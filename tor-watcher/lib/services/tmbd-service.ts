@@ -32,7 +32,6 @@ class LRU<K, V> {
   get(key: K): V | undefined {
     const val = this.map.get(key);
     if (val === undefined) return undefined;
-    // mark as recently used
     this.map.delete(key);
     this.map.set(key, val);
     return val;
@@ -42,7 +41,6 @@ class LRU<K, V> {
     if (this.map.has(key)) this.map.delete(key);
     this.map.set(key, val);
     if (this.map.size > this.max) {
-      // evict least-recently used (first inserted)
       const firstKey = this.map.keys().next().value as K | undefined;
       if (firstKey !== undefined) this.map.delete(firstKey);
     }
@@ -55,23 +53,14 @@ class LRU<K, V> {
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX_ENTRIES = 500;
-const STALE_WINDOW_MS = 5 * 60_000; // 5 minutes for stale-on-error
+const STALE_WINDOW_MS = 5 * 60_000;
 
 const cache = new LRU<string, CacheEntry>(CACHE_MAX_ENTRIES);
-
-// De-dupe in-flight identical requests (by cache key)
 const inflight = new Map<string, Promise<string>>();
-
-// Build cache key. For TMDB we only cache GET and key by full URL.
-function cacheKey(url: string, init?: RequestInit) {
-  const method = (init?.method || "GET").toUpperCase();
-  return `${method}:${url}`;
-}
 
 function isCacheBypassed(init?: RequestInit) {
   if (!init) return false;
-  // Next.js RequestInit.cache or custom header can bypass
-  if ((init as any).cache === "no-store") return true;
+  if (init.cache === "no-store") return true;
   const headers = new Headers(init.headers || {});
   return headers.get("x-bypass-cache") === "1";
 }
@@ -80,12 +69,10 @@ function safeJsonParse<T>(text: string): T {
   try {
     return JSON.parse(text) as T;
   } catch {
-    // If TMDB ever returns non-JSON text (rare), throw to bubble up
     throw new Error("Failed to parse JSON from TMDB response");
   }
 }
 
-// --- Retry helper ---
 function anySignal(a?: AbortSignal, b?: AbortSignal) {
   if (!a) return b;
   if (!b) return a;
@@ -98,13 +85,15 @@ function anySignal(a?: AbortSignal, b?: AbortSignal) {
   return c.signal;
 }
 
+type RetryError = Error & { code?: string; name?: string; message: string };
+
 async function fetchWithRetry(
   url: string,
   init: RequestInit & { timeoutMs?: number } = {},
   maxRetries = 3
 ): Promise<Response> {
   const { timeoutMs = 8000, signal: callerSignal, ...rest } = init;
-  let lastErr: any;
+  let lastErr: RetryError | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const attemptCtrl = new AbortController();
@@ -122,12 +111,11 @@ async function fetchWithRetry(
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...(rest.headers || {}),
+          ...(rest.headers ?? {}),
         },
       });
 
       if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
-        // backoff (respect Retry-After)
         const ra = Number(res.headers.get("retry-after")) || 0;
         const backoff = ra ? ra * 1000 : Math.min(1200 * 2 ** attempt, 5000);
         await new Promise<void>((resolve, reject) => {
@@ -140,16 +128,18 @@ async function fetchWithRetry(
         continue;
       }
 
-      return res; // OK or 4xx (don’t retry)
-    } catch (err: any) {
-      lastErr = err;
+      return res;
+    } catch (err) {
+      const errorObj = err as RetryError;
+      lastErr = errorObj;
 
-      // If the caller aborted, DO NOT retry
-      if (callerSignal?.aborted) throw err;
+      if (callerSignal?.aborted) throw errorObj;
 
       const transient =
-        err?.name === "AbortError" ||
-        ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND"].includes(err?.code);
+        errorObj.name === "AbortError" ||
+        (errorObj.code !== undefined &&
+          ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND"].includes(errorObj.code));
+
       if (!transient || attempt === maxRetries) break;
 
       const backoff = Math.min(400 * 2 ** attempt, 3000);
@@ -166,20 +156,19 @@ async function fetchWithRetry(
   }
 
   throw new Error(
-  `fetch failed: ${lastErr?.code ?? lastErr?.name ?? "Unknown"} ${lastErr?.message ?? ""}`.trim(),
-  { cause: lastErr }
-);
+    `fetch failed: ${lastErr?.code ?? lastErr?.name ?? "Unknown"} ${lastErr?.message ?? ""}`.trim(),
+    { cause: lastErr }
+  );
 }
 
-// Main TMDB fetch with LRU cache + retry
-export async function tmdb<T = any>(
+export async function tmdb<T>(
   path: string,
   init?: RequestInit & {
     next?: { revalidate?: number };
     timeoutMs?: number;
     ttlMs?: number;
     cacheable?: boolean;
-    signal?: AbortSignal; // <-- make sure this is here
+    signal?: AbortSignal;
   }
 ): Promise<T> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -188,7 +177,6 @@ export async function tmdb<T = any>(
   const cacheable = init?.cacheable ?? (method === "GET");
   const key = `${method}:${url}`;
 
-  // Try fresh cache
   if (cacheable && !isCacheBypassed(init)) {
     const hit = cache.get(key);
     if (hit && hit.expiresAt > Date.now()) {
@@ -196,7 +184,6 @@ export async function tmdb<T = any>(
     }
   }
 
-  // De-dupe identical in-flight
   if (cacheable && inflight.has(key)) {
     const text = await inflight.get(key)!;
     return safeJsonParse<T>(text);
@@ -207,7 +194,7 @@ export async function tmdb<T = any>(
       ...init,
       headers: {
         ...authHeaders(),
-        ...(init?.headers as Record<string, string> | {}),
+        ...(init?.headers as Record<string, string> ?? {}),
       },
     });
 
@@ -217,7 +204,7 @@ export async function tmdb<T = any>(
       throw new Error(`TMDb ${res.status} ${res.statusText}: ${text}`);
     }
 
-    const text = await res.text(); // store text to avoid shared object mutation
+    const text = await res.text();
     if (cacheable && !isCacheBypassed(init)) {
       const ttl = Math.max(1, init?.ttlMs ?? CACHE_TTL_MS);
       cache.set(key, { value: text, expiresAt: Date.now() + ttl });
@@ -236,7 +223,6 @@ export async function tmdb<T = any>(
       return safeJsonParse<T>(text);
     }
   } catch (err) {
-    // Serve stale on error if available (within window)
     if (cacheable) {
       const stale = cache.get(key);
       if (stale && Date.now() - stale.expiresAt < STALE_WINDOW_MS) {
@@ -250,10 +236,10 @@ export async function tmdb<T = any>(
   }
 }
 
-// Helpers for images (unchanged)
 export function posterUrl(path: string | null, size: "w342" | "w500" = "w500") {
   return path ? `https://image.tmdb.org/t/p/${size}${path}` : null;
 }
+
 export function backdropUrl(path: string | null, size: "w780" | "w1280" = "w1280") {
   return path ? `https://image.tmdb.org/t/p/${size}${path}` : null;
 }

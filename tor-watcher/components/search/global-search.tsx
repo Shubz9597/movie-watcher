@@ -64,9 +64,10 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setResults((data.results ?? []).slice(0, 8));
-      } catch (e: any) {
-        if (e?.name !== "AbortError") {
-          setError(e?.message ?? "Search failed");
+      } catch (e: unknown) {
+        if ((e as {name?: string}).name !== "AbortError") {
+          const msg = e instanceof Error ? e.message : String(e);
+          setError(msg ?? "Search failed");
           setResults([]);
         }
       } finally {

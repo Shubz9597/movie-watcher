@@ -1,15 +1,7 @@
 import { NextResponse } from "next/server";
-import { tmdb, posterUrl } from "@/lib/services/tmbd-service";
+import { tmdb } from "@/lib/services/tmbd-service";
 import type { TmdbPaginated, TmdbMovie, Paginated } from "@/lib/types";
 import { mapTmdbMovieToCard } from "@/lib/adapters/tmdb";
-
-function isNew(release_date?: string) {
-  if (!release_date) return false;
-  const d = new Date(release_date);
-  const now = new Date();
-  const diffDays = (now.getTime() - d.getTime()) / 86_400_000;
-  return diffDays <= 30;
-}
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -42,7 +34,7 @@ export async function GET(req: Request) {
     const params = new URLSearchParams({
       query,
       page: String(page),
-      include_adult: "false",
+      include_adult: "true",
       language: "en-US",
     });
     upstreamPath = `/search/movie?${params.toString()}`;
@@ -103,12 +95,12 @@ export async function GET(req: Request) {
         },
       }
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Map upstream errors → cleaner status for client
-    if (req.signal.aborted || err?.name === "AbortError") {
+    if (req.signal.aborted || (err as {name?: string}).name === "AbortError") {
     return NextResponse.json({ error: "Request aborted" }, { status: 499 });
   }
-  const msg = err?.message || "Upstream error";
+  const msg = err instanceof Error ? err.message : String(err);
   const is4xx = /TMDb 4\d\d/.test(msg);
   return NextResponse.json({ error: "Upstream TMDb error", detail: msg }, { status: is4xx ? 400 : 502 });
   }

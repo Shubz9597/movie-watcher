@@ -1,0 +1,73 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add: 
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=mullvad
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_CITIES=Amsterdam
+      - TZ=Asia/Kolkata
+    volumes:
+      - ./data/gluetun:/gluetun
+    # expose Prowlarr & FlareSolverr through the VPN container
+    ports:
+      - "9696:9696"   # Prowlarr UI (through gluetun)
+      - "8191:8191"   # FlareSolverr (optional)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://google.com"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # NOTE: shares gluetun's network namespace -> same localhost as Prowlarr
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Asia/Kolkata
+    depends_on:
+      - gluetun
+
+  # NOTE: shares gluetun's network namespace -> same localhost as FlareSolverr
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+      - flaresolverr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+      - DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP2SUPPORT=false
+      - DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP3SUPPORT=false
+    volumes:
+      - ./data/prowlarr:/config
+
+  web:
+    build: .
+    container_name: moviewatcher_web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # IMPORTANT: call prowlarr through the gluetun container, not by "prowlarr"
+      - INDEXER_URL=http://gluetun:9696
+      - INDEXER_API_KEY=${PROWLARR_API_KEY}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN}
+      - TZ=Asia/Kolkata
+    depends_on:
+      - prowlarr

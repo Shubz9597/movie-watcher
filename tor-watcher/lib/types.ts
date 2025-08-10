@@ -64,6 +64,10 @@ export type TmdbMovieDetail = {
   videos?: TmdbVideos;
 };
 
+export type TmdbGenreList = {
+  genres: TmdbGenre[];
+};
+
 /** ------------------------------
  * APP TYPES (UI-friendly view models)
  * ------------------------------ */

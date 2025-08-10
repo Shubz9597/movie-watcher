@@ -16,7 +16,6 @@ export default function HomePage() {
   const [movies, setMovies] = useState<MovieCard[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState<MovieDetail | null>(null);
   const [quickLoading, setQuickLoading] = useState(false);
@@ -122,7 +121,6 @@ export default function HomePage() {
       else setMovies((prev) => [...prev, ...(data.results ?? [])]);
 
       const pages = data.total_pages ?? 1;
-      setTotalPages(pages);
       setHasMore(page < pages);
       setLoading(false);
     })

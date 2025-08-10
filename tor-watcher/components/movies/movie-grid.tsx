@@ -8,53 +8,19 @@ export default function MovieGrid({
   items,
   onOpen,
   onPrefetch,
-  loadMore = () => {},
-  hasMore = false,
 }: {
   items: MovieCard[];
   onOpen: (id: number) => void;
   onPrefetch?: (id: number) => void;
-  loadMore?: () => void | Promise<void>;
-  hasMore?: boolean;
 }) {
-  const sentinel = useRef<HTMLDivElement | null>(null);
-  const pendingRef = useRef(false);
-
   useEffect(() => {
-    if (!sentinel.current || !hasMore) return;
-
-    const el = sentinel.current;
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(async (e) => {
-          if (!e.isIntersecting) return;
-          if (pendingRef.current) return;
-
-          pendingRef.current = true;
-          try {
-            const maybePromise = loadMore();
-            if (maybePromise && typeof (maybePromise as any).then === "function") {
-              await (maybePromise as Promise<void>);
-            }
-          } finally {
-            // Give the grid a tick to render new items before retriggering
-            setTimeout(() => {
-              pendingRef.current = false;
-            }, 100);
-          }
-        });
-      },
-      { rootMargin: "1000px" }
-    );
-
-    io.observe(el);
-    return () => io.disconnect();
-  }, [hasMore, loadMore]);
-
-  useEffect(() => {
-    const onOpenMovie = (e: any) => onOpen(e.detail.id);
-    window.addEventListener("open-movie", onOpenMovie as any);
-    return () => window.removeEventListener("open-movie", onOpenMovie as any);
+    const onOpenMovie = (e: Event) => {
+      const ce = e as CustomEvent<{ id: number }>;
+      const id = ce.detail?.id;
+      if (typeof id === "number") onOpen(id);
+    };
+    window.addEventListener("open-movie", onOpenMovie as EventListener);
+    return () => window.removeEventListener("open-movie", onOpenMovie as EventListener);
   }, [onOpen]);
 
   return (
@@ -64,7 +30,6 @@ export default function MovieGrid({
           <PosterCard key={m.id} movie={m} onOpen={onOpen} onPrefetch={onPrefetch} />
         ))}
       </div>
-      {hasMore && <div ref={sentinel} className="h-10" />}
     </>
   );
 }

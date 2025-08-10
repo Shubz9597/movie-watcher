@@ -64,12 +64,12 @@ export default function PosterCard({
             className="object-cover transition-opacity group-hover:opacity-90"
             priority={false}
           />
-          <div className="absolute left-2 top-2 flex gap-1">
+          <div className="absolute left-2 top-2 flex flex-col gap-1 items-start">
             {movie.isNew && (
               <Badge className="bg-cyan-500 text-black hover:bg-cyan-400">NEW</Badge>
             )}
             {typeof movie.rating === "number" && (
-              <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] leading-none text-slate-100">
+              <span className="flex items-center gap-0.5 rounded-full bg-black/70 px-2 py-[2px] text-[11px] font-medium text-slate-100 shadow-sm">
                 ★ {movie.rating.toFixed(1)}
               </span>
             )}

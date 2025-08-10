@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "image.tmdb.org" },
     ],
   },
+  output: "standalone",
 };
 
 export default nextConfig;

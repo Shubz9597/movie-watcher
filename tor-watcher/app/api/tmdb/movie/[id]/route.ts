@@ -1,6 +1,6 @@
 // app/api/tmdb/movie/[id]/route.ts
 import { NextResponse } from "next/server";
-import { tmdb, posterUrl, backdropUrl } from "@/lib/services/tmbd-service";
+import { tmdb } from "@/lib/services/tmbd-service";
 import type { MovieDetail, TmdbMovieDetail } from "@/lib/types";
 import { mapTmdbDetailToMovieDetail } from "@/lib/adapters/tmdb";
 
@@ -27,12 +27,13 @@ export async function GET(
       headers: { "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600" },
     });
 
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
+  } catch (err: unknown) {
+    if ((err as {name?: string}).name === "AbortError") {
       return NextResponse.json({ error: "Aborted" }, { status: 499 });
     }
+    const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
-      { error: "Upstream TMDb error", detail: err?.message ?? "fetch failed" },
+      { error: "Upstream TMDb error", detail: msg ?? "fetch failed" },
       { status: 502 }
     );
   }
