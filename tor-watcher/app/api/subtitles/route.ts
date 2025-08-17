@@ -1,21 +1,13 @@
-import { NextRequest } from "next/server";
-import type { Instance as WebTorrentInstance, Torrent } from "webtorrent";
-import { normalizeSrc, waitForMetadata } from "@/lib/torrent-src";
+import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-let client: WebTorrentInstance | null = null;
-
-async function getClient(): Promise<WebTorrentInstance> {
-  if (client) return client;
-  (process as any).env.WEBTORRENT_UTP = "false";
-  (globalThis as any).WEBTORRENT_UTP = "false";
-  const mod = await import("webtorrent");
-  const WebTorrent = (mod as any).default || mod;
-  client = new WebTorrent({ utp: false });
-  return client!;
-}
+// Where your Go streamer runs
+const VOD_BASE =
+  process.env.VOD_BASE ??
+  process.env.NEXT_PUBLIC_VOD_BASE ??
+  "http://localhost:4001";
 
 function toLangTagFromName(name: string) {
   const lower = name.toLowerCase();
@@ -26,33 +18,71 @@ function toLangTagFromName(name: string) {
   return "und";
 }
 
+function baseName(p: string) {
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
 export async function GET(req: NextRequest) {
-  const magnetParam = req.nextUrl.searchParams.get("magnet");
-  const srcParam    = req.nextUrl.searchParams.get("src");
-  const infoHash    = req.nextUrl.searchParams.get("infoHash");
+  const u = new URL(req.url);
+  const magnet = u.searchParams.get("magnet") || "";
+  const src = u.searchParams.get("src") || "";
+  const infoHash = u.searchParams.get("infoHash") || "";
+  const cat = u.searchParams.get("cat") || "movie";
 
-  const src = await normalizeSrc({ magnet: magnetParam, src: srcParam, infoHash });
-  if (!src) return new Response(JSON.stringify({ subtitles: [] }), { headers: { "Content-Type": "application/json" } });
+  // Ask Go for the file list
+  const pass = new URLSearchParams();
+  if (magnet) pass.set("magnet", magnet);
+  if (src) pass.set("src", src);
+  if (infoHash) pass.set("infoHash", infoHash);
+  pass.set("cat", cat);
 
-  const client = await getClient();
-  const torrent: Torrent = await new Promise((resolve, reject) => {
-    const ex = client.get(src);
-    if (ex) return resolve(ex as unknown as Torrent);
-    client.add(src, (t: Torrent) => resolve(t)).once("error", reject);
-  });
+  const target = `${VOD_BASE.replace(/\/$/, "")}/files?${pass.toString()}`;
 
-  try { await waitForMetadata(torrent, 15000); }
-  catch { return new Response(JSON.stringify({ subtitles: [] }), { headers: { "Content-Type": "application/json" } }); }
+  try {
+    const res = await fetch(target, { method: "GET" });
+    if (!res.ok) {
+      // If metadata isn’t ready yet, just return empty; UI can fall back to OpenSubs.
+      return NextResponse.json({ subtitles: [] });
+    }
+    const files: Array<{ Index: number; Name: string; Length: number } | { index: number; name: string; length: number }> =
+      await res.json();
 
-  const files = Array.isArray(torrent.files) ? torrent.files : [];
-  const subs = files
-    .filter(f => { const n = f.name.toLowerCase(); return n.endsWith(".srt") || n.endsWith(".vtt"); })
-    .map((f, i) => ({
-      source: "torrent" as const,
-      label: f.name,
-      lang: toLangTagFromName(f.name),
-      url: `/api/subtitles/serve?${magnetParam ? "magnet" : srcParam ? "src" : "infoHash"}=${encodeURIComponent(magnetParam ?? srcParam ?? (infoHash ?? ""))}&index=${i}`,
+    // Normalize possible field casing (Go JSON vs TS expectations)
+    const norm = files.map((f: any) => ({
+      index: typeof f.index === "number" ? f.index : f.Index,
+      name: typeof f.name === "string" ? f.name : f.Name,
+      length: typeof f.length === "number" ? f.length : f.Length,
     }));
 
-  return new Response(JSON.stringify({ subtitles: subs }), { headers: { "Content-Type": "application/json" } });
+    const subs = norm
+      .filter((f) => {
+        const n = f.name.toLowerCase();
+        return n.endsWith(".srt") || n.endsWith(".vtt");
+      })
+      .map((f) => {
+        const filename = baseName(f.name);
+        const ext = filename.toLowerCase().endsWith(".srt") ? "srt" : "vtt";
+
+        // Serve through our Next route so we can SRT->VTT if needed
+        const qs = new URLSearchParams();
+        if (magnet) qs.set("magnet", magnet);
+        if (src) qs.set("src", src);
+        if (infoHash) qs.set("infoHash", infoHash);
+        qs.set("cat", cat);
+        qs.set("index", String(f.index));
+        qs.set("ext", ext);
+
+        return {
+          source: "torrent" as const,
+          label: filename,
+          lang: toLangTagFromName(filename),
+          url: `/api/subtitles/serve?${qs.toString()}`,
+        };
+      });
+
+    return NextResponse.json({ subtitles: subs });
+  } catch {
+    return NextResponse.json({ subtitles: [] });
+  }
 }

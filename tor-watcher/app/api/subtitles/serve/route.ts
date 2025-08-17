@@ -1,83 +1,61 @@
-// app/api/subtitles/serve/route.ts
 import { NextRequest } from "next/server";
-import type { Instance as WebTorrentInstance, Torrent } from "webtorrent";
-import { PassThrough } from "stream";
-// @ts-ignore - srt2vtt has no great types; we just use it as a transform stream
+import { PassThrough, Readable } from "stream";
+// @ts-ignore – cjs transform stream
 import srt2vtt from "srt2vtt";
-
-import { normalizeSrc, waitForMetadata } from "@/lib/torrent-src";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-let client: WebTorrentInstance | null = null;
-
-async function getClient(): Promise<WebTorrentInstance> {
-  if (client) return client;
-  // Hard-disable uTP on Windows/Node 22
-  (process as any).env.WEBTORRENT_UTP = "false";
-  (globalThis as any).WEBTORRENT_UTP = "false";
-
-  const mod = await import("webtorrent");
-  const WebTorrent = (mod as any).default || mod;
-  client = new WebTorrent({ utp: false });
-  return client!;
-}
+const VOD_BASE =
+  process.env.VOD_BASE ??
+  process.env.NEXT_PUBLIC_VOD_BASE ??
+  "http://localhost:4001";
 
 export async function GET(req: NextRequest) {
-  const magnetParam = req.nextUrl.searchParams.get("magnet");
-  const srcParam    = req.nextUrl.searchParams.get("src");
-  const infoHash    = req.nextUrl.searchParams.get("infoHash");
-  const indexStr    = req.nextUrl.searchParams.get("index");
+  const u = new URL(req.url);
+  const magnet = u.searchParams.get("magnet") || "";
+  const src = u.searchParams.get("src") || "";
+  const infoHash = u.searchParams.get("infoHash") || "";
+  const cat = u.searchParams.get("cat") || "movie";
+  const indexStr = u.searchParams.get("index");
+  const ext = (u.searchParams.get("ext") || "").toLowerCase(); // "srt" or "vtt"
 
-  const src = await normalizeSrc({ magnet: magnetParam, src: srcParam, infoHash });
-  if (!src || indexStr === null) {
-    return new Response("Missing source and/or index", { status: 400 });
-  }
-
+  if (!indexStr) return new Response("Missing index", { status: 400 });
   const index = Number(indexStr);
   if (!Number.isFinite(index) || index < 0) {
     return new Response("Bad index", { status: 400 });
   }
 
-  const client = await getClient();
+  // Build call to Go's /stream for the subtitle fileIndex
+  const pass = new URLSearchParams();
+  if (magnet) pass.set("magnet", magnet);
+  if (src) pass.set("src", src);
+  if (infoHash) pass.set("infoHash", infoHash);
+  pass.set("cat", cat);
+  pass.set("fileIndex", String(index));
 
-  const torrent: Torrent = await new Promise((resolve, reject) => {
-    const ex = client.get(src);
-    if (ex) return resolve(ex as unknown as Torrent);
-    client.add(src, (t: Torrent) => resolve(t)).once("error", reject);
-  });
+  const target = `${VOD_BASE.replace(/\/$/, "")}/stream?${pass.toString()}`;
 
-  try {
-    await waitForMetadata(torrent, 15000);
-  } catch {
-    return new Response("Could not fetch torrent metadata", { status: 504 });
+  const res = await fetch(target, { method: "GET" });
+  if (!res.ok || !res.body) {
+    return new Response("Subtitle fetch failed", { status: res.status || 502 });
   }
 
-  const files = Array.isArray(torrent.files) ? torrent.files : [];
-  const subFiles = files.filter((f) => {
-    const n = f.name.toLowerCase();
-    return n.endsWith(".srt") || n.endsWith(".vtt");
-  });
-
-  const file = subFiles[index];
-  if (!file) {
-    return new Response("Subtitle not found", { status: 404 });
+  // Convert SRT -> VTT on the fly if needed
+  if (ext === "srt") {
+    const nodeReadable = Readable.fromWeb(res.body as any); // web -> node stream
+    const out = new PassThrough();
+    nodeReadable.pipe(srt2vtt()).pipe(out);
+    return new Response(out as any, {
+      headers: {
+        "Content-Type": "text/vtt; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
   }
 
-  const isSrt = file.name.toLowerCase().endsWith(".srt");
-  const passthrough = new PassThrough();
-
-  const read = file.createReadStream().on("error", (err) => passthrough.destroy(err));
-  if (isSrt) {
-    // Convert SRT → VTT on the fly
-    // @ts-ignore - transform stream without types
-    read.pipe(srt2vtt()).pipe(passthrough);
-  } else {
-    read.pipe(passthrough);
-  }
-
-  return new Response(passthrough as any, {
+  // Already VTT (or unknown) – pass through
+  return new Response(res.body, {
     headers: {
       "Content-Type": "text/vtt; charset=utf-8",
       "Cache-Control": "no-store",
