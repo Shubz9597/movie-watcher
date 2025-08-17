@@ -34,7 +34,10 @@ export function mapTmdbMovieToCard(m: TmdbMovie): MovieCard {
     year: toYear(m.release_date),
     rating: toRating1dp(m.vote_average),
     isNew: isNew(m.release_date),
+    originalLanguage: m.original_language,
     // topCast: [] // only if you choose to include it later
+    tmdbRatingPct: typeof m.vote_average === "number" ? Math.round(m.vote_average * 10) : undefined,
+    tmdbPopularity: typeof (m as any).popularity === "number" ? (m as any).popularity : undefined,
   };
 }
 
@@ -59,6 +62,7 @@ export function mapTmdbDetailToMovieDetail(d: TmdbMovieDetail): MovieDetail {
       character: c.character,
     })),
     trailerKey,
+    imdbId: d.imdb_id || undefined,
     torrents: [], // fill later
   };
 }

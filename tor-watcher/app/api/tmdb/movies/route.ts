@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { tmdb } from "@/lib/services/tmbd-service";
+import { tmdb } from "@/lib/services/tmbd-service"; // ⬅️ use the minimal client
 import type { TmdbPaginated, TmdbMovie, Paginated } from "@/lib/types";
 import { mapTmdbMovieToCard } from "@/lib/adapters/tmdb";
 
@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const nowYear = new Date().getFullYear();
 
-  // Parse & sanitize inputs
+  // Inputs
   const pageRaw = Number(searchParams.get("page") || "1");
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.min(pageRaw, 1000) : 1;
 
@@ -19,18 +19,22 @@ export async function GET(req: Request) {
 
   const yearMinRaw = Number(searchParams.get("yearMin") || "1970");
   const yearMaxRaw = Number(searchParams.get("yearMax") || String(nowYear));
-  const yearMin = Math.max(1874, Math.min(yearMinRaw || 1970, nowYear)); // TMDB data floor
+  const yearMin = Math.max(1874, Math.min(yearMinRaw || 1970, nowYear));
   const yearMax = Math.max(yearMin, Math.min(yearMaxRaw || nowYear, nowYear));
 
-  // Build upstream URL
+  // (Optional) If you later want to filter by original language on discover,
+  // read `lang` and set with_original_language=xx only for discover.
+  const lang = (searchParams.get("lang") || "").trim().toLowerCase(); // e.g. "en"
+
+  // Build upstream
   let upstreamPath = "";
-  let cacheable = true; // switch off for search
-  let ttlMs = 60_000;   // default TTL for discover/trending
+  let revalidateSeconds = 60; // default for discover
+  let useCache = true;
 
   if (query) {
-    // SEARCH — no cache
-    cacheable = false;
-    ttlMs = 0;
+    // SEARCH → no store
+    useCache = false;
+    revalidateSeconds = 0;
     const params = new URLSearchParams({
       query,
       page: String(page),
@@ -39,12 +43,12 @@ export async function GET(req: Request) {
     });
     upstreamPath = `/search/movie?${params.toString()}`;
   } else {
-    // DISCOVER or TRENDING
     const needsDiscover =
       !!genreId ||
       sort !== "trending" ||
       yearMin !== 1970 ||
-      yearMax !== nowYear;
+      yearMax !== nowYear ||
+      !!lang;
 
     if (needsDiscover) {
       const params = new URLSearchParams();
@@ -63,32 +67,34 @@ export async function GET(req: Request) {
       if (genreId) params.set("with_genres", String(genreId));
       params.set("primary_release_date.gte", `${yearMin}-01-01`);
       params.set("primary_release_date.lte", `${yearMax}-12-31`);
-
-      // Guard for rating sort: avoid low-vote noise and TMDB quirks
       if (sort === "rating") params.set("vote_count.gte", "200");
 
+      // Optional language filtering (discover only)
+      if (lang) params.set("with_original_language", lang);
+
       upstreamPath = `/discover/movie?${params.toString()}`;
-      ttlMs = 60_000; // 60s cache is safe for discover
+      revalidateSeconds = 60;
     } else {
       upstreamPath = `/trending/movie/day?page=${page}`;
-      ttlMs = 30_000; // trending rotates fast; shorter TTL
+      revalidateSeconds = 30;
     }
   }
 
   try {
-    const data = await tmdb<TmdbPaginated<TmdbMovie>>(upstreamPath, {
-    ttlMs,
-    cacheable,
-    signal: req.signal, // <-- forward cancellation
-  });
+    const init = ({ next: { revalidate: revalidateSeconds }, cache: "force-cache", signal: (req as any).signal } as RequestInit & { next: { revalidate: number } })
 
-    const results = data.results?.map(mapTmdbMovieToCard) ?? [];
+    const data = await tmdb<TmdbPaginated<TmdbMovie>>(upstreamPath, init) ;
+
+    // If you ever pass `lang` for search (not supported by TMDB as a filter),
+    // you could post-filter here:
+    // const rows = lang && query ? data.results.filter(r => r.original_language === lang) : data.results;
+
+    const results = (data.results ?? []).map(mapTmdbMovieToCard);
 
     return NextResponse.json(
       { page: data.page, total_pages: data.total_pages, results } satisfies Paginated<ReturnType<typeof mapTmdbMovieToCard>>,
       {
         headers: {
-          // Edge cache hint (doesn't affect your in-memory LRU)
           "Cache-Control": query
             ? "no-store"
             : "public, s-maxage=60, stale-while-revalidate=600",
@@ -96,12 +102,14 @@ export async function GET(req: Request) {
       }
     );
   } catch (err: unknown) {
-    // Map upstream errors → cleaner status for client
-    if (req.signal.aborted || (err as {name?: string}).name === "AbortError") {
-    return NextResponse.json({ error: "Request aborted" }, { status: 499 });
-  }
-  const msg = err instanceof Error ? err.message : String(err);
-  const is4xx = /TMDb 4\d\d/.test(msg);
-  return NextResponse.json({ error: "Upstream TMDb error", detail: msg }, { status: is4xx ? 400 : 502 });
+    if ((req as any).signal?.aborted || (err as { name?: string }).name === "AbortError") {
+      return NextResponse.json({ error: "Request aborted" }, { status: 499 });
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    const is4xx = /TMDB 4\d\d/.test(msg);
+    return NextResponse.json(
+      { error: "Upstream TMDB error", detail: msg },
+      { status: is4xx ? 400 : 502 }
+    );
   }
 }

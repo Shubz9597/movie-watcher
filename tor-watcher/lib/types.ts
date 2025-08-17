@@ -22,7 +22,8 @@ export type TmdbMovie = {
   overview?: string;
   release_date?: string;       // "YYYY-MM-DD"
   vote_average?: number;       // 0-10 float
-  genre_ids?: number[];        // present in discover/search
+  genre_ids?: number[];
+  original_language?: string;        // present in discover/search
 };
 
 export type TmdbCast = {
@@ -62,6 +63,7 @@ export type TmdbMovieDetail = {
   genres?: TmdbGenre[];
   credits?: TmdbCredits;
   videos?: TmdbVideos;
+  imdb_id?: string | null;
 };
 
 export type TmdbGenreList = {
@@ -81,6 +83,9 @@ export type MovieCard = {
   isNew?: boolean;             // computed (last 30 days)
   /** Optional: only if you decide to surface cast on cards */
   topCast?: string[];
+  originalLanguage?: string;   // e.g. "en", "ja", etc.
+  tmdbRatingPct?: number;      // 0–100, derived from vote_average
+  tmdbPopularity?: number;     // optional, not shown by default
 };
 
 export type CastMember = { name: string; character?: string };
@@ -97,7 +102,8 @@ export type MovieDetail = {
   runtime?: number | null;
   cast?: CastMember[];
   trailerKey?: string | null;
-  torrents: Torrent[]; // stays empty until you wire torrents
+  torrents: Torrent[];
+  imdbId?: string;
 };
 
 /** ------------------------------
@@ -129,3 +135,60 @@ export type Paginated<T> = {
   total_pages: number;
   results: T[];
 };
+
+// --- Torrents / Prowlarr ---
+export type TorrentItem = {
+  title: string;
+  link: string;
+  magnet?: string;
+  sizeBytes: number;
+  indexer?: string;
+  seeders?: number;
+  leechers?: number;
+  pubDate?: string;
+  quality?: string;
+  codec?: string;
+};
+
+export type TorrentSearchBody = {
+  type: "movie" | "tv";
+  title: string;
+  year?: number;
+  season?: number;
+  episode?: number;
+  imdbId?: string;      // pass when available for better matches
+  tmdbId?: number;      // optional, useful if you map tmdb->imdb later
+  categories?: number[]; // override Torznab cats if needed
+};
+
+type categories = {
+  id: number;
+  name: string;
+  subCategories?: categories[];
+};
+
+export type TorrentSearchResponse = {
+age: number;
+ageHours: number;
+ageMinutes: number; 
+categories: categories[];
+fileName: string;
+guid: string;
+imdbId?: string;
+indexer: string;
+indexerFlags: string[];
+indexerId: number;
+infoHash: string;
+infoUrl?: string; // optional, if not provided, use magnetUrl
+leechers: number;
+magnetUrl?: string; // optional, if not provided, use link
+protocol: string; // "torrent" or "magnet"
+publishDate: string; // ISO date string
+seeders: number;
+size: number; // in bytes
+sortTitle: string; // normalized for sorting
+title: string; // normalized title
+tmdbId?: number; // optional, useful if you map tmdb->imdb later
+tvMazeId?: number; // optional, useful if you map tmdb->tvmaze later
+tvdbId?: number; // optional, useful if you map tmdb->tvdb later
+}

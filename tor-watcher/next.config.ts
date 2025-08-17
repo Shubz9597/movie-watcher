@@ -8,6 +8,18 @@ const nextConfig: NextConfig = {
     ],
   },
   output: "standalone",
+   transpilePackages: ["webtorrent"],
+
+  webpack: (config) => {
+    // Alias out native deps that break on Windows/Node 22
+    config.resolve = config.resolve || {};
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      "utp-native": false,
+      "node-gyp-build": false,
+    };
+    return config;
+  },
 };
 
 export default nextConfig;
