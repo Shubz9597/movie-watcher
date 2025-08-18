@@ -122,7 +122,7 @@ func parseSrc(q urlQ) (string, error) {
 
 func mustParseMagnet(src string) metainfo.Hash {
 	if strings.HasPrefix(src, "magnet:") {
-		m, err := metainfo.ParseMagnetURI(src)
+		m, err := metainfo.ParseMagnetUri(src)
 		if err == nil && m.InfoHash != (metainfo.Hash{}) {
 			return m.InfoHash
 		}
