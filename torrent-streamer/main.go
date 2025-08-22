@@ -8,19 +8,25 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/joho/godotenv"
+
+	"torrent-streamer/internal/logx"
+	"torrent-streamer/internal/watch"
 )
 
 /* =========================
@@ -61,6 +67,8 @@ type torrentStat struct {
 	BestLength    int64  `json:"bestLength"`
 	SelectedIndex *int   `json:"selectedIndex,omitempty"` // last streamed file index if known
 	LastTouched   string `json:"lastTouched"`             // RFC3339 or "never"
+	BufferedAhead int64  `json:"bufferedAhead"`           // probe from bestIdx + playhead
+	TargetAhead   int64  `json:"targetAhead"`
 }
 
 type categoryStats struct {
@@ -79,6 +87,17 @@ type statsResp struct {
 }
 
 type urlQ interface{ Get(string) string }
+
+type bufferInfoOut struct {
+	State           string `json:"state"`
+	PlayheadBytes   int64  `json:"playheadBytes"`
+	TargetBytes     int64  `json:"targetBytes"`
+	TargetAheadSec  int64  `json:"targetAheadSec"`
+	RollingBps      int64  `json:"rollingBps"`
+	ContiguousAhead int64  `json:"contiguousAhead"`
+	FileIndex       int    `json:"fileIndex"`
+	FileLength      int64  `json:"fileLength"`
+}
 
 /* =========================
    Env & globals
@@ -105,18 +124,50 @@ var (
 
 	startTime     = time.Now()
 	lastFileIndex = make(map[string]int) // key(cat:infohash) -> last streamed file index
+
+	// --- Buffering tunables (seconds/MB) ---
+	targetPlaySec     = int64(90)             // keep ~90s ahead while playing
+	targetPauseSec    = int64(360)            // fill ~6m ahead while paused
+	warmReadAheadMB   = int64(16)             // internal warm-up read per request
+	enableEndgameDup  = true                  // duplicate final 5% requests in window
+	defaultBitrateBps = int64(24_000_000 / 8) // 3 MB/s fallback (~24 Mbps)
+	// serialize prefetch per file to avoid thrash/lock contention
+	prefetchLocks sync.Map // key string -> *sync.Mutex
+
+	// Optional, read from env at boot (see main)
+	targetPlay4KSec   int64 // default 180 if env missing
+	targetPause4KSec  int64 // default 600 if env missing
+	warmReadAhead4KMB int64 // default 64 (or env)
 )
 
 func setupLogging() {
+	var out io.Writer = os.Stdout
+
 	if p := os.Getenv("LOG_FILE"); p != "" {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			log.Printf("WARN opening LOG_FILE=%q: %v", p, err)
-			return
+		} else {
+			out = io.MultiWriter(os.Stdout, f)
 		}
-		log.SetOutput(io.MultiWriter(os.Stdout, f))
-		log.Printf("logging to %s", p)
 	}
+
+	// Allow ONLY our tagged lines; drop noisy library spew.
+	// Tweak LOG_ALLOW to your taste (adds or removes tags).
+	allow := getenvDefault("LOG_ALLOW",
+		`^\[(init|add|files|prefetch|stream|watch|janitor|stats|trackers)\]`)
+
+	// Hide Windows flush/fsync messages and similar low-level churn.
+	deny := getenvDefault("LOG_DENY",
+		`FlushFileBuffers|fsync|WriteFile|The handle is invalid|Access is denied|Permission denied`)
+
+	// De-dup window (identical lines within this time are dropped).
+	window := getenvDuration("LOG_DEDUP_WINDOW", 2*time.Second)
+
+	filter := logx.New(out, window, allow, deny)
+	log.SetOutput(filter)
+
+	log.Printf("[init] logging configured (dedup=%s allow=%q deny=%q)", window, allow, deny)
 }
 
 // sanitizeMagnet: optionally filter trackers from a magnet string.
@@ -282,6 +333,9 @@ func getClientFor(cat string) *torrent.Client {
 	dir := filepath.Join(dataRoot, cat)
 	_ = os.MkdirAll(dir, 0o755)
 
+	// ✅ Make DataDir Windows-safe (short and long-path enabled)
+	dir = winLongPath(dir)
+
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DataDir = dir
 	cfg.DisableTCP = false
@@ -377,11 +431,10 @@ func chooseBestVideoFile(t *torrent.Torrent) (*torrent.File, int) {
 }
 
 func contentTypeForName(name string) string {
-	if c := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); c != "" {
-		if strings.Contains(c, "video/x-matroska") {
-			return "video/webm"
-		}
-		return c
+	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	// Don't map Matroska to webm. Let it be what it is.
+	if ct != "" {
+		return ct // "video/x-matroska" for .mkv on most systems
 	}
 	return "application/octet-stream"
 }
@@ -418,9 +471,8 @@ func prebuffer(r torrent.Reader, want int64, timeout time.Duration) int64 {
 	var done int64
 	deadline := time.Now().Add(timeout)
 
-	// Hints (if available)
-	// These methods exist on the concrete that implements torrent.Reader in your version.
-	r.SetReadahead(want)
+	// Only responsiveness hint. DO NOT change readahead here to avoid
+	// contention with stream/warmers touching priorities simultaneously.
 	r.SetResponsive()
 
 	for done < want && time.Now().Before(deadline) {
@@ -439,6 +491,183 @@ func prebuffer(r torrent.Reader, want int64, timeout time.Duration) int64 {
 		}
 	}
 	return done
+}
+
+// ==== watch-manager glue ====
+
+// Build a playable "src" from a watch.Key-like ID.
+// If it's an infohash (40-hex or 32-base32), synthesize a magnet.
+// If it's already a magnet, sanitize and return it.
+func srcFromID(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("empty id")
+	}
+	// magnet as-is
+	if strings.HasPrefix(id, "magnet:") {
+		return sanitizeMagnet(id), nil
+	}
+	// 40-hex infohash
+	if len(id) == 40 && strings.IndexFunc(id, func(r rune) bool {
+		return !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'))
+	}) == -1 {
+		return sanitizeMagnet("magnet:?xt=urn:btih:" + strings.ToUpper(id)), nil
+	}
+	// 32-chars (base32 infohash) — pass through, anacrolix accepts btih=BASE32 too
+	if len(id) == 32 {
+		return sanitizeMagnet("magnet:?xt=urn:btih:" + strings.ToUpper(id)), nil
+	}
+	return "", fmt.Errorf("unrecognized id: %q", id)
+}
+
+// Ensure the torrent exists/started for {cat,id}.
+func ensureTorrentForKey(cat, id string) error {
+	cat = validCat(cat)
+	cl := getClientFor(cat)
+	src, err := srcFromID(id)
+	if err != nil {
+		return err
+	}
+	t, err := addOrGetTorrent(cl, src)
+	if err != nil {
+		return err
+	}
+	// Kick metadata briefly so first stream is snappier
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = waitForInfo(ctx, t)
+	lastTouch[key(cat, t.InfoHash())] = time.Now()
+	return nil
+}
+
+// Best-effort stop by infohash/magnet on the given category.
+func stopTorrentForKey(cat, id string) {
+	cat = validCat(cat)
+	clientsMu.Lock()
+	cl := clients[cat]
+	clientsMu.Unlock()
+	if cl == nil {
+		return
+	}
+
+	// Try to derive an infohash to match quickly
+	var wantIH *metainfo.Hash
+	if strings.HasPrefix(id, "magnet:") {
+		if m, err := metainfo.ParseMagnetURI(id); err == nil && m.InfoHash != (metainfo.Hash{}) {
+			h := m.InfoHash
+			wantIH = &h
+		}
+	} else if len(id) == 40 {
+		h := metainfo.NewHashFromHex(strings.ToUpper(id))
+		wantIH = &h
+	}
+
+	for _, t := range cl.Torrents() {
+		match := false
+		if wantIH != nil {
+			match = (t.InfoHash() == *wantIH)
+		} else {
+			// Fallback: match by hex
+			if strings.EqualFold(t.InfoHash().HexString(), id) {
+				match = true
+			}
+		}
+		if match {
+			log.Printf("[watch] dropping [%s] %s", cat, t.Name())
+			t.Drop()
+			delete(lastTouch, key(cat, t.InfoHash()))
+			delete(lastFileIndex, key(cat, t.InfoHash()))
+			return
+		}
+	}
+}
+
+// On Windows, add the long-path prefix to avoid MAX_PATH issues.
+// Also normalize to an absolute, shallow path.
+func winLongPath(p string) string {
+	if os.PathSeparator != '\\' {
+		return p
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	// If already has \\?\ prefix, return as-is.
+	if strings.HasPrefix(abs, `\\?\`) {
+		return abs
+	}
+	// Don't prefix UNC \\server\share paths with \\?\ directly — those need \\?\UNC\...
+	if strings.HasPrefix(abs, `\\`) {
+		// Convert \\server\share\... -> \\?\UNC\server\share\...
+		return `\\?\UNC\` + strings.TrimPrefix(abs, `\\`)
+	}
+	return `\\?\` + abs
+}
+
+func safeDownloadName(name string) string {
+	// Strip Windows-forbidden characters
+	repl := strings.NewReplacer("<", "", ">", "", ":", "", `"`, "", "/", "", `\`, "", "|", "", "?", "", "*", "")
+	n := repl.Replace(name)
+	n = strings.Trim(n, " .") // no trailing dot/space
+	if len(n) == 0 {
+		n = "video"
+	}
+	// Keep it short to be safe
+	if len(n) > 120 {
+		n = n[:120]
+	}
+	return n
+}
+
+func isLikely4K(name string, size int64) bool {
+	n := strings.ToLower(name)
+	if strings.Contains(n, "2160p") || strings.Contains(n, "4k") || strings.Contains(n, "uhd") {
+		return true
+	}
+	// Remuxes / larger-than-8GiB are treated as heavy
+	return size >= 8<<30
+}
+
+// Allow callers to override the target seconds while preserving state
+func (c *bufCtl) SetTargetSeconds(playSec, pauseSec int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state == statePlaying {
+		c.targetAheadSec = playSec
+	} else {
+		c.targetAheadSec = pauseSec
+	}
+}
+
+func buildBufferInfoOut(t *torrent.Torrent, f *torrent.File, fidx int, ctl *bufCtl) map[string]any {
+	ctl.mu.Lock()
+	state := ctl.state
+	ph := ctl.playhead
+	bps := ctl.rollingBps
+	targetSec := ctl.targetAheadSec
+	ctl.mu.Unlock()
+
+	return map[string]any{
+		"state":           string(state),
+		"playheadBytes":   ph,
+		"targetBytes":     ctl.TargetBytes(),
+		"targetAheadSec":  targetSec,
+		"rollingBps":      bps,
+		"contiguousAhead": contiguousAheadPieceExact(t, f, ph),
+		"fileIndex":       fidx,
+		"fileLength":      f.Length(),
+	}
+}
+
+func wantsSSE(r *http.Request) bool {
+	if strings.EqualFold(r.URL.Query().Get("sse"), "1") {
+		return true
+	}
+	// optional: also honor Accept: text/event-stream
+	if strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
+		return true
+	}
+	return false
 }
 
 /* =========================
@@ -566,6 +795,11 @@ func handlePrefetch(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	// 🔒 ensure only one prefetch per (cat,ih,fileIndex)
+	unlock := lockFor(fmt.Sprintf("prefetch:%s:%s:%d", cat, t.InfoHash().HexString(), fidx))
+	defer unlock()
+
 	rd := f.NewReader()
 	defer rd.Close()
 	_, _ = rd.Seek(0, io.SeekStart)
@@ -595,13 +829,21 @@ func handlePrefetch(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleStream(w http.ResponseWriter, r *http.Request) {
+	// Guard the handler so panics never take the process down.
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("[stream] panic recovered: %v\n%s", rec, debug.Stack())
+			// don't re-panic; just end this request
+		}
+	}()
+
 	enableCORS(w)
 	cat := parseCat(r.URL.Query())
 	cl := getClientFor(cat)
 
 	src, err := parseSrc(r.URL.Query())
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	t, err := addOrGetTorrent(cl, src)
@@ -610,7 +852,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[trackers] udp=%d http=%d https=%d other=%d", u, h, s, o)
 	}
 	if err != nil {
-		http.Error(w, "add torrent: "+err.Error(), 400)
+		http.Error(w, "add torrent: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -638,11 +880,26 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		f, fidx = chooseBestVideoFile(t)
 	}
 	if f == nil {
-		http.Error(w, "no playable file in torrent", 404)
+		http.Error(w, "no playable file in torrent", http.StatusNotFound)
 		return
 	}
 
 	lastFileIndex[key(cat, t.InfoHash())] = fidx
+
+	k := keyFile(cat, t.InfoHash(), fidx)
+	ctl := getCtl(k)
+
+	if isLikely4K(f.Path(), f.Length()) {
+		playSec := targetPlay4KSec
+		pauseSec := targetPause4KSec
+		if playSec <= 0 {
+			playSec = 180
+		}
+		if pauseSec <= 0 {
+			pauseSec = 600
+		}
+		ctl.SetTargetSeconds(playSec, pauseSec)
+	}
 
 	size := f.Length()
 	name := f.Path()
@@ -669,30 +926,55 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	end = clamp(end, start, size-1)
 	length := end - start + 1
 
-	// Reader drives piece priorities (interface!)
+	// Controller-driven reader + dynamic warm-up
+	ctl.SetState(statePlaying)
+	ctl.SetPlayhead(start)
+
+	target := ctl.TargetBytes()
+
 	reader := f.NewReader()
 	defer reader.Close()
 	if _, err := reader.Seek(start, io.SeekStart); err != nil {
-		http.Error(w, "seek error: "+err.Error(), 500)
+		http.Error(w, "seek error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	reader.SetResponsive()
+	reader.SetReadahead(target)
 
-	// Optional prebuffer
-	var warmed int64
-	if prebufferN > 0 {
-		want := min64(prebufferN, length)
+	// dynamic warm-up: read up to min(target, warmReadAheadMB)
+	localWarmMB := warmReadAheadMB
+	if isLikely4K(f.Path(), f.Length()) {
+		// Prefer explicit env override, else ensure at least 64 MiB
+		if warmReadAhead4KMB > 0 {
+			localWarmMB = warmReadAhead4KMB
+		} else if localWarmMB < 64 {
+			localWarmMB = 64
+		}
+	}
+	warmWant := min64(target, localWarmMB<<20)
+	if warmWant > 256<<10 && length >= 512<<10 {
 		warmStart := time.Now()
-		warmed = prebuffer(reader, want, prebufferTO)
-		log.Printf("[stream] prebuffer cat=%s ih=%s file=%d want=%d got=%d took=%s",
-			cat, t.InfoHash().HexString(), fidx, want, warmed, time.Since(warmStart))
+		got := prebuffer(reader, min64(warmWant, length), prebufferTO)
+		ctl.UpdateThroughput(got, int64(time.Since(warmStart).Milliseconds()))
+		_, _ = reader.Seek(start, io.SeekStart) // rewind
+	}
+
+	// Optional: surface buffer hints to the UI
+	w.Header().Set("X-Buffer-Target-Bytes", strconv.FormatInt(target, 10))
+	w.Header().Set("X-Buffered-Ahead-Probe", strconv.FormatInt(contiguousAheadPieceExact(t, f, start), 10))
+
+	// 🔧 Rewind so we don't consume the client's requested range.
+	if warmWant > 0 {
+		if _, err := reader.Seek(start, io.SeekStart); err != nil {
+			log.Printf("[stream] rewind after prebuffer failed: %v", err)
+		}
 	}
 
 	// Headers
 	ct := contentTypeForName(name)
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(name)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeDownloadName(filepath.Base(name))))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-File-Index", strconv.Itoa(fidx))
 	w.Header().Set("X-File-Name", filepath.Base(name))
@@ -704,35 +986,64 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusPartialContent)
 	}
 
-	// Stream loop
-	buf := make([]byte, 256<<10)
+	// Stream loop (context-aware, robust to disconnects)
+	rc := http.NewResponseController(w) // Go 1.20+
+	buf := make([]byte, 256<<10)        // 256 KiB
 	var written int64
+
 	for written < length {
+		// Client cancel/seek/etc.
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+		}
+
 		toRead := int64(len(buf))
 		if rem := length - written; rem < toRead {
 			toRead = rem
 		}
 		reader.SetResponsive()
-		n, readErr := io.ReadFull(reader, buf[:toRead])
+		readStart := time.Now()
+		n, readErr := reader.Read(buf[:toRead])
+
 		if n > 0 {
+			ctl.UpdateThroughput(int64(n), int64(time.Since(readStart).Milliseconds()))
+			// keep torrent alive while actively streaming
+			lastTouch[key(cat, t.InfoHash())] = time.Now()
+
 			if _, err := w.Write(buf[:n]); err != nil {
+				if clientGone(err) {
+					// benign: client went away
+					return
+				}
 				log.Printf("[stream] client write error: %v", err)
 				return
 			}
-			if fsh, ok := w.(http.Flusher); ok {
-				fsh.Flush()
+			if err := rc.Flush(); err != nil {
+				if clientGone(err) {
+					return
+				}
+				log.Printf("[stream] flush error: %v", err)
+				return
 			}
 			written += int64(n)
 		}
+
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
 				break
 			}
+			if clientGone(readErr) {
+				return
+			}
+			// transient: backoff a bit
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
-	log.Printf("[stream] cat=%s name=%q fileIdx=%d range=%d-%d len=%d warmed=%d",
-		cat, t.Name(), fidx, start, end, written, warmed)
+
+	log.Printf("[stream] cat=%s name=%q fileIdx=%d range=%d-%d len=%d target=%d",
+		cat, t.Name(), fidx, start, end, written, target)
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
@@ -821,6 +1132,19 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 				SelectedIndex: selPtr,
 				LastTouched:   last,
 			}
+			if best != nil && bestIdx >= 0 {
+				bk := keyFile(cat, t.InfoHash(), bestIdx)
+				ctl := getCtl(bk)
+
+				// Read controller state safely
+				ctl.mu.Lock()
+				ph := ctl.playhead
+				tgt := ctl.TargetBytes()
+				ctl.mu.Unlock()
+
+				ts.BufferedAhead = contiguousAheadPieceExact(t, best, ph)
+				ts.TargetAhead = tgt
+			}
 			tstats = append(tstats, ts)
 		}
 
@@ -850,13 +1174,232 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func handleBufferState(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w)
+	q := r.URL.Query()
+	cat := parseCat(q)
+
+	cl := getClientFor(cat)
+	src, err := parseSrc(q)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	t, err := addOrGetTorrent(cl, src)
+	if err != nil {
+		http.Error(w, "add torrent: "+err.Error(), 400)
+		return
+	}
+
+	if err := waitForInfo(r.Context(), t); err != nil {
+		http.Error(w, "metadata timeout", http.StatusGatewayTimeout)
+		return
+	}
+
+	// choose the file index same as /stream
+	var f *torrent.File
+	fidx := 0
+	if idxStr := q.Get("fileIndex"); idxStr != "" {
+		if n, _ := strconv.Atoi(idxStr); n >= 0 && n < len(t.Files()) {
+			f = t.Files()[n]
+			fidx = n
+		}
+	}
+	if f == nil {
+		if bf, bi := chooseBestVideoFile(t); bf != nil {
+			f, fidx = bf, bi
+		}
+	}
+	if f == nil {
+		http.Error(w, "no playable file", 404)
+		return
+	}
+
+	k := keyFile(cat, t.InfoHash(), fidx)
+	ctl := getCtl(k)
+
+	if isLikely4K(f.Path(), f.Length()) {
+		playSec := targetPlay4KSec
+		pauseSec := targetPause4KSec
+		if playSec <= 0 {
+			playSec = 180
+		}
+		if pauseSec <= 0 {
+			pauseSec = 600
+		}
+		ctl.SetTargetSeconds(playSec, pauseSec)
+	}
+
+	switch strings.ToLower(q.Get("state")) {
+	case "pause":
+		ctl.SetState(statePaused)
+		// start warmer from last known playhead (default 0)
+		ctl.mu.Lock()
+		ph := ctl.playhead
+		ctl.mu.Unlock()
+		ctl.startWarm(cat, t, f, ph)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "paused"})
+	case "play":
+		ctl.SetState(statePlaying)
+		ctl.stopWarm()
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "playing"})
+	default:
+		http.Error(w, "state must be pause|play", 400)
+	}
+}
+
+func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w)
+	q := r.URL.Query()
+	cat := parseCat(q)
+
+	cl := getClientFor(cat)
+	src, err := parseSrc(q)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	t, err := addOrGetTorrent(cl, src)
+	if err != nil {
+		http.Error(w, "add torrent: "+err.Error(), 400)
+		return
+	}
+	if err := waitForInfo(r.Context(), t); err != nil {
+		http.Error(w, "metadata timeout", http.StatusGatewayTimeout)
+		return
+	}
+
+	// choose same file logic as /stream
+	var f *torrent.File
+	fidx := 0
+	if idxStr := q.Get("fileIndex"); idxStr != "" {
+		if n, _ := strconv.Atoi(idxStr); n >= 0 && n < len(t.Files()) {
+			f = t.Files()[n]
+			fidx = n
+		}
+	}
+	if f == nil {
+		if bf, bi := chooseBestVideoFile(t); bf != nil {
+			f, fidx = bf, bi
+		}
+	}
+	if f == nil {
+		http.Error(w, "no playable file", 404)
+		return
+	}
+
+	k := keyFile(cat, t.InfoHash(), fidx)
+	ctl := getCtl(k)
+
+	// 4K overrides (same as /stream)
+	if isLikely4K(f.Path(), f.Length()) {
+		playSec := targetPlay4KSec
+		pauseSec := targetPause4KSec
+		if playSec <= 0 {
+			playSec = 180
+		}
+		if pauseSec <= 0 {
+			pauseSec = 600
+		}
+		ctl.SetTargetSeconds(playSec, pauseSec)
+	}
+
+	// ---- SSE mode? ----
+	if wantsSSE(r) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache, no-transform")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		// optional: initial reconnection hint for EventSource
+		_, _ = io.WriteString(w, "retry: 2000\n\n")
+		rc := http.NewResponseController(w)
+
+		write := func() bool {
+			out := buildBufferInfoOut(t, f, fidx, ctl)
+			b, _ := json.Marshal(out)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+				return false
+			}
+			_ = rc.Flush()
+			// keep torrent considered "active"
+			lastTouch[key(cat, t.InfoHash())] = time.Now()
+			return true
+		}
+
+		if !write() {
+			return
+		}
+
+		tick := time.NewTicker(1 * time.Second) // you can tune this
+		defer tick.Stop()
+		ping := time.NewTicker(15 * time.Second) // comment pings for proxies
+		defer ping.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-tick.C:
+				if !write() {
+					return
+				}
+			case <-ping.C:
+				_, _ = io.WriteString(w, ": keepalive\n\n")
+				_ = rc.Flush()
+			}
+		}
+	}
+
+	// ---- one-shot JSON (existing behavior) ----
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(buildBufferInfoOut(t, f, fidx, ctl))
+}
+
 /* =========================
    housekeeping
    ========================= */
 
+func clientGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	// Text matches for cross-platform "client vanished" cases
+	s := err.Error()
+	if strings.Contains(s, "broken pipe") || strings.Contains(s, "reset by peer") {
+		return true
+	}
+	// Windows-specific: ECONNRESET/ECONNABORTED on writes
+	var op *net.OpError
+	if errors.As(err, &op) {
+		if se, ok := op.Err.(*os.SyscallError); ok {
+			if se.Err == syscall.WSAECONNRESET || se.Err == syscall.WSAECONNABORTED {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func lockFor(key string) func() {
+	m, _ := prefetchLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 func enableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type, X-File-Index, X-File-Name")
+	w.Header().Set(
+		"Access-Control-Expose-Headers",
+		"Content-Length, Content-Range, Content-Type, X-File-Index, X-File-Name, X-Buffer-Target-Bytes, X-Buffered-Ahead-Probe",
+	)
 }
 
 func dirSize(root string) int64 {
@@ -924,6 +1467,62 @@ func janitor() {
 	}
 }
 
+// contiguousAheadPieceExact returns the count of *file bytes* we can
+// read contiguously from "from" before hitting the first *incomplete piece*.
+// It is read-free and uses piece completion state.
+//
+// Notes:
+//   - Piece granularity: if the starting piece isn't complete we return 0,
+//     even if some bytes might actually be available; this is conservative
+//     and avoids misleading the UI.
+//   - At file boundaries where a piece spans multiple files, an incomplete
+//     piece belonging to *another* file will still count as incomplete here;
+//     that's a safe under-report.
+func contiguousAheadPieceExact(t *torrent.Torrent, f *torrent.File, from int64) int64 {
+	info := t.Info()
+	if info == nil {
+		return 0
+	}
+	fileLen := f.Length()
+	if from >= fileLen {
+		return 0
+	}
+	pieceLen := info.PieceLength // BEP3 piece length
+	if pieceLen <= 0 {
+		return 0
+	}
+
+	fileStartGlobal := f.Offset() + from
+	fileEndGlobal := f.Offset() + fileLen
+
+	startPiece := int(fileStartGlobal / pieceLen)
+	pieceOff := fileStartGlobal % pieceLen
+
+	// If the starting piece isn't fully complete, be conservative.
+	if t.PieceBytesMissing(startPiece) != 0 {
+		return 0
+	}
+
+	var ahead int64
+	// Account remainder of starting piece segment within this file
+	segEnd := min64(fileEndGlobal, (int64(startPiece)+1)*pieceLen)
+	ahead += segEnd - (int64(startPiece)*pieceLen + pieceOff)
+
+	// Walk subsequent pieces until the end of the file or first incomplete piece
+	for p := startPiece + 1; (int64(p) * pieceLen) < fileEndGlobal; p++ {
+		if t.PieceBytesMissing(p) != 0 {
+			break
+		}
+		ps := int64(p) * pieceLen
+		pe := ps + pieceLen
+		if pe > fileEndGlobal {
+			pe = fileEndGlobal
+		}
+		ahead += pe - ps
+	}
+	return ahead
+}
+
 /* =========================
    main
    ========================= */
@@ -947,6 +1546,18 @@ func main() {
 	prebufferTO = getenvDuration("PREBUFFER_TIMEOUT_MS", prebufferTO)
 	trackersMode = strings.ToLower(getenvDefault("TRACKERS_MODE", trackersMode)) // all|http|udp|none
 
+	targetPlaySec = getenvInt64("TARGET_BUFFER_PLAY_SEC", targetPlaySec)
+	targetPauseSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC", targetPauseSec)
+	warmReadAheadMB = getenvInt64("WARM_READ_AHEAD_MB", warmReadAheadMB)
+
+	targetPlay4KSec = getenvInt64("TARGET_BUFFER_PLAY_SEC_4K", 180)
+	targetPause4KSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC_4K", 600)
+	warmReadAhead4KMB = getenvInt64("WARM_READ_AHEAD_MB_4K", 64)
+
+	if s := strings.ToLower(getenvDefault("ENDGAME_DUPLICATE", "true")); s == "false" {
+		enableEndgameDup = false
+	}
+
 	go janitor()
 
 	mux := http.NewServeMux()
@@ -955,6 +1566,50 @@ func main() {
 	mux.HandleFunc("/prefetch", handlePrefetch)
 	mux.HandleFunc("/stream", handleStream) // ?magnet=...&cat=anime&fileIndex=0
 	mux.HandleFunc("/stats", handleStats)   // ?cat=movie&infoHash=ABC...
+
+	// --- Watch/lease manager wiring ---
+	mgr := watch.NewManager(
+		20*time.Second, // staleAfter: if no ping > 20s, eligible to stop
+		30*time.Second, // ticker: reaper runs every 30s
+		// Ensure:
+		func(k watch.Key) error { return ensureTorrentForKey(k.Cat, k.ID) },
+		// Stop:
+		func(k watch.Key) { stopTorrentForKey(k.Cat, k.ID) },
+	)
+
+	// CORS-wrapped endpoints (so your Next.js app can call them)
+	mux.HandleFunc("/watch/open", func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		mgr.HandleOpen(w, r)
+	})
+	mux.HandleFunc("/watch/ping", func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		mgr.HandlePing(w, r)
+	})
+	mux.HandleFunc("/watch/close", func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		mgr.HandleClose(w, r)
+	})
+
+	mux.HandleFunc("/buffer/state", handleBufferState)
+	mux.HandleFunc("/buffer/info", handleBufferInfo)
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			enableCORS(w)
+			return
+		}
+		http.NotFound(w, r)
+	})
 
 	addr := getenvDefault("LISTEN", ":4001")
 	log.Printf("[boot] VOD listening on %s root=%s prebuffer=%dB/%s waitMetadata=%s trackersMode=%s",
@@ -974,4 +1629,200 @@ func min64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// =========================
+// Buffer Controller
+// =========================
+
+type playState string
+
+const (
+	statePlaying playState = "playing"
+	statePaused  playState = "paused"
+)
+
+type bufKey struct {
+	Cat  string
+	IH   string
+	FIdx int
+}
+
+type bufCtl struct {
+	mu sync.Mutex
+
+	state          playState
+	playhead       int64 // bytes
+	rollingBps     int64 // bytes/sec (EWMA)
+	targetAheadSec int64 // cache of last computed target (sec)
+	// warmer control
+	warmCtx    context.Context
+	warmCancel context.CancelFunc
+}
+
+var (
+	bufMu    sync.Mutex
+	bufCtrls = map[bufKey]*bufCtl{}
+)
+
+func keyFile(cat string, ih metainfo.Hash, fidx int) bufKey {
+	return bufKey{Cat: validCat(cat), IH: ih.HexString(), FIdx: fidx}
+}
+
+func getCtl(k bufKey) *bufCtl {
+	bufMu.Lock()
+	defer bufMu.Unlock()
+	if c, ok := bufCtrls[k]; ok {
+		return c
+	}
+	c := &bufCtl{
+		state:          statePlaying,
+		rollingBps:     defaultBitrateBps,
+		targetAheadSec: targetPlaySec,
+	}
+	bufCtrls[k] = c
+	return c
+}
+
+func (c *bufCtl) SetState(ps playState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.state = ps
+	c.targetAheadSec = map[playState]int64{
+		statePlaying: targetPlaySec,
+		statePaused:  targetPauseSec,
+	}[ps]
+}
+
+func (c *bufCtl) SetPlayhead(pos int64) {
+	c.mu.Lock()
+	c.playhead = pos
+	c.mu.Unlock()
+}
+
+func (c *bufCtl) UpdateThroughput(bytes, millis int64) {
+	if millis <= 0 || bytes <= 0 {
+		return
+	}
+	// EWMA toward observed bps
+	obs := (bytes * 1000) / millis
+	if obs <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rollingBps == 0 {
+		c.rollingBps = obs
+		return
+	}
+	// 0.7 old, 0.3 new
+	c.rollingBps = (c.rollingBps*7 + obs*3) / 10
+}
+
+func (c *bufCtl) TargetBytes() int64 {
+	c.mu.Lock()
+	bps := c.rollingBps
+	sec := c.targetAheadSec
+	c.mu.Unlock()
+	if bps <= 0 {
+		bps = defaultBitrateBps
+	}
+	// if slow swarm, grow target a bit so we stay safe
+	if bps < defaultBitrateBps {
+		sec = sec + sec/3 // +33%
+	}
+	return bps * sec
+}
+
+// =========================
+// Pause Warmer
+// =========================
+
+func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, start int64) {
+	c.mu.Lock()
+	if c.warmCancel != nil {
+		c.mu.Unlock()
+		return // already warming
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.warmCtx = ctx
+	c.warmCancel = cancel
+	c.mu.Unlock()
+
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			if c.warmCancel != nil {
+				c.warmCancel = nil
+				c.warmCtx = nil
+			}
+			c.mu.Unlock()
+		}()
+
+		rd := f.NewReader()
+		defer rd.Close()
+
+		pos := start
+		for {
+			c.mu.Lock()
+			st := c.state
+			ctx := c.warmCtx
+			target := c.TargetBytes()
+			c.mu.Unlock()
+
+			if st != statePaused || ctx == nil {
+				return
+			}
+
+			// Move to latest playhead (it may have changed)
+			c.mu.Lock()
+			pos = c.playhead
+			c.mu.Unlock()
+			if _, err := rd.Seek(pos, io.SeekStart); err != nil {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			rd.SetResponsive()
+			rd.SetReadahead(target)
+
+			need := target - contiguousAheadPieceExact(t, f, pos)
+			if need <= 256<<10 { // good enough
+				time.Sleep(750 * time.Millisecond)
+				continue
+			}
+
+			chunk := need
+			localWarmMB := warmReadAheadMB
+			if isLikely4K(f.Path(), f.Length()) {
+				if warmReadAhead4KMB > 0 {
+					localWarmMB = warmReadAhead4KMB
+				} else if localWarmMB < 64 {
+					localWarmMB = 64
+				}
+			}
+			maxChunk := localWarmMB << 20
+			if chunk > maxChunk {
+				chunk = maxChunk
+			}
+			start := time.Now()
+			got := prebuffer(rd, chunk, 5*time.Second)
+			c.UpdateThroughput(got, int64(time.Since(start).Milliseconds()))
+
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (c *bufCtl) stopWarm() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.warmCancel != nil {
+		c.warmCancel()
+		c.warmCancel = nil
+		c.warmCtx = nil
+	}
 }

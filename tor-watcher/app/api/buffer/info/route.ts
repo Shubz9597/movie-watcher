@@ -1,0 +1,17 @@
+import { NextRequest } from "next/server";
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+const VOD_BASE = (process.env.VOD_BASE ?? process.env.NEXT_PUBLIC_VOD_BASE ?? "http://localhost:4001").replace(/\/$/,"");
+
+export async function GET(req: NextRequest) {
+  const incoming = new URL(req.url);
+  const target = `${VOD_BASE}/buffer/info?${incoming.searchParams.toString()}`;
+  const res = await fetch(target, { method: "GET" });
+  const headers = new Headers();
+  // pass JSON headers through
+  for (const [k,v] of res.headers.entries()) {
+    if (k.toLowerCase().startsWith("content-")) headers.set(k, v);
+  }
+  return new Response(res.body, { status: res.status, headers });
+}

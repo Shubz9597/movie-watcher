@@ -40,3 +40,5 @@ data/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+subs-cache/*

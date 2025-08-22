@@ -36,6 +36,7 @@
     "react-dom": "19.1.0",
     "sonner": "^2.0.7",
     "srt2vtt": "^1.3.1",
+    "subtitle": "^4.2.2-alpha.0",
     "tailwind-merge": "^3.3.1",
     "tsx": "^4.20.4",
     "webtorrent": "^2.8.4",

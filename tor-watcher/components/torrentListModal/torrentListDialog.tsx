@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useCallback } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,46 @@ export type TorrentRow = {
   indexer: string;
   publishDate?: string;
 };
+
+// ---- prefetch types & helpers ----
+type PrefetchResult = {
+  infoHash: string;
+  name: string;
+  fileIndex: number;
+  fileName: string;
+  length: number;
+  contentType?: string;
+  prewarmedBytes?: number;
+  tookMs?: number;
+};
+
+const PREFETCH_DELAY_MS = 200;
+
+function keyFor(t: TorrentRow) {
+  // stable key for maps
+  return (
+    t.infoHash?.toLowerCase() ||
+    t.magnetUri ||
+    t.torrentUrl ||
+    t.title
+  );
+}
+
+function buildPrefetchUrl(t: TorrentRow, cat: string) {
+  const u = new URL("/api/stream", window.location.origin);
+  u.searchParams.set("prefetch", "1");
+  u.searchParams.set("cat", cat || "movie");
+
+  if (t.magnetUri) {
+    u.searchParams.set("magnet", t.magnetUri);
+  } else if (t.infoHash) {
+    u.searchParams.set("magnet", `magnet:?xt=urn:btih:${t.infoHash}`);
+  } else if (t.torrentUrl) {
+    // Go backend accepts ?src=<torrent-file-url>
+    u.searchParams.set("src", t.torrentUrl);
+  }
+  return u.toString();
+}
 
 /* ---------- helpers ---------- */
 function formatSize(n?: number) {
@@ -40,8 +80,8 @@ function qualityRank(q: Quality): number {
   switch (q) {
     case "2160p": return 3;
     case "1080p": return 2;
-    case "720p":  return 1;
-    default:      return 0;
+    case "720p": return 1;
+    default: return 0;
   }
 }
 
@@ -60,6 +100,7 @@ export default function TorrentListDialog({
   movie,
   torrents,
   onPlay,
+  cat = "movie",
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -67,8 +108,10 @@ export default function TorrentListDialog({
   error?: string | null;
   movie: { title: string; year?: number; posterUrl?: string | null; backdropUrl?: string | null };
   torrents: TorrentRow[] | null;
-  onPlay: (t: TorrentRow) => void;
+  onPlay: (t: TorrentRow, fileIndex?: number) => void;
+  cat?: string; // NEW
 }) {
+
   // Presence stats (which qualities exist in this result set?)
   const { present, counts } = useMemo(() => {
     const list = torrents ?? [];
@@ -81,16 +124,67 @@ export default function TorrentListDialog({
   // Quality filter state (only relevant for visible chips)
   const [q2160, setQ2160] = useState(true);
   const [q1080, setQ1080] = useState(true);
-  const [q720,  setQ720 ] = useState(true);
-  const [qOther,setQOther]= useState(true);
+  const [q720, setQ720] = useState(true);
+  const [qOther, setQOther] = useState(true);
+  const [prefetchMap, setPrefetchMap] = useState<Record<string, PrefetchResult | "loading">>({});
+  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const abortersRef = useRef<Record<string, AbortController>>({});
+
+  const doPrefetch = useCallback(async (t: TorrentRow) => {
+    const k = keyFor(t);
+    if (!k || prefetchMap[k]) return; // already loading or done
+
+    const ctrl = new AbortController();
+    abortersRef.current[k] = ctrl;
+    setPrefetchMap((m) => ({ ...m, [k]: "loading" }));
+
+    try {
+      const url = buildPrefetchUrl(t, cat);
+      const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+      if (!r.ok) throw new Error(String(r.status));
+      const data = (await r.json()) as PrefetchResult;
+      setPrefetchMap((m) => ({ ...m, [k]: data }));
+    } catch {
+      // clear on failure
+      setPrefetchMap((m) => {
+        const { [k]: _, ...rest } = m;
+        return rest;
+      });
+    } finally {
+      delete abortersRef.current[k];
+    }
+  }, [prefetchMap, cat]);
+
+  const handleEnterRow = (t: TorrentRow) => {
+    const k = keyFor(t);
+    if (!k || timersRef.current[k]) return;
+    timersRef.current[k] = setTimeout(() => {
+      delete timersRef.current[k];
+      void doPrefetch(t);
+    }, PREFETCH_DELAY_MS);
+  };
+
+  const handleLeaveRow = (t: TorrentRow) => {
+    const k = keyFor(t);
+    const timer = timersRef.current[k];
+    if (timer) {
+      clearTimeout(timer);
+      delete timersRef.current[k];
+    }
+    const ac = abortersRef.current[k];
+    if (ac) {
+      ac.abort();
+      delete abortersRef.current[k];
+    }
+  };
 
   const filtered = useMemo(() => {
     const list = torrents ?? [];
     const allowed = new Set<Quality>([
       ...(q2160 ? (present.includes("2160p") ? ["2160p"] as const : []) : []),
       ...(q1080 ? (present.includes("1080p") ? ["1080p"] as const : []) : []),
-      ...(q720  ? (present.includes("720p")  ? ["720p"]  as const : []) : []),
-      ...(qOther? (present.includes("other") ? ["other"] as const : []) : []),
+      ...(q720 ? (present.includes("720p") ? ["720p"] as const : []) : []),
+      ...(qOther ? (present.includes("other") ? ["other"] as const : []) : []),
     ]);
     // If user unticked all visible, fall back to "all present" so we don't show empty accidentally
     const effectiveAllowed = allowed.size ? allowed : new Set<Quality>(present as Quality[]);
@@ -219,26 +313,49 @@ export default function TorrentListDialog({
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((t, i) => (
-                    <tr key={`${t.infoHash ?? t.title}-${i}`} className="border-b border-slate-800 hover:bg-slate-800/20">
-                      <td className="py-2 pl-3 pr-2">
-                        <Button size="sm" className="h-8 w-8 p-0 rounded-lg bg-cyan-500 text-black hover:bg-cyan-400"
-                                onClick={() => onPlay(t)} aria-label={`Play ${t.title}`}>
-                          <Play className="h-4 w-4" />
-                        </Button>
-                      </td>
-                      <td className="py-2 pr-2">
-                        <div className="flex items-start gap-2">
-                          <QualityBadge title={t.title} />
-                          <span className="text-slate-300 break-words">{t.title}</span>
-                        </div>
-                      </td>
-                      <td className="py-2 pr-2">{formatSize(t.size)}</td>
-                      <td className="py-2 pr-2">{t.seeders ?? "-"}</td>
-                      <td className="py-2 pr-2">{t.leechers ?? "-"}</td>
-                      <td className="py-2 pr-3">{t.indexer}</td>
-                    </tr>
-                  ))}
+                  {filtered.map((t, i) => {
+                    const k = keyFor(t);
+                    const pf = (k && prefetchMap[k]) || null;
+                    const isLoading = pf === "loading";
+                    const isReady = !!pf && pf !== "loading";
+
+                    return (
+                      <tr key={`${t.infoHash ?? t.title}-${i}`} className="border-b border-slate-800 hover:bg-slate-800/20"
+                        onMouseEnter={() => handleEnterRow(t)}
+                        onMouseLeave={() => handleLeaveRow(t)}>
+                        <td className="py-2 pl-3 pr-2">
+                          <Button size="sm" className="h-8 w-8 p-0 rounded-lg bg-cyan-500 text-black hover:bg-cyan-400"
+                            onClick={() => {
+                              // opportunistic prefetch on click if we didn't already
+                              const k = keyFor(t);
+                              if (k && !prefetchMap[k]) void doPrefetch(t);
+                              onPlay(t, (pf && pf !== "loading" ? pf.fileIndex : undefined));
+                            }} aria-label={`Play ${t.title}`}>
+                            <Play className="h-4 w-4" />
+                          </Button>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <div className="flex items-start gap-2">
+                            <QualityBadge title={t.title} />
+                            <span className="text-slate-300 break-words">{t.title}</span>
+                            {isLoading ? (
+                              <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                                warming…
+                              </span>
+                            ) : isReady ? (
+                              <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-300 border border-green-500/30">
+                                prefetched
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-2">{formatSize(t.size)}</td>
+                        <td className="py-2 pr-2">{t.seeders ?? "-"}</td>
+                        <td className="py-2 pr-2">{t.leechers ?? "-"}</td>
+                        <td className="py-2 pr-3">{t.indexer}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
