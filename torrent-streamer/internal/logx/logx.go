@@ -24,18 +24,16 @@ type Writer struct {
 func New(dst io.Writer, window time.Duration, allowPattern, denyPattern string) *Writer {
 	var allowRE, denyRE *regexp.Regexp
 	if strings.TrimSpace(allowPattern) != "" {
-		allowRE = regexp.MustCompile(allowPattern)
+		if re, err := regexp.Compile(allowPattern); err == nil {
+			allowRE = re
+		} // else: fail-soft (log if you like)
 	}
 	if strings.TrimSpace(denyPattern) != "" {
-		denyRE = regexp.MustCompile(denyPattern)
+		if re, err := regexp.Compile(denyPattern); err == nil {
+			denyRE = re
+		}
 	}
-	return &Writer{
-		dst:      dst,
-		allow:    allowRE,
-		deny:     denyRE,
-		window:   window,
-		lastSeen: make(map[string]time.Time),
-	}
+	return &Writer{dst: dst, allow: allowRE, deny: denyRE, window: window, lastSeen: make(map[string]time.Time)}
 }
 
 func (w *Writer) Write(p []byte) (int, error) {

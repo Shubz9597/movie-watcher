@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -142,7 +143,6 @@ var (
 
 func setupLogging() {
 	var out io.Writer = os.Stdout
-
 	if p := os.Getenv("LOG_FILE"); p != "" {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
@@ -152,21 +152,16 @@ func setupLogging() {
 		}
 	}
 
-	// Allow ONLY our tagged lines; drop noisy library spew.
-	// Tweak LOG_ALLOW to your taste (adds or removes tags).
-	allow := getenvDefault("LOG_ALLOW",
-		`^\[(init|add|files|prefetch|stream|watch|janitor|stats|trackers)\]`)
+	// ✅ No prefix/timestamps, so lines start with [tag] and pass LOG_ALLOW
+	log.SetFlags(0)
+	log.SetPrefix("")
 
-	// Hide Windows flush/fsync messages and similar low-level churn.
-	deny := getenvDefault("LOG_DENY",
-		`FlushFileBuffers|fsync|WriteFile|The handle is invalid|Access is denied|Permission denied`)
-
-	// De-dup window (identical lines within this time are dropped).
+	allow := getenvDefault("LOG_ALLOW", `^\[(init|boot|http|add|files|prefetch|stream|watch|janitor|stats|trackers)\]`)
+	deny := getenvDefault("LOG_DENY", `FlushFileBuffers|fsync|WriteFile|The handle is invalid|Access is denied|Permission denied`)
 	window := getenvDuration("LOG_DEDUP_WINDOW", 2*time.Second)
 
 	filter := logx.New(out, window, allow, deny)
 	log.SetOutput(filter)
-
 	log.Printf("[init] logging configured (dedup=%s allow=%q deny=%q)", window, allow, deny)
 }
 
@@ -339,7 +334,7 @@ func getClientFor(cat string) *torrent.Client {
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DataDir = dir
 	cfg.DisableTCP = false
-	cfg.DisableUTP = false
+	cfg.DisableUTP = true
 	cfg.Seed = false
 	cfg.NoUpload = false
 
@@ -670,6 +665,18 @@ func wantsSSE(r *http.Request) bool {
 	return false
 }
 
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[panic] recovered in %s: %v\n%s", r.URL.Path, rec, debug.Stack())
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 /* =========================
    HTTP handlers
    ========================= */
@@ -702,6 +709,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	metaMs := time.Since(metaStart).Milliseconds()
 
 	ih := t.InfoHash()
+	log.Printf("[add] connected cat=%s ih=%s name=%q files=%d", cat, ih.HexString(), t.Name(), len(t.Files()))
 	lastTouch[key(cat, ih)] = time.Now()
 
 	var files []fileEntry
@@ -1396,8 +1404,9 @@ func lockFor(key string) func() {
 }
 func enableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set(
-		"Access-Control-Expose-Headers",
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range")
+	w.Header().Set("Access-Control-Expose-Headers",
 		"Content-Length, Content-Range, Content-Type, X-File-Index, X-File-Name, X-Buffer-Target-Bytes, X-Buffered-Ahead-Probe",
 	)
 }
@@ -1413,57 +1422,63 @@ func dirSize(root string) int64 {
 	return total
 }
 
-func janitor() {
+func janitor(ctx context.Context) {
 	t := time.NewTicker(2 * time.Minute)
 	defer t.Stop()
-	for range t.C {
-		now := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			now := time.Now()
 
-		// age-based drop
-		if evictTTL > 0 {
-			clientsMu.Lock()
-			for cat, c := range clients {
-				for _, tt := range c.Torrents() {
-					k := key(cat, tt.InfoHash())
-					if last, ok := lastTouch[k]; ok && now.Sub(last) > evictTTL {
-						log.Printf("[janitor] dropping idle [%s] %s", cat, tt.Name())
-						tt.Drop()
-						delete(lastTouch, k)
-					}
-				}
-			}
-			clientsMu.Unlock()
-		}
-
-		// size-based cap
-		if cacheMax > 0 && dirSize(dataRoot) > cacheMax {
-			var oldest string
-			var oldestAt time.Time
-			for k, at := range lastTouch {
-				if oldestAt.IsZero() || at.Before(oldestAt) {
-					oldest, oldestAt = k, at
-				}
-			}
-			if oldest != "" {
-				parts := strings.SplitN(oldest, ":", 2) // cat:ih
-				if len(parts) == 2 {
-					cat := parts[0]
-					ih := metainfo.NewHashFromHex(parts[1])
-					clientsMu.Lock()
-					if c := clients[cat]; c != nil {
-						for _, tt := range c.Torrents() {
-							if tt.InfoHash() == ih {
-								log.Printf("[janitor] evicting [%s] %s to honor CACHE_MAX_BYTES", cat, tt.Name())
-								tt.Drop()
-								break
-							}
+			// age-based drop
+			if evictTTL > 0 {
+				clientsMu.Lock()
+				for cat, c := range clients {
+					for _, tt := range c.Torrents() {
+						k := key(cat, tt.InfoHash())
+						if last, ok := lastTouch[k]; ok && now.Sub(last) > evictTTL {
+							log.Printf("[janitor] dropping idle [%s] %s", cat, tt.Name())
+							tt.Drop()
+							delete(lastTouch, k)
 						}
 					}
-					clientsMu.Unlock()
-					delete(lastTouch, oldest)
+				}
+				clientsMu.Unlock()
+			}
+
+			// size-based cap
+			if cacheMax > 0 && dirSize(dataRoot) > cacheMax {
+				var oldest string
+				var oldestAt time.Time
+				for k, at := range lastTouch {
+					if oldestAt.IsZero() || at.Before(oldestAt) {
+						oldest, oldestAt = k, at
+					}
+				}
+				if oldest != "" {
+					parts := strings.SplitN(oldest, ":", 2) // cat:ih
+					if len(parts) == 2 {
+						cat := parts[0]
+						ih := metainfo.NewHashFromHex(parts[1])
+						clientsMu.Lock()
+						if c := clients[cat]; c != nil {
+							for _, tt := range c.Torrents() {
+								if tt.InfoHash() == ih {
+									log.Printf("[janitor] evicting [%s] %s to honor CACHE_MAX_BYTES", cat, tt.Name())
+									tt.Drop()
+									break
+								}
+							}
+						}
+						clientsMu.Unlock()
+						delete(lastTouch, oldest)
+					}
 				}
 			}
 		}
+
 	}
 }
 
@@ -1523,100 +1538,96 @@ func contiguousAheadPieceExact(t *torrent.Torrent, f *torrent.File, from int64) 
 	return ahead
 }
 
-/* =========================
-   main
-   ========================= */
+// =========================
+// Pause Warmer
+// =========================
 
-func main() {
-	_ = godotenv.Load(".env")
-
-	// logging first
-	logFilePath = getenvDefault("LOG_FILE", "debug.log")
-	setupLogging()
-
-	// paths & cache controls
-	dataRoot = getenvDefault("TORRENT_DATA_ROOT", "./vod-cache")
-	_ = os.MkdirAll(dataRoot, 0o755)
-	cacheMax = getenvInt64("CACHE_MAX_BYTES", 0)
-	evictTTL = getenvDuration("CACHE_EVICT_TTL", 0)
-
-	// tunables
-	waitMetadata = getenvDuration("WAIT_METADATA_MS", waitMetadata)
-	prebufferN = getenvInt64("PREBUFFER_BYTES", prebufferN)
-	prebufferTO = getenvDuration("PREBUFFER_TIMEOUT_MS", prebufferTO)
-	trackersMode = strings.ToLower(getenvDefault("TRACKERS_MODE", trackersMode)) // all|http|udp|none
-
-	targetPlaySec = getenvInt64("TARGET_BUFFER_PLAY_SEC", targetPlaySec)
-	targetPauseSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC", targetPauseSec)
-	warmReadAheadMB = getenvInt64("WARM_READ_AHEAD_MB", warmReadAheadMB)
-
-	targetPlay4KSec = getenvInt64("TARGET_BUFFER_PLAY_SEC_4K", 180)
-	targetPause4KSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC_4K", 600)
-	warmReadAhead4KMB = getenvInt64("WARM_READ_AHEAD_MB_4K", 64)
-
-	if s := strings.ToLower(getenvDefault("ENDGAME_DUPLICATE", "true")); s == "false" {
-		enableEndgameDup = false
+func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, start int64) {
+	c.mu.Lock()
+	if c.warmCancel != nil {
+		c.mu.Unlock()
+		return // already warming
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.warmCtx = ctx
+	c.warmCancel = cancel
+	c.mu.Unlock()
 
-	go janitor()
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			if c.warmCancel != nil {
+				c.warmCancel = nil
+				c.warmCtx = nil
+			}
+			c.mu.Unlock()
+		}()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/add", handleAdd)     // ?magnet=...&cat=movie
-	mux.HandleFunc("/files", handleFiles) // ?magnet=...&cat=tv
-	mux.HandleFunc("/prefetch", handlePrefetch)
-	mux.HandleFunc("/stream", handleStream) // ?magnet=...&cat=anime&fileIndex=0
-	mux.HandleFunc("/stats", handleStats)   // ?cat=movie&infoHash=ABC...
+		rd := f.NewReader()
+		defer rd.Close()
 
-	// --- Watch/lease manager wiring ---
-	mgr := watch.NewManager(
-		20*time.Second, // staleAfter: if no ping > 20s, eligible to stop
-		30*time.Second, // ticker: reaper runs every 30s
-		// Ensure:
-		func(k watch.Key) error { return ensureTorrentForKey(k.Cat, k.ID) },
-		// Stop:
-		func(k watch.Key) { stopTorrentForKey(k.Cat, k.ID) },
-	)
+		pos := start
+		for {
+			c.mu.Lock()
+			st := c.state
+			ctx := c.warmCtx
+			target := c.TargetBytes()
+			c.mu.Unlock()
 
-	// CORS-wrapped endpoints (so your Next.js app can call them)
-	mux.HandleFunc("/watch/open", func(w http.ResponseWriter, r *http.Request) {
-		enableCORS(w)
-		if r.Method == http.MethodOptions {
-			return
+			if st != statePaused || ctx == nil {
+				return
+			}
+
+			// Move to latest playhead (it may have changed)
+			c.mu.Lock()
+			pos = c.playhead
+			c.mu.Unlock()
+			if _, err := rd.Seek(pos, io.SeekStart); err != nil {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			rd.SetResponsive()
+			rd.SetReadahead(target)
+
+			need := target - contiguousAheadPieceExact(t, f, pos)
+			if need <= 256<<10 { // good enough
+				time.Sleep(750 * time.Millisecond)
+				continue
+			}
+
+			chunk := need
+			localWarmMB := warmReadAheadMB
+			if isLikely4K(f.Path(), f.Length()) {
+				if warmReadAhead4KMB > 0 {
+					localWarmMB = warmReadAhead4KMB
+				} else if localWarmMB < 64 {
+					localWarmMB = 64
+				}
+			}
+			maxChunk := localWarmMB << 20
+			if chunk > maxChunk {
+				chunk = maxChunk
+			}
+			start := time.Now()
+			got := prebuffer(rd, chunk, 5*time.Second)
+			c.UpdateThroughput(got, int64(time.Since(start).Milliseconds()))
+
+			select {
+			case <-time.After(150 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
 		}
-		mgr.HandleOpen(w, r)
-	})
-	mux.HandleFunc("/watch/ping", func(w http.ResponseWriter, r *http.Request) {
-		enableCORS(w)
-		if r.Method == http.MethodOptions {
-			return
-		}
-		mgr.HandlePing(w, r)
-	})
-	mux.HandleFunc("/watch/close", func(w http.ResponseWriter, r *http.Request) {
-		enableCORS(w)
-		if r.Method == http.MethodOptions {
-			return
-		}
-		mgr.HandleClose(w, r)
-	})
+	}()
+}
 
-	mux.HandleFunc("/buffer/state", handleBufferState)
-	mux.HandleFunc("/buffer/info", handleBufferInfo)
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			enableCORS(w)
-			return
-		}
-		http.NotFound(w, r)
-	})
-
-	addr := getenvDefault("LISTEN", ":4001")
-	log.Printf("[boot] VOD listening on %s root=%s prebuffer=%dB/%s waitMetadata=%s trackersMode=%s",
-		addr, dataRoot, prebufferN, prebufferTO, waitMetadata, trackersMode)
-
-	if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+func (c *bufCtl) stopWarm() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.warmCancel != nil {
+		c.warmCancel()
+		c.warmCancel = nil
+		c.warmCtx = nil
 	}
 }
 
@@ -1734,95 +1745,138 @@ func (c *bufCtl) TargetBytes() int64 {
 	return bps * sec
 }
 
-// =========================
-// Pause Warmer
-// =========================
+/* =========================
+   main
+   ========================= */
 
-func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, start int64) {
-	c.mu.Lock()
-	if c.warmCancel != nil {
-		c.mu.Unlock()
-		return // already warming
+func main() {
+	_ = godotenv.Load(".env")
+
+	// logging first
+	logFilePath = getenvDefault("LOG_FILE", "debug.log")
+	setupLogging()
+
+	// paths & cache controls
+	dataRoot = getenvDefault("TORRENT_DATA_ROOT", "./vod-cache")
+	_ = os.MkdirAll(dataRoot, 0o755)
+	cacheMax = getenvInt64("CACHE_MAX_BYTES", 0)
+	evictTTL = getenvDuration("CACHE_EVICT_TTL", 0)
+
+	// tunables
+	waitMetadata = getenvDuration("WAIT_METADATA_MS", waitMetadata)
+	prebufferN = getenvInt64("PREBUFFER_BYTES", prebufferN)
+	prebufferTO = getenvDuration("PREBUFFER_TIMEOUT_MS", prebufferTO)
+	trackersMode = strings.ToLower(getenvDefault("TRACKERS_MODE", trackersMode)) // all|http|udp|none
+
+	targetPlaySec = getenvInt64("TARGET_BUFFER_PLAY_SEC", targetPlaySec)
+	targetPauseSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC", targetPauseSec)
+	warmReadAheadMB = getenvInt64("WARM_READ_AHEAD_MB", warmReadAheadMB)
+
+	targetPlay4KSec = getenvInt64("TARGET_BUFFER_PLAY_SEC_4K", 180)
+	targetPause4KSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC_4K", 600)
+	warmReadAhead4KMB = getenvInt64("WARM_READ_AHEAD_MB_4K", 64)
+
+	if s := strings.ToLower(getenvDefault("ENDGAME_DUPLICATE", "true")); s == "false" {
+		enableEndgameDup = false
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	c.warmCtx = ctx
-	c.warmCancel = cancel
-	c.mu.Unlock()
 
+	mux := http.NewServeMux()
+	mux.HandleFunc("/add", handleAdd)     // ?magnet=...&cat=movie
+	mux.HandleFunc("/files", handleFiles) // ?magnet=...&cat=tv
+	mux.HandleFunc("/prefetch", handlePrefetch)
+	mux.HandleFunc("/stream", handleStream) // ?magnet=...&cat=anime&fileIndex=0
+	mux.HandleFunc("/stats", handleStats)   // ?cat=movie&infoHash=ABC...
+
+	// --- Watch/lease manager wiring ---
+	mgr := watch.NewManager(
+		20*time.Second, // staleAfter: if no ping > 20s, eligible to stop
+		30*time.Second, // ticker: reaper runs every 30s
+		// Ensure:
+		func(k watch.Key) error { return ensureTorrentForKey(k.Cat, k.ID) },
+		// Stop:
+		func(k watch.Key) { stopTorrentForKey(k.Cat, k.ID) },
+	)
+
+	// CORS-wrapped endpoints (so your Next.js app can call them)
+	mux.HandleFunc("/watch/open", func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		mgr.HandleOpen(w, r)
+	})
+	mux.HandleFunc("/watch/ping", func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		mgr.HandlePing(w, r)
+	})
+	mux.HandleFunc("/watch/close", func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		mgr.HandleClose(w, r)
+	})
+
+	mux.HandleFunc("/buffer/state", handleBufferState)
+	mux.HandleFunc("/buffer/info", handleBufferInfo)
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			enableCORS(w)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	addr := getenvDefault("LISTEN", ":4001")
+	log.Printf("[boot] VOD listening on %s root=%s prebuffer=%dB/%s waitMetadata=%s trackersMode=%s",
+		addr, dataRoot, prebufferN, prebufferTO, waitMetadata, trackersMode)
+
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	go janitor(rootCtx)
+
+	// ✅ tag HTTP server errors so they’re kept
+	srv := &http.Server{
+		Addr:     addr,
+		Handler:  recoverMiddleware(mux),
+		ErrorLog: log.New(log.Writer(), "[http] ", 0),
+	}
+
+	// serve in a goroutine
 	go func() {
-		defer func() {
-			c.mu.Lock()
-			if c.warmCancel != nil {
-				c.warmCancel = nil
-				c.warmCtx = nil
-			}
-			c.mu.Unlock()
-		}()
-
-		rd := f.NewReader()
-		defer rd.Close()
-
-		pos := start
-		for {
-			c.mu.Lock()
-			st := c.state
-			ctx := c.warmCtx
-			target := c.TargetBytes()
-			c.mu.Unlock()
-
-			if st != statePaused || ctx == nil {
-				return
-			}
-
-			// Move to latest playhead (it may have changed)
-			c.mu.Lock()
-			pos = c.playhead
-			c.mu.Unlock()
-			if _, err := rd.Seek(pos, io.SeekStart); err != nil {
-				time.Sleep(300 * time.Millisecond)
-				continue
-			}
-			rd.SetResponsive()
-			rd.SetReadahead(target)
-
-			need := target - contiguousAheadPieceExact(t, f, pos)
-			if need <= 256<<10 { // good enough
-				time.Sleep(750 * time.Millisecond)
-				continue
-			}
-
-			chunk := need
-			localWarmMB := warmReadAheadMB
-			if isLikely4K(f.Path(), f.Length()) {
-				if warmReadAhead4KMB > 0 {
-					localWarmMB = warmReadAhead4KMB
-				} else if localWarmMB < 64 {
-					localWarmMB = 64
-				}
-			}
-			maxChunk := localWarmMB << 20
-			if chunk > maxChunk {
-				chunk = maxChunk
-			}
-			start := time.Now()
-			got := prebuffer(rd, chunk, 5*time.Second)
-			c.UpdateThroughput(got, int64(time.Since(start).Milliseconds()))
-
-			select {
-			case <-time.After(150 * time.Millisecond):
-			case <-ctx.Done():
-				return
-			}
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
 		}
 	}()
-}
 
-func (c *bufCtl) stopWarm() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.warmCancel != nil {
-		c.warmCancel()
-		c.warmCancel = nil
-		c.warmCtx = nil
+	// wait for Ctrl+C
+	<-rootCtx.Done()
+	log.Printf("[boot] shutdown requested")
+
+	// graceful shutdown window
+	shCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_ = srv.Shutdown(shCtx)
+
+	// stop watch leases
+	mgr.Shutdown()
+
+	// close torrent clients
+	clientsMu.Lock()
+	for cat, c := range clients {
+		if c != nil {
+			log.Printf("[boot] closing client[%s]", cat)
+			c.Close()
+		}
 	}
+	clientsMu.Unlock()
+
+	log.Printf("[boot] shutdown complete")
+	return
 }
