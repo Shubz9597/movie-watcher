@@ -6,9 +6,18 @@ import {
   Maximize, Minimize, Pause, Play, Volume2, VolumeX,
   Captions, SkipBack, SkipForward, Loader2, AlertTriangle
 } from "lucide-react";
-import { getPublicConfig } from "@/app/server-config";
 
+// 🔒 No server-only imports in a client component (removed getPublicConfig)
 
+// ---------- Hardcoded VOD endpoints (direct to Go) ----------
+const VOD_BASE = "http://localhost:4001";        // change if needed
+const STREAM_BASE = `${VOD_BASE}/stream`;
+const BUFFER_BASE = `${VOD_BASE}/buffer`;
+const WATCH_BASE  = `${VOD_BASE}/watch`;
+const PREFETCH_URL = `${VOD_BASE}/prefetch`;
+const AUTOSTART_THRESHOLD = 0.9; // 90% of target buffer
+
+// ---------- Types ----------
 type Subtrack = { label: string; lang: string; url: string; source: "torrent" | "opensub" };
 
 type Props = {
@@ -26,15 +35,7 @@ const SEEK_LARGE = 10;
 const MIN_BUFFER_SEC = 10;                // ahead-of-play to hide spinner
 const DEFAULT_PREF_LANGS = ["hi", "en"] as const;
 
-
-/* ---------------- Local buffer-info hook ----------------
- * Tries GET /buffer/info (either via VOD base or /api) every pollMs.
- * If unavailable, falls back to a tiny Range probe on /stream and
- * reads the custom headers:
- *   - X-Buffer-Target-Bytes
- *   - X-Buffered-Ahead-Probe
- */
-
+// ---------------- Local buffer-info hook ----------------
 type BufInfo = {
   targetBytes: number;
   contiguousAhead: number;
@@ -45,7 +46,7 @@ type BufInfo = {
 };
 
 export function useBufferInfo(opts: {
-  baseUrl?: string | null;     // VOD base (e.g. https://vod.example.com) or null to use /api proxy
+  baseUrl?: string | null;     // e.g. http://localhost:4001
   magnet: string;
   cat: string;
   fileIndex?: number | null;
@@ -63,8 +64,7 @@ export function useBufferInfo(opts: {
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let lastProbe = 0;
 
-    const base = baseUrl ? `${baseUrl.replace(/\/$/, "")}/buffer/info`
-      : `/api/buffer/info`;
+    const base = baseUrl ? `${baseUrl.replace(/\/$/, "")}/buffer/info` : `/api/buffer/info`;
 
     const qs = new URLSearchParams();
     qs.set("magnet", magnet);
@@ -83,12 +83,7 @@ export function useBufferInfo(opts: {
       });
     };
 
-    const stopSSE = () => {
-      if (es) {
-        try { es.close(); } catch { }
-        es = null;
-      }
-    };
+    const stopSSE = () => { try { es?.close(); } catch {} es = null; };
 
     const snapOnce = async (): Promise<boolean> => {
       try {
@@ -97,7 +92,7 @@ export function useBufferInfo(opts: {
           apply(await r.json());
           return true;
         }
-      } catch { }
+      } catch {}
       return false;
     };
 
@@ -118,7 +113,7 @@ export function useBufferInfo(opts: {
           contiguousAhead: ahead,
           fileLength: Number.isFinite(fileLen) ? fileLen : undefined,
         });
-      } catch { }
+      } catch {}
     };
 
     const startPolling = () => {
@@ -136,23 +131,18 @@ export function useBufferInfo(opts: {
 
     const startSSE = () => {
       try {
-        // server should switch to SSE mode when it sees ?sse=1
         const url = `${base}?${qs}&sse=1`;
         es = new EventSource(url, { withCredentials: false });
         es.onmessage = (e) => {
-          try { apply(JSON.parse(e.data)); } catch { /* ignore bad frame */ }
+          try { apply(JSON.parse(e.data)); } catch {}
         };
-        es.onerror = () => {
-          // fall back to polling if SSE can’t stay up
-          stopSSE();
-          startPolling();
-        };
+        es.onerror = () => { stopSSE(); startPolling(); };
       } catch {
         startPolling();
       }
     };
 
-    // prefer SSE; it will auto-reconnect. if it fails, we’ll poll.
+    // prefer SSE; fallback to polling
     startSSE();
 
     return () => {
@@ -164,7 +154,6 @@ export function useBufferInfo(opts: {
 
   return info;
 }
-
 
 export default function VideoPlayer({
   magnet,
@@ -202,39 +191,24 @@ export default function VideoPlayer({
   const [bufferedRanges, setBufferedRanges] = useState<Array<[number, number]>>([]);
   const [bufferedEnd, setBufferedEnd] = useState(0);
 
+  //Watch Lease
   const leaseRef = useRef<string | null>(null);
-
-  //Watch Lease Manager
-  const [leaseId, setLeaseId] = useState<string | null>(null);
 
   // --- Hover scrub tooltip state ---
   const progressRef = useRef<HTMLDivElement>(null);
-  const [hoverX, setHoverX] = useState<number | null>(null);    // px from left inside progress
-  const [hoverTime, setHoverTime] = useState<number | null>(null); // seconds at hover
+  const [hoverX, setHoverX] = useState<number | null>(null);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
 
-  const [beUrl, setBEUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async function getUrls() {
-      const vod = (await getPublicConfig()).VOD_API_URL;
-      setBEUrl(vod.replace(/\/$/, "")); // remove trailing slash
-    })()
-  }, []);
-
-  const STREAM_BASE = beUrl ? beUrl + "/stream" : '/api/stream';
-  const BUFFER_BASE  = beUrl ? beUrl + "/buffer" : 'api/buffer';
-  const WATCH_BASE = beUrl ? beUrl + "/watch" : '/api/watch';
-  const PREFETCH_URL = beUrl ? beUrl + "/prefetch" : '/api/prefetch';
-  const BUFFER_API = `${BUFFER_BASE}/state`;
+  const [autoStartArmed, setAutoStartArmed] = useState(true);
 
   /* ---------------- Stream URL ---------------- */
-const streamUrl = useMemo(() => {
-  const sp = new URLSearchParams();
-  sp.set("cat", cat);
-  sp.set("magnet", magnet);
-  if (fileIndex != null) sp.set("fileIndex", String(fileIndex));
-  return `${STREAM_BASE}?${sp.toString()}`;
-}, [magnet, fileIndex, cat, STREAM_BASE]);
+  const streamUrl = useMemo(() => {
+    const sp = new URLSearchParams();
+    sp.set("cat", cat);
+    sp.set("magnet", magnet);
+    if (fileIndex != null) sp.set("fileIndex", String(fileIndex));
+    return `${STREAM_BASE}?${sp.toString()}`;
+  }, [magnet, fileIndex, cat]);
 
   // --- Stable subtitle language prefs + tiny cache ---
   const preferLangsKey = useMemo(
@@ -242,97 +216,76 @@ const streamUrl = useMemo(() => {
     [Array.isArray(preferLangs) ? preferLangs.join(",") : ""]
   );
   const preferLangsArr = useMemo(() => preferLangsKey.split(","), [preferLangsKey]);
-
-  // Cache subtitles for the session by a stable key so re-renders don’t refetch
   const subsCacheRef = useRef<Map<string, Subtrack[]>>(new Map());
 
   /* ---------------- Prefetching (initial warm) ---------------- */
- useEffect(() => {
-  const sp = new URLSearchParams();
-  sp.set("cat", cat);
-  sp.set("magnet", magnet);
+  useEffect(() => {
+    const sp = new URLSearchParams();
+    sp.set("cat", cat);
+    sp.set("magnet", magnet);
+    if (fileIndex != null) sp.set("fileIndex", String(fileIndex));
+    fetch(`${PREFETCH_URL}?${sp.toString()}`, { cache: "no-store" }).catch(() => { });
+  }, [cat, magnet, fileIndex]);
+
+  useEffect(() => {
+  const sp = new URLSearchParams({ cat, magnet });
   if (fileIndex != null) sp.set("fileIndex", String(fileIndex));
-  fetch(`${PREFETCH_URL}?${sp.toString()}`, { cache: "no-store" }).catch(() => {});
-}, [cat, magnet, fileIndex, PREFETCH_URL]);
+  // tell Go we’re not playing yet, but start warming
+  fetch(`${BUFFER_BASE}/state?${sp.toString()}&state=pause`).catch(() => {});
+  setAutoStartArmed(true);
+}, [cat, magnet, fileIndex]);
 
-  /* ---------------- Subtitles ---------------- */
-  // reset selection whenever the media changes
-  useEffect(() => {
-    setActiveSub("");
-    setSubs([]); // optional, clears the list while loading new one
-  }, [imdbId, magnet]);
-  // load OpenSubtitles list and pick one
-  useEffect(() => {
-    if (!imdbId) return; // nothing to do without an ID
+  /* ---------------- Subtitles (Next API; not in Go) ---------------- */
+  useEffect(() => { setActiveSub(""); setSubs([]); }, [imdbId, magnet]);
 
+  useEffect(() => {
+    if (!imdbId) return;
     let cancelled = false;
     const ac = new AbortController();
 
-    const cacheKey = `${imdbId}|${preferLangsKey}`; // OS search only depends on these
+    const cacheKey = `${imdbId}|${preferLangsKey}`;
     const useAndPick = (list: Subtrack[]) => {
       if (cancelled) return;
       setSubs(list);
-      // Prefer user languages; don't override if user already picked
       const pick =
         preferLangsArr.map(l => list.find(s => s.lang === l)).find(Boolean) || list[0];
       setActiveSub(prev => prev || pick?.url || "");
     };
 
     (async () => {
-      // 1) Cache
       const cached = subsCacheRef.current.get(cacheKey);
-      if (cached?.length) {
-        useAndPick(cached);
-        return;
-      }
+      if (cached?.length) { useAndPick(cached); return; }
 
-      // 2) Query OpenSubtitles LIST endpoint; it returns urls pointing to /api/opensub?...&vtt=true
       const sp = new URLSearchParams({ imdbId, langs: preferLangsKey });
-      // If you have TV context available, pass it through:
-      // if (season) sp.set("s", String(season));
-      // if (episode) sp.set("e", String(episode));
-
       const res = await fetch(`/api/subtitles/opensub?${sp.toString()}`, { signal: ac.signal });
       const j = await res.json().catch(() => ({ subtitles: [] }));
       const list: Subtrack[] = j.subtitles || [];
 
       subsCacheRef.current.set(cacheKey, list);
       if (list.length) useAndPick(list);
-      else if (!cancelled) {
-        setSubs([]);
-        setActiveSub("");
-      }
-    })().catch(() => { /* swallow; UI stays as-is */ });
+      else if (!cancelled) { setSubs([]); setActiveSub(""); }
+    })().catch(() => {});
 
     return () => { cancelled = true; ac.abort(); };
-  }, [imdbId, preferLangsKey /*, season, episode */]);
+  }, [imdbId, preferLangsKey]);
 
-  // choose active sub meta for label/lang
   const activeSubMeta = useMemo(
     () => subs.find(s => s.url === activeSub),
     [subs, activeSub]
   );
-
-  // If a raw .srt/.vtt URL is provided, route via /subtitles/serve so browsers get VTT
   const resolvedActiveSub = activeSub;
 
   /* ---------------- Auto-hide controls ---------------- */
   const showUI = () => {
     setUiVisible(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    if (playing) {
-      hideTimer.current = setTimeout(() => setUiVisible(false), 2500);
-    }
+    if (playing) hideTimer.current = setTimeout(() => setUiVisible(false), 2500);
   };
-
-  useEffect(() => {
-    showUI();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing]);
+  useEffect(() => { showUI(); /* eslint-disable-next-line */ }, [playing]);
 
   // ---- Watch lease: open on mount, ping every 10s, close on unmount ----
   useEffect(() => {
-    let active = true;
+    let stopped = false;
     (async () => {
       try {
         const params = new URLSearchParams({ cat });
@@ -342,39 +295,36 @@ const streamUrl = useMemo(() => {
         const r = await fetch(`${WATCH_BASE}/open?${params.toString()}`, { method: "POST" });
         if (!r.ok) throw new Error("open failed");
         const { leaseId } = await r.json();
-        if (!active) return;
-        setLeaseId(leaseId);
+        if (stopped) return;
         leaseRef.current = leaseId;
 
         const id = setInterval(() => {
           const lid = leaseRef.current;
           if (!lid) return;
           fetch(`${WATCH_BASE}/ping?leaseId=${encodeURIComponent(lid)}`, { method: "POST", keepalive: true })
-            .catch(() => { });
+            .catch(() => {});
         }, 10_000);
         (window as any).__watchPing = id;
-      } catch { }
+      } catch {}
     })();
 
     return () => {
-      active = false;
-      if ((window as any).__watchPing) {
-        clearInterval((window as any).__watchPing);
-        (window as any).__watchPing = null;
-      }
+      stopped = true;
+      const ping = (window as any).__watchPing;
+      if (ping) { clearInterval(ping); (window as any).__watchPing = null; }
       const lid = leaseRef.current;
       if (lid) {
         const data = new Blob([`leaseId=${lid}`], { type: "text/plain" });
-        navigator.sendBeacon(`${WATCH_BASE}/close`, new Blob([`leaseId=${lid}`], { type: "text/plain" }));
+        // Go’s /watch/close accepts raw body or leaseId=...; sendBeacon keeps it fire-and-forget
+        navigator.sendBeacon(`${WATCH_BASE}/close`, data);
       }
     };
-  }, [magnet, fileIndex, cat, WATCH_BASE]);
+  }, [magnet, fileIndex, cat]);
 
   /* ---------------- Keyboard shortcuts ---------------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const v = videoRef.current;
-      if (!v) return;
+      const v = videoRef.current; if (!v) return;
       switch (e.key.toLowerCase()) {
         case " ":
         case "k": e.preventDefault(); togglePlay(); break;
@@ -382,29 +332,20 @@ const streamUrl = useMemo(() => {
         case "arrowright": e.preventDefault(); seekBy(SEEK_SMALL); break;
         case "j": e.preventDefault(); seekBy(-SEEK_LARGE); break;
         case "l": e.preventDefault(); seekBy(SEEK_LARGE); break;
-        case "m": e.preventDefault(); setMuted(v.muted = !v.muted); break;
+        case "m": e.preventDefault(); v.muted = !v.muted; setMuted(v.muted); if (!v.muted && volume === 0) setVolume(0.5); break;
         case "f": e.preventDefault(); toggleFullscreen(); break;
         case "escape": if (document.fullscreenElement) document.exitFullscreen(); break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [volume]);
 
   /* ---------------- Player helpers ---------------- */
   const togglePlay = () => {
     const v = videoRef.current; if (!v) return;
-    if (v.paused) {
-      v.play();
-      setPlaying(true);
-      const sp = new URLSearchParams({ cat, magnet });
-      if (fileIndex != null) sp.set("fileIndex", String(fileIndex));
-    } else {
-      v.pause();
-      setPlaying(false);
-      const sp = new URLSearchParams({ cat, magnet });
-      if (fileIndex != null) sp.set("fileIndex", String(fileIndex));
-    }
+    if (v.paused) { v.play(); setPlaying(true); }
+    else { v.pause(); setPlaying(false); }
   };
 
   const seekBy = (sec: number) => {
@@ -419,11 +360,8 @@ const streamUrl = useMemo(() => {
 
   const toggleFullscreen = async () => {
     const el = containerRef.current; if (!el) return;
-    if (!document.fullscreenElement) {
-      await el.requestFullscreen(); setFs(true);
-    } else {
-      await document.exitFullscreen(); setFs(false);
-    }
+    if (!document.fullscreenElement) { await el.requestFullscreen(); setFs(true); }
+    else { await document.exitFullscreen(); setFs(false); }
   };
 
   const onDoubleTap = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -441,6 +379,29 @@ const streamUrl = useMemo(() => {
     setHoverX(x);
     setHoverTime(t);
   };
+
+  function explainMediaError(v: HTMLVideoElement | null) {
+    const err = v?.error;
+    if (!err) return null;
+    switch (err.code) {
+      case err.MEDIA_ERR_ABORTED: return "Playback aborted (user or browser).";
+      case err.MEDIA_ERR_NETWORK: return "Network error while fetching the stream.";
+      case err.MEDIA_ERR_DECODE: return "Decode failed (codec/bitstream).";
+      case err.MEDIA_ERR_SRC_NOT_SUPPORTED:
+      default: return "Source not supported by this browser.";
+    }
+  }
+
+  async function probeStreamHead(url: string) {
+    try {
+      const r = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
+      const fileName = r.headers.get("X-File-Name") ?? "";
+      const contentType = r.headers.get("Content-Type") ?? "";
+      return { ok: r.ok, status: r.status, fileName, contentType };
+    } catch {
+      return { ok: false, status: 0, fileName: "", contentType: "" };
+    }
+  }
 
   /* ---------------- Buffered computation ---------------- */
   const pullBuffered = () => {
@@ -484,7 +445,6 @@ const streamUrl = useMemo(() => {
   const onSeeked = async () => {
     setBuffering(false); pullBuffered(); const v = videoRef.current;
     if (v && v.paused && Number.isFinite(v.duration) && v.duration > 0) {
-      // quick total size probe (cache this if you want)
       try {
         const r = await fetch(streamUrl, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
         const cr = r.headers.get("Content-Range"); // "bytes 0-0/123456"
@@ -492,10 +452,9 @@ const streamUrl = useMemo(() => {
         const totalBytes = total ? Number(total) : NaN;
         if (Number.isFinite(totalBytes) && totalBytes > 0) {
           const posByte = Math.max(0, Math.floor((v.currentTime / v.duration) * totalBytes));
-          // 0-byte fetch to update backend playhead
           fetch(streamUrl, { headers: { Range: `bytes=${posByte}-${posByte}` }, cache: "no-store" }).catch(() => { });
         }
-      } catch { }
+      } catch {}
     }
   };
   const onProgress = () => {
@@ -504,18 +463,20 @@ const streamUrl = useMemo(() => {
     const ahead = Math.max(0, bufferedEnd - v.currentTime);
     if (ahead >= MIN_BUFFER_SEC || v.readyState >= 3) setBuffering(false);
   };
-  const onError = () => {
+  const onError = async () => {
     const v = videoRef.current;
-    const code = v?.error?.code;
-    const msg =
-      code === 4 ? "The video format/codec isn’t supported by your browser." :
-        code ? `Playback error (code ${code}).` :
-          "Unknown playback error.";
-    setErrorMsg(msg);
+    const basic = explainMediaError(v);
+    const head = await probeStreamHead(streamUrl.toString());
+
+    let help = basic ?? "Playback error.";
+    if (head.status === 504) help += " Server timed out fetching torrent metadata.";
+    if (/\.mkv$/i.test(head.fileName) || /video\/x-matroska/.test(head.contentType)) {
+      help += " MKV container is often fine, but if it’s HEVC/H.265 your browser may not decode it. Try Microsoft Edge or open in VLC.";
+    }
+    setErrorMsg(help);
     setBuffering(false);
     setPlaying(false);
   };
-
 
   // force-show active text track (Chrome sometimes ignores default)
   useEffect(() => {
@@ -528,7 +489,7 @@ const streamUrl = useMemo(() => {
         v.textTracks[i].mode = (wanted && src === wanted) ? "showing" as TextTrackMode : "disabled";
       }
     };
-    const id = setTimeout(apply, 50); // wait for track to attach
+    const id = setTimeout(apply, 50);
     return () => clearTimeout(id);
   }, [resolvedActiveSub, streamUrl]);
 
@@ -543,20 +504,18 @@ const streamUrl = useMemo(() => {
 
   /* ---------------- Buffer Info  ---------------- */
   const info = useBufferInfo({
-  baseUrl: beUrl,
-  magnet,
-  cat,
-  fileIndex,
-  streamUrl,
-  pollMs: 1000,
-});
-
+    baseUrl: VOD_BASE,         // ⬅️ direct to Go (no Next proxy)
+    magnet,
+    cat,
+    fileIndex,
+    streamUrl,
+    pollMs: 1000,
+  });
 
   const serverBar = useMemo(() => {
     const fileLen = info?.fileLength;
     if (!fileLen || fileLen <= 0) return null;
 
-    // Prefer backend playhead; else estimate from currentTime
     const estPlayhead =
       info?.playheadBytes ??
       (duration > 0 ? Math.floor((time / duration) * fileLen) : null);
@@ -568,6 +527,26 @@ const streamUrl = useMemo(() => {
     const widthPct = Math.max(0, Math.min(100 - leftPct, (aheadB / fileLen) * 100));
     return { leftPct, widthPct };
   }, [info, time, duration]);
+
+
+  useEffect(() => {
+  if (!autoStartArmed || playing) return;
+  const v = videoRef.current;
+  if (!v || !info) return;
+
+  const target = Math.max(1, info.targetBytes || 0);
+  const ahead = Math.max(0, info.contiguousAhead || 0);
+
+  // if file is shorter than the target, require remaining bytes instead
+  const remaining = (info.fileLength ?? Infinity) - (info.playheadBytes ?? 0);
+  const goal = Math.min(target, remaining);
+
+  if (goal > 0 && ahead >= goal * AUTOSTART_THRESHOLD) {
+    v.play().catch(() => { /* user gesture may be needed if audio policy */ });
+    setAutoStartArmed(false);
+  }
+}, [info, playing, autoStartArmed]);
+
   /* ---------------- UI ---------------- */
   return (
     <div
@@ -598,7 +577,7 @@ const streamUrl = useMemo(() => {
         ref={videoRef}
         className="w-full h-full"
         src={streamUrl}
-        preload="auto"               // allow buffering while paused
+        preload="auto"
         crossOrigin="anonymous"
         controls={false}
         onLoadStart={onLoadStart}
@@ -638,7 +617,7 @@ const streamUrl = useMemo(() => {
         </div>
       ) : null}
 
-      {/* Loading / Buffering overlay (doesn't block clicks) */}
+      {/* Loading / Buffering overlay */}
       {(loadingMeta || buffering) && !errorMsg ? (
         <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
           <div className="flex items-center gap-2 rounded-xl bg-black/60 px-3 py-2 text-white text-sm">
@@ -648,7 +627,7 @@ const streamUrl = useMemo(() => {
         </div>
       ) : null}
 
-      {/* Error overlay (interactive) */}
+      {/* Error overlay */}
       {errorMsg ? (
         <div className="absolute inset-0 z-30 flex items-center justify-center">
           <div className="rounded-xl border border-red-400/40 bg-red-900/30 text-red-100 px-4 py-3 text-sm shadow">
@@ -701,7 +680,6 @@ const streamUrl = useMemo(() => {
             {formatTime(time)} / {formatTime(duration)}
           </div>
 
-          {/* Spacer */}
           <div className="ml-auto" />
 
           {/* Volume */}
@@ -764,7 +742,7 @@ const streamUrl = useMemo(() => {
             ) : null}
           </div>
 
-          {/* Fullscreen duplicate on right (handy) */}
+          {/* Fullscreen duplicate */}
           <Button size="icon" variant="secondary" className="rounded-xl" onClick={toggleFullscreen}>
             {fs ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
           </Button>
@@ -786,7 +764,7 @@ const streamUrl = useMemo(() => {
             v.currentTime = t; setTime(t);
           }}
         >
-          {/* Buffered segments (under the slider) */}
+          {/* Buffered segments */}
           <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 rounded bg-white/10 overflow-hidden">
             {bufferedRanges.map(([s, e], i) => {
               const left = duration ? (s / duration) * 100 : 0;
@@ -815,7 +793,7 @@ const streamUrl = useMemo(() => {
             />
           ) : null}
 
-          {/* Seek slider (on top) */}
+          {/* Seek slider */}
           <input
             className="absolute inset-x-0 top-1/2 -translate-y-1/2 w-full h-2 bg-transparent
                appearance-none cursor-pointer z-10"
@@ -847,7 +825,7 @@ const streamUrl = useMemo(() => {
           ) : null}
         </div>
 
-        {/* Tiny debug footer (now shows backend buffer targets too) */}
+        {/* Tiny debug footer */}
         <div className="mt-1 text-[10px] text-white/60 truncate">
           stream: {streamUrl}
           {info ? (
@@ -886,33 +864,18 @@ function flag(lang: string) {
 }
 
 <style jsx>{`
-  input[type="range"] {
-    outline: none;
-  }
+  input[type="range"] { outline: none; }
   /* WebKit */
-  input[type="range"]::-webkit-slider-runnable-track {
-    background: transparent;
-    height: 8px;
-  }
+  input[type="range"]::-webkit-slider-runnable-track { background: transparent; height: 8px; }
   input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px; height: 14px;
-    border-radius: 9999px;
-    background: white;
-    margin-top: -3px; /* center thumb on 8px track */
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 9999px; background: white; margin-top: -3px;
     box-shadow: 0 0 0 2px rgba(0,0,0,.15);
   }
   /* Firefox */
-  input[type="range"]::-moz-range-track {
-    background: transparent;
-    height: 8px;
-  }
+  input[type="range"]::-moz-range-track { background: transparent; height: 8px; }
   input[type="range"]::-moz-range-thumb {
-    width: 14px; height: 14px;
-    border-radius: 9999px;
-    background: white;
-    border: none;
+    width: 14px; height: 14px; border-radius: 9999px; background: white; border: none;
     box-shadow: 0 0 0 2px rgba(0,0,0,.15);
   }
 `}</style>

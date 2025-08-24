@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-
 export const runtime = "nodejs";
+import dns from "node:dns";
+dns.setDefaultResultOrder?.("ipv4first");
+
+
 export const dynamic = "force-dynamic";
 
 const OS_API = process.env.OPENSUB_API_URL || "https://api.opensubtitles.com/api/v1";
@@ -58,13 +61,31 @@ export async function GET(req: NextRequest) {
   if (!imdbId) return NextResponse.json({ subtitles: [] });
 
   const searchUrl = buildSearchUrl(u);
-  const r = await fetch(searchUrl, {
+  async function fRetry(url: URL, init: RequestInit, tries = 3) {
+    let lastErr: any;
+    for (let i = 0; i < tries; i++) {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 6000);
+      try {
+        const r = await fetch(url, { ...init, cache: "no-store", signal: ac.signal, next: { revalidate: 0 } });
+        clearTimeout(t);
+        if (!r.ok) throw new Error(`opensubtitles ${r.status}`);
+        return r;
+      } catch (e) {
+        clearTimeout(t);
+        lastErr = e;
+        await new Promise(res => setTimeout(res, 400 * (i + 1)));
+      }
+    }
+    throw lastErr;
+  }
+
+  const r = await fRetry(searchUrl, {
     headers: {
-      "Api-Key": OS_KEY,
+      "Api-Key": OS_KEY!,
+      "Accept": "application/json",
       ...(OS_USER_TOKEN ? { Authorization: `Bearer ${OS_USER_TOKEN}` } : {}),
-      Accept: "application/json",
     },
-    cache: "no-store",
   });
   if (!r.ok) return NextResponse.json({ subtitles: [] }, { status: 200 });
 

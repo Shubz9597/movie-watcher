@@ -4,7 +4,7 @@ import { useMemo, useState, useRef, useCallback } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Loader2 } from "lucide-react";
+import { Play, Loader2, FileDown } from "lucide-react";
 
 export type TorrentRow = {
   title: string;
@@ -31,6 +31,7 @@ type PrefetchResult = {
 };
 
 const PREFETCH_DELAY_MS = 200;
+const VOD_BASE = "http://localhost:4001";
 
 function keyFor(t: TorrentRow) {
   // stable key for maps
@@ -43,8 +44,7 @@ function keyFor(t: TorrentRow) {
 }
 
 function buildPrefetchUrl(t: TorrentRow, cat: string) {
-  const u = new URL("/api/stream", window.location.origin);
-  u.searchParams.set("prefetch", "1");
+  const u = new URL(`${VOD_BASE}/prefetch`);
   u.searchParams.set("cat", cat || "movie");
 
   if (t.magnetUri) {
@@ -52,7 +52,7 @@ function buildPrefetchUrl(t: TorrentRow, cat: string) {
   } else if (t.infoHash) {
     u.searchParams.set("magnet", `magnet:?xt=urn:btih:${t.infoHash}`);
   } else if (t.torrentUrl) {
-    // Go backend accepts ?src=<torrent-file-url>
+    // Go backend accepts ?src=<.torrent or indexer download URL>
     u.searchParams.set("src", t.torrentUrl);
   }
   return u.toString();
@@ -89,6 +89,35 @@ function QualityBadge({ title }: { title: string }) {
   const q = qualityFromTitle(title);
   if (q === "other") return null;
   return <Badge variant="secondary" className="bg-black/60">{q}</Badge>;
+}
+
+
+function streamUrlFor(t: TorrentRow, cat: string, fileIndex?: number) {
+  const u = new URL(`${VOD_BASE}/stream`);
+  u.searchParams.set("cat", cat || "movie");
+
+  if (t.magnetUri) {
+    u.searchParams.set("magnet", t.magnetUri);
+  } else if (t.infoHash) {
+    u.searchParams.set("magnet", `magnet:?xt=urn:btih:${t.infoHash}`);
+  } else if (t.torrentUrl) {
+    u.searchParams.set("src", t.torrentUrl);
+  }
+  if (fileIndex != null) u.searchParams.set("fileIndex", String(fileIndex));
+  return u.toString();
+}
+
+function downloadM3U(title: string, streamUrl: string) {
+  const safe = (title || "stream").replace(/[^\w\- .]/g, "_").slice(0, 120);
+  const body = `#EXTM3U\n#EXTINF:-1,${title}\n${streamUrl}\n`;
+  const blob = new Blob([body], { type: "audio/x-mpegurl" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${safe}.m3u`;
+  document.body.appendChild(a);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  a.remove();
 }
 
 /* ---------- component ---------- */
@@ -129,6 +158,8 @@ export default function TorrentListDialog({
   const [prefetchMap, setPrefetchMap] = useState<Record<string, PrefetchResult | "loading">>({});
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const abortersRef = useRef<Record<string, AbortController>>({});
+
+
 
   const doPrefetch = useCallback(async (t: TorrentRow) => {
     const k = keyFor(t);
@@ -324,15 +355,43 @@ export default function TorrentListDialog({
                         onMouseEnter={() => handleEnterRow(t)}
                         onMouseLeave={() => handleLeaveRow(t)}>
                         <td className="py-2 pl-3 pr-2">
-                          <Button size="sm" className="h-8 w-8 p-0 rounded-lg bg-cyan-500 text-black hover:bg-cyan-400"
-                            onClick={() => {
-                              // opportunistic prefetch on click if we didn't already
-                              const k = keyFor(t);
-                              if (k && !prefetchMap[k]) void doPrefetch(t);
-                              onPlay(t, (pf && pf !== "loading" ? pf.fileIndex : undefined));
-                            }} aria-label={`Play ${t.title}`}>
-                            <Play className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            {/* Play */}
+                            <Button
+                              size="sm"
+                              className="h-8 w-8 p-0 rounded-lg bg-cyan-500 text-black hover:bg-cyan-400"
+                              onClick={() => {
+                                // opportunistic prefetch if not already done
+                                const k = keyFor(t);
+                                if (k && !prefetchMap[k]) void doPrefetch(t);
+
+                                const pf = k ? prefetchMap[k] : undefined;
+                                const idx = pf && pf !== "loading" ? pf.fileIndex : undefined;
+                                onPlay(t, idx);
+                              }}
+                              aria-label={`Play ${t.title || ""}`}
+                            >
+                              <Play className="h-4 w-4" />
+                            </Button>
+
+                            {/* Download .m3u for VLC */}
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 w-8 p-0 rounded-lg"
+                              title="Download .m3u for VLC"
+                              aria-label="Download .m3u"
+                              onClick={() => {
+                                const k = keyFor(t);
+                                const pf = k ? prefetchMap[k] : undefined;
+                                const idx = pf && pf !== "loading" ? pf.fileIndex : undefined;
+                                const url = streamUrlFor(t, cat, idx);
+                                downloadM3U(t.title || "Stream", url);
+                              }}
+                            >
+                              <FileDown className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </td>
                         <td className="py-2 pr-2">
                           <div className="flex items-start gap-2">
