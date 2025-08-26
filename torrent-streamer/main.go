@@ -116,6 +116,10 @@ var (
 	waitMetadata = 25 * time.Second
 	prebufferN   = int64(1 << 20) // 1 MiB default
 	prebufferTO  = 15 * time.Second
+	// First-start targets (seconds) before we upshift with observed throughput.
+	initialPlaySecSD  = int64(6)  // e.g., 480p/low bitrate
+	initialPlaySecHD  = int64(8)  // 720p/1080p
+	initialPlaySecUHD = int64(12) // 2160p or very large files
 
 	// Trackers behavior: "all" | "http" | "udp" | "none"
 	trackersMode = "all"
@@ -350,6 +354,15 @@ func getClientFor(cat string) *torrent.Client {
 /* =========================
    helpers
    ========================= */
+
+// Treat as a probe if it's very small, so we don't move playhead or warm a lot.
+func isProbeRange(start, end int64) bool {
+	const maxProbe = 1 << 10 // 1 KiB is more than enough for header sniff
+	if start < 0 || end < start {
+		return false
+	}
+	return (end - start + 1) <= maxProbe
+}
 
 func parseCat(q urlQ) string { return validCat(q.Get("cat")) }
 
@@ -897,7 +910,33 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	k := keyFile(cat, t.InfoHash(), fidx)
 	ctl := getCtl(k)
 
-	if isLikely4K(f.Path(), f.Length()) {
+	firstGoalDone.Lock()
+	first := !firstGoalDone.m[k]
+	if first {
+		firstGoalDone.m[k] = true
+	}
+	firstGoalDone.Unlock()
+
+	if first {
+		// Pick an initial seconds target by "resolution"
+		var initSec int64
+		if isLikely4K(f.Path(), f.Length()) {
+			initSec = initialPlaySecUHD
+		} else {
+			// crude heuristic: treat > 2 GiB as HD
+			if f.Length() >= (2 << 30) {
+				initSec = initialPlaySecHD
+			} else {
+				initSec = initialPlaySecSD
+			}
+		}
+		// Keep pause target generous so a paused player fills ahead
+		playSec := initSec
+		pauseSec := max64(targetPauseSec, initSec*6)
+		ctl.SetTargetSeconds(playSec, pauseSec)
+	}
+
+	if !first && isLikely4K(f.Path(), f.Length()) {
 		playSec := targetPlay4KSec
 		pauseSec := targetPause4KSec
 		if playSec <= 0 {
@@ -934,9 +973,12 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	end = clamp(end, start, size-1)
 	length := end - start + 1
 
-	// Controller-driven reader + dynamic warm-up
-	ctl.SetState(statePlaying)
-	ctl.SetPlayhead(start)
+	// Controller-driven reader with probe fast-path
+	isProbe := isProbeRange(start, end)
+	if !isProbe {
+		ctl.SetState(statePlaying)
+		ctl.SetPlayhead(start)
+	}
 
 	target := ctl.TargetBytes()
 
@@ -947,7 +989,12 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reader.SetResponsive()
-	reader.SetReadahead(target)
+	// Tiny readahead for probes to avoid reprioritizing the swarm
+	if isProbe {
+		reader.SetReadahead(256 << 10) // 256 KiB cap for probe
+	} else {
+		reader.SetReadahead(target)
+	}
 
 	// dynamic warm-up: read up to min(target, warmReadAheadMB)
 	localWarmMB := warmReadAheadMB
@@ -959,12 +1006,23 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 			localWarmMB = 64
 		}
 	}
-	warmWant := min64(target, localWarmMB<<20)
-	if warmWant > 256<<10 && length >= 512<<10 {
-		warmStart := time.Now()
-		got := prebuffer(reader, min64(warmWant, length), prebufferTO)
-		ctl.UpdateThroughput(got, int64(time.Since(warmStart).Milliseconds()))
-		_, _ = reader.Seek(start, io.SeekStart) // rewind
+	var warmWant int64
+	if !isProbe {
+		localWarmMB := warmReadAheadMB
+		if isLikely4K(f.Path(), f.Length()) {
+			if warmReadAhead4KMB > 0 {
+				localWarmMB = warmReadAhead4KMB
+			} else if localWarmMB < 64 {
+				localWarmMB = 64
+			}
+		}
+		warmWant = min64(target, localWarmMB<<20)
+		if warmWant > 256<<10 && length >= 512<<10 {
+			warmStart := time.Now()
+			got := prebuffer(reader, min64(warmWant, length), prebufferTO)
+			ctl.UpdateThroughput(got, int64(time.Since(warmStart).Milliseconds()))
+			_, _ = reader.Seek(start, io.SeekStart) // rewind
+		}
 	}
 
 	// Optional: surface buffer hints to the UI
@@ -999,6 +1057,9 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	buf := make([]byte, 256<<10)        // 256 KiB
 	var written int64
 
+	progressEvery := 2 * time.Second
+	var lastProg time.Time
+
 	for written < length {
 		// Client cancel/seek/etc.
 		select {
@@ -1029,13 +1090,20 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := rc.Flush(); err != nil {
-				if clientGone(err) {
-					return
-				}
-				log.Printf("[stream] flush error: %v", err)
+				// Treat any flush error as "client went away" to avoid noisy logs.
 				return
 			}
 			written += int64(n)
+
+			if time.Since(lastProg) >= progressEvery {
+				lastProg = time.Now()
+				ctl.mu.Lock()
+				bps := ctl.rollingBps
+				ctl.mu.Unlock()
+				pct := float64(written) / float64(length) * 100
+				log.Printf("[stream] progress %0.1f%% (%d/%d) @ %0.2f MB/s",
+					pct, written, length, float64(bps)/1024/1024)
+			}
 		}
 
 		if readErr != nil {
@@ -1227,17 +1295,17 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 	k := keyFile(cat, t.InfoHash(), fidx)
 	ctl := getCtl(k)
 
-	if isLikely4K(f.Path(), f.Length()) {
-		playSec := targetPlay4KSec
-		pauseSec := targetPause4KSec
-		if playSec <= 0 {
-			playSec = 180
-		}
-		if pauseSec <= 0 {
-			pauseSec = 600
-		}
-		ctl.SetTargetSeconds(playSec, pauseSec)
-	}
+	// if isLikely4K(f.Path(), f.Length()) {
+	// 	playSec := targetPlay4KSec
+	// 	pauseSec := targetPause4KSec
+	// 	if playSec <= 0 {
+	// 		playSec = 180
+	// 	}
+	// 	if pauseSec <= 0 {
+	// 		pauseSec = 600
+	// 	}
+	// 	ctl.SetTargetSeconds(playSec, pauseSec)
+	// }
 
 	switch strings.ToLower(q.Get("state")) {
 	case "pause":
@@ -1246,15 +1314,15 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 		ctl.mu.Lock()
 		ph := ctl.playhead
 		ctl.mu.Unlock()
-		ctl.startWarm(cat, t, f, ph)
+		go ctl.startWarm(cat, t, f, ph)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "paused"})
 	case "play":
 		ctl.SetState(statePlaying)
-		ctl.stopWarm()
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "playing"})
 	default:
 		http.Error(w, "state must be pause|play", 400)
+		return
 	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
@@ -1568,6 +1636,7 @@ func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, star
 
 		pos := start
 		for {
+			// read controller state
 			c.mu.Lock()
 			st := c.state
 			ctx := c.warmCtx
@@ -1578,10 +1647,12 @@ func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, star
 				return
 			}
 
-			// Move to latest playhead (it may have changed)
+			// always chase the latest playhead
 			c.mu.Lock()
 			pos = c.playhead
 			c.mu.Unlock()
+
+			// seek to playhead, bias readahead near it
 			if _, err := rd.Seek(pos, io.SeekStart); err != nil {
 				time.Sleep(300 * time.Millisecond)
 				continue
@@ -1589,12 +1660,14 @@ func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, star
 			rd.SetResponsive()
 			rd.SetReadahead(target)
 
+			// how much contiguous we’re missing ahead of playhead
 			need := target - contiguousAheadPieceExact(t, f, pos)
-			if need <= 256<<10 { // good enough
+			if need <= 256<<10 { // good enough, short nap
 				time.Sleep(750 * time.Millisecond)
 				continue
 			}
 
+			// cap warm chunk to avoid reprioritization churn
 			chunk := need
 			localWarmMB := warmReadAheadMB
 			if isLikely4K(f.Path(), f.Length()) {
@@ -1608,10 +1681,12 @@ func (c *bufCtl) startWarm(cat string, t *torrent.Torrent, f *torrent.File, star
 			if chunk > maxChunk {
 				chunk = maxChunk
 			}
+
 			start := time.Now()
 			got := prebuffer(rd, chunk, 5*time.Second)
 			c.UpdateThroughput(got, int64(time.Since(start).Milliseconds()))
 
+			// short pacing sleep (or exit if canceled)
 			select {
 			case <-time.After(150 * time.Millisecond):
 			case <-ctx.Done():
@@ -1637,6 +1712,13 @@ func (c *bufCtl) stopWarm() {
 
 func min64(a, b int64) int64 {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
 		return a
 	}
 	return b
@@ -1672,8 +1754,12 @@ type bufCtl struct {
 }
 
 var (
-	bufMu    sync.Mutex
-	bufCtrls = map[bufKey]*bufCtl{}
+	bufMu         sync.Mutex
+	bufCtrls      = map[bufKey]*bufCtl{}
+	firstGoalDone = struct {
+		sync.Mutex
+		m map[bufKey]bool
+	}{m: make(map[bufKey]bool)}
 )
 
 func keyFile(cat string, ih metainfo.Hash, fidx int) bufKey {
