@@ -143,6 +143,10 @@ var (
 	targetPlay4KSec   int64 // default 180 if env missing
 	targetPause4KSec  int64 // default 600 if env missing
 	warmReadAhead4KMB int64 // default 64 (or env)
+
+	activeMu       sync.Mutex
+	activeStreams  = map[string]int{} // key(cat:ih) -> concurrent HTTP readers
+	watchDropGuard time.Duration      // refuse drops within this recent-activity window
 )
 
 func setupLogging() {
@@ -262,6 +266,53 @@ func getenvDuration(k string, def time.Duration) time.Duration {
 	return def
 }
 func key(cat string, ih metainfo.Hash) string { return cat + ":" + ih.HexString() }
+
+func incActive(cat string, ih metainfo.Hash) {
+	k := key(cat, ih)
+	activeMu.Lock()
+	activeStreams[k]++
+	activeMu.Unlock()
+}
+
+func decActive(cat string, ih metainfo.Hash) {
+	k := key(cat, ih)
+	activeMu.Lock()
+	if n := activeStreams[k]; n > 1 {
+		activeStreams[k] = n - 1
+	} else {
+		delete(activeStreams, k)
+	}
+	activeMu.Unlock()
+}
+
+// Only allow dropping if no active reader and we're outside the recent-activity guard window.
+func mayDrop(cat string, ih metainfo.Hash) bool {
+	k := key(cat, ih)
+
+	activeMu.Lock()
+	n := activeStreams[k]
+	activeMu.Unlock()
+	if n > 0 {
+		log.Printf("[guard] skip drop (activeReaders=%d) [%s] %s", n, cat, ih.HexString())
+		return false
+	}
+
+	if watchDropGuard > 0 {
+		if last, ok := lastTouch[k]; ok && time.Since(last) < watchDropGuard {
+			log.Printf("[guard] skip drop (recent=%s<%s) [%s] %s",
+				time.Since(last).Truncate(time.Second), watchDropGuard, cat, ih.HexString())
+			return false
+		}
+	}
+	return true
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
 
 /* =========================
    Trackers (optional extras)
@@ -581,7 +632,15 @@ func stopTorrentForKey(cat, id string) {
 			}
 		}
 		if match {
-			log.Printf("[watch] dropping [%s] %s", cat, t.Name())
+			// ----- GUARD: do not drop if there's an active reader or recent activity -----
+			if !mayDrop(cat, t.InfoHash()) {
+				log.Printf("[watch] skip drop (guard) [%s] %s ih=%s",
+					cat, t.Name(), t.InfoHash().HexString())
+				return
+			}
+
+			log.Printf("[watch] dropping [%s] %s ih=%s",
+				cat, t.Name(), t.InfoHash().HexString())
 			t.Drop()
 			delete(lastTouch, key(cat, t.InfoHash()))
 			delete(lastFileIndex, key(cat, t.InfoHash()))
@@ -688,6 +747,51 @@ func recoverMiddleware(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// parseByteRange handles "bytes=START-END", "bytes=START-" and "bytes=-SUFFIX".
+func parseByteRange(h string, size int64) (start, end int64, ok bool) {
+	h = strings.TrimSpace(strings.ToLower(h))
+	if !strings.HasPrefix(h, "bytes=") {
+		return 0, 0, false
+	}
+	spec := strings.TrimPrefix(h, "bytes=")
+	parts := strings.Split(spec, ",")
+	if len(parts) != 1 { // keep it single-range
+		return 0, 0, false
+	}
+	se := strings.SplitN(strings.TrimSpace(parts[0]), "-", 2)
+
+	// suffix: bytes=-N
+	if se[0] == "" {
+		n, err := strconv.ParseInt(se[1], 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		if n > size {
+			n = size
+		}
+		return size - n, size - 1, true
+	}
+
+	// normal/open range
+	s, err := strconv.ParseInt(se[0], 10, 64)
+	if err != nil || s < 0 || s >= size {
+		return 0, 0, false
+	}
+	var e int64
+	if len(se) == 1 || se[1] == "" {
+		e = size - 1
+	} else {
+		e, err = strconv.ParseInt(se[1], 10, 64)
+		if err != nil || e < s {
+			return 0, 0, false
+		}
+		if e >= size {
+			e = size - 1
+		}
+	}
+	return s, e, true
 }
 
 /* =========================
@@ -904,8 +1008,14 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no playable file in torrent", http.StatusNotFound)
 		return
 	}
-
 	lastFileIndex[key(cat, t.InfoHash())] = fidx
+
+	// protect while a reader is attached
+	incActive(cat, t.InfoHash())
+	defer decActive(cat, t.InfoHash())
+
+	// mark touch immediately to avoid race before first write
+	lastTouch[key(cat, t.InfoHash())] = time.Now()
 
 	k := keyFile(cat, t.InfoHash(), fidx)
 	ctl := getCtl(k)
@@ -948,29 +1058,21 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		ctl.SetTargetSeconds(playSec, pauseSec)
 	}
 
+	// ----- Range parsing (RFC-compliant) -----
 	size := f.Length()
 	name := f.Path()
 
-	// Range parsing
-	var start, end int64
-	start, end = 0, size-1
-	if rh := r.Header.Get("Range"); rh != "" && strings.HasPrefix(strings.ToLower(rh), "bytes=") {
-		parts := strings.SplitN(strings.TrimPrefix(strings.ToLower(rh), "bytes="), "-", 2)
-		if len(parts) == 2 {
-			if parts[0] != "" {
-				if s, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-					start = s
-				}
-			}
-			if parts[1] != "" {
-				if e, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-					end = e
-				}
-			}
+	hadRange := false
+	start, end := int64(0), size-1
+	if rh := r.Header.Get("Range"); rh != "" {
+		if s, e, ok := parseByteRange(rh, size); ok {
+			start, end, hadRange = s, e, true
+		} else {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+			http.Error(w, "invalid range", http.StatusRequestedRangeNotSatisfiable)
+			return
 		}
 	}
-	start = clamp(start, 0, size-1)
-	end = clamp(end, start, size-1)
 	length := end - start + 1
 
 	// Controller-driven reader with probe fast-path
@@ -999,7 +1101,6 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	// dynamic warm-up: read up to min(target, warmReadAheadMB)
 	localWarmMB := warmReadAheadMB
 	if isLikely4K(f.Path(), f.Length()) {
-		// Prefer explicit env override, else ensure at least 64 MiB
 		if warmReadAhead4KMB > 0 {
 			localWarmMB = warmReadAhead4KMB
 		} else if localWarmMB < 64 {
@@ -1008,14 +1109,6 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	var warmWant int64
 	if !isProbe {
-		localWarmMB := warmReadAheadMB
-		if isLikely4K(f.Path(), f.Length()) {
-			if warmReadAhead4KMB > 0 {
-				localWarmMB = warmReadAhead4KMB
-			} else if localWarmMB < 64 {
-				localWarmMB = 64
-			}
-		}
 		warmWant = min64(target, localWarmMB<<20)
 		if warmWant > 256<<10 && length >= 512<<10 {
 			warmStart := time.Now()
@@ -1037,19 +1130,23 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Headers
-	ct := contentTypeForName(name)
-	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Type", contentTypeForName(name))
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeDownloadName(filepath.Base(name))))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-File-Index", strconv.Itoa(fidx))
 	w.Header().Set("X-File-Name", filepath.Base(name))
-	if start == 0 && end == size-1 {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	} else {
+
+	if hadRange {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
-		w.WriteHeader(http.StatusPartialContent)
+		w.WriteHeader(http.StatusPartialContent) // 206 for any valid Range
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+
+	if r.Method == http.MethodHead {
+		return
 	}
 
 	// Stream loop (context-aware, robust to disconnects)
@@ -1507,6 +1604,10 @@ func janitor(ctx context.Context) {
 					for _, tt := range c.Torrents() {
 						k := key(cat, tt.InfoHash())
 						if last, ok := lastTouch[k]; ok && now.Sub(last) > evictTTL {
+							// ⬇︎ do NOT drop if the torrent is active or was touched recently
+							if !mayDrop(cat, tt.InfoHash()) {
+								continue
+							}
 							log.Printf("[janitor] dropping idle [%s] %s", cat, tt.Name())
 							tt.Drop()
 							delete(lastTouch, k)
@@ -1517,34 +1618,82 @@ func janitor(ctx context.Context) {
 			}
 
 			// size-based cap
-			if cacheMax > 0 && dirSize(dataRoot) > cacheMax {
-				var oldest string
-				var oldestAt time.Time
-				for k, at := range lastTouch {
-					if oldestAt.IsZero() || at.Before(oldestAt) {
-						oldest, oldestAt = k, at
+			if cacheMax > 0 {
+				used := dirSize(dataRoot)
+				for used > cacheMax { // <-- keep going until we're under the cap
+					// Build a candidate list of safe-to-drop torrents.
+					type cand struct {
+						cat  string
+						ih   metainfo.Hash
+						at   time.Time
+						size int64
+						name string
 					}
-				}
-				if oldest != "" {
-					parts := strings.SplitN(oldest, ":", 2) // cat:ih
-					if len(parts) == 2 {
-						cat := parts[0]
-						ih := metainfo.NewHashFromHex(parts[1])
-						clientsMu.Lock()
-						if c := clients[cat]; c != nil {
-							for _, tt := range c.Torrents() {
-								if tt.InfoHash() == ih {
-									log.Printf("[janitor] evicting [%s] %s to honor CACHE_MAX_BYTES", cat, tt.Name())
-									tt.Drop()
-									break
-								}
+					var cands []cand
+
+					clientsMu.Lock()
+					for cat, c := range clients {
+						for _, tt := range c.Torrents() {
+							ih := tt.InfoHash()
+							if !mayDrop(cat, ih) { // protect active/recent torrents
+								continue
+							}
+							k := key(cat, ih)
+							at := time.Unix(0, 0)
+							if v, ok := lastTouch[k]; ok {
+								at = v
+							}
+							var sz int64
+							for _, f := range tt.Files() {
+								sz += f.Length()
+							}
+							cands = append(cands, cand{
+								cat:  cat,
+								ih:   ih,
+								at:   at,
+								size: sz,
+								name: tt.Name(),
+							})
+						}
+					}
+					clientsMu.Unlock()
+
+					if len(cands) == 0 {
+						log.Printf("[janitor] cache %d > %d but no safe candidate to evict; will retry later", used, cacheMax)
+						break
+					}
+
+					// Pick the oldest; if ages are within ~2m, pick the bigger.
+					best := cands[0]
+					for _, x := range cands[1:] {
+						older := x.at.Before(best.at)
+						closeAge := absDuration(x.at.Sub(best.at)) < 2*time.Minute
+						bigger := x.size > best.size
+						if older || (closeAge && bigger) {
+							best = x
+						}
+					}
+
+					// Drop best
+					clientsMu.Lock()
+					if c := clients[best.cat]; c != nil {
+						for _, tt := range c.Torrents() {
+							if tt.InfoHash() == best.ih {
+								log.Printf("[janitor] evicting [%s] %s ih=%s (age=%s size=%d) to honor CACHE_MAX_BYTES | used=%d max=%d",
+									best.cat, best.name, best.ih.HexString(),
+									time.Since(best.at).Truncate(time.Second), best.size, used, cacheMax)
+								tt.Drop()
+								break
 							}
 						}
-						clientsMu.Unlock()
-						delete(lastTouch, oldest)
 					}
+					clientsMu.Unlock()
+
+					delete(lastTouch, key(best.cat, best.ih))
+					used = dirSize(dataRoot) // re-measure and loop again if still over
 				}
 			}
+
 		}
 
 	}
@@ -1861,6 +2010,8 @@ func main() {
 	targetPlay4KSec = getenvInt64("TARGET_BUFFER_PLAY_SEC_4K", 180)
 	targetPause4KSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC_4K", 600)
 	warmReadAhead4KMB = getenvInt64("WARM_READ_AHEAD_MB_4K", 64)
+
+	watchDropGuard = getenvDuration("WATCH_DROP_GUARD", 10*time.Minute)
 
 	if s := strings.ToLower(getenvDefault("ENDGAME_DUPLICATE", "true")); s == "false" {
 		enableEndgameDup = false
