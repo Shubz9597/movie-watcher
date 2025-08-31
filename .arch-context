@@ -1,0 +1,4 @@
+ARCH_MANUAL=docs/owners-manual.md
+SERVICE_PATTERN=modular-monolith
+CORE_MODULES=httpapi,catalog,search,scoring,picks,stream,prefetch,subtitles,progress,torrent,store,cache,telemetry,config
+NEXT_ACTIONS=follow rollout checklist in owners-manual.md
