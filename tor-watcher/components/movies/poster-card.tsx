@@ -55,8 +55,6 @@ export default function PosterCard({
       onClick={() => onOpen(movie.id)}
       onMouseEnter={startPrefetchTimer}
       onMouseLeave={clearPrefetchTimer}
-      onFocus={startPrefetchTimer}
-      onBlur={clearPrefetchTimer}
       aria-label={`Open quick view for ${movie.title}`}
       className="group text-left focus:outline-none"
     >
