@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -9,15 +10,40 @@ import (
 	"os/signal"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver
 	"github.com/joho/godotenv"
 
 	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/httpapi"
 	"torrent-streamer/internal/janitor"
 	"torrent-streamer/internal/middleware"
+	"torrent-streamer/internal/scoring"
 	"torrent-streamer/internal/torrentx"
 	"torrent-streamer/internal/watch"
 )
+
+var (
+	db         *sql.DB
+	pickRepo   *torrentx.Repo
+	searchCli  *torrentx.TorznabClient
+	progressDB *watch.Store
+)
+
+func mustOpenDB() {
+	dsn := os.Getenv("PG_DSN")
+	if dsn == "" {
+		log.Fatal("PG_DSN missing")
+	}
+	var err error
+	db, err = sql.Open("pgx", dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := db.PingContext(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("[db] connected")
+}
 
 func main() {
 	_ = godotenv.Load(".env")
@@ -26,6 +52,15 @@ func main() {
 	config.Load()
 	config.SetupLogging()
 
+	mustOpenDB()
+	pickRepo = &torrentx.Repo{DB: db}
+	progressDB = watch.NewStore(db)
+	searchCli = &torrentx.TorznabClient{
+		BaseURL: os.Getenv("INDEXER_URL"),
+		APIKey:  os.Getenv("INDEXER_API_KEY"),
+		HTTP:    &http.Client{Timeout: 20 * time.Second},
+	}
+
 	// prepare torrentx (root dirs, initial state)
 	torrentx.Init()
 
@@ -33,6 +68,15 @@ func main() {
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux) // /add, /files, /prefetch, /stream, /stats, /buffer/*
 
+	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
+		Picks: torrentx.EnsureDeps{
+			Repo:   pickRepo,
+			Search: searchCli,
+		},
+		Watch:       progressDB,
+		ProfileCaps: scoring.ProfileCaps{CodecAllow: map[string]bool{"h264": true, "hevc": true, "av1": true}},
+	})
+	sess.Register(mux)
 	// watch/lease manager wiring — same semantics as your main.go
 	mgr := watch.NewManager(
 		20*time.Second, // staleAfter
