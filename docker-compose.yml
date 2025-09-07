@@ -7,7 +7,7 @@ services:
     devices: [ "/dev/net/tun:/dev/net/tun" ]
     env_file: [ ./infra/gluetun.env ]        # VPN creds live here (infra-only)
     volumes:
-      - ./data/gluetun:/gluetun
+      - ./tor-watcher/data/gluetun:/gluetun
     ports:
       - "9696:9696"   # Prowlarr UI via VPN (host -> gluetun -> prowlarr)
       - "8191:8191"   # FlareSolverr via VPN
@@ -43,7 +43,7 @@ services:
     restart: unless-stopped
     env_file: [ ./torrent-streamer/.env ]    # PG_* live with the Go app
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - ./tor-watcher/data/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"                           # expose to host (Go runs on host)
     healthcheck:

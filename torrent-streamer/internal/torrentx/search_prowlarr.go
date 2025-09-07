@@ -32,6 +32,8 @@ func (c *TorznabClient) Query(title string, season, episode int, abs *int) ([]ty
 	q := title
 	if abs != nil {
 		q = title + " " + pad2(*abs)
+	} else if season == 0 && episode == 0 {
+		q = title
 	} else {
 		q = title + " S" + pad2(season) + "E" + pad2(episode)
 	}

@@ -28,6 +28,7 @@ func NewSessionHandlers(d SessionDeps) *SessionHandlers { return &SessionHandler
 func (h *SessionHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/session/start", cors(h.Start))
 	mux.HandleFunc("/v1/session/heartbeat", cors(h.Heartbeat))
+	mux.HandleFunc("/v1/session/ended", cors(h.Ended))
 	mux.HandleFunc("/v1/resume", cors(h.Resume))
 	mux.HandleFunc("/v1/continue", cors(h.ContinueList))
 	mux.HandleFunc("/v1/continue/dismiss", cors(h.ContinueDismiss))
@@ -121,6 +122,12 @@ func (h *SessionHandlers) Resume(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"found": false})
 		return
 	}
+	pos := res.Position
+	if pos > 10 {
+		pos -= 10
+	} else {
+		pos = 0
+	} // ← rewind
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"seriesId": res.SeriesID, "season": res.Season, "episode": res.Episode, "position_s": res.Position,
 	})
@@ -164,4 +171,37 @@ func (h *SessionHandlers) ContinueDismiss(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *SessionHandlers) Ended(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SeriesID, SeriesTitle, Kind string
+		Season, Episode             int
+		ProfileHash                 string
+		EstRuntimeMin               float64
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	nextSeason, nextEp := in.Season, in.Episode+1
+	p, err := torrentx.EnsurePick(r.Context(), h.d.Picks, torrentx.EnsureInput{
+		SeriesID: in.SeriesID, SeriesTitle: in.SeriesTitle, Kind: in.Kind,
+		Season: nextSeason, Episode: nextEp,
+		ProfileHash: in.ProfileHash, EstRuntimeMin: in.EstRuntimeMin,
+		ProfileCaps: h.d.ProfileCaps,
+	})
+	if err != nil {
+		http.Error(w, "pick error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	streamURL := "/stream?magnet=" + url.QueryEscape(p.Magnet)
+	if p.FileIndex != nil {
+		streamURL += "&fileIndex=" + strconv.Itoa(*p.FileIndex)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"nextPick":   p,
+		"streamUrl":  streamURL,
+		"autoplayIn": 10,
+	})
 }
