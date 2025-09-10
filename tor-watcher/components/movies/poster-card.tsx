@@ -1,4 +1,3 @@
-// components/movies/poster-card.tsx
 "use client";
 
 import Image from "next/image";
@@ -35,11 +34,6 @@ export default function PosterCard({
     }
   };
 
-  const topCast =
-    movie.topCast && movie.topCast.length
-      ? movie.topCast.slice(0, 3).join(", ")
-      : null;
-
   const tmdbPct =
     typeof movie.tmdbRatingPct === "number"
       ? movie.tmdbRatingPct
@@ -56,23 +50,23 @@ export default function PosterCard({
       onMouseEnter={startPrefetchTimer}
       onMouseLeave={clearPrefetchTimer}
       aria-label={`Open quick view for ${movie.title}`}
-      className="group text-left focus:outline-none"
+      className="block w-full text-left focus:outline-none"
     >
-      <Card className="overflow-hidden rounded-2xl border-slate-800 bg-[#0F141A] ring-1 ring-slate-800
-                       transition hover:scale-[1.02] hover:ring-cyan-600/40 focus:ring-2 focus:ring-cyan-500">
-        {/* Poster */}
-        <div className="relative aspect-[2/3] w-full">
+      {/* Poster-forward card. No group hover; hover is local to this card only. */}
+      <Card className="w-full overflow-hidden rounded-2xl border-slate-800 bg-[#0F141A] ring-1 ring-slate-800 transition-shadow hover:ring-2 hover:ring-white/25 focus:ring-2 focus:ring-cyan-500">
+        {/* Poster frame (2:3) — any transform stays inside this box */}
+        <div className="relative aspect-[2/3] w-full overflow-hidden">
           <Image
             src={movie.posterPath ?? "/placeholder.svg"}
             alt={movie.title}
             fill
             sizes="(max-width: 640px) 45vw, (max-width: 1024px) 22vw, 14vw"
-            className="object-cover transition-opacity group-hover:opacity-90"
+            className="object-cover transition-transform duration-300 ease-out hover:scale-[1.03]"
             priority={false}
           />
 
           {/* TL: NEW + language (hide EN) */}
-          <div className="absolute left-2 top-2 flex flex-col gap-1 items-start">
+          <div className="absolute left-2 top-2 flex items-start gap-1">
             {movie.isNew && (
               <Badge className="bg-cyan-500 text-black hover:bg-cyan-400">NEW</Badge>
             )}
@@ -105,19 +99,16 @@ export default function PosterCard({
           </div>
         </div>
 
-        {/* Text */}
-        <CardContent className="px-3 py-3 text-slate-300">
+        {/* Minimal text: single-line title so poster stays the hero */}
+        <CardContent className="px-2.5 py-2">
           <div className="flex items-baseline justify-between gap-2">
-            <span className="line-clamp-1 text-sm font-medium text-slate-100">
+            <span className="truncate text-sm font-medium leading-tight text-slate-100">
               {movie.title}
             </span>
             {movie.year && (
               <span className="shrink-0 text-[11px] text-slate-400">{movie.year}</span>
             )}
           </div>
-          {topCast && (
-            <div className="mt-1 line-clamp-1 text-[12px] text-slate-400">{topCast}</div>
-          )}
         </CardContent>
       </Card>
     </button>
