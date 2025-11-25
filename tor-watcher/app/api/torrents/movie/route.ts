@@ -6,9 +6,17 @@ const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY!;
 
 const MOVIE_CATS = "2000,2040,2045,2050,2080";
 
-const INDEXER_MATCHES = [/torrentgalaxy/i, /rarbg/i];
+const INDEXER_MATCHES = [
+  /limetorrents/i,
+  /subsplease/i,
+  /therarbg/i,
+  /torrentgalaxy/i,
+  /yts/i,
+];
 
 const PROWLARR_ORIGIN = new URL(PROWLARR_URL).origin;
+const MAGNET_RX = /magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}[^"' \r\n]*/i;
+const isDev = process.env.NODE_ENV !== "production";
 
 function isProwlarrDownloadUrl(u?: string | null): boolean {
   if (!u) return false;
@@ -20,14 +28,42 @@ function isProwlarrDownloadUrl(u?: string | null): boolean {
   }
 }
 
-async function resolveProwlarrDownloadToMagnet(url: string, timeoutMs = 6000): Promise<string | undefined> {
+function isHttpUrl(u?: string | null): u is string {
+  if (!u) return false;
+  return /^https?:\/\//i.test(u);
+}
+
+async function resolveDownloadToMagnet(url: string, timeoutMs = 8000, maxHops = 5): Promise<string | undefined> {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    // We just need the Location header; don’t follow.
-    const res = await fetch(url, { redirect: "manual", cache: "no-store", signal: ctrl.signal });
-    const loc = res.headers.get("location");
-    if (loc?.startsWith("magnet:")) return loc;
+    let current = url;
+    for (let hop = 0; hop < maxHops; hop++) {
+      const res = await fetch(current, { redirect: "manual", cache: "no-store", signal: ctrl.signal });
+      const loc = res.headers.get("location");
+      if (loc?.startsWith("magnet:")) return loc;
+      if (loc) {
+        try {
+          const next = new URL(loc, current).href;
+          if (next.startsWith("magnet:")) return next;
+          if (res.status >= 300 && res.status < 400) {
+            current = next;
+            continue;
+          }
+        } catch {
+          // ignore invalid redirect target
+        }
+      }
+
+      const ct = res.headers.get("content-type") || "";
+      if (/text\/html|application\/json/i.test(ct)) {
+        const body = await res.text();
+        const inlineMagnet = body.match(MAGNET_RX);
+        if (inlineMagnet) return inlineMagnet[0];
+      }
+
+      break; // no redirect to chase and no inline magnet
+    }
     return undefined;
   } finally {
     clearTimeout(to);
@@ -333,11 +369,27 @@ export async function GET(request: Request) {
       return NextResponse.json({ results: [], note: "No IMDb-capable movie indexers found (TorrentGalaxyClone/RARBG)." });
     }
 
-    const urls = providers.map((p) =>
-      imdbDigits
-        ? { id: p.id, name: p.name, url: buildMovieByImdbUrl(p.id, imdbDigits) }
-        : { id: p.id, name: p.name, url: buildMovieByQueryUrl(p.id, title!, year) }
+    const trimmedTitle = title?.trim();
+    const searchModes: Array<"imdb" | "query"> = [];
+    if (imdbDigits) searchModes.push("imdb");
+    if (trimmedTitle) searchModes.push("query");
+    const urls = providers.flatMap((p) =>
+      searchModes.map((mode) => ({
+        id: p.id,
+        name: p.name,
+        mode,
+        url:
+          mode === "imdb"
+            ? buildMovieByImdbUrl(p.id, imdbDigits!)
+            : buildMovieByQueryUrl(p.id, trimmedTitle!, year),
+      }))
     );
+
+    if (isDev) {
+      console.debug(
+        `[movie-torrents] providers=${providers.length} searches=${urls.length} modes=${searchModes.join(",") || "query"}`
+      );
+    }
 
     const responses = await Promise.allSettled(
       urls.map(async (u) => {
@@ -353,26 +405,6 @@ export async function GET(request: Request) {
       if (r.status !== "fulfilled") continue;
       const { name, xml } = r.value;
       all.push(...parseTorznab(xml, name));
-    }
-
-    // IMDb miss fallback
-    if (all.length === 0 && imdbDigits && title) {
-      const fallbackUrls = providers.map((p) => ({
-        id: p.id, name: p.name, url: buildMovieByQueryUrl(p.id, title, year),
-      }));
-      const fb = await Promise.allSettled(
-        fallbackUrls.map(async (u) => {
-          const r = await fetch(u.url, { next: { revalidate: 0 } });
-          if (!r.ok) throw new Error(`${u.name} ${r.status}`);
-          const xml = await r.text();
-          return { id: u.id, name: u.name, xml };
-        })
-      );
-      for (const r2 of fb) {
-        if (r2.status !== "fulfilled") continue;
-        const { name, xml } = r2.value;
-        all.push(...parseTorznab(xml, name));
-      }
     }
 
     /* ---------- LANGUAGE FILTER HERE ---------- */
@@ -394,16 +426,23 @@ export async function GET(request: Request) {
     for (const it of toFix) {
       if (it.magnetUri?.startsWith("magnet:")) continue;
 
-      // Try resolving Prowlarr /download → magnet
-      if (isProwlarrDownloadUrl(it.torrentUrl)) {
+      // Try resolving HTTP(S) torrent/download URLs into magnets
+      if (isHttpUrl(it.torrentUrl)) {
         try {
-          const m = await resolveProwlarrDownloadToMagnet(it.torrentUrl!);
-          if (m) {
-            it.magnetUri = m;
+          const resolved = await resolveDownloadToMagnet(it.torrentUrl);
+          if (resolved) {
+            it.magnetUri = resolved;
+            if (isDev) {
+              console.debug(
+                `[movie-torrents] magnet resolved from ${isProwlarrDownloadUrl(it.torrentUrl) ? "prowlarr" : "http"}`
+              );
+            }
             continue;
           }
-        } catch {
-          // ignore; fall back to infohash synth if possible
+        } catch (err) {
+          if (isDev) {
+            console.debug("[movie-torrents] magnet resolve failed", err);
+          }
         }
       }
 
