@@ -7,7 +7,12 @@ const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY!;
 const MOVIE_CATS = "2000,2040,2045,2050,2080";
 
 const INDEXER_MATCHES = [
+  /eztv/i,
+  /kickass/i,
   /limetorrents/i,
+  /magnetdownload/i,
+  /nyaa/i,
+  /pirate\s*bay/i,
   /subsplease/i,
   /therarbg/i,
   /torrentgalaxy/i,
