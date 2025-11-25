@@ -36,11 +36,16 @@ export async function tmdb<T>(
   const normalized = path.startsWith("/") ? path : `/${path}`;
   const url = withApiKey(`${TMDB_BASE}${normalized}`);
 
-  const res = await fetch(url, {
-    ...init,
-    cache: init?.next?.revalidate ? "force-cache" : "no-store",
-    headers: authHeaders(init?.headers),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      cache: init?.next?.revalidate ? "force-cache" : "no-store",
+      headers: authHeaders(init?.headers),
+    });
+  } catch (err) {
+    throw new Error(`TMDB network failure: ${(err as Error)?.message || err}`);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");

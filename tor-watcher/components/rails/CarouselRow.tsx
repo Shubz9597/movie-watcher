@@ -7,6 +7,7 @@ import type { MovieCard } from "@/lib/types";
 
 type Props = {
   title: string;
+  subtitle?: string;
   items: MovieCard[];
   loading?: boolean;
   onOpen: (id: number) => void;
@@ -15,33 +16,43 @@ type Props = {
   maxItems?: number;
   /** Route to the See All page, e.g. `/see-all?title=...&api=...` */
   seeAllHref?: string;
+  accent?: "cyan" | "purple" | "rose";
 };
 
 export default function CarouselRow({
   title,
+  subtitle,
   items,
   loading,
   onOpen,
   onPrefetch,
   maxItems = 10,
   seeAllHref,
+  accent = "cyan",
 }: Props) {
   const visible = React.useMemo(
     () => items.slice(0, maxItems),
     [items, maxItems]
   );
 
+  const accentBg: Record<"cyan" | "purple" | "rose", string> = {
+    cyan: "bg-gradient-to-br from-[#031b2a] via-[#050d18] to-[#05070f]",
+    purple: "bg-gradient-to-br from-[#1b0f2e] via-[#0f0a1f] to-[#04050a]",
+    rose: "bg-gradient-to-br from-[#2b0f19] via-[#13060c] to-[#050407]",
+  } as const;
+
   return (
-    <section className="space-y-3 md:space-y-4">
-      {/* Heading + See all */}
-      <div className="mb-1.5 md:mb-2.5 flex items-baseline justify-between">
-        <h2 className="text-lg sm:text-xl font-semibold tracking-tight text-slate-100">
-          {title}
-        </h2>
+    <section className={`rounded-3xl border border-white/10 ${accentBg[accent]} p-5 md:p-7 shadow-2xl shadow-black/30`}>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Spotlight</p>
+          <h2 className="text-2xl font-semibold text-white">{title}</h2>
+          {subtitle ? <p className="text-sm text-slate-300">{subtitle}</p> : null}
+        </div>
         {seeAllHref ? (
           <Link
             href={seeAllHref}
-            className="inline-flex items-center gap-1 text-sm md:text-base font-medium text-cyan-400 hover:text-cyan-300"
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
           >
             See all
             <svg
@@ -59,7 +70,6 @@ export default function CarouselRow({
         ) : null}
       </div>
 
-      {/* Grid rail (no horizontal scroll) */}
       {loading ? (
         <RailSkeleton />
       ) : (
