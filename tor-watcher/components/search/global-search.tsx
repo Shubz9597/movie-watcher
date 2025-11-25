@@ -15,9 +15,9 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { Search, Star } from "lucide-react";
+import { Search, Star, TrendingUp } from "lucide-react";
 import { useRouter } from "next/navigation";
- import Image from "next/image";
+import Image from "next/image";
 
 type SearchKind = "movie" | "tv" | "person";
 type Basic = { id: number; title?: string; name?: string; year?: number; rating?: number; posterUrl?: string | null };
@@ -27,19 +27,6 @@ const MIN_CHARS = 2;
 const DEBOUNCE_MS = 350;
 const MAX_ITEMS_PER_GROUP = 6;
 const CACHE_SIZE = 50;
-
-function highlight(text: string, q: string) {
-  if (!q) return text;
-  const i = text.toLowerCase().indexOf(q.toLowerCase());
-  if (i === -1) return text;
-  return (
-    <>
-      {text.slice(0, i)}
-      <mark className="bg-transparent underline underline-offset-2">{text.slice(i, i + q.length)}</mark>
-      {text.slice(i + q.length)}
-    </>
-  );
-}
 
 class LRU<K, V> {
   private map = new Map<K, V>();
@@ -64,6 +51,8 @@ class LRU<K, V> {
   }
 }
 const cache = new LRU<string, SearchResults>(CACHE_SIZE);
+
+const QUICK_SEARCHES = ["Dune: Part Two", "The Bear", "Deadpool & Wolverine", "Inside Out 2", "Fallout"];
 
 export default function GlobalSearch({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -237,12 +226,22 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
     fn?.();
   }
 
+  function safePrefetch(url: string | null) {
+    if (!url) return;
+    try {
+      const maybe = router.prefetch(url);
+      if (maybe && typeof (maybe as Promise<void>).catch === "function") {
+        (maybe as Promise<void>).catch(() => { });
+      }
+    } catch (err) {
+      console.warn("prefetch skipped", err);
+    }
+  }
+
   // Prefetch details on hover
   function prefetch(kind: SearchKind, id: number) {
-    // If you have a route like /movie/[id] etc:
-    if (kind === "movie") router.prefetch(`/movie/${id}`);
-    if (kind === "tv") router.prefetch(`/tv/${id}`);
-    // For person you might open a sheet/profile:
+    const target = kind === "person" ? null : `/title/${kind}/${id}`;
+    safePrefetch(target);
   }
 
   return (
@@ -263,7 +262,7 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
         }}
       >
         <DialogContent
-          className="p-0 overflow-hidden rounded-2xl border border-white/10 bg-neutral-900/95 shadow-2xl backdrop-blur-md w-[720px]"
+          className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-[#050912]/95 p-0 shadow-2xl backdrop-blur-2xl"
           onOpenAutoFocus={(e) => {
             // Let CommandInput auto-focus
           }}
@@ -271,11 +270,14 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
         >
           <DialogTitle className="sr-only">Global search</DialogTitle>
 
-          <Command shouldFilter={false} className="[&_[cmdk-group-heading]]:sticky [&_[cmdk-group-heading]]:top-0 [&_[cmdk-group-heading]]:z-10 [&_[cmdk-group-heading]]:bg-neutral-900/90 [&_[cmdk-group-heading]]:backdrop-blur [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1">
+          <Command
+            shouldFilter={false}
+            className="[&_[cmdk-group-heading]]:sticky [&_[cmdk-group-heading]]:top-0 [&_[cmdk-group-heading]]:z-10 [&_[cmdk-group-heading]]:bg-transparent [&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-slate-300 [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:after:block [&_[cmdk-group-heading]]:after:mt-1 [&_[cmdk-group-heading]]:after:h-px [&_[cmdk-group-heading]]:after:w-full [&_[cmdk-group-heading]]:after:bg-white/10"
+          >
             <CommandInput
               aria-label="Search movies, shows, people"
               placeholder="Search movies, shows, people…"
-              className="text-base"
+              className="px-4 text-base [&_input]:pr-8"
               value={query}
               onValueChange={setQuery}
               onKeyDown={(e) => {
@@ -286,7 +288,7 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
 
             <CommandList aria-busy={loading} className="max-h-[60vh] overflow-y-auto">
               <CommandEmpty>
-                <div className="px-3 py-6 text-sm text-slate-400">
+                <div className="px-4 py-6 text-sm text-slate-400">
                   {error
                     ? `Error: ${error}`
                     : query.trim().length < MIN_CHARS
@@ -297,19 +299,34 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
                 </div>
               </CommandEmpty>
 
+              {debouncedQuery.length < MIN_CHARS && (
+                <CommandGroup heading="TRY THIS">
+                  {QUICK_SEARCHES.map((title) => (
+                    <CommandItem
+                      key={title}
+                      value={title}
+                      onSelect={() => {
+                        setQuery(title);
+                        setDebouncedQuery(title);
+                      }}
+                      className="px-4 py-2 text-slate-200 hover:bg-white/5"
+                    >
+                      <TrendingUp className="mr-2 h-4 w-4 text-amber-400" />
+                      {title}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+
               {/* Movies */}
               {results.movie.length > 0 && (
-                <CommandGroup heading="Movies">
+                <CommandGroup heading="MOVIES">
                   {results.movie.map((m) => (
                     <CommandItem
                       key={`m-${m.id}`}
-                      onSelect={() => closeAnd(() => window.dispatchEvent(new CustomEvent("open-movie", { detail: { id: m.id } })))}
+                      onSelect={() => closeAnd(() => router.push(`/title/movie/${m.id}`))}
                       onMouseEnter={() => prefetch("movie", m.id)}
-                      className={clsx(
-                        "px-3 py-2",
-                        "data-[selected=true]:bg-primary/15 data-[selected=true]:text-primary",
-                        "hover:bg-white/5"
-                      )}
+                      className="px-4 py-2 hover:bg-white/5 data-[selected=true]:bg-white/10 data-[selected=true]:text-white"
                     >
                       <PosterThumb src={m.posterUrl ?? undefined} alt={m.title || "Movie"} />
                       <div className="min-w-0 flex-1">
@@ -325,13 +342,13 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
 
               {/* TV */}
               {results.tv.length > 0 && (
-                <CommandGroup heading="TV Shows">
+                <CommandGroup heading="TV SHOWS">
                   {results.tv.map((t) => (
                     <CommandItem
                       key={`t-${t.id}`}
-                      onSelect={() => closeAnd(() => window.dispatchEvent(new CustomEvent("open-tv", { detail: { id: t.id } })))}
+                          onSelect={() => closeAnd(() => router.push(`/title/tv/${t.id}`))}
                       onMouseEnter={() => prefetch("tv", t.id)}
-                      className="px-3 py-2 hover:bg-white/5 data-[selected=true]:bg-primary/15 data-[selected=true]:text-primary"
+                      className="px-4 py-2 hover:bg-white/5 data-[selected=true]:bg-white/10 data-[selected=true]:text-white"
                     >
                       <PosterThumb src={t.posterUrl ?? undefined} alt={t.title || t.name || "TV"} />
                       <div className="min-w-0 flex-1">
@@ -348,13 +365,13 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
 
               {/* People */}
               {results.person.length > 0 && (
-                <CommandGroup heading="People">
+                <CommandGroup heading="PEOPLE">
                   {results.person.map((p) => (
-                    <CommandItem
-                      key={`p-${p.id}`}
-                      onSelect={() => closeAnd(() => window.dispatchEvent(new CustomEvent("open-person", { detail: { id: p.id } })))}
-                      className="px-3 py-2 hover:bg-white/5 data-[selected=true]:bg-primary/15 data-[selected=true]:text-primary"
-                    >
+                            <CommandItem
+                              key={`p-${p.id}`}
+                              onSelect={() => closeAnd()}
+                      className="px-4 py-2 hover:bg-white/5 data-[selected=true]:bg-white/10 data-[selected=true]:text-white"
+                            >
                       <div className="mr-3 h-10 w-10 overflow-hidden rounded-full bg-slate-800 ring-1 ring-white/5">
                         {/* Use profile thumb if you have it */}
                         {/* <Image src={p.posterUrl ?? ""} alt={p.name || "Person"} width={40} height={40} className="h-10 w-10 object-cover" /> */}
@@ -378,14 +395,6 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
               )}
 
               <CommandSeparator />
-              <CommandGroup heading="Actions">
-                <CommandItem onSelect={() => closeAnd(() => router.push(`/search?query=${encodeURIComponent(query.trim())}`))}>
-                  <Search className="mr-2 size-4" /> See all results
-                </CommandItem>
-                <CommandItem onSelect={() => closeAnd(() => router.push("/watchlist"))}>
-                  <Star className="mr-2 size-4" /> Open Watchlist
-                </CommandItem>
-              </CommandGroup>
             </CommandList>
           </Command>
         </DialogContent>

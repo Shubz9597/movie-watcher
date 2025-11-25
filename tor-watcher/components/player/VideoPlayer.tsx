@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Maximize, Minimize, Pause, Play, Volume2, VolumeX,
@@ -19,6 +19,14 @@ const HEARTBEAT_MS = 5000;
 
 // ---------- Types ----------
 type Subtrack = { label: string; lang: string; url: string; source: "torrent" | "opensub" };
+
+type NextEpisodeState = {
+  season: number;
+  episode: number;
+  streamUrl: string;
+  countdown: number;
+  title?: string | null;
+};
 
 type Props = {
   // legacy magnet flow (kept)
@@ -88,6 +96,12 @@ function qsInt(name: string): number | undefined {
   if (!v) return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
+}
+
+function appendCatParam(url: string, cat: string) {
+  if (!url) return url;
+  if (url.includes("cat=")) return url;
+  return url.includes("?") ? `${url}&cat=${cat}` : `${url}?cat=${cat}`;
 }
 
 type BufInfo = {
@@ -258,16 +272,21 @@ export default function VideoPlayer(props: Props) {
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [autoStartArmed, setAutoStartArmed] = useState(true);
 
+  const [nextUp, setNextUp] = useState<NextEpisodeState | null>(null);
+  const [nextError, setNextError] = useState<string | null>(null);
+  const [autoplayNext, setAutoplayNext] = useState(true);
+
   // ---------- choose initial SOURCE (streamUrl or magnet) ----------
   const [src, setSrc] = useState<string>("");
+
+  const withCat = useCallback((url: string) => appendCatParam(url, kind), [kind]);
 
   useEffect(() => {
     // session flow first
     const qsStream = qsString("streamUrl");
     if (props.streamUrl || qsStream) {
       const base = props.streamUrl ?? qsStream!;
-      const withCat = base.includes("?") ? `${base}&cat=${kind}` : `${base}?cat=${kind}`;
-      setSrc(withCat);
+      setSrc(withCat(base));
       return;
     }
     // magnet fallback
@@ -280,7 +299,7 @@ export default function VideoPlayer(props: Props) {
       if (fi != null) sp.set("fileIndex", String(fi));
       setSrc(`${STREAM_BASE}?${sp.toString()}`);
     }
-  }, [props.streamUrl, props.magnet, props.fileIndex, kind]);
+  }, [props.streamUrl, props.magnet, props.fileIndex, withCat, kind]);
 
   // ---------- prefetch & warm ----------
   useEffect(() => {
@@ -305,6 +324,31 @@ export default function VideoPlayer(props: Props) {
     setAutoStartArmed(true);
   }, [props.magnet, props.fileIndex, kind]);
 
+  useEffect(() => {
+    if (!nextUp || !autoplayNext) return;
+    if (nextUp.countdown <= 0) {
+      beginNextEpisode(nextUp);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setNextUp((prev) => (prev ? { ...prev, countdown: prev.countdown - 1 } : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [nextUp, autoplayNext, beginNextEpisode]);
+
+  useEffect(() => {
+    setNextUp(null);
+    setNextError(null);
+    setAutoplayNext(true);
+  }, [src]);
+
+  useEffect(() => {
+    if (!seriesId || kind === "movie") {
+      setNextUp(null);
+      setNextError(null);
+    }
+  }, [seriesId, kind]);
+
   // ---------- subtitles (unchanged: using your Next API) ----------
   useEffect(() => { setActiveSub(""); setSubs([]); }, [props.imdbId, props.magnet]);
 
@@ -324,7 +368,7 @@ export default function VideoPlayer(props: Props) {
     const ac = new AbortController();
 
     const cacheKey = `${imdbId}|${preferLangsKey}`;
-    const useAndPick = (list: Subtrack[]) => {
+    const applySubs = (list: Subtrack[]) => {
       if (cancelled) return;
       setSubs(list);
       const pick =
@@ -334,7 +378,7 @@ export default function VideoPlayer(props: Props) {
 
     (async () => {
       const cached = subsCacheRef.current.get(cacheKey);
-      if (cached?.length) { useAndPick(cached); return; }
+      if (cached?.length) { applySubs(cached); return; }
 
       const sp = new URLSearchParams({ imdbId, langs: preferLangsKey });
       const res = await fetch(`/api/subtitles/opensub?${sp.toString()}`, { signal: ac.signal });
@@ -342,7 +386,7 @@ export default function VideoPlayer(props: Props) {
       const list: Subtrack[] = j.subtitles || [];
 
       subsCacheRef.current.set(cacheKey, list);
-      if (list.length) useAndPick(list);
+      if (list.length) applySubs(list);
       else if (!cancelled) { setSubs([]); setActiveSub(""); }
     })().catch(() => {});
 
@@ -421,6 +465,65 @@ export default function VideoPlayer(props: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [volume]);
+
+  const beginNextEpisode = useCallback((entry?: NextEpisodeState | null) => {
+    const target = entry ?? nextUp;
+    if (!target) return;
+    const nextUrl = withCat(target.streamUrl);
+    if (!nextUrl) return;
+    setSrc(nextUrl);
+    setCurSeason(target.season);
+    setCurEpisode(target.episode);
+    setNextUp(null);
+    setNextError(null);
+    setAutoplayNext(true);
+    setAutoStartArmed(true);
+    setTimeout(() => videoRef.current?.play().catch(() => {}), 300);
+  }, [nextUp, withCat]);
+
+  const prepareNextEpisode = useCallback(async () => {
+    if (!seriesId || kind === "movie") return;
+    try {
+      setNextError(null);
+      const res = await fetch(`${VOD_BASE}/v1/session/ended`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          SeriesID: seriesId,
+          SeriesTitle: props.seriesTitle ?? props.title ?? "",
+          Kind: kind,
+          Season: curSeason,
+          Episode: curEpisode,
+          ProfileHash: profileHash,
+          EstRuntimeMin: estRuntimeMin,
+        }),
+      });
+      if (!res.ok) throw new Error(`Next episode failed (${res.status})`);
+      const data = await res.json();
+      const countdown = Number(data?.autoplayIn ?? 10) || 10;
+      const stream = withCat(data?.streamUrl || "");
+      if (!stream) throw new Error("Missing stream URL");
+      const nextSeason = data?.nextPick?.Season ?? curSeason;
+      const nextEpisode = data?.nextPick?.Episode ?? curEpisode + 1;
+      const titleHint =
+        data?.nextPick?.ReleaseGroup ||
+        data?.nextPick?.Resolution ||
+        props.seriesTitle ||
+        props.title ||
+        "Up next";
+      setNextUp({
+        season: nextSeason,
+        episode: nextEpisode,
+        streamUrl: stream,
+        countdown,
+        title: titleHint,
+      });
+      setAutoplayNext(true);
+    } catch (err) {
+      setNextError((err as Error)?.message || "Failed to fetch next episode");
+      setNextUp(null);
+    }
+  }, [seriesId, kind, curSeason, curEpisode, profileHash, estRuntimeMin, props.seriesTitle, props.title, withCat]);
 
   // ---------- player helpers ----------
   const togglePlay = () => {
@@ -602,33 +705,7 @@ export default function VideoPlayer(props: Props) {
   // ---------- autoplay next ----------
   const onEnded = async () => {
     if (!seriesId || kind === "movie") return;
-    try {
-      const body = {
-        seriesId,
-        seriesTitle: props.seriesTitle ?? props.title ?? "",
-        kind,
-        season: curSeason,
-        episode: curEpisode,
-        profileHash,
-        estRuntimeMin,
-      };
-      const r = await fetch(`${VOD_BASE}/v1/session/ended`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) return;
-      const out = await r.json();
-      const next = String(out.streamUrl || "");
-      const delay = Number(out.autoplayIn) || 10;
-
-      if (next) {
-        const withCat = next.includes("?") ? `${next}&cat=${kind}` : `${next}?cat=${kind}`;
-        setSrc(withCat);
-        setCurEpisode(e => e + 1); // naive bump; backend already chose next pick
-        setTimeout(() => videoRef.current?.play().catch(()=>{}), delay * 1000);
-      }
-    } catch {}
+    await prepareNextEpisode();
   };
 
   // ---------- volume bind ----------
@@ -683,6 +760,12 @@ export default function VideoPlayer(props: Props) {
     }
   }, [info, playing, autoStartArmed]);
 
+  const isSeriesPlayback = kind !== "movie" && !!seriesId;
+  const seriesTitleDisplay = props.seriesTitle || props.title;
+  const episodeBadge = isSeriesPlayback ? `S${String(curSeason).padStart(2, "0")}E${String(curEpisode).padStart(2, "0")}` : null;
+  const nextEpisodeBadge = nextUp ? `S${String(nextUp.season).padStart(2, "0")}E${String(nextUp.episode).padStart(2, "0")}` : null;
+  const showNextOverlay = Boolean(isSeriesPlayback && (nextUp || nextError));
+
   // ---------- UI ----------
   return (
     <div
@@ -697,9 +780,16 @@ export default function VideoPlayer(props: Props) {
                     p-4 flex items-center justify-between transition-opacity duration-300
                     ${uiVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
       >
-        <div className="text-white/95 drop-shadow">
+        <div className="text-white/95 drop-shadow space-y-1">
+          {seriesTitleDisplay && (
+            <div className="text-[11px] uppercase tracking-[0.4em] text-white/70">{seriesTitleDisplay}</div>
+          )}
           <div className="text-lg font-semibold">{props.title}</div>
-          {props.year ? <div className="text-xs opacity-70">{props.year}</div> : null}
+          {episodeBadge ? (
+            <div className="text-xs text-white/75">{episodeBadge}</div>
+          ) : props.year ? (
+            <div className="text-xs text-white/75">{props.year}</div>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="icon" onClick={toggleFullscreen} className="rounded-xl">
@@ -781,9 +871,52 @@ export default function VideoPlayer(props: Props) {
                   Open stream URL
                 </a>
               ) : null}
-              {/* keep your VLC helper if you want */}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {showNextOverlay ? (
+        <div className="absolute bottom-24 right-6 z-30 w-80 space-y-2 rounded-2xl border border-white/15 bg-black/75 p-4 shadow-2xl">
+          {nextError ? (
+            <>
+              <p className="text-xs uppercase tracking-[0.2em] text-rose-200">Next episode unavailable</p>
+              <p className="text-xs text-slate-200">{nextError}</p>
+              <Button
+                size="sm"
+                className="rounded-full bg-white/80 px-4 py-1.5 text-black hover:bg-white"
+                onClick={() => prepareNextEpisode()}
+              >
+                Retry
+              </Button>
+            </>
+          ) : nextUp ? (
+            <>
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Up next</p>
+              <div className="text-sm font-semibold text-white">{nextUp.title || seriesTitleDisplay}</div>
+              {nextEpisodeBadge ? <div className="text-xs text-slate-300">{nextEpisodeBadge}</div> : null}
+              <p className="text-xs text-slate-400">
+                {autoplayNext ? `Autoplaying in ${nextUp.countdown}s` : "Autoplay paused"}
+              </p>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm"
+                  className="rounded-full bg-white px-4 py-1.5 text-black hover:bg-white/90"
+                  onClick={() => beginNextEpisode(nextUp)}
+                >
+                  Play next
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="rounded-full border border-white/20 px-3 py-1 text-white hover:bg-white/10"
+                  onClick={() => setAutoplayNext((prev) => !prev)}
+                >
+                  {autoplayNext ? "Cancel" : "Autoplay"}
+                </Button>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : null}
 

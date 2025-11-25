@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import PosterCard from "./poster-card";
 import type { MovieCard } from "@/lib/types";
 
@@ -25,7 +25,7 @@ export default function MovieGrid({
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-4 sm:gap-5 md:gap-6">
         {items.map((m) => (
           <PosterCard key={m.id} movie={m} onOpen={onOpen} onPrefetch={onPrefetch} />
         ))}
