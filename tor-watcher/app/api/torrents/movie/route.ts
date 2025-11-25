@@ -9,6 +9,8 @@ const MOVIE_CATS = "2000,2040,2045,2050,2080";
 const INDEXER_MATCHES = [
   /eztv/i,
   /kickass/i,
+  /eztv/i,
+  /kickass/i,
   /limetorrents/i,
   /magnetdownload/i,
   /nyaa/i,
