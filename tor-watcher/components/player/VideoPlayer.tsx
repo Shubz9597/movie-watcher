@@ -61,9 +61,10 @@ function getDeviceId(): string {
   const KEY = "mw_device_id";
   const existing = localStorage.getItem(KEY);
   if (existing && existing !== "null" && existing !== "undefined") return existing;
-  const newId =
-    (crypto as any)?.randomUUID?.() ??
-    (Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const canUseUUID = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function";
+  const newId = canUseUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
   localStorage.setItem(KEY, newId);
   return newId;
 }
@@ -75,7 +76,7 @@ async function computeProfileHash(): Promise<string> {
     ['video/mp4; codecs="av01.0.05M.08"', "av1"],
   ] as const;
   const supported = tests
-    .filter(([mime]) => (window as any).MediaSource?.isTypeSupported?.(mime))
+    .filter(([mime]) => typeof window !== "undefined" && "MediaSource" in window && typeof (window.MediaSource as { isTypeSupported?: (type: string) => boolean }).isTypeSupported === "function" && (window.MediaSource as { isTypeSupported: (type: string) => boolean }).isTypeSupported(mime))
     .map(([, k]) => k)
     .sort()
     .join(",");
@@ -140,7 +141,15 @@ export function useBufferInfo(opts: {
     qs.set("cat", cat);
     if (fileIndex != null) qs.set("fileIndex", String(fileIndex));
 
-    const apply = (j: any) => {
+    type BufInfoPayload = {
+      targetBytes?: number;
+      contiguousAhead?: number;
+      rollingBps?: number | null;
+      targetAheadSec?: number | null;
+      playheadBytes?: number | null;
+      fileLength?: number | null;
+    };
+    const apply = (j: BufInfoPayload | null | undefined) => {
       if (aborted || !j) return;
       setInfo({
         targetBytes: Number(j.targetBytes ?? 0),
@@ -324,6 +333,21 @@ export default function VideoPlayer(props: Props) {
     setAutoStartArmed(true);
   }, [props.magnet, props.fileIndex, kind]);
 
+  const beginNextEpisode = useCallback((entry?: NextEpisodeState | null) => {
+    const target = entry ?? nextUp;
+    if (!target) return;
+    const nextUrl = withCat(target.streamUrl);
+    if (!nextUrl) return;
+    setSrc(nextUrl);
+    setCurSeason(target.season);
+    setCurEpisode(target.episode);
+    setNextUp(null);
+    setNextError(null);
+    setAutoplayNext(true);
+    setAutoStartArmed(true);
+    setTimeout(() => videoRef.current?.play().catch(() => {}), 300);
+  }, [nextUp, withCat]);
+
   useEffect(() => {
     if (!nextUp || !autoplayNext) return;
     if (nextUp.countdown <= 0) {
@@ -352,12 +376,11 @@ export default function VideoPlayer(props: Props) {
   // ---------- subtitles (unchanged: using your Next API) ----------
   useEffect(() => { setActiveSub(""); setSubs([]); }, [props.imdbId, props.magnet]);
 
-  const preferLangsKey = useMemo(
-    () => (Array.isArray(props.preferLangs) && props.preferLangs.length
+  const preferLangsKey = useMemo(() => {
+    return Array.isArray(props.preferLangs) && props.preferLangs.length
       ? props.preferLangs.join(",")
-      : DEFAULT_PREF_LANGS.join(",")),
-    [Array.isArray(props.preferLangs) ? props.preferLangs.join(",") : ""]
-  );
+      : DEFAULT_PREF_LANGS.join(",");
+  }, [props.preferLangs]);
   const preferLangsArr = useMemo(() => preferLangsKey.split(","), [preferLangsKey]);
   const subsCacheRef = useRef<Map<string, Subtrack[]>>(new Map());
 
@@ -400,12 +423,12 @@ export default function VideoPlayer(props: Props) {
   const resolvedActiveSub = activeSub;
 
   // ---------- auto-hide controls ----------
-  const showUI = () => {
+  const showUI = useCallback(() => {
     setUiVisible(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     if (playing) hideTimer.current = setTimeout(() => setUiVisible(false), 2500);
-  };
-  useEffect(() => { showUI(); /* eslint-disable-next-line */ }, [playing]);
+  }, [playing]);
+  useEffect(() => { showUI(); }, [showUI]);
 
   // ---------- watch lease ----------
   useEffect(() => {
@@ -430,14 +453,14 @@ export default function VideoPlayer(props: Props) {
           fetch(`${WATCH_BASE}/ping?leaseId=${encodeURIComponent(lid)}`, { method: "POST", keepalive: true })
             .catch(() => {});
         }, 10_000);
-        (window as any).__watchPing = id;
+        (window as unknown as Record<string, NodeJS.Timeout | null>).__watchPing = id;
       } catch {}
     })();
 
     return () => {
       stopped = true;
-      const ping = (window as any).__watchPing;
-      if (ping) { clearInterval(ping); (window as any).__watchPing = null; }
+      const ping = (window as unknown as Record<string, NodeJS.Timeout | null>).__watchPing;
+      if (ping) { clearInterval(ping); (window as unknown as Record<string, NodeJS.Timeout | null>).__watchPing = null; }
       const lid = leaseRef.current;
       if (lid) {
         const data = new Blob([`leaseId=${lid}`], { type: "text/plain" });
@@ -447,6 +470,16 @@ export default function VideoPlayer(props: Props) {
   }, [props.magnet, props.fileIndex, kind]);
 
   // ---------- keyboard ----------
+  const seekBy = useCallback((sec: number) => {
+    const v = videoRef.current; if (!v) return;
+    const d = duration || v.duration || 0;
+    v.currentTime = Math.min(Math.max(0, v.currentTime + sec), d);
+    setTime(v.currentTime);
+    setTapHint(sec > 0 ? "right" : "left");
+    setTimeout(() => setTapHint(null), 300);
+    showUI();
+  }, [duration, showUI]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const v = videoRef.current; if (!v) return;
@@ -464,22 +497,7 @@ export default function VideoPlayer(props: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [volume]);
-
-  const beginNextEpisode = useCallback((entry?: NextEpisodeState | null) => {
-    const target = entry ?? nextUp;
-    if (!target) return;
-    const nextUrl = withCat(target.streamUrl);
-    if (!nextUrl) return;
-    setSrc(nextUrl);
-    setCurSeason(target.season);
-    setCurEpisode(target.episode);
-    setNextUp(null);
-    setNextError(null);
-    setAutoplayNext(true);
-    setAutoStartArmed(true);
-    setTimeout(() => videoRef.current?.play().catch(() => {}), 300);
-  }, [nextUp, withCat]);
+  }, [volume, seekBy]);
 
   const prepareNextEpisode = useCallback(async () => {
     if (!seriesId || kind === "movie") return;
@@ -530,15 +548,6 @@ export default function VideoPlayer(props: Props) {
     const v = videoRef.current; if (!v) return;
     if (v.paused) { v.play(); setPlaying(true); }
     else { v.pause(); setPlaying(false); }
-  };
-  const seekBy = (sec: number) => {
-    const v = videoRef.current; if (!v) return;
-    const d = duration || v.duration || 0;
-    v.currentTime = Math.min(Math.max(0, v.currentTime + sec), d);
-    setTime(v.currentTime);
-    setTapHint(sec > 0 ? "right" : "left");
-    setTimeout(() => setTapHint(null), 300);
-    showUI();
   };
   const toggleFullscreen = async () => {
     const el = containerRef.current; if (!el) return;

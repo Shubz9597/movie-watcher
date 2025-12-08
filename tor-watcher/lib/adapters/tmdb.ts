@@ -37,7 +37,7 @@ export function mapTmdbMovieToCard(m: TmdbMovie): MovieCard {
     originalLanguage: m.original_language,
     // topCast: [] // only if you choose to include it later
     tmdbRatingPct: typeof m.vote_average === "number" ? Math.round(m.vote_average * 10) : undefined,
-    tmdbPopularity: typeof (m as any).popularity === "number" ? (m as any).popularity : undefined,
+    tmdbPopularity: typeof (m as TmdbMovie & { popularity?: number }).popularity === "number" ? (m as TmdbMovie & { popularity?: number }).popularity : undefined,
   };
 }
 

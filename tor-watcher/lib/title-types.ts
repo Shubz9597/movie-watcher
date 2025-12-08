@@ -13,6 +13,7 @@ export type EpisodeSummary = {
   stillUrl?: string | null;
   episodeNumber: number;
   seasonNumber: number;
+  absoluteNumber?: number;
   airDate?: string | null;
   runtime?: number | null;
 };

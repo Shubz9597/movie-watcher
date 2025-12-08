@@ -21,7 +21,8 @@ function isProwlarrDownload(s?: string | null) {
 
 /** Accepts magnet/src/infoHash. Converts /download -> magnet; infoHash -> magnet. */
 export async function normalizeSrc(input: { magnet?: string | null; src?: string | null; infoHash?: string | null }): Promise<string | null> {
-  let { magnet, src, infoHash } = input;
+  let { magnet, src } = input;
+  const { infoHash } = input;
 
   // Some callers pass Prowlarr /download under *magnet* by mistake -> fix it
   if (isHttp(magnet) && isProwlarrDownload(magnet)) magnet = await resolveProwlarrDownload(magnet!) || magnet!;
@@ -35,10 +36,10 @@ export async function normalizeSrc(input: { magnet?: string | null; src?: string
 
 /** Wait until metadata/files appear, with timeout; throw on timeout */
 export async function waitForMetadata(t: Torrent, timeoutMs = 15000): Promise<void> {
-  if ((t as any).metadata || (Array.isArray(t.files) && t.files)) return;
+  if ((t as Torrent & { metadata?: unknown }).metadata || (Array.isArray(t.files) && t.files)) return;
   await new Promise<void>((resolve, reject) => {
     const onMeta = () => { cleanup(); resolve(); };
-    const onErr  = (e: any) => { cleanup(); reject(e); };
+    const onErr  = (e: Error) => { cleanup(); reject(e); };
     const onTO   = () => { cleanup(); reject(new Error("metadata timeout")); };
     const to = setTimeout(onTO, timeoutMs);
     const cleanup = () => { clearTimeout(to); t.off("metadata", onMeta); t.off("error", onErr); };

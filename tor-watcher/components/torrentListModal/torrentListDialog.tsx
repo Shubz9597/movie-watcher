@@ -13,9 +13,16 @@ export type TorrentRow = {
   leechers?: number;
   magnetUri?: string;
   torrentUrl?: string;
+  downloadUrl?: string;
   infoHash?: string;
   indexer: string;
   publishDate?: string;
+  episodeMatch?: boolean;
+  seasonPack?: {
+    season?: number | null;
+    reason?: string | null;
+    keywords?: string[];
+  } | null;
 };
 
 // ---- prefetch types & helpers ----
@@ -178,7 +185,8 @@ export default function TorrentListDialog({
     } catch {
       // clear on failure
       setPrefetchMap((m) => {
-        const { [k]: _, ...rest } = m;
+        const { [k]: _unused, ...rest } = m;
+        void _unused; // suppress unused warning
         return rest;
       });
     } finally {

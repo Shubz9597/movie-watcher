@@ -27,6 +27,10 @@ type TitlePayload = {
   initialSeason?: number;
   initialEpisodes?: EpisodeSummary[];
   seasonApiBase?: string | null;
+  /** True if this is an anime movie (not a TV series) */
+  isAnimeMovie?: boolean;
+  /** Anime type from Jikan: "Movie", "TV", "OVA", "ONA", "Special", "Music" */
+  animeType?: string | null;
 };
 
 const TMDB_IMG = (path?: string | null, size: "w342" | "w500" | "w1280" = "w500") =>
@@ -44,13 +48,14 @@ type SeasonBlock = {
 type NetworkBlock = { name?: string | null };
 
 type TmdbMovieExtras = {
+  id: number;
   tagline?: string | null;
   release_date?: string | null;
   status?: string | null;
   credits?: CreditsBlock;
 };
 
-type TmdbTvExtras = TmdbMovieExtras & {
+type TmdbTvExtras = Omit<TmdbMovieExtras, 'release_date'> & {
   seasons?: SeasonBlock[];
   networks?: NetworkBlock[];
   first_air_date?: string | null;
@@ -73,10 +78,12 @@ type SeasonResponse = {
 };
 
 type JikanAnimeDetail = {
+  type?: string | null; // "Movie", "TV", "OVA", "ONA", "Special", "Music"
   theme?: { openings?: string[] };
   aired?: { from?: string | null };
   status?: string | null;
   episodes?: number | null;
+  duration?: string | null; // e.g., "1 hr 46 min" for movies
   images?: { jpg?: { image_url?: string | null } };
 };
 
@@ -217,13 +224,53 @@ async function fetchTvSeasonEpisodes(id: number, seasonNumber: number): Promise<
   }
 }
 
+// Parse Jikan duration string like "1 hr 46 min" or "24 min per ep" to minutes
+function parseJikanDuration(duration?: string | null): number | null {
+  if (!duration) return null;
+  const hourMatch = duration.match(/(\d+)\s*hr/i);
+  const minMatch = duration.match(/(\d+)\s*min/i);
+  let total = 0;
+  if (hourMatch) total += parseInt(hourMatch[1], 10) * 60;
+  if (minMatch) total += parseInt(minMatch[1], 10);
+  return total > 0 ? total : null;
+}
+
 async function fetchAnime(id: number): Promise<TitlePayload> {
   const detailRes = await fetch(`https://api.jikan.moe/v4/anime/${id}/full`, { next: { revalidate: 300 } });
   if (!detailRes.ok) throw new Error("Anime detail failed");
   const detailJson: JikanDetailResponse = await detailRes.json();
   const detail = detailFromJikan(detailJson.data);
-  const episodes = await fetchAnimeEpisodes(id);
+  
+  // Determine if this anime is a movie
+  const animeType = detailJson.data?.type ?? null;
+  const isAnimeMovie = animeType === "Movie";
+  
+  // Parse runtime for movies from Jikan duration field
+  const runtime = parseJikanDuration(detailJson.data?.duration);
+  
+  // Only fetch episodes for non-movie anime
+  const episodes = isAnimeMovie ? [] : await fetchAnimeEpisodes(id);
 
+  // For movies, we don't show seasons/episodes
+  if (isAnimeMovie) {
+    return {
+      kind: "anime",
+      detail: {
+        ...detail,
+        runtime, // Add movie runtime
+        tagline: detailJson.data?.theme?.openings?.[0] ?? null,
+        releaseDate: detailJson.data?.aired?.from ?? null,
+        status: detailJson.data?.status ?? null,
+        totalEpisodes: null,
+        directors: [],
+        writers: [],
+      },
+      isAnimeMovie: true,
+      animeType,
+    };
+  }
+
+  // For TV/OVA/ONA/Special - show episode list
   return {
     kind: "anime",
     detail: {
@@ -238,7 +285,7 @@ async function fetchAnime(id: number): Promise<TitlePayload> {
     seasons: [
       {
         seasonNumber: 1,
-        name: "Season 1",
+        name: animeType === "OVA" ? "OVA" : animeType === "ONA" ? "ONA" : "Season 1",
         episodeCount: detailJson.data?.episodes ?? episodes.length,
         airDate: detailJson.data?.aired?.from ?? null,
         posterUrl: detail.posterUrl ?? null,
@@ -247,6 +294,8 @@ async function fetchAnime(id: number): Promise<TitlePayload> {
     initialSeason: 1,
     initialEpisodes: episodes,
     seasonApiBase: null,
+    isAnimeMovie: false,
+    animeType,
   };
 }
 
@@ -257,16 +306,20 @@ async function fetchAnimeEpisodes(id: number): Promise<EpisodeSummary[]> {
     const json: JikanEpisodesPayload = await res.json();
     return Array.isArray(json?.data)
       ? json.data.map(
-          (ep, idx): EpisodeSummary => ({
-            id: ep.mal_id,
-            name: ep.title || `Episode ${ep.mal_id}`,
-            overview: ep.synopsis || ep.discussion_url || "",
-            stillUrl: ep.images?.jpg?.image_url || null,
-            episodeNumber: typeof ep.mal_id === "number" ? ep.mal_id : idx + 1,
-            seasonNumber: 1,
-            airDate: ep.aired,
-            runtime: ep.duration || null,
-          })
+          (ep, idx): EpisodeSummary => {
+            const absoluteNumber = idx + 1;
+            return {
+              id: ep.mal_id,
+              name: ep.title || `Episode ${absoluteNumber}`,
+              overview: ep.synopsis || ep.discussion_url || "",
+              stillUrl: ep.images?.jpg?.image_url || null,
+              episodeNumber: absoluteNumber,
+              absoluteNumber,
+              seasonNumber: 1,
+              airDate: ep.aired,
+              runtime: ep.duration || null,
+            };
+          }
         )
       : [];
   } catch {
@@ -278,7 +331,8 @@ function extractCrew(crew: CrewMember[] | undefined | null, jobs: string[]): str
   if (!Array.isArray(crew)) return [];
   const set = new Set<string>();
   for (const member of crew) {
-    if (jobs.includes(member?.job) && member?.name) {
+    const job = member?.job;
+    if (job && jobs.includes(job) && member?.name) {
       set.add(member.name);
     }
   }
@@ -355,7 +409,13 @@ export default async function TitlePage({
           </Link>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-200">
             <span className="rounded-full bg-black/40 px-3 py-1 uppercase tracking-wide backdrop-blur">
-              {payload.kind === "tv" ? "Series" : payload.kind === "anime" ? "Anime" : "Movie"}
+              {payload.kind === "tv" 
+                ? "Series" 
+                : payload.kind === "anime" 
+                  ? payload.isAnimeMovie 
+                    ? "Anime Movie" 
+                    : `Anime ${payload.animeType === "OVA" ? "OVA" : payload.animeType === "ONA" ? "ONA" : "Series"}`
+                  : "Movie"}
             </span>
             {detail.year ? (
               <span className="rounded-full bg-black/40 px-3 py-1 backdrop-blur">{detail.year}</span>
@@ -485,17 +545,23 @@ export default async function TitlePage({
           </div>
 
           <div className="space-y-4">
-            {payload.kind === "movie" ? (
+            {/* Show TorrentPanel for movies OR anime movies */}
+            {payload.kind === "movie" || payload.isAnimeMovie ? (
               <TorrentPanel
                 title={detail.title}
                 year={detail.year}
                 imdbId={detail.imdbId}
                 originalLanguage={detail.originalLanguage}
+                kind={payload.isAnimeMovie ? "anime" : "movie"}
+                malId={payload.isAnimeMovie ? id : undefined}
+                tmdbId={payload.kind === "movie" ? id : undefined}
+                titleAliases={detail.altTitles}
               />
             ) : (
               <EpisodePanel
                 kind={payload.kind === "anime" ? "anime" : "tv"}
                 title={detail.title}
+                titleAliases={detail.altTitles}
                 imdbId={detail.imdbId}
                 year={detail.year}
                 originalLanguage={detail.originalLanguage}
@@ -505,6 +571,8 @@ export default async function TitlePage({
                 initialSeason={payload.initialSeason ?? 1}
                 initialEpisodes={payload.initialEpisodes ?? []}
                 seasonApiBase={payload.seasonApiBase}
+                tmdbId={payload.kind === "tv" ? id : undefined}
+                malId={payload.kind === "anime" ? id : undefined}
               />
             )}
           </div>

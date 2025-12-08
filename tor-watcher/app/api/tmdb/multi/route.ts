@@ -5,16 +5,30 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY!;
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMG_BASE = "https://image.tmdb.org/t/p/w185"; // tiny thumbs for search
 
+type TmdbItem = {
+  id: number;
+  media_type: "movie" | "tv" | "person";
+  title?: string;
+  name?: string;
+  release_date?: string;
+  first_air_date?: string;
+  vote_average?: number;
+  poster_path?: string | null;
+  profile_path?: string | null;
+  genre_ids?: number[];
+  known_for?: Array<{ title?: string; name?: string }>;
+};
+
 // Normalize TMDb item to a compact shape
-function toBasic(item: any) {
-  const media = item.media_type as "movie" | "tv" | "person";
+function toBasic(item: TmdbItem) {
+  const media = item.media_type;
   if (media === "person") {
     return {
       id: item.id,
       name: item.name ?? "",
       posterUrl: item.profile_path ? `${IMG_BASE}${item.profile_path}` : null,
       known_for: (item.known_for ?? [])
-        .map((k: any) => k.title || k.name)
+        .map((k) => k.title || k.name)
         .filter(Boolean)
         .slice(0, 3),
     };
@@ -72,8 +86,9 @@ export async function GET(req: Request) {
     const data = await res.json();
 
     // Split into groups and trim
-    const grouped = { movie: [] as any[], tv: [] as any[], person: [] as any[] };
-    for (const item of data.results ?? []) {
+    type BasicItem = ReturnType<typeof toBasic>;
+    const grouped = { movie: [] as BasicItem[], tv: [] as BasicItem[], person: [] as BasicItem[] };
+    for (const item of (data.results ?? []) as TmdbItem[]) {
       if (item.media_type === "movie") grouped.movie.push(toBasic(item));
       else if (item.media_type === "tv") grouped.tv.push(toBasic(item));
       else if (item.media_type === "person") grouped.person.push(toBasic(item));
@@ -90,10 +105,11 @@ export async function GET(req: Request) {
         "Vercel-CDN-Cache-Control": "public, max-age=60",
       },
     });
-  } catch (e: any) {
-    const aborted = e?.name === "AbortError";
+  } catch (e: unknown) {
+    const aborted = e instanceof Error && e.name === "AbortError";
+    const message = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json(
-      { error: aborted ? "Upstream timeout" : e?.message || "Unknown error" },
+      { error: aborted ? "Upstream timeout" : message },
       { status: 500 }
     );
   }

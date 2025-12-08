@@ -1,26 +1,47 @@
 import { NextResponse } from "next/server";
-import { XMLParser } from "fast-xml-parser";
 import { tmdb } from "@/lib/services/tmbd-service";
+import {
+  matchesEpisode,
+  detectSeasonPack,
+  type SeasonPackDetection,
+} from "@/lib/anime-matching";
 
-const PROWLARR_URL = process.env.PROWLARR_URL!;
-const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY!;
+const PROWLARR_URL = process.env.PROWLARR_URL ?? "";
+const PROWLARR_API_KEY = process.env.PROWLARR_API_KEY ?? "";
+const PROWLARR_ORIGIN = PROWLARR_URL ? new URL(PROWLARR_URL).origin : "";
 
-const TV_CATS = "5000,5010,5020,5030,5040,5050,5060,5070,5080";
+// TV categories for Prowlarr search
+const TV_CATS = [5000, 5010, 5020, 5030, 5040, 5050, 5060, 5070, 5080];
 
-const INDEXER_MATCHES = [/torrentgalaxy/i, /rarbg/i, /eztv/i];
-
-const PROWLARR_ORIGIN = new URL(PROWLARR_URL).origin;
 const MAGNET_RX = /magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}[^"' \r\n]*/i;
 const isDev = process.env.NODE_ENV !== "production";
+
+/* ---------- Prowlarr Native Search Response Types ---------- */
+
+interface ProwlarrRelease {
+  guid: string;
+  indexerId: number;
+  indexer: string;
+  title: string;
+  sortTitle?: string;
+  size: number;
+  publishDate?: string;
+  downloadUrl?: string;
+  magnetUrl?: string;
+  infoHash?: string;
+  seeders?: number;
+  leechers?: number;
+  protocol: "torrent" | "usenet";
+  categories?: { id: number; name: string }[];
+  indexerFlags?: string[];
+}
+
+/* ---------- Helper Functions ---------- */
 
 function cleanImdbId(input?: string | null): string | null {
   if (!input) return null;
   const m = String(input).match(/(\d{6,8})$/);
   return m ? m[1] : null;
-}
-
-function isMagnet(u?: string | null): boolean {
-  return !!u && u.startsWith("magnet:");
 }
 
 function extractInfoHash(magnet?: string | null): string | undefined {
@@ -30,7 +51,7 @@ function extractInfoHash(magnet?: string | null): string | undefined {
 }
 
 function isProwlarrDownloadUrl(u?: string | null): boolean {
-  if (!u) return false;
+  if (!u || !PROWLARR_URL || !PROWLARR_ORIGIN) return false;
   try {
     const x = new URL(u, PROWLARR_URL);
     return x.origin === PROWLARR_ORIGIN && /\/download\b/i.test(x.pathname);
@@ -44,13 +65,21 @@ function isHttpUrl(u?: string | null): u is string {
   return /^https?:\/\//i.test(u);
 }
 
-async function resolveDownloadToMagnet(url: string, timeoutMs = 8000, maxHops = 5): Promise<string | undefined> {
+async function resolveDownloadToMagnet(
+  url: string,
+  timeoutMs = 8000,
+  maxHops = 5
+): Promise<string | undefined> {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     let current = url;
     for (let hop = 0; hop < maxHops; hop++) {
-      const res = await fetch(current, { redirect: "manual", cache: "no-store", signal: ctrl.signal });
+      const res = await fetch(current, {
+        redirect: "manual",
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
       const loc = res.headers.get("location");
       if (loc?.startsWith("magnet:")) return loc;
       if (loc) {
@@ -62,6 +91,7 @@ async function resolveDownloadToMagnet(url: string, timeoutMs = 8000, maxHops = 
             continue;
           }
         } catch {
+          // invalid redirect target
         }
       }
 
@@ -82,21 +112,31 @@ async function resolveDownloadToMagnet(url: string, timeoutMs = 8000, maxHops = 
 
 function magnetFromHash(infoHash?: string, title?: string) {
   if (!infoHash) return undefined;
-  const dn = title ? &dn= : "";
+  const dn = title ? `&dn=${encodeURIComponent(title)}` : "";
   const trackers = [
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.stealth.si:80/announce",
-  ].map((t) => &tr=).join("");
-  return magnet:?xt=urn:btih:;
+  ]
+    .map((t) => `&tr=${encodeURIComponent(t)}`)
+    .join("");
+  return `magnet:?xt=urn:btih:${infoHash.toUpperCase()}${dn}${trackers}`;
 }
 
-async function fetchTitleFromImdb(imdbDigits: string): Promise<{ title?: string; year?: string } | undefined> {
-  const imdbId = 	t;
+async function fetchTitleFromImdb(
+  imdbDigits: string
+): Promise<{ title?: string; year?: string } | undefined> {
+  const imdbId = `tt${imdbDigits}`;
   type FindResponse = {
-    tv_results?: Array<{ name?: string; original_name?: string; first_air_date?: string | null }>;
+    tv_results?: Array<{
+      name?: string;
+      original_name?: string;
+      first_air_date?: string | null;
+    }>;
   };
   try {
-    const data = await tmdb<FindResponse>(/find/?external_source=imdb_id);
+    const data = await tmdb<FindResponse>(
+      `/find/${imdbId}?external_source=imdb_id`
+    );
     const match = data.tv_results?.[0];
     if (!match) return undefined;
     const title = match.name || match.original_name || undefined;
@@ -104,13 +144,9 @@ async function fetchTitleFromImdb(imdbDigits: string): Promise<{ title?: string;
     if (!title) return undefined;
     return { title, year };
   } catch (err) {
-    if (isDev) console.warn([tv-torrents] tmdb lookup failed for , err);
+    if (isDev) console.warn(`[tv-torrents] tmdb lookup failed for ${imdbId}`, err);
     return undefined;
   }
-}
-
-function pad(num: number, len = 2) {
-  return String(num).padStart(len, "0");
 }
 
 function toNumber(value?: string | null): number | undefined {
@@ -119,25 +155,13 @@ function toNumber(value?: string | null): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-function buildEpisodeQueries(title: string, season?: number, episode?: number, year?: string | null): string[] {
-  const queries = new Set<string>();
-  const base = title.trim();
-  if (base) queries.add(base);
-  if (year) queries.add(${base} );
+/* ---------- Normalized Result Type ---------- */
 
-  if (season != null && episode != null) {
-    const s = pad(season);
-    const e = pad(episode);
-    queries.add(${base} SE);
-    queries.add(${base} x);
-  }
-
-  if (season != null) {
-    queries.add(${base} Season );
-  }
-
-  return [...queries];
-}
+type SeasonPackMeta = {
+  season?: number | null;
+  reason?: string | null;
+  keywords?: string[];
+};
 
 type Normalized = {
   title: string;
@@ -147,86 +171,95 @@ type Normalized = {
   leechers?: number;
   magnetUri?: string;
   torrentUrl?: string;
+  downloadUrl?: string;
   infoHash?: string;
   publishDate?: string;
+  episodeMatch?: boolean;
+  seasonPack?: SeasonPackMeta;
 };
 
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  allowBooleanAttributes: true,
-});
+/* ---------- Prowlarr Native Search ---------- */
 
-function parseTorznab(xmlText: string, indexerName: string): Normalized[] {
-  const doc = parser.parse(xmlText);
-  const items = doc?.rss?.channel?.item
-    ? Array.isArray(doc.rss.channel.item)
-      ? doc.rss.channel.item
-      : [doc.rss.channel.item]
-    : [];
-
-  return items.map((it: any) => {
-    const title: string = it.title ?? "";
-    const pubDate: string | undefined = it.pubDate;
-
-    const enclosureUrl: string | undefined = it?.enclosure?.["@_url"];
-    const enclosureType: string | undefined = it?.enclosure?.["@_type"];
-
-    const guidVal: string | undefined =
-      typeof it.guid === "object" ? it.guid["#text"] : it.guid;
-    const linkVal: string | undefined = it.link;
-
-    const attrs = it["torznab:attr"]
-      ? Array.isArray(it["torznab:attr"])
-        ? it["torznab:attr"]
-        : [it["torznab:attr"]]
-      : [];
-
-    const attrMap = new Map<string, string>();
-    for (const a of attrs) {
-      if (a?.["@_name"]) attrMap.set(a["@_name"], a["@_value"]);
-    }
-
-    const size = Number(it.size) || Number(attrMap.get("size")) || undefined;
-
-    const seeders = Number(attrMap.get("seeders")) || undefined;
-    const peers = Number(attrMap.get("peers")) || undefined;
-    const leechers =
-      typeof peers === "number" && typeof seeders === "number"
-        ? Math.max(peers - seeders, 0)
-        : Number(attrMap.get("leechers")) || undefined;
-
-    const magnetFromEnclosure =
-      enclosureType?.includes("x-scheme-handler/magnet") && enclosureUrl
-        ? enclosureUrl
-        : undefined;
-    const magnetFromGuid = isMagnet(guidVal) ? guidVal : undefined;
-    const magnetFromLink = isMagnet(linkVal) ? linkVal : undefined;
-    const magnetUri = magnetFromEnclosure || magnetFromGuid || magnetFromLink;
-
-    const torrentUrl =
-      enclosureType?.startsWith("application/x-bittorrent") && enclosureUrl
-        ? enclosureUrl
-        : linkVal?.endsWith(".torrent")
-          ? linkVal
-          : undefined;
-
-    const infoHash =
-      attrMap.get("infohash")?.toUpperCase() || extractInfoHash(magnetUri);
-
-    return {
-      title,
-      indexer: indexerName,
-      size,
-      seeders,
-      leechers,
-      magnetUri,
-      torrentUrl,
-      infoHash,
-      publishDate: pubDate,
-    } as Normalized;
-  });
+interface ProwlarrSearchOpts {
+  query: string;
+  season?: number;
+  episode?: number;
+  imdbId?: string;
+  tvdbId?: number;
 }
+
+async function searchProwlarrNative(opts: ProwlarrSearchOpts): Promise<ProwlarrRelease[]> {
+  const url = new URL(`${PROWLARR_URL}/api/v1/search`);
+  url.searchParams.set("query", opts.query);
+  url.searchParams.set("type", "tvsearch");
+  
+  // Pass season/episode for indexers that support episode-level searches
+  if (opts.season != null) {
+    url.searchParams.set("season", String(opts.season));
+  }
+  if (opts.episode != null) {
+    url.searchParams.set("episode", String(opts.episode));
+  }
+  
+  // Pass IDs for better show matching (reduces ambiguity)
+  if (opts.imdbId) {
+    url.searchParams.set("imdbId", opts.imdbId);
+  }
+  if (opts.tvdbId != null && !Number.isNaN(opts.tvdbId)) {
+    url.searchParams.set("tvdbId", String(opts.tvdbId));
+  }
+  
+  for (const cat of TV_CATS) {
+    url.searchParams.append("categories", String(cat));
+  }
+  url.searchParams.set("limit", "100");
+
+  if (isDev) {
+    console.debug(`[tv-torrents] Prowlarr URL: ${url.toString().replace(PROWLARR_API_KEY, "***")}`);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "X-Api-Key": PROWLARR_API_KEY,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Prowlarr search failed: ${res.status} ${text}`);
+  }
+
+  const releases = (await res.json()) as ProwlarrRelease[];
+  // Filter to torrents only
+  return releases.filter((r) => r.protocol === "torrent");
+}
+
+function transformProwlarrRelease(release: ProwlarrRelease): Normalized {
+  const magnetUri = release.magnetUrl ?? undefined;
+  const infoHash = release.infoHash?.toUpperCase() ?? extractInfoHash(magnetUri);
+  const downloadUrl = isProwlarrDownloadUrl(release.downloadUrl)
+    ? release.downloadUrl
+    : undefined;
+
+  return {
+    title: release.title,
+    indexer: release.indexer,
+    size: release.size,
+    seeders: release.seeders ?? 0,
+    leechers: release.leechers ?? 0,
+    magnetUri,
+    torrentUrl: release.downloadUrl?.endsWith(".torrent")
+      ? release.downloadUrl
+      : undefined,
+    downloadUrl,
+    infoHash,
+    publishDate: release.publishDate,
+  };
+}
+
+/* ---------- Ranking and Filtering ---------- */
 
 function qualityScore(title: string): number {
   const t = title.toLowerCase();
@@ -250,7 +283,7 @@ function dedupeByHash(items: Normalized[]): Normalized[] {
   for (const it of items) {
     const key =
       it.infoHash ||
-      ${it.title.toLowerCase().replace(/\s+/g, " ").trim()}|;
+      `${it.title.toLowerCase().replace(/\s+/g, " ").trim()}|${it.indexer}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(it);
@@ -258,49 +291,44 @@ function dedupeByHash(items: Normalized[]): Normalized[] {
   return out;
 }
 
-async function discoverTvIndexers(): Promise<{ id: number; name: string }[]> {
-  const res = await fetch(${PROWLARR_URL}/api/v1/indexer?apikey=, {
-    next: { revalidate: 0 },
-  });
-  if (!res.ok) throw new Error(Indexer list failed: );
-  const list = (await res.json()) as Array<{ id: number; name: string; implementationName?: string; implementation?: string }>;
-  return list
-    .filter((idx) => {
-      const hay = ${idx.name}  ;
-      return INDEXER_MATCHES.some((rx) => rx.test(hay));
-    })
-    .map((i) => ({ id: i.id, name: i.name }));
+function normalizeForSeriesMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[_/.:-]+/g, " ")
+    .replace(/[^\p{Letter}\p{Number}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function buildTvQueryUrl(indexerId: number, query: string, season?: number, episode?: number) {
-  const url = new URL(${PROWLARR_URL}//api);
-  url.searchParams.set("t", "tvsearch");
-  url.searchParams.set("cat", TV_CATS);
-  url.searchParams.set("limit", "100");
-  url.searchParams.set("apikey", PROWLARR_API_KEY);
-  url.searchParams.set("q", query);
-  if (season != null) url.searchParams.set("season", String(season));
-  if (episode != null) url.searchParams.set("ep", String(episode));
-  return url.toString();
+function buildSeriesMatchers(variants: string[]): string[] {
+  const matchers: string[] = [];
+  const seen = new Set<string>();
+  for (const variant of variants) {
+    const norm = normalizeForSeriesMatch(variant);
+    if (norm.length < 2) continue;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    matchers.push(norm);
+  }
+  return matchers;
 }
 
-type Target = { id: number; name: string; query: string; url: string };
-
-async function fetchFeeds(targets: Target[]) {
-  return Promise.allSettled(
-    targets.map(async (t) => {
-      const res = await fetch(t.url, { next: { revalidate: 0 } });
-      if (!res.ok) throw new Error(${t.name} );
-      const xml = await res.text();
-      return { id: t.id, name: t.name, query: t.query, xml };
-    })
-  );
+function matchesSeries(title: string, matchers: string[]): boolean {
+  if (!matchers.length) return true;
+  const normTitle = normalizeForSeriesMatch(title);
+  if (!normTitle) return false;
+  return matchers.some((needle) => normTitle.includes(needle));
 }
+
+/* ---------- Main Handler ---------- */
 
 export async function GET(request: Request) {
   try {
     if (!PROWLARR_URL || !PROWLARR_API_KEY) {
-      return NextResponse.json({ error: "Prowlarr configuration is missing." }, { status: 500 });
+      return NextResponse.json(
+        { error: "Prowlarr configuration is missing." },
+        { status: 500 }
+      );
     }
 
     const { searchParams } = new URL(request.url);
@@ -309,11 +337,15 @@ export async function GET(request: Request) {
     const yearParam = searchParams.get("year");
     const seasonParam = searchParams.get("season");
     const episodeParam = searchParams.get("episode");
+    const aliasParams = searchParams
+      .getAll("alias")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const imdbDigits = cleanImdbId(imdbIdRaw);
     let queryTitle = titleParam?.trim() || undefined;
     let queryYear = yearParam?.trim() || undefined;
-    let querySource: "client" | "tmdb" | undefined = queryTitle ? "client" : undefined;
+    let querySource: "client" | "tmdb" = queryTitle ? "client" : "client";
 
     if (!queryTitle && imdbDigits) {
       const meta = await fetchTitleFromImdb(imdbDigits);
@@ -333,85 +365,148 @@ export async function GET(request: Request) {
 
     const seasonNum = toNumber(seasonParam);
     const episodeNum = toNumber(episodeParam);
-    const queryStrings = buildEpisodeQueries(queryTitle, seasonNum, episodeNum, queryYear);
-    if (queryStrings.length === 0) queryStrings.push(queryTitle);
+    const tvdbIdParam = searchParams.get("tvdbId");
+    const tvdbId = tvdbIdParam ? parseInt(tvdbIdParam, 10) : undefined;
 
-    const providers = await discoverTvIndexers();
-    if (providers.length === 0) {
-      return NextResponse.json({ results: [], note: "No TV indexers (TorrentGalaxy, RARBG, EZTV) are enabled in Prowlarr." });
-    }
+    const titleVariants = [queryTitle, ...aliasParams];
+    const seriesMatchers = buildSeriesMatchers(titleVariants);
 
-    const targets: Target[] = providers.flatMap((p) =>
-      queryStrings.map((q) => ({
-        id: p.id,
-        name: p.name,
-        query: q,
-        url: buildTvQueryUrl(p.id, q, seasonNum, episodeNum),
-      }))
-    );
+    // Build search query - just the title, optionally with year
+    const searchQuery = queryYear ? `${queryTitle} ${queryYear}` : queryTitle;
+
+    // Format IMDB ID properly (with tt prefix)
+    const imdbIdForSearch = imdbDigits ? `tt${imdbDigits}` : undefined;
 
     if (isDev) {
       console.debug(
-        [tv-torrents] providers= queries= title="" season= episode=
+        `[tv-torrents] Prowlarr native search: "${searchQuery}" season=${seasonNum ?? "-"} episode=${episodeNum ?? "-"} imdb=${imdbIdForSearch ?? "-"} tvdb=${tvdbId ?? "-"}`
       );
     }
 
-    const responses = await fetchFeeds(targets);
+    // Single request to Prowlarr native search API - searches ALL indexers at once
+    // Pass season/episode/IDs for indexers that support targeted searches
+    const prowlarrResults = await searchProwlarrNative({
+      query: searchQuery,
+      season: seasonNum,
+      episode: episodeNum,
+      imdbId: imdbIdForSearch,
+      tvdbId: tvdbId && !Number.isNaN(tvdbId) ? tvdbId : undefined,
+    });
 
-    const all: Normalized[] = [];
-    for (const r of responses) {
-      if (r.status !== "fulfilled") continue;
-      const { name, xml } = r.value;
-      all.push(...parseTorznab(xml, name));
+    if (isDev) {
+      console.debug(`[tv-torrents] Prowlarr returned ${prowlarrResults.length} results`);
     }
+
+    // Transform Prowlarr results to normalized format
+    const all: Normalized[] = prowlarrResults.map(transformProwlarrRelease);
 
     const uniq = dedupeByHash(all);
     const ranked = rank(uniq);
 
-    for (const item of ranked.slice(0, 10)) {
+    // Flag episode matches and season packs
+    const wantEpisodeFilter = episodeNum != null;
+    const flagged = ranked.map((item) => {
+      const matches = wantEpisodeFilter
+        ? matchesEpisode(item.title, seasonNum ?? undefined, episodeNum, undefined)
+        : true;
+      const packDetection: SeasonPackDetection | undefined =
+        wantEpisodeFilter && !matches
+          ? detectSeasonPack(item.title, seasonNum ?? undefined)
+          : undefined;
+      return {
+        ...item,
+        episodeMatch: wantEpisodeFilter ? matches : undefined,
+        seasonPack:
+          packDetection && packDetection.isSeasonPack
+            ? {
+                season: seasonNum ?? null,
+                reason: packDetection.reason,
+                keywords: packDetection.keywords,
+              }
+            : undefined,
+      } as Normalized;
+    });
+
+    // Unified list: include episode matches AND season packs, sorted by seeds/quality
+    // Exclude results that are neither episode matches nor season packs
+    const relevant = wantEpisodeFilter
+      ? flagged.filter((it) => it.episodeMatch || it.seasonPack)
+      : flagged;
+
+    // Apply series name filter
+    const applySeriesFilter = (list: Normalized[]) =>
+      seriesMatchers.length > 0
+        ? list.filter((it) => matchesSeries(it.title, seriesMatchers))
+        : list;
+
+    const afterSeries = applySeriesFilter(relevant);
+
+    // Unified list - already sorted by seeds/quality from rank(), keep that order
+    const finalResults = seriesMatchers.length > 0 ? afterSeries : relevant;
+
+    // Resolve magnets for top results
+    for (const item of finalResults.slice(0, 10)) {
       if (item.magnetUri?.startsWith("magnet:")) continue;
+
+      if (isHttpUrl(item.downloadUrl)) {
+        try {
+          const resolved = await resolveDownloadToMagnet(item.downloadUrl);
+          if (resolved) {
+            item.magnetUri = resolved;
+            continue;
+          }
+        } catch (err) {
+          if (isDev)
+            console.debug("[tv-torrents] magnet resolve (download) failed", err);
+        }
+      }
+
       if (isHttpUrl(item.torrentUrl)) {
         try {
           const resolved = await resolveDownloadToMagnet(item.torrentUrl);
           if (resolved) {
             item.magnetUri = resolved;
-            if (isDev) {
-              console.debug(
-                [tv-torrents] magnet resolved from 
-              );
-            }
             continue;
           }
         } catch (err) {
-          if (isDev) console.debug("[tv-torrents] magnet resolve failed", err);
+          if (isDev)
+            console.debug("[tv-torrents] magnet resolve (torrent) failed", err);
         }
       }
+
       if (!item.magnetUri && item.infoHash) {
         item.magnetUri = magnetFromHash(item.infoHash, item.title);
       }
     }
 
+    // Get unique indexers from results
+    const indexersUsed = [...new Set(finalResults.map((r) => r.indexer))];
+
     const note =
-      ranked.length === 0
-        ? No torrents returned from  providers (queries tried: )
+      finalResults.length === 0
+        ? `No torrents found for "${searchQuery}"`
         : undefined;
 
     return NextResponse.json({
       query: {
-        imdbId: imdbDigits ? 	t : null,
+        imdbId: imdbDigits ? `tt${imdbDigits}` : null,
+        tvdbId: tvdbId ?? null,
         title: queryTitle,
         year: queryYear ?? null,
         season: seasonNum ?? null,
         episode: episodeNum ?? null,
-        querySource: querySource ?? null,
-        queriesTried: queryStrings,
+        querySource,
+        searchQuery,
+        aliases: aliasParams,
       },
-      providers,
-      total: ranked.length,
-      results: ranked,
+      providers: indexersUsed.map((name) => ({ name })),
+      total: finalResults.length,
+      results: finalResults,
       note,
     });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? "Unexpected error" }, { status: 500 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unexpected error";
+    if (isDev) console.error("[tv-torrents] Error:", err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

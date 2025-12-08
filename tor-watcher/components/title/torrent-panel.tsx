@@ -11,6 +11,14 @@ type Props = {
   year?: number;
   imdbId?: string;
   originalLanguage?: string;
+  /** "movie" (default) or "anime" for anime movies */
+  kind?: "movie" | "anime";
+  /** MAL ID for anime movies */
+  malId?: number;
+  /** TMDB ID for movies */
+  tmdbId?: number;
+  /** Alternative titles for better anime search */
+  titleAliases?: string[];
 };
 
 type TorrentApiItem = {
@@ -60,7 +68,7 @@ function qualityFromTitle(title: string) {
   return null;
 }
 
-export default function TorrentPanel({ title, year, imdbId, originalLanguage }: Props) {
+export default function TorrentPanel({ title, year, imdbId, originalLanguage, kind = "movie", malId, tmdbId, titleAliases }: Props) {
   const router = useRouter();
   const [torrents, setTorrents] = useState<TorrentRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,22 +76,42 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage }: 
   const [lastFetched, setLastFetched] = useState<number | null>(null);
 
   const canSearch = title.length > 0;
+  const isAnime = kind === "anime";
 
   const refresh = async () => {
     if (!canSearch) return;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams();
-      if (imdbId) {
-        params.set("imdbId", imdbId);
-      } else {
+      let url: string;
+      
+      if (isAnime) {
+        // Use anime torrents API for anime movies
+        const params = new URLSearchParams();
         params.set("title", title);
+        // Add aliases for better search
+        if (titleAliases?.length) {
+          for (const alias of titleAliases.slice(0, 5)) {
+            params.append("alias", alias);
+          }
+        }
         if (year) params.set("year", String(year));
+        // For movies, we don't specify season/episode - search for the movie title
+        url = `/api/torrents/anime?${params.toString()}`;
+      } else {
+        // Regular movie torrents API
+        const params = new URLSearchParams();
+        if (imdbId) {
+          params.set("imdbId", imdbId);
+        } else {
+          params.set("title", title);
+          if (year) params.set("year", String(year));
+        }
+        if (originalLanguage) params.set("origLang", originalLanguage);
+        url = `/api/torrents/movie?${params.toString()}`;
       }
-      if (originalLanguage) params.set("origLang", originalLanguage);
 
-      const res = await fetch(`/api/torrents/movie?${params.toString()}`, { cache: "no-store" });
+      const res = await fetch(url, { cache: "no-store" });
       const json: TorrentApiResponse = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to load torrents");
       const items = Array.isArray(json?.results) ? json.results : [];
@@ -114,7 +142,7 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage }: 
     setLastFetched(null);
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, imdbId, year, originalLanguage]);
+  }, [title, imdbId, year, originalLanguage, kind, malId]);
 
   const meta = useMemo(() => {
     if (!lastFetched) return null;
@@ -129,8 +157,16 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage }: 
     const qs = new URLSearchParams();
     qs.set("src", magnet);
     qs.set("title", title);
+    qs.set("cat", isAnime ? "anime" : "movie");
     if (year) qs.set("year", String(year));
     if (imdbId) qs.set("imdbId", imdbId);
+    if (malId) qs.set("malId", String(malId));
+    // Build seriesId for watch progress tracking
+    if (isAnime && malId) {
+      qs.set("seriesId", `mal:${malId}`);
+    } else if (tmdbId) {
+      qs.set("seriesId", `tmdb:movie:${tmdbId}`);
+    }
     router.push(`/watch?${qs.toString()}`);
   };
 
@@ -138,7 +174,7 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage }: 
     <aside className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 text-white shadow-2xl shadow-black/40">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Streams</p>
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-400">{isAnime ? "Anime" : "Movie"} Streams</p>
           <h2 className="text-lg font-semibold text-white">Available torrents</h2>
           <p className="text-xs text-slate-400">Pick the best source and start watching instantly.</p>
         </div>

@@ -1,4 +1,4 @@
-import type { TorrentItem, TorrentSearchResponse } from "@/lib/types";
+import type { TorrentSearchResponse } from "@/lib/types";
 
 export const torrentDataToList = (data: TorrentSearchResponse[]) => {
   return data.map((item) => {

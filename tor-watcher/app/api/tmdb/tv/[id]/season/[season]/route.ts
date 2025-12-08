@@ -22,9 +22,10 @@ type SeasonPayload = {
   episodes?: TmdbEpisode[];
 };
 
-export async function GET(_req: NextRequest, ctx: { params: { id: string; season: string } }) {
-  const showId = Number(ctx.params.id);
-  const seasonNumber = Number(ctx.params.season);
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string; season: string }> }) {
+  const { id, season } = await ctx.params;
+  const showId = Number(id);
+  const seasonNumber = Number(season);
 
   if (!Number.isFinite(showId) || !Number.isFinite(seasonNumber)) {
     return NextResponse.json({ error: "Invalid id or season" }, { status: 400 });

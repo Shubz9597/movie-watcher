@@ -9,12 +9,14 @@ async function jikan(path: string) {
   return r.json();
 }
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const data = await jikan(`/anime/${params.id}/full`);
+    const { id } = await params;
+    const data = await jikan(`/anime/${id}/full`);
     const a = data?.data;
     return NextResponse.json(detailFromJikan(a));
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "anime detail failed" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "anime detail failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
 
   const searchUrl = buildSearchUrl(u);
   async function fRetry(url: URL, init: RequestInit, tries = 3) {
-    let lastErr: any;
+    let lastErr: unknown;
     for (let i = 0; i < tries; i++) {
       const ac = new AbortController();
       const t = setTimeout(() => ac.abort(), 6000);
@@ -89,8 +89,20 @@ export async function GET(req: NextRequest) {
   });
   if (!r.ok) return NextResponse.json({ subtitles: [] }, { status: 200 });
 
-  const data = await r.json().catch(() => ({} as any));
-  const rows: any[] = data?.data || [];
+  type OpenSubItem = {
+    attributes?: {
+      files?: Array<{ file_id?: number }>;
+      language?: string;
+      language_name?: string;
+      download_count?: number;
+      downloads?: number;
+      hearing_impaired?: boolean;
+      feature_details?: { title?: string };
+      release?: string;
+    };
+  };
+  const data = await r.json().catch(() => ({} as { data?: OpenSubItem[] }));
+  const rows: OpenSubItem[] = (data?.data as OpenSubItem[]) || [];
 
   // Dedup per language; pick the first file_id of each record
   const seenLang = new Set<string>();

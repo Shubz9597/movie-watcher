@@ -11,9 +11,9 @@ function authTvd() {
   return { Authorization: `Bearer ${TMDB_TOKEN_TVD}` };
 }
 
-export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const id = await ctx.params.id;
+    const { id } = await ctx.params;
     const u = new URL(`${TMDB_BASE_TVD}/tv/${id}`);
     u.searchParams.set("append_to_response", "external_ids,credits,videos");
 
@@ -22,7 +22,8 @@ export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
     const it = await res.json();
 
     return NextResponse.json(detailFromTmdbTv(it));
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

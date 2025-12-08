@@ -6,7 +6,7 @@ import { useIsMobile } from "@/lib/hooks/use-is-mobile";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Play, PlayCircle, Loader2, ArrowRight, Flame } from "lucide-react";
+import { PlayCircle, Loader2, ArrowRight, Flame } from "lucide-react";
 import TorrentListDialog, { type TorrentRow } from "../torrentListModal/torrentListDialog";
 import type { Kind } from "@/app/page";
 
@@ -130,10 +130,24 @@ export default function MovieQuickView({
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `Request failed with ${res.status}`);
 
-      const items = (json?.results ?? []) as any[];
+      type TorrentApiItem = {
+        title?: string;
+        size?: number;
+        sizeBytes?: number;
+        seeders?: number;
+        leechers?: number;
+        magnetUri?: string;
+        magnet?: string;
+        torrentUrl?: string;
+        downloadUrl?: string;
+        infoHash?: string;
+        indexer?: string;
+        publishDate?: string;
+      };
+      const items = (json?.results ?? []) as TorrentApiItem[];
 
       const mapped: TorrentRow[] = items.map((it) => ({
-        title: it.title,
+        title: it.title ?? "",
         size: it.size ?? it.sizeBytes,
         seeders: it.seeders,
         leechers: it.leechers,
@@ -145,9 +159,11 @@ export default function MovieQuickView({
       }));
 
       setTorrents(mapped);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setTorrents([]);
-      setTError(e?.name === "AbortError" ? "Torrent search timed out. Please try again." : e?.message || "Something went wrong");
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      const message = e instanceof Error ? e.message : "Something went wrong";
+      setTError(isAbort ? "Torrent search timed out. Please try again." : message);
     } finally {
       clearTimeout(timeout);
       setTLoading(false);
@@ -169,9 +185,18 @@ export default function MovieQuickView({
   function playTorrent(t: TorrentRow) {
     const src = t.magnetUri || t.torrentUrl || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "");
     if (!src) return;
-    const label = encodeURIComponent(data?.title ?? "");
-    const extra = `${data?.year ? `&year=${data.year}` : ""}${data?.imdbId ? `&imdbId=${data.imdbId}` : ""}`;
-    router.push(`/watch?src=${encodeURIComponent(src)}&title=${label}${extra}`);
+    const qs = new URLSearchParams();
+    qs.set("src", src);
+    qs.set("title", data?.title ?? "");
+    qs.set("kind", kind);
+    if (data?.year) qs.set("year", String(data.year));
+    if (data?.imdbId) qs.set("imdbId", data.imdbId);
+    // Build seriesId for watch progress tracking
+    if (tmdb) {
+      const prefix = kind === "tv" ? "tmdb:tv" : "tmdb:movie";
+      qs.set("seriesId", `${prefix}:${tmdb}`);
+    }
+    router.push(`/watch?${qs.toString()}`);
   }
 
   const tmdbPct = typeof data?.tmdbRatingPct === "number" ? data.tmdbRatingPct : typeof data?.rating === "number" ? Math.round(data.rating * 10) : undefined;

@@ -67,7 +67,8 @@ export async function GET(req: NextRequest) {
       total_results: json.total_results,
       results,
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

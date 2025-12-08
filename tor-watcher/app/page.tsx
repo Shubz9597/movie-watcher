@@ -2,10 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import FilterBar from "@/components/filters/filter-bar";
-import MovieGrid from "@/components/movies/movie-grid";
-import SkeletonGrid from "@/components/state/skeleton-grid";
-import EmptyState from "@/components/state/empty-state";
 import type { MovieCard, Filters } from "@/lib/types";
 import { useDebounce } from "@/lib/hooks/use-debounce";
 import CarouselRow from "@/components/rails/CarouselRow";
@@ -32,6 +28,13 @@ type ContinueItem = {
   duration_s: number;
   percent: number;         // 0..100
   updated_at: string;      // ISO
+  // Enriched fields from /api/continue
+  title: string;
+  posterPath: string | null;
+  year?: number;
+  kind: "movie" | "tv" | "anime";
+  tmdbId?: number;
+  malId?: number;
 };
 
 function kindFromSeriesId(seriesId: string): "movie" | "tv" | "anime" {
@@ -66,7 +69,8 @@ function ContinueRail() {
     if (!subjectId) return;
     const ctrl = new AbortController();
     setLoading(true);
-    fetch(`${VOD}/v1/continue?subjectId=${encodeURIComponent(subjectId)}&limit=12`, { signal: ctrl.signal, cache: "no-store" })
+    // Use the enriched API that adds poster/title metadata
+    fetch(`/api/continue?subjectId=${encodeURIComponent(subjectId)}&limit=12`, { signal: ctrl.signal, cache: "no-store" })
       .then(r => r.json())
       .then((xs: ContinueItem[]) => setRows(xs))
       .catch(() => { })
@@ -125,75 +129,127 @@ function ContinueRail() {
 
   if (loading) {
     return (
-      <div className="space-y-2">
-        <div className="text-base font-semibold">Continue watching</div>
-        <div className="flex gap-3 overflow-x-auto">
+      <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#0a1520] via-[#060d14] to-[#040810] p-5 md:p-7 shadow-2xl shadow-black/30">
+        <div className="mb-4">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Pick up where you left off</p>
+          <h2 className="text-2xl font-semibold text-white">Continue Watching</h2>
+        </div>
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="w-[220px] h-[110px] rounded-xl bg-slate-800/40 animate-pulse" />
+            <div key={i} className="min-w-[180px] max-w-[180px] flex-shrink-0">
+              <div className="aspect-[2/3] rounded-2xl bg-slate-800/40 animate-pulse" />
+              <div className="mt-2 flex gap-1.5">
+                <div className="flex-1 h-7 rounded-lg bg-slate-800/40 animate-pulse" />
+                <div className="w-8 h-7 rounded-lg bg-slate-800/40 animate-pulse" />
+              </div>
+            </div>
           ))}
         </div>
-      </div>
+      </section>
     );
   }
 
   if (!rows.length) return null;
 
   return (
-    <div className="space-y-2">
-      <div className="text-base font-semibold">Continue watching</div>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+    <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#0a1520] via-[#060d14] to-[#040810] p-5 md:p-7 shadow-2xl shadow-black/30">
+      <div className="mb-4">
+        <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Pick up where you left off</p>
+        <h2 className="text-2xl font-semibold text-white">Continue Watching</h2>
+      </div>
+      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-700">
         {rows.map((it) => {
-          const kind = kindFromSeriesId(it.seriesId);
+          const kind = it.kind || kindFromSeriesId(it.seriesId);
           const pct = Math.round(it.percent);
+          const displayTitle = it.title || it.seriesId;
           return (
             <div
               key={`${it.seriesId}-${it.season}-${it.episode}`}
-              className="min-w-[260px] max-w-[260px] rounded-xl bg-[#0F141A] border border-slate-800 p-3 flex flex-col gap-2"
+              className="group relative min-w-[180px] max-w-[180px] flex-shrink-0"
             >
-              <div className="text-sm font-medium truncate" title={it.seriesId}>
-                {it.seriesId}
-              </div>
-              <div className="text-xs opacity-70">
-                {kind !== "movie"
-                  ? <>S{String(it.season).padStart(2, "0")}E{String(it.episode).padStart(2, "0")} · {pct}%</>
-                  : <>{pct}%</>
-                }
-              </div>
-              <div className="h-1 w-full bg-slate-800 rounded overflow-hidden">
-                <div className="h-full bg-cyan-600" style={{ width: `${pct}%` }} />
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <button
-                  className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-xs hover:bg-blue-500"
-                  onClick={() => void resumeWeb(it)}
-                >
-                  Resume
-                </button>
+              {/* Poster Card */}
+              <button
+                type="button"
+                onClick={() => void resumeWeb(it)}
+                className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#0b111f] shadow-lg shadow-black/40 transition-all duration-300 group-hover:-translate-y-1 group-hover:border-cyan-500/40"
+              >
+                {it.posterPath ? (
+                  <img
+                    src={it.posterPath}
+                    alt={displayTitle}
+                    className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900">
+                    <span className="text-4xl opacity-30">🎬</span>
+                  </div>
+                )}
+
+                {/* Gradient overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-90" />
+
+                {/* Progress bar at bottom */}
+                <div className="absolute inset-x-0 bottom-0 h-1 bg-slate-800/80">
+                  <div className="h-full bg-cyan-500 transition-all" style={{ width: `${pct}%` }} />
+                </div>
+
+                {/* Episode badge */}
+                <div className="absolute left-2 top-2">
+                  <span className="rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-sm">
+                    {kind !== "movie"
+                      ? `S${String(it.season).padStart(2, "0")}E${String(it.episode).padStart(2, "0")}`
+                      : `${pct}%`
+                    }
+                  </span>
+                </div>
+
+                {/* Play icon on hover */}
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/90 text-black shadow-lg shadow-cyan-500/30">
+                    <Play className="h-5 w-5 ml-0.5" />
+                  </div>
+                </div>
+
+                {/* Title at bottom */}
+                <div className="absolute inset-x-2 bottom-3 space-y-0.5">
+                  <div className="text-sm font-semibold leading-tight text-white line-clamp-2">
+                    {displayTitle}
+                  </div>
+                  {it.year && (
+                    <div className="text-[10px] text-slate-300">{it.year}</div>
+                  )}
+                </div>
+              </button>
+
+              {/* Action buttons below poster */}
+              <div className="mt-2 flex items-center gap-1.5">
                 <a
-                  className="px-3 py-1.5 rounded-md bg-slate-700 text-white text-xs hover:bg-slate-600"
+                  className="flex-1 rounded-lg bg-slate-800/80 px-2 py-1.5 text-center text-[10px] font-medium text-slate-300 hover:bg-slate-700 transition-colors"
                   href={`${VOD}/v1/resume.m3u?subjectId=${encodeURIComponent(subjectId)}&seriesId=${encodeURIComponent(it.seriesId)}&kind=${kind}`}
                   download
+                  title="Open in VLC"
                 >
-                  Open in VLC
+                  VLC
                 </a>
                 <button
-                  className="ml-auto px-2 py-1 rounded-md bg-slate-800 text-slate-300 text-xs hover:bg-slate-700"
+                  className="rounded-lg bg-slate-800/80 px-2 py-1.5 text-[10px] font-medium text-slate-400 hover:bg-red-900/50 hover:text-red-300 transition-colors"
                   onClick={() => void dismiss(it)}
                   title="Remove from Continue"
                 >
-                  Remove
+                  ✕
                 </button>
               </div>
             </div>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
 
 // =================== End Continue Rail (new) ===================
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function SegmentedKind({ kind, onChange }: { kind: Kind; onChange: (k: Kind) => void }) {
   const btn = (k: Kind, label: string) => (
     <button
@@ -244,9 +300,9 @@ export default function HomePage() {
   }, [kind, pathname, router, searchParams]);
 
   // ===== list paging/filter state =====
-  const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<MovieCard[]>([]);
-  const [hasMore, setHasMore] = useState(false);
+  const [, setLoading] = useState(true);
+  const [, setItems] = useState<MovieCard[]>([]);
+  const [, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
 
   // ===== homepage rails (popular/trending) =====
@@ -376,12 +432,9 @@ export default function HomePage() {
 
   function safePrefetch(url: string) {
     try {
-      const maybe = router.prefetch(url);
-      if (maybe && typeof (maybe as Promise<void>).catch === "function") {
-        (maybe as Promise<void>).catch(() => { /* ignore */ });
-      }
-    } catch (err) {
-      console.warn("prefetch skipped", err);
+      router.prefetch(url);
+    } catch {
+      // ignore prefetch errors
     }
   }
 
@@ -389,6 +442,7 @@ export default function HomePage() {
     safePrefetch(`/title/${k}/${id}`);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function handleFilterChange(next: Filters) {
     setFilters(next);
     setSkipDebounceOnce(true);
@@ -422,7 +476,7 @@ export default function HomePage() {
   useEffect(() => {
     const ac = new AbortController();
 
-    async function loadRow<T extends MovieCard[]>(
+    async function loadRow(
       url: string,
       setData: (xs: MovieCard[]) => void,
       setBusy: (b: boolean) => void
@@ -465,8 +519,6 @@ export default function HomePage() {
       desc: "Every card shown here already has seeds, so you never waste time chasing dead links.",
     },
   ];
-
-  const browseHeading = kind === "movie" ? "Browse movies" : kind === "tv" ? "Browse series" : "Browse anime";
 
   return (
     <div className="space-y-10">

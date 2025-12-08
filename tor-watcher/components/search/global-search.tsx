@@ -15,7 +15,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { Search, Star, TrendingUp } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
@@ -62,7 +62,6 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
   const [results, setResults] = React.useState<SearchResults>({ movie: [], tv: [], person: [] });
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [reqId, setReqId] = React.useState(0);
   const latestReqIdRef = React.useRef(0);
 
   // Global hotkey: Cmd/Ctrl+K to open
@@ -229,12 +228,9 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
   function safePrefetch(url: string | null) {
     if (!url) return;
     try {
-      const maybe = router.prefetch(url);
-      if (maybe && typeof (maybe as Promise<void>).catch === "function") {
-        (maybe as Promise<void>).catch(() => { });
-      }
-    } catch (err) {
-      console.warn("prefetch skipped", err);
+      router.prefetch(url);
+    } catch {
+      // ignore prefetch errors
     }
   }
 
@@ -263,7 +259,7 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
       >
         <DialogContent
           className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-[#050912]/95 p-0 shadow-2xl backdrop-blur-2xl"
-          onOpenAutoFocus={(e) => {
+          onOpenAutoFocus={() => {
             // Let CommandInput auto-focus
           }}
           onEscapeKeyDown={() => setOpen(false)}
@@ -379,9 +375,9 @@ export default function GlobalSearch({ children }: { children: React.ReactNode }
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-slate-100">{highlight(p.name || "Unknown", query.trim())}</div>
                         {/* Known for */}
-                        {"known_for" in p && Array.isArray((p as any).known_for) && (
+                        {"known_for" in p && Array.isArray((p as Basic & { known_for?: string[] }).known_for) && (
                           <div className="mt-0.5 flex flex-wrap gap-1">
-                            {(p as any).known_for.slice(0, 3).map((k: string) => (
+                            {((p as Basic & { known_for?: string[] }).known_for ?? []).slice(0, 3).map((k: string) => (
                               <span key={k} className="truncate rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300 ring-1 ring-white/10">
                                 {k}
                               </span>

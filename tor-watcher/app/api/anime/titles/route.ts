@@ -27,7 +27,8 @@ export async function GET(req: Request) {
       : data?.pagination?.has_next_page ? page + 1 : page;
 
     return NextResponse.json({ page, total_pages: totalPages, results });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "anime list failed" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "anime list failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

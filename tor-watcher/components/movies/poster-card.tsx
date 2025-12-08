@@ -3,7 +3,7 @@
 import Image from "next/image";
 import type { MovieCard } from "@/lib/types";
 import { useRef } from "react";
-import { Flame, Play } from "lucide-react";
+import { Flame } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 const PREFETCH_DELAY_MS = 300;

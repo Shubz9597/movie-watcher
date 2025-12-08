@@ -18,9 +18,9 @@ function tmdbUrl(path: string): URL {
   if (!TMDB_ACCESS_TOKEN && TMDB_API_KEY) u.searchParams.set("api_key", TMDB_API_KEY);
   return u;
 }
-export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const id = await ctx.params.id;
+    const { id } = await ctx.params;
     const u = tmdbUrl(`/movie/${id}`);
     u.searchParams.set("append_to_response", "external_ids,credits,videos");
 
@@ -29,7 +29,8 @@ export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
     const it = await res.json();
 
     return NextResponse.json(detailFromTmdbMovie(it));
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

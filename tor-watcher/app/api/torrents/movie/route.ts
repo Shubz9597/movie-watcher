@@ -238,15 +238,26 @@ const parser = new XMLParser({
   allowBooleanAttributes: true,
 });
 
+type TorznabAttr = { "@_name"?: string; "@_value"?: string };
+type TorznabItem = {
+  title?: string;
+  pubDate?: string;
+  size?: number | string;
+  link?: string;
+  guid?: string | { "#text"?: string };
+  enclosure?: { "@_url"?: string; "@_type"?: string };
+  "torznab:attr"?: TorznabAttr | TorznabAttr[];
+};
+
 function parseTorznab(xmlText: string, indexerName: string): Normalized[] {
   const doc = parser.parse(xmlText);
-  const items = doc?.rss?.channel?.item
+  const items: TorznabItem[] = doc?.rss?.channel?.item
     ? Array.isArray(doc.rss.channel.item)
       ? doc.rss.channel.item
       : [doc.rss.channel.item]
     : [];
 
-  return items.map((it: any) => {
+  return items.map((it) => {
     const title: string = it.title ?? "";
     const pubDate: string | undefined = it.pubDate;
 
@@ -263,7 +274,7 @@ function parseTorznab(xmlText: string, indexerName: string): Normalized[] {
       : [];
     const attrMap = new Map<string, string>();
     for (const a of attrs) {
-      if (a?.["@_name"]) attrMap.set(a["@_name"], a["@_value"]);
+      if (a?.["@_name"]) attrMap.set(a["@_name"], a["@_value"] ?? "");
     }
 
     const size = Number(it.size) || Number(attrMap.get("size")) || undefined;
@@ -407,7 +418,7 @@ export async function GET(request: Request) {
       })
     );
 
-    let all: Normalized[] = [];
+    const all: Normalized[] = [];
     for (const r of responses) {
       if (r.status !== "fulfilled") continue;
       const { name, xml } = r.value;
@@ -470,7 +481,8 @@ export async function GET(request: Request) {
       total: ranked.length,
       results: ranked,
     });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? "Unexpected error" }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unexpected error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

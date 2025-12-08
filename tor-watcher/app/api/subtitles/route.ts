@@ -49,10 +49,11 @@ export async function GET(req: NextRequest) {
       await res.json();
 
     // Normalize possible field casing (Go JSON vs TS expectations)
-    const norm = files.map((f: any) => ({
-      index: typeof f.index === "number" ? f.index : f.Index,
-      name: typeof f.name === "string" ? f.name : f.Name,
-      length: typeof f.length === "number" ? f.length : f.Length,
+    type FileEntry = { index?: number; Index?: number; name?: string; Name?: string; length?: number; Length?: number };
+    const norm = files.map((f: FileEntry) => ({
+      index: typeof f.index === "number" ? f.index : f.Index ?? 0,
+      name: typeof f.name === "string" ? f.name : f.Name ?? "",
+      length: typeof f.length === "number" ? f.length : f.Length ?? 0,
     }));
 
     const subs = norm
