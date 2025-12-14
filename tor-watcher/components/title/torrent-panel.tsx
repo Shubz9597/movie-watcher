@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Loader2, Play, RotateCcw } from "lucide-react";
+import { Loader2, Play, RotateCcw, MonitorPlay } from "lucide-react";
 import type { TorrentRow } from "@/components/torrentListModal/torrentListDialog";
 
 type Props = {
@@ -66,6 +66,74 @@ function qualityFromTitle(title: string) {
   if (lower.includes("1080p")) return "1080p";
   if (lower.includes("720p")) return "720p";
   return null;
+}
+
+const VOD_BASE = "http://localhost:4001";
+const isElectron = typeof window !== "undefined" && Boolean((window as any).electronAPI);
+
+function getDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  const KEY = "mw_device_id";
+  const existing = localStorage.getItem(KEY);
+  if (existing && existing !== "null" && existing !== "undefined") return existing;
+  const canUseUUID = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function";
+  const newId = canUseUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem(KEY, newId);
+  return newId;
+}
+
+async function downloadM3U(magnet: string, displayTitle: string, cat: string, seriesId?: string, imdbId?: string) {
+  const params = new URLSearchParams();
+  params.set("cat", cat);
+  params.set("magnet", magnet);
+  // Include tracking info so server can auto-save progress
+  if (seriesId) params.set("seriesId", seriesId);
+  params.set("subjectId", getDeviceId());
+  params.set("trackProgress", "1");
+  
+  const streamUrl = `${VOD_BASE}/stream?${params.toString()}`;
+  const safeFilename = displayTitle.replace(/[<>:"/\\|?*]/g, "_");
+  
+  // Try to fetch subtitles from Go backend
+  let subtitleUrl: string | undefined;
+  try {
+    const subParams = new URLSearchParams({ cat, magnet });
+    if (imdbId) subParams.set("imdbId", imdbId);
+    subParams.set("langs", "en,hi");
+    const res = await fetch(`${VOD_BASE}/subtitles/list?${subParams.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      // Prefer torrent subtitles, then external
+      const torrentSub = data.torrent?.[0];
+      const externalSub = data.external?.[0];
+      if (torrentSub) {
+        subtitleUrl = `${VOD_BASE}/subtitles/torrent?magnet=${encodeURIComponent(magnet)}&cat=${cat}&fileIndex=${torrentSub.index}`;
+      } else if (externalSub) {
+        subtitleUrl = `${VOD_BASE}${externalSub.url}`;
+      }
+    }
+  } catch {}
+  
+  // Build M3U content with optional subtitle for VLC
+  // Use input-slave for network URLs (sub-file only works for local paths)
+  let m3uContent = `#EXTM3U\n#EXTINF:-1,${displayTitle}\n`;
+  if (subtitleUrl) {
+    m3uContent += `#EXTVLCOPT:input-slave=${subtitleUrl}\n`;
+    m3uContent += `#EXTVLCOPT:sub-track=0\n`;
+  }
+  m3uContent += `${streamUrl}\n`;
+
+  const blob = new Blob([m3uContent], { type: "audio/x-mpegurl" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeFilename}.m3u`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 export default function TorrentPanel({ title, year, imdbId, originalLanguage, kind = "movie", malId, tmdbId, titleAliases }: Props) {
@@ -151,8 +219,24 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage, ki
 
   const primaryTorrent = torrents?.[0];
 
+  const playInMpv = async (t: TorrentRow) => {
+    if (!isElectron) return;
+    const magnet = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
+    if (!magnet) return;
+    const params = new URLSearchParams();
+    params.set("cat", isAnime ? "anime" : "movie");
+    params.set("magnet", magnet);
+    const streamUrl = `${VOD_BASE}/stream?${params.toString()}`;
+    try {
+      await (window as any).electronAPI.playInMpv(streamUrl);
+    } catch (err) {
+      console.error("mpv play failed", err);
+    }
+  };
+
   const playTorrent = (t: TorrentRow) => {
-    const magnet = t.magnetUri || t.torrentUrl || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "");
+    // Prefer magnet links over HTTP torrent URLs (which can fail if indexer returns HTML)
+    const magnet = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
     if (!magnet) return;
     const qs = new URLSearchParams();
     qs.set("src", magnet);
@@ -233,11 +317,12 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage, ki
             {torrents.slice(0, 12).map((t, idx) => {
               const quality = qualityFromTitle(t.title);
               const aired = formatDate(t.publishDate);
+              const magnet = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
+              const displayTitle = year ? `${title} (${year})` : title;
               return (
-                <button
+                <div
                   key={`${t.infoHash || t.title}-${idx}`}
                   className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-left transition hover:border-cyan-400/50"
-                  onClick={() => playTorrent(t)}
                 >
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-xs font-semibold text-cyan-200">
                     {quality ?? "—"}
@@ -245,12 +330,48 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage, ki
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold text-white">{t.title}</div>
                     <div className="text-xs text-slate-400">
-                      {formatBytes(t.size)} • {t.seeders ?? 0} seed {t.seeders === 1 ? "" : "s"} • {t.indexer}
+                      {formatBytes(t.size)} • {t.seeders ?? 0} seed{t.seeders === 1 ? "" : "s"} • {t.indexer}
                       {aired ? ` • ${aired}` : ""}
                     </div>
                   </div>
-                  <Play className="h-4 w-4 text-cyan-200" />
-                </button>
+                  <div className="flex items-center gap-1">
+                    {magnet && (
+                      <button
+                        className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500/20 text-orange-300 transition hover:bg-orange-500/40"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Build seriesId for progress tracking
+                          let sId: string | undefined;
+                          if (isAnime && malId) sId = `mal:${malId}`;
+                          else if (tmdbId) sId = `tmdb:movie:${tmdbId}`;
+                          void downloadM3U(magnet, displayTitle, isAnime ? "anime" : "movie", sId, imdbId);
+                        }}
+                        title="Download .m3u for VLC"
+                      >
+                        <MonitorPlay className="h-4 w-4" />
+                      </button>
+                    )}
+                    {isElectron && magnet && (
+                      <button
+                        className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300 transition hover:bg-emerald-500/40"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void playInMpv(t);
+                        }}
+                        title="Play in mpv (Electron)"
+                      >
+                        <MonitorPlay className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-500/20 text-cyan-300 transition hover:bg-cyan-500/40"
+                      onClick={() => playTorrent(t)}
+                      title="Play in browser"
+                    >
+                      <Play className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
               );
             })}
           </div>

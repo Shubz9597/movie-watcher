@@ -3,6 +3,7 @@ package buffer
 import (
 	"context"
 	"io"
+	"log"
 	"sync"
 	"time"
 
@@ -27,7 +28,7 @@ type Key struct {
 }
 
 type Controller struct {
-	mu             sync.Mutex
+	mu             sync.RWMutex // Changed to RWMutex to allow concurrent reads
 	state          playState
 	playhead       int64
 	rollingBps     int64
@@ -67,8 +68,8 @@ func Get(k Key) *Controller {
 }
 
 func (c *Controller) State() playState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.state
 }
 
@@ -90,8 +91,8 @@ func (c *Controller) SetPlayhead(pos int64) {
 }
 
 func (c *Controller) Playhead() int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.playhead
 }
 
@@ -113,22 +114,28 @@ func (c *Controller) UpdateThroughput(bytes, millis int64) {
 }
 
 func (c *Controller) TargetBytes() int64 {
-	c.mu.Lock()
+	c.mu.RLock()
 	bps := c.rollingBps
 	sec := c.targetAheadSec
-	c.mu.Unlock()
+	c.mu.RUnlock()
 	if bps <= 0 {
-		bps = 24_000_000 / 8
+		bps = 24_000_000 / 8 // default 24 Mbps = 3 MB/s
 	}
 	if bps < (24_000_000 / 8) {
 		sec = sec + sec/3 // +33% when slow swarm
 	}
-	return bps * sec
+	target := bps * sec
+	// Cap target to prevent insane prebuffer sizes
+	maxTarget := config.TargetMaxBytes()
+	if maxTarget > 0 && target > maxTarget {
+		target = maxTarget
+	}
+	return target
 }
 
 func (c *Controller) TargetAheadSeconds() int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.targetAheadSec
 }
 
@@ -167,6 +174,9 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 
 	go func() {
 		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[buffer] StartWarm panic recovered: %v", r)
+			}
 			c.mu.Lock()
 			if c.warmCancel != nil {
 				c.warmCancel = nil

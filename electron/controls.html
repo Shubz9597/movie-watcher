@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>mpv Controls</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: white;
+      overflow: hidden;
+      user-select: none;
+    }
+    .controls-overlay {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.7) 60%, transparent 100%);
+      padding: 20px 30px 30px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .controls-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .progress-container {
+      margin-bottom: 15px;
+      position: relative;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 2px;
+      transition: width 0.1s;
+    }
+    .progress-hover {
+      position: absolute;
+      top: -8px;
+      width: 16px;
+      height: 16px;
+      background: #3b82f6;
+      border-radius: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    .progress-container:hover .progress-hover {
+      opacity: 1;
+    }
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .time-display {
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+      min-width: 100px;
+      text-align: right;
+    }
+    .control-btn {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+    }
+    .control-btn:hover {
+      background: rgba(255,255,255,0.2);
+    }
+    .control-btn:active {
+      background: rgba(255,255,255,0.3);
+    }
+    .play-btn {
+      width: 50px;
+      height: 50px;
+      background: rgba(255,255,255,0.15);
+    }
+    .volume-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+    }
+    .volume-slider {
+      width: 100px;
+      height: 4px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+    .volume-fill {
+      height: 100%;
+      background: white;
+      border-radius: 2px;
+    }
+    .title-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.7) 60%, transparent 100%);
+      padding: 15px 30px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .title-bar.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .title-text {
+      font-size: 16px;
+      font-weight: 500;
+    }
+    svg {
+      width: 20px;
+      height: 20px;
+    }
+    .play-btn svg {
+      width: 24px;
+      height: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="title-bar" id="titleBar">
+    <div class="title-text" id="titleText">Video Player</div>
+    <button class="control-btn" id="closeBtn" title="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+
+  <div class="controls-overlay" id="controlsOverlay">
+    <div class="progress-container" id="progressContainer">
+      <div class="progress-bar" id="progressBar">
+        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+        <div class="progress-hover" id="progressHover"></div>
+      </div>
+    </div>
+    <div class="controls-row">
+      <button class="control-btn play-btn" id="playBtn" title="Play/Pause">
+        <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+        <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+          <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+        </svg>
+      </button>
+      <div class="time-display" id="timeDisplay">0:00 / 0:00</div>
+      <div class="volume-container">
+        <button class="control-btn" id="muteBtn" title="Mute">
+          <svg id="volumeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+            <path id="volumeWave1" d="M19 14a4 4 0 0 0 0-8M19 18a8 8 0 0 0 0-16"></path>
+          </svg>
+          <svg id="volumeMutedIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+            <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        </button>
+        <div class="volume-slider" id="volumeSlider">
+          <div class="volume-fill" id="volumeFill" style="width: 100%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // In controls.html, we have nodeIntegration: true, so we can use require directly
+    const { ipcRenderer } = require('electron');
+    
+    let state = { time: 0, duration: 0, paused: true, volume: 1, mute: false };
+    let hideControlsTimer = null;
+    let isDragging = false;
+    
+    // Elements
+    const controlsOverlay = document.getElementById('controlsOverlay');
+    const titleBar = document.getElementById('titleBar');
+    const playBtn = document.getElementById('playBtn');
+    const playIcon = document.getElementById('playIcon');
+    const pauseIcon = document.getElementById('pauseIcon');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const progressHover = document.getElementById('progressHover');
+    const timeDisplay = document.getElementById('timeDisplay');
+    const muteBtn = document.getElementById('muteBtn');
+    const volumeIcon = document.getElementById('volumeIcon');
+    const volumeMutedIcon = document.getElementById('volumeMutedIcon');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const volumeFill = document.getElementById('volumeFill');
+    const closeBtn = document.getElementById('closeBtn');
+    const titleText = document.getElementById('titleText');
+    
+    function formatTime(seconds) {
+      if (!isFinite(seconds) || seconds < 0) return '0:00';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      return `${m}:${String(s).padStart(2, '0')}`;
+    }
+    
+    function showControls() {
+      controlsOverlay.classList.add('visible');
+      titleBar.classList.add('visible');
+      clearTimeout(hideControlsTimer);
+      hideControlsTimer = setTimeout(() => {
+        controlsOverlay.classList.remove('visible');
+        titleBar.classList.remove('visible');
+      }, 3000);
+    }
+    
+    function updateUI() {
+      // Progress
+      const progress = state.duration > 0 ? (state.time / state.duration) * 100 : 0;
+      progressFill.style.width = `${progress}%`;
+      
+      // Time display
+      timeDisplay.textContent = `${formatTime(state.time)} / ${formatTime(state.duration)}`;
+      
+      // Play/Pause icon
+      if (state.paused) {
+        playIcon.style.display = 'block';
+        pauseIcon.style.display = 'none';
+      } else {
+        playIcon.style.display = 'none';
+        pauseIcon.style.display = 'block';
+      }
+      
+      // Volume
+      volumeFill.style.width = `${state.mute ? 0 : state.volume * 100}%`;
+      if (state.mute || state.volume === 0) {
+        volumeIcon.style.display = 'none';
+        volumeMutedIcon.style.display = 'block';
+      } else {
+        volumeIcon.style.display = 'block';
+        volumeMutedIcon.style.display = 'none';
+      }
+    }
+    
+    // Poll mpv state
+    async function pollState() {
+      try {
+        const result = await ipcRenderer.invoke('mpv:state');
+        if (result?.ok && result?.state) {
+          state = { ...state, ...result.state };
+          updateUI();
+        }
+      } catch (err) {
+        console.error('Failed to get mpv state', err);
+      }
+    }
+    
+    setInterval(pollState, 250);
+    pollState();
+    
+    // Event listeners
+    document.addEventListener('mousemove', () => showControls());
+    document.addEventListener('click', () => showControls());
+    
+    playBtn.addEventListener('click', async () => {
+      await ipcRenderer.invoke('mpv:pause', !state.paused);
+      showControls();
+    });
+    
+    progressBar.addEventListener('click', async (e) => {
+      if (isDragging) return;
+      const rect = progressBar.getBoundingClientRect();
+      const percent = (e.clientX - rect.left) / rect.width;
+      const seekTime = percent * state.duration;
+      await ipcRenderer.invoke('mpv:seek', seekTime, false);
+      showControls();
+    });
+    
+    progressBar.addEventListener('mousemove', (e) => {
+      const rect = progressBar.getBoundingClientRect();
+      const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      progressHover.style.left = `${percent * 100}%`;
+    });
+    
+    muteBtn.addEventListener('click', async () => {
+      await ipcRenderer.invoke('mpv:setMute', !state.mute);
+      showControls();
+    });
+    
+    volumeSlider.addEventListener('click', async (e) => {
+      const rect = volumeSlider.getBoundingClientRect();
+      const volume = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      await ipcRenderer.invoke('mpv:setVolume', volume);
+      showControls();
+    });
+    
+    closeBtn.addEventListener('click', async () => {
+      await ipcRenderer.invoke('mpv:stop');
+    });
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', async (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        await ipcRenderer.invoke('mpv:pause', !state.paused);
+        showControls();
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        await ipcRenderer.invoke('mpv:seek', -10, true);
+        showControls();
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        await ipcRenderer.invoke('mpv:seek', 10, true);
+        showControls();
+      } else if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        const newVol = Math.min(1, state.volume + 0.1);
+        await ipcRenderer.invoke('mpv:setVolume', newVol);
+        showControls();
+      } else if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        const newVol = Math.max(0, state.volume - 0.1);
+        await ipcRenderer.invoke('mpv:setVolume', newVol);
+        showControls();
+      }
+    });
+    
+    // Receive title updates
+    ipcRenderer.on('mpv:title', (_, title) => {
+      titleText.textContent = title || 'Video Player';
+    });
+    
+    showControls();
+  </script>
+</body>
+</html>
+

@@ -16,12 +16,13 @@ var (
 	prebufferTimeout = 15 * time.Second
 	trackersMode     = "udp" // all|http|udp|none
 
-	targetPlaySec   int64 = 90
-	targetPauseSec  int64 = 360
+	targetPlaySec   int64 = 45   // seconds of video to buffer while playing
+	targetPauseSec  int64 = 60   // seconds of video to buffer before autoplay (was 360!)
+	targetMaxBytes  int64 = 200 << 20 // 200 MB cap on prebuffer target
 	warmReadAheadMB int64 = 100
 
-	targetPlay4KSec   int64 = 180
-	targetPause4KSec  int64 = 600
+	targetPlay4KSec   int64 = 90
+	targetPause4KSec  int64 = 120  // was 600!
 	warmReadAhead4KMB int64 = 128
 
 	endgameDuplicate = true
@@ -60,6 +61,7 @@ func Load() {
 
 	targetPlaySec = getenvInt64("TARGET_BUFFER_PLAY_SEC", targetPlaySec)
 	targetPauseSec = getenvInt64("TARGET_BUFFER_PAUSE_SEC", targetPauseSec)
+	targetMaxBytes = getenvInt64("TARGET_BUFFER_MAX_BYTES", targetMaxBytes)
 	warmReadAheadMB = getenvInt64("WARM_READ_AHEAD_MB", warmReadAheadMB)
 
 	// 4K overrides
@@ -89,6 +91,7 @@ func PrebufferTimeout() time.Duration    { return prebufferTimeout }
 func TrackersMode() string               { return trackersMode }
 func TargetPlaySec() int64               { return targetPlaySec }
 func TargetPauseSec() int64              { return targetPauseSec }
+func TargetMaxBytes() int64              { return targetMaxBytes }
 func WarmReadAheadMB() int64             { return warmReadAheadMB }
 func TargetPlay4KSec() int64             { return targetPlay4KSec }
 func TargetPause4KSec() int64            { return targetPause4KSec }

@@ -55,6 +55,7 @@ func main() {
 	mustOpenDB()
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
+	httpapi.SetProgressStore(progressDB) // Enable server-side progress tracking for VLC
 	searchCli = &torrentx.TorznabClient{
 		BaseURL: os.Getenv("INDEXER_URL"),
 		APIKey:  os.Getenv("INDEXER_API_KEY"),
@@ -66,7 +67,8 @@ func main() {
 
 	// http mux & routes (endpoints are IDENTICAL to your original service)
 	mux := http.NewServeMux()
-	httpapi.RegisterRoutes(mux) // /add, /files, /prefetch, /stream, /stats, /buffer/*
+	httpapi.RegisterRoutes(mux)         // /add, /files, /prefetch, /stream, /stats, /buffer/*
+	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
 		Picks: torrentx.EnsureDeps{

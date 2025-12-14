@@ -1,0 +1,53 @@
+{
+  "name": "tor-watcher-electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "cross-env FRONTEND_URL=http://localhost:3000 electron .",
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^31.2.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.0",
+    "@napi-rs/cli": "^2.16.1"
+  },
+  "build": {
+    "appId": "com.moviewatcher.app",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../mpv",
+        "to": "mpv",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../mpv-sdk",
+        "to": "mpv-sdk",
+        "filter": [
+          "*.dll"
+        ]
+      },
+      {
+        "from": "../native/mpv-embed/index.node",
+        "to": "mpv-embed.node"
+      }
+    ],
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
+  }
+}
+

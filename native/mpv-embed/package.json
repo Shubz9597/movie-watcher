@@ -1,0 +1,12 @@
+{
+  "name": "mpv-embed",
+  "version": "0.1.0",
+  "napi": {
+    "binaryName": "index",
+    "targets": []
+  },
+  "scripts": {
+    "build": "napi build --platform"
+  }
+}
+

@@ -96,7 +96,7 @@ func (m *Manager) reaper() {
 			m.mu.Unlock()
 
 			for _, k := range toStop {
-				log.Printf("[watch] stopping %s (no active leases)", k.String())
+				log.Printf("[watch] reaper: stopping %s (all leases expired or closed)", k.String())
 				// stop outside the lock
 				safely(func() { m.Stop(k) })
 			}
@@ -167,8 +167,31 @@ func KeyFromRequest(r *http.Request) (Key, error) {
 		// noop
 	}
 
+	// If ID is a magnet URL, extract the infoHash
+	if strings.HasPrefix(id, "magnet:") {
+		// Try to extract infoHash from magnet URI
+		if strings.Contains(id, "xt=urn:btih:") {
+			parts := strings.Split(id, "xt=urn:btih:")
+			if len(parts) > 1 {
+				hashPart := parts[1]
+				// Remove any trailing & or other parameters
+				if idx := strings.IndexAny(hashPart, "&"); idx > 0 {
+					hashPart = hashPart[:idx]
+				}
+				// Remove any URL encoding
+				hashPart = strings.TrimSpace(hashPart)
+				if len(hashPart) == 40 {
+					id = strings.ToUpper(hashPart)
+				} else if len(hashPart) == 32 {
+					// Base32 encoded, convert to hex (simplified - just use as-is for now)
+					id = strings.ToUpper(hashPart)
+				}
+			}
+		}
+	}
+
 	// Normalize infoHash to upper-case hex if it looks like one
-	if len(id) == 40 && strings.IndexFunc(id, isHex) == -1 {
+	if len(id) == 40 && strings.IndexFunc(id, func(r rune) bool { return !isHex(r) }) == -1 {
 		id = strings.ToUpper(id)
 	}
 
@@ -184,6 +207,7 @@ func isHex(r rune) bool {
 func (m *Manager) Open(_ context.Context, k Key) (leaseID string, err error) {
 	if m.Ensure != nil {
 		if err = m.Ensure(k); err != nil {
+			log.Printf("[watch] Open: Ensure failed for %s: %v", k.String(), err)
 			return "", err
 		}
 	}
@@ -196,10 +220,12 @@ func (m *Manager) Open(_ context.Context, k Key) (leaseID string, err error) {
 	if e == nil {
 		e = &entry{key: k, leases: make(map[string]time.Time), lastSeen: now}
 		m.entries[ks] = e
+		log.Printf("[watch] Open: created new entry for %s", ks)
 	}
 	e.leases[id] = now
 	e.lastSeen = now
 	m.leaseToKey[id] = ks
+	log.Printf("[watch] Open: created lease %s for %s (total leases: %d)", id[:8], ks, len(e.leases))
 	return id, nil
 }
 
@@ -209,6 +235,7 @@ func (m *Manager) Ping(_ context.Context, leaseID string) bool {
 	defer m.mu.Unlock()
 	ks, ok := m.leaseToKey[leaseID]
 	if !ok {
+		log.Printf("[watch] Ping: unknown lease %s", leaseID[:8])
 		return false
 	}
 	if e, ok := m.entries[ks]; ok {
@@ -218,6 +245,7 @@ func (m *Manager) Ping(_ context.Context, leaseID string) bool {
 		}
 		return true
 	}
+	log.Printf("[watch] Ping: lease %s has key %s but no entry", leaseID[:8], ks)
 	return false
 }
 
@@ -265,13 +293,16 @@ func (m *Manager) HandlePing(w http.ResponseWriter, r *http.Request) {
 		lease = b.LeaseId
 	}
 	if lease == "" {
+		log.Printf("[watch] Ping: missing leaseId from %s %s", r.Method, r.URL.String())
 		http.Error(w, "missing leaseId", http.StatusBadRequest)
 		return
 	}
 	if ok := m.Ping(r.Context(), lease); !ok {
+		log.Printf("[watch] Ping: unknown lease %s", lease[:8])
 		http.Error(w, "unknown lease", http.StatusNotFound)
 		return
 	}
+	log.Printf("[watch] Ping: success for lease %s", lease[:8])
 	w.WriteHeader(http.StatusNoContent)
 }
 

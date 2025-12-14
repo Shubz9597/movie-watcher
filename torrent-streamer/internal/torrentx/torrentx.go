@@ -1,12 +1,15 @@
 package torrentx
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -222,6 +225,10 @@ func srcFromID(id string) (string, error) {
 	if strings.HasPrefix(id, "magnet:") {
 		return sanitizeMagnet(id), nil
 	}
+	// Handle HTTP/HTTPS torrent URLs (from indexers like Prowlarr)
+	if strings.HasPrefix(id, "http://") || strings.HasPrefix(id, "https://") {
+		return id, nil
+	}
 	if len(id) == 40 && strings.IndexFunc(id, func(r rune) bool {
 		return !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'))
 	}) == -1 {
@@ -277,7 +284,74 @@ func AddOrGetTorrent(cl *torrent.Client, src string) (*torrent.Torrent, error) {
 		}
 		return t, nil
 	}
+	// Handle HTTP/HTTPS torrent URLs (e.g., from indexers like Prowlarr/Jackett)
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		return addTorrentFromURL(cl, src)
+	}
 	return cl.AddTorrentFromFile(src)
+}
+
+// addTorrentFromURL fetches a .torrent file from an HTTP URL and adds it to the client
+func addTorrentFromURL(cl *torrent.Client, torrentURL string) (*torrent.Torrent, error) {
+	log.Printf("[torrent] fetching torrent from URL: %s", torrentURL)
+
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := httpClient.Get(torrentURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch torrent URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("torrent URL returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Read the torrent file data
+	torrentData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read torrent data: %w", err)
+	}
+
+	// Validate it looks like a torrent file (bencode starts with 'd')
+	if len(torrentData) < 2 || torrentData[0] != 'd' {
+		// Probably HTML or error page
+		preview := string(torrentData)
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		return nil, fmt.Errorf("response is not a valid torrent file (got %d bytes starting with: %q)", len(torrentData), preview)
+	}
+
+	// Parse the metainfo
+	mi, err := metainfo.Load(bytes.NewReader(torrentData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse torrent metainfo: %w", err)
+	}
+
+	// Check if torrent already exists
+	ih := mi.HashInfoBytes()
+	if t, ok := cl.Torrent(ih); ok {
+		log.Printf("[torrent] torrent already exists: %s", ih.HexString())
+		return t, nil
+	}
+
+	// Add the torrent
+	t, err := cl.AddTorrent(mi)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add torrent: %w", err)
+	}
+
+	// Add trackers
+	if tiers := buildTrackerTiers(); len(tiers) != 0 {
+		t.AddTrackers(tiers)
+	}
+
+	log.Printf("[torrent] added torrent from URL: %s (hash: %s)", t.Name(), ih.HexString())
+	return t, nil
 }
 
 func WaitForInfo(ctx context.Context, t *torrent.Torrent) error {
@@ -520,3 +594,89 @@ func winLongPath(p string) string {
 
 // Passthroughs for guards used by janitor
 func CanDrop(cat string, ih metainfo.Hash) bool { return mayDrop(cat, ih) }
+
+// SubtitleFile represents a subtitle file in a torrent
+type SubtitleFile struct {
+	Index    int    `json:"index"`
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Length   int64  `json:"length"`
+	Lang     string `json:"lang"`
+	Ext      string `json:"ext"` // "srt", "vtt", "ass", "ssa"
+}
+
+// FindSubtitleFiles returns all subtitle files found in the torrent
+func FindSubtitleFiles(t *torrent.Torrent) []SubtitleFile {
+	if t.Info() == nil {
+		return nil
+	}
+
+	subtitleExts := map[string]bool{
+		".srt": true,
+		".vtt": true,
+		".ass": true,
+		".ssa": true,
+		".sub": true,
+	}
+
+	var subs []SubtitleFile
+	for i, f := range t.Files() {
+		ext := strings.ToLower(filepath.Ext(f.Path()))
+		if !subtitleExts[ext] {
+			continue
+		}
+
+		name := filepath.Base(f.Path())
+		subs = append(subs, SubtitleFile{
+			Index:  i,
+			Path:   f.Path(),
+			Name:   name,
+			Length: f.Length(),
+			Lang:   DetectLanguage(name),
+			Ext:    strings.TrimPrefix(ext, "."),
+		})
+	}
+	return subs
+}
+
+// DetectLanguage parses language code from a subtitle filename
+func DetectLanguage(filename string) string {
+	lower := strings.ToLower(filename)
+
+	// Common language patterns in subtitle filenames
+	langPatterns := []struct {
+		patterns []string
+		code     string
+	}{
+		{[]string{"english", "eng", ".en.", "_en_", "_en.", ".en_", "[en]", "(en)"}, "en"},
+		{[]string{"hindi", "hin", ".hi.", "_hi_", "_hi.", ".hi_", "[hi]", "(hi)"}, "hi"},
+		{[]string{"spanish", "spa", "espanol", ".es.", "_es_", "_es.", ".es_", "[es]", "(es)"}, "es"},
+		{[]string{"french", "fra", "francais", ".fr.", "_fr_", "_fr.", ".fr_", "[fr]", "(fr)"}, "fr"},
+		{[]string{"german", "deu", "deutsch", ".de.", "_de_", "_de.", ".de_", "[de]", "(de)"}, "de"},
+		{[]string{"italian", "ita", "italiano", ".it.", "_it_", "_it.", ".it_", "[it]", "(it)"}, "it"},
+		{[]string{"portuguese", "por", ".pt.", "_pt_", "_pt.", ".pt_", "[pt]", "(pt)"}, "pt"},
+		{[]string{"russian", "rus", ".ru.", "_ru_", "_ru.", ".ru_", "[ru]", "(ru)"}, "ru"},
+		{[]string{"japanese", "jpn", ".ja.", "_ja_", "_ja.", ".ja_", "[ja]", "(ja)", ".jp.", "_jp_"}, "ja"},
+		{[]string{"korean", "kor", ".ko.", "_ko_", "_ko.", ".ko_", "[ko]", "(ko)", ".kr.", "_kr_"}, "ko"},
+		{[]string{"chinese", "chi", "zho", ".zh.", "_zh_", "_zh.", ".zh_", "[zh]", "(zh)", ".cn.", "_cn_"}, "zh"},
+		{[]string{"arabic", "ara", ".ar.", "_ar_", "_ar.", ".ar_", "[ar]", "(ar)"}, "ar"},
+		{[]string{"dutch", "nld", ".nl.", "_nl_", "_nl.", ".nl_", "[nl]", "(nl)"}, "nl"},
+		{[]string{"polish", "pol", ".pl.", "_pl_", "_pl.", ".pl_", "[pl]", "(pl)"}, "pl"},
+		{[]string{"turkish", "tur", ".tr.", "_tr_", "_tr.", ".tr_", "[tr]", "(tr)"}, "tr"},
+		{[]string{"vietnamese", "vie", ".vi.", "_vi_", "_vi.", ".vi_", "[vi]", "(vi)"}, "vi"},
+		{[]string{"thai", "tha", ".th.", "_th_", "_th.", ".th_", "[th]", "(th)"}, "th"},
+		{[]string{"indonesian", "ind", ".id.", "_id_", "_id.", ".id_", "[id]", "(id)"}, "id"},
+		{[]string{"malay", "msa", ".ms.", "_ms_", "_ms.", ".ms_", "[ms]", "(ms)"}, "ms"},
+	}
+
+	for _, lp := range langPatterns {
+		for _, p := range lp.patterns {
+			if strings.Contains(lower, p) {
+				return lp.code
+			}
+		}
+	}
+
+	// Default to unknown
+	return "und"
+}

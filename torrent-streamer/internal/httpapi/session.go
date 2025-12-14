@@ -87,9 +87,12 @@ func (h *SessionHandlers) Start(w http.ResponseWriter, r *http.Request) {
 
 func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		SubjectID, SeriesID  string
-		Season, Episode      int
-		PositionS, DurationS int
+		SubjectID string `json:"subjectId"`
+		SeriesID  string `json:"seriesId"`
+		Season    int    `json:"season"`
+		Episode   int    `json:"episode"`
+		PositionS int    `json:"position_s"`
+		DurationS int    `json:"duration_s"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)

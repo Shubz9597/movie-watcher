@@ -1,2 +1,113 @@
+# Infrastructure and data
 infra/*
 data/*
+
+# Node.js dependencies (all subdirectories)
+**/node_modules/
+node_modules/
+
+# Package manager files (uncomment if you don't want to commit lock files)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Build outputs
+**/dist/
+**/build/
+**/out/
+**/.next/
+**/target/          # Rust build artifacts
+**/bin/             # Go binaries
+**/*.exe            # Windows executables
+**/*.node           # Native Node.js addons (compiled)
+native/**/index.d.ts # Generated TypeScript definitions for native addons
+
+# Electron build outputs
+electron/dist/
+electron/out/
+
+# Native addon build artifacts
+native/**/target/
+native/**/*.node
+native/**/index.d.ts
+native/**/*.win32-*.node
+
+# Go build artifacts
+torrent-streamer/bin/
+*.exe
+
+# Logs
+*.log
+debug.log
+**/logs/
+**/*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+**/.env*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Cache directories
+**/.cache/
+**/.turbo/
+.cache/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Database files (SQLite)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Subtitle cache
+subs-cache/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Rust
+# Cargo.lock is kept for binaries (native addons), uncomment if needed:
+# **/Cargo.lock
+**/target/
+
+# Python (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Docker volumes (if any)
+docker-volumes/
+
+# mpv binaries and SDK (typically downloaded/installed at build time)
+mpv/
+mpv-sdk/
+# Uncomment to keep mpv-sdk headers (if you want to commit them):
+# !mpv-sdk/include/

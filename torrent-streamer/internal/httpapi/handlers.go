@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
@@ -21,7 +23,27 @@ import (
 	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/middleware"
 	"torrent-streamer/internal/torrentx"
+	"torrent-streamer/internal/watch"
 )
+
+// Progress tracking for external players (VLC)
+var (
+	progressStore   *watch.Store
+	progressStoreMu sync.RWMutex
+)
+
+// SetProgressStore sets the watch progress store for server-side tracking
+func SetProgressStore(s *watch.Store) {
+	progressStoreMu.Lock()
+	progressStore = s
+	progressStoreMu.Unlock()
+}
+
+func getProgressStore() *watch.Store {
+	progressStoreMu.RLock()
+	defer progressStoreMu.RUnlock()
+	return progressStore
+}
 
 type fileEntry struct {
 	Index  int    `json:"index"`
@@ -34,16 +56,17 @@ type addResp struct {
 	Files    []fileEntry `json:"files"`
 }
 type prefetchResp struct {
-	InfoHash       string      `json:"infoHash"`
-	Name           string      `json:"name"`
-	FileIndex      int         `json:"fileIndex"`
-	FileName       string      `json:"fileName"`
-	FileLength     int64       `json:"fileLength"`
-	MetadataMs     int64       `json:"metadataMs"`
-	PrebufferBytes int64       `json:"prebufferBytes"`
-	PrebufferMs    int64       `json:"prebufferMs"`
-	Note           string      `json:"note"`
-	Files          []fileEntry `json:"files,omitempty"`
+	InfoHash       string                  `json:"infoHash"`
+	Name           string                  `json:"name"`
+	FileIndex      int                     `json:"fileIndex"`
+	FileName       string                  `json:"fileName"`
+	FileLength     int64                   `json:"fileLength"`
+	MetadataMs     int64                   `json:"metadataMs"`
+	PrebufferBytes int64                   `json:"prebufferBytes"`
+	PrebufferMs    int64                   `json:"prebufferMs"`
+	Note           string                  `json:"note"`
+	Files          []fileEntry             `json:"files,omitempty"`
+	Subtitles      []torrentx.SubtitleFile `json:"subtitles,omitempty"`
 }
 
 type torrentStat struct {
@@ -94,6 +117,25 @@ func parseCat(q url.Values) string {
 	default:
 		return c
 	}
+}
+
+// estimateDuration estimates video duration in seconds based on file size
+// Rough estimates based on typical bitrates:
+// - 4K: ~20 Mbps = 2.5 MB/s = 9 GB/hour
+// - 1080p: ~8 Mbps = 1 MB/s = 3.6 GB/hour
+// - 720p: ~4 Mbps = 0.5 MB/s = 1.8 GB/hour
+// We use a conservative estimate of ~1.5 MB/s (5.4 GB/hour) which works for most content
+func estimateDuration(sizeBytes int64) int {
+	const bytesPerSecond = 1.5 * 1024 * 1024 // 1.5 MB/s average
+	durationS := float64(sizeBytes) / bytesPerSecond
+	// Clamp to reasonable bounds (1 minute to 6 hours)
+	if durationS < 60 {
+		durationS = 60
+	}
+	if durationS > 6*3600 {
+		durationS = 6 * 3600
+	}
+	return int(durationS)
 }
 
 func handleAdd(w http.ResponseWriter, r *http.Request) {
@@ -205,6 +247,23 @@ func handlePrefetch(w http.ResponseWriter, r *http.Request) {
 	metaMs := time.Since(metaStart).Milliseconds()
 	torrentx.SetLastTouch(cat, t.InfoHash())
 
+	// Find and prebuffer subtitle files first (they're small, typically <500KB)
+	subtitleFiles := torrentx.FindSubtitleFiles(t)
+	for _, sub := range subtitleFiles {
+		if sub.Index >= 0 && sub.Index < len(t.Files()) {
+			subFile := t.Files()[sub.Index]
+			// Only prebuffer subtitles up to 2MB
+			if subFile.Length() <= 2<<20 {
+				subRd := subFile.NewReader()
+				subRd.SetResponsive()
+				got := torrentx.Prebuffer(subRd, subFile.Length(), 10*time.Second)
+				subRd.Close()
+				log.Printf("[prefetch] subtitle %s (%s) prebuffered %d/%d bytes",
+					sub.Name, sub.Lang, got, subFile.Length())
+			}
+		}
+	}
+
 	f, fidx := torrentx.ChooseBestVideoFile(t)
 	if f == nil {
 		_ = json.NewEncoder(w).Encode(prefetchResp{
@@ -212,6 +271,7 @@ func handlePrefetch(w http.ResponseWriter, r *http.Request) {
 			Name:       t.Name(),
 			MetadataMs: metaMs,
 			Note:       "no-playable-file",
+			Subtitles:  subtitleFiles,
 		})
 		return
 	}
@@ -240,6 +300,7 @@ func handlePrefetch(w http.ResponseWriter, r *http.Request) {
 		PrebufferMs:    time.Since(readStart).Milliseconds(),
 		Note:           "ok",
 		Files:          files,
+		Subtitles:      subtitleFiles,
 	})
 }
 
@@ -256,6 +317,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 
 	src, err := torrentx.ParseSrc(r.URL.Query())
 	if err != nil {
+		log.Printf("[stream] parse src error: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -265,11 +327,13 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[trackers] udp=%d http=%d https=%d other=%d", u, h, s, o)
 	}
 	if err != nil {
+		log.Printf("[stream] add torrent error: %v", err)
 		http.Error(w, "add torrent: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), config.WaitMetadata())
+	// Bound metadata wait to avoid hanging with no headers written
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	metaStart := time.Now()
 	if err := torrentx.WaitForInfo(ctx, t); err != nil {
@@ -294,12 +358,21 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no playable file in torrent", http.StatusNotFound)
 		return
 	}
+	log.Printf("[stream] starting cat=%s file=%s (%d bytes) fidx=%d", cat, f.Path(), f.Length(), fidx)
 	torrentx.SetLastFileIndex(cat, t.InfoHash(), fidx)
 
 	torrentx.IncActive(cat, t.InfoHash())
 	defer torrentx.DecActive(cat, t.InfoHash())
 
 	torrentx.SetLastTouch(cat, t.InfoHash())
+
+	// Progress tracking params (for VLC/external players)
+	q := r.URL.Query()
+	trackProgress := q.Get("trackProgress") == "1"
+	trackSubjectID := q.Get("subjectId")
+	trackSeriesID := q.Get("seriesId")
+	trackSeason, _ := strconv.Atoi(q.Get("season"))
+	trackEpisode, _ := strconv.Atoi(q.Get("episode"))
 
 	k := buffer.Key{Cat: cat, IH: t.InfoHash().HexString(), FIdx: fidx}
 	ctl := buffer.Get(k)
@@ -353,6 +426,38 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 
 	target := ctl.TargetBytes()
 
+	// Prepare response controller and headers early; flush so browser sees status/headers even if buffering is slow
+	rc := http.NewResponseController(w)
+
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	if mimeType == "" {
+		mimeType = torrentx.ContentTypeForName(name)
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", torrentx.SafeDownloadName(filepath.Base(name))))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-File-Index", strconv.Itoa(fidx))
+	w.Header().Set("X-File-Name", filepath.Base(name))
+
+	if hadRange {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+
+	// Flush headers now; if buffering is slow, browser still gets status/headers
+	if err := rc.Flush(); err != nil {
+		log.Printf("[stream] header flush error: %v", err)
+		return
+	}
+
 	reader := f.NewReader()
 	defer reader.Close()
 	if _, err := reader.Seek(start, io.SeekStart); err != nil {
@@ -394,26 +499,10 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", torrentx.ContentTypeForName(name))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", torrentx.SafeDownloadName(filepath.Base(name))))
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-File-Index", strconv.Itoa(fidx))
-	w.Header().Set("X-File-Name", filepath.Base(name))
-
-	if hadRange {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
-		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	}
-
 	if r.Method == http.MethodHead {
 		return
 	}
 
-	rc := http.NewResponseController(w)
 	buf := make([]byte, 256<<10)
 	var written int64
 	progressEvery := 2 * time.Second
@@ -450,8 +539,21 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 			if time.Since(lastProg) >= progressEvery {
 				lastProg = time.Now()
 				ctlBytes := ctl.TargetBytes()
-				pct := float64(written) / float64(length) * 100
-				log.Printf("[stream] progress %0.1f%% (%d/%d) target=%d", pct, written, length, ctlBytes)
+				pct := float64(start+written) / float64(size) * 100
+				log.Printf("[stream] progress %0.1f%% (%d/%d) target=%d", pct, start+written, size, ctlBytes)
+
+				// Auto-save progress for VLC/external players
+				if trackProgress && trackSubjectID != "" && trackSeriesID != "" {
+					if ps := getProgressStore(); ps != nil {
+						// Estimate position in seconds based on byte position
+						estDurationS := estimateDuration(size)
+						positionS := int(float64(start+written) / float64(size) * float64(estDurationS))
+
+						if err := ps.SaveProgress(r.Context(), trackSubjectID, trackSeriesID, trackSeason, trackEpisode, positionS, estDurationS); err != nil {
+							log.Printf("[stream] failed to save progress: %v", err)
+						}
+					}
+				}
 			}
 		}
 		if readErr != nil {
@@ -464,6 +566,21 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
+
+	// Final progress save when stream ends
+	if trackProgress && trackSubjectID != "" && trackSeriesID != "" {
+		if ps := getProgressStore(); ps != nil {
+			estDurationS := estimateDuration(size)
+			positionS := int(float64(start+written) / float64(size) * float64(estDurationS))
+			pctWatched := float64(start+written) / float64(size) * 100
+			if err := ps.SaveProgress(r.Context(), trackSubjectID, trackSeriesID, trackSeason, trackEpisode, positionS, estDurationS); err != nil {
+				log.Printf("[stream] final progress save failed: %v", err)
+			} else {
+				log.Printf("[stream] saved progress: %s S%dE%d pos=%ds pct=%.1f%%", trackSeriesID, trackSeason, trackEpisode, positionS, pctWatched)
+			}
+		}
+	}
+
 	log.Printf("[stream] cat=%s name=%q fileIdx=%d range=%d-%d len=%d target=%d",
 		cat, t.Name(), fidx, start, end, written, target)
 }
@@ -580,26 +697,36 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "add torrent: "+err.Error(), 400)
 		return
 	}
-	if err := torrentx.WaitForInfo(r.Context(), t); err != nil {
-		http.Error(w, "metadata timeout", http.StatusGatewayTimeout)
-		return
+	// Use a short timeout - if prefetch already got metadata, this will return immediately
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := torrentx.WaitForInfo(ctx, t); err != nil {
+		// If metadata isn't ready yet, that's ok - we can still set state
+		// The buffer controller will work once metadata is available
+		log.Printf("[buffer/state] metadata not ready yet for %s (will retry): %v", src, err)
 	}
 
 	var f *torrent.File
 	fidx := 0
-	if idxStr := q.Get("fileIndex"); idxStr != "" {
-		if n, _ := strconv.Atoi(idxStr); n >= 0 && n < len(t.Files()) {
-			f = t.Files()[n]
-			fidx = n
+	if t.Info() != nil {
+		if idxStr := q.Get("fileIndex"); idxStr != "" {
+			if n, _ := strconv.Atoi(idxStr); n >= 0 && n < len(t.Files()) {
+				f = t.Files()[n]
+				fidx = n
+			}
+		}
+		if f == nil {
+			if bf, bi := torrentx.ChooseBestVideoFile(t); bf != nil {
+				f, fidx = bf, bi
+			}
 		}
 	}
+
+	// If we don't have a file yet, still respond but don't start warming
+	// The buffer controller will work once metadata is available
 	if f == nil {
-		if bf, bi := torrentx.ChooseBestVideoFile(t); bf != nil {
-			f, fidx = bf, bi
-		}
-	}
-	if f == nil {
-		http.Error(w, "no playable file", 404)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": q.Get("state"), "note": "metadata not ready yet"})
 		return
 	}
 
@@ -611,14 +738,18 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 		ctl.SetState(buffer.StatePaused)
 		ctlStart := ctl.Playhead()
 		go ctl.StartWarm(cat, t, f, ctlStart)
+		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "paused"})
+		return
 	case "play":
 		ctl.SetState(buffer.StatePlaying)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "playing"})
+		return
 	default:
 		http.Error(w, "state must be pause|play", 400)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
@@ -637,8 +768,23 @@ func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "add torrent: "+err.Error(), 400)
 		return
 	}
-	if err := torrentx.WaitForInfo(r.Context(), t); err != nil {
-		http.Error(w, "metadata timeout", http.StatusGatewayTimeout)
+	// Use a short timeout - if prefetch already got metadata, this will return immediately
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := torrentx.WaitForInfo(ctx, t); err != nil {
+		// If metadata isn't ready, return empty buffer info
+		// The client can retry or use fallback logic
+		log.Printf("[buffer/info] metadata not ready yet for %s: %v", src, err)
+		if wantsSSE(r) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			_, _ = io.WriteString(w, "retry: 2000\n\n")
+			_, _ = io.WriteString(w, "data: {\"targetBytes\":0,\"contiguousAhead\":0}\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"targetBytes": 0, "contiguousAhead": 0})
 		return
 	}
 
@@ -656,7 +802,17 @@ func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if f == nil {
-		http.Error(w, "no playable file", 404)
+		// Return empty buffer info if no file found
+		if wantsSSE(r) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			_, _ = io.WriteString(w, "retry: 2000\n\n")
+			_, _ = io.WriteString(w, "data: {\"targetBytes\":0,\"contiguousAhead\":0}\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"targetBytes": 0, "contiguousAhead": 0})
 		return
 	}
 
@@ -680,23 +836,43 @@ func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache, no-transform")
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 
+		// Write initial SSE headers and flush immediately
 		_, _ = io.WriteString(w, "retry: 2000\n\n")
 		rc := http.NewResponseController(w)
+		if err := rc.Flush(); err != nil {
+			log.Printf("[buffer/info] SSE flush error: %v", err)
+			return
+		}
 
 		write := func() bool {
 			out := buildBufferInfoOut(t, f, fidx, ctl)
-			b, _ := json.Marshal(out)
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			b, err := json.Marshal(out)
+			if err != nil {
+				log.Printf("[buffer/info] JSON marshal error: %v", err)
 				return false
 			}
-			_ = rc.Flush()
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+				log.Printf("[buffer/info] Write error: %v", err)
+				return false
+			}
+			if err := rc.Flush(); err != nil {
+				log.Printf("[buffer/info] Flush error: %v", err)
+				return false
+			}
 			torrentx.SetLastTouch(cat, t.InfoHash())
 			return true
 		}
+
+		// Send initial data immediately
+		log.Printf("[buffer/info] SSE: sending initial data for cat=%s ih=%s fileIndex=%d", cat, t.InfoHash().HexString(), fidx)
 		if !write() {
+			log.Printf("[buffer/info] SSE: initial write failed")
 			return
 		}
+		log.Printf("[buffer/info] SSE: initial data sent successfully")
+
 		tick := time.NewTicker(1 * time.Second)
 		defer tick.Stop()
 		ping := time.NewTicker(15 * time.Second)

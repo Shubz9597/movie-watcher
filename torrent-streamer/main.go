@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -461,7 +462,64 @@ func addOrGetTorrent(cl *torrent.Client, src string) (*torrent.Torrent, error) {
 		}
 		return t, nil
 	}
+	// Handle HTTP/HTTPS torrent URLs (e.g., from indexers like Prowlarr/Jackett)
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		return addTorrentFromURL(cl, src)
+	}
 	return cl.AddTorrentFromFile(src)
+}
+
+// addTorrentFromURL fetches a .torrent file from an HTTP URL and adds it to the client
+func addTorrentFromURL(cl *torrent.Client, torrentURL string) (*torrent.Torrent, error) {
+	log.Printf("[torrent] fetching torrent from URL: %s", torrentURL)
+
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := httpClient.Get(torrentURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch torrent URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("torrent URL returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Read the torrent file data
+	torrentData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read torrent data: %w", err)
+	}
+
+	// Parse the metainfo
+	mi, err := metainfo.Load(bytes.NewReader(torrentData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse torrent metainfo: %w", err)
+	}
+
+	// Check if torrent already exists
+	ih := mi.HashInfoBytes()
+	if t, ok := cl.Torrent(ih); ok {
+		log.Printf("[torrent] torrent already exists: %s", ih.HexString())
+		return t, nil
+	}
+
+	// Add the torrent
+	t, err := cl.AddTorrent(mi)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add torrent: %w", err)
+	}
+
+	// Add trackers
+	if tiers := buildTrackerTiers(); len(tiers) != 0 {
+		t.AddTrackers(tiers)
+	}
+
+	log.Printf("[torrent] added torrent from URL: %s (hash: %s)", t.Name(), ih.HexString())
+	return t, nil
 }
 
 func waitForInfo(ctx context.Context, t *torrent.Torrent) error {

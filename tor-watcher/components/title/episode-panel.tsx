@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Play } from "lucide-react";
+import { Loader2, Play, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { TorrentRow } from "@/components/torrentListModal/torrentListDialog";
@@ -83,6 +83,85 @@ function qualityFromTitle(title: string) {
   if (lower.includes("1080p")) return "1080p";
   if (lower.includes("720p")) return "720p";
   return null;
+}
+
+const VOD_BASE = "http://localhost:4001";
+
+function getDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  const KEY = "mw_device_id";
+  const existing = localStorage.getItem(KEY);
+  if (existing && existing !== "null" && existing !== "undefined") return existing;
+  const canUseUUID = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function";
+  const newId = canUseUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem(KEY, newId);
+  return newId;
+}
+
+type M3UOpts = {
+  magnet: string;
+  displayTitle: string;
+  cat: string;
+  seriesId?: string;
+  season?: number;
+  episode?: number;
+  imdbId?: string;
+};
+
+async function downloadM3U(opts: M3UOpts) {
+  const params = new URLSearchParams();
+  params.set("cat", opts.cat);
+  params.set("magnet", opts.magnet);
+  // Include tracking info so server can auto-save progress
+  if (opts.seriesId) params.set("seriesId", opts.seriesId);
+  if (opts.season != null) params.set("season", String(opts.season));
+  if (opts.episode != null) params.set("episode", String(opts.episode));
+  params.set("subjectId", getDeviceId());
+  params.set("trackProgress", "1");
+  
+  const streamUrl = `${VOD_BASE}/stream?${params.toString()}`;
+  const safeFilename = opts.displayTitle.replace(/[<>:"/\\|?*]/g, "_");
+  
+  // Try to fetch subtitles from Go backend
+  let subtitleUrl: string | undefined;
+  try {
+    const subParams = new URLSearchParams({ cat: opts.cat, magnet: opts.magnet });
+    if (opts.imdbId) subParams.set("imdbId", opts.imdbId);
+    subParams.set("langs", "en,hi");
+    const res = await fetch(`${VOD_BASE}/subtitles/list?${subParams.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      // Prefer torrent subtitles, then external
+      const torrentSub = data.torrent?.[0];
+      const externalSub = data.external?.[0];
+      if (torrentSub) {
+        subtitleUrl = `${VOD_BASE}/subtitles/torrent?magnet=${encodeURIComponent(opts.magnet)}&cat=${opts.cat}&fileIndex=${torrentSub.index}`;
+      } else if (externalSub) {
+        subtitleUrl = `${VOD_BASE}${externalSub.url}`;
+      }
+    }
+  } catch {}
+  
+  // Build M3U content with optional subtitle for VLC
+  // Use input-slave for network URLs (sub-file only works for local paths)
+  let m3uContent = `#EXTM3U\n#EXTINF:-1,${opts.displayTitle}\n`;
+  if (subtitleUrl) {
+    m3uContent += `#EXTVLCOPT:input-slave=${subtitleUrl}\n`;
+    m3uContent += `#EXTVLCOPT:sub-track=0\n`;
+  }
+  m3uContent += `${streamUrl}\n`;
+
+  const blob = new Blob([m3uContent], { type: "audio/x-mpegurl" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeFilename}.m3u`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 export default function EpisodePanel({
@@ -218,7 +297,8 @@ export default function EpisodePanel({
   };
 
   const playTorrent = async (t: TorrentRow) => {
-    const magnet = t.magnetUri || t.torrentUrl || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "");
+    // Prefer magnet links over HTTP torrent URLs (which can fail if indexer returns HTML)
+    const magnet = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
     if (!magnet) {
       setTorrentError("Unable to start playback: missing magnet.");
       return;
@@ -301,12 +381,14 @@ export default function EpisodePanel({
           ? "Season pack • auto picks this episode"
           : null;
 
+    const magnet = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
+    const epLabel = activeEpisode ? `S${String(activeEpisode.seasonNumber ?? selectedSeason).padStart(2, "0")}E${String(activeEpisode.episodeNumber).padStart(2, "0")}` : "";
+    const displayTitle = `${title} ${epLabel}`.trim();
+
     return (
-      <button
+      <div
         key={key}
         className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/10 p-3 text-left transition hover:border-cyan-400/50"
-        onClick={() => void playTorrent(t)}
-        disabled={busy}
       >
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-xs font-semibold text-cyan-200">
           {quality ?? "—"}
@@ -318,8 +400,42 @@ export default function EpisodePanel({
           </div>
           {packNote ? <div className="mt-1 text-[11px] text-cyan-200">{packNote}</div> : null}
         </div>
-        {busy ? <Loader2 className="h-4 w-4 animate-spin text-cyan-200" /> : <Play className="h-4 w-4 text-cyan-200" />}
-      </button>
+        <div className="flex items-center gap-1">
+          {magnet && (
+            <button
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500/20 text-orange-300 transition hover:bg-orange-500/40 disabled:opacity-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                // Build seriesId for progress tracking
+                let sId: string | undefined;
+                if (kind === "anime" && malId) sId = `mal:${malId}`;
+                else if (tmdbId) sId = `tmdb:tv:${tmdbId}`;
+                void downloadM3U({
+                  magnet,
+                  displayTitle,
+                  cat: kind,
+                  seriesId: sId,
+                  season: activeEpisode?.seasonNumber ?? selectedSeason,
+                  episode: activeEpisode?.episodeNumber,
+                  imdbId,
+                });
+              }}
+              title="Download .m3u for VLC"
+              disabled={busy}
+            >
+              <MonitorPlay className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-500/20 text-cyan-300 transition hover:bg-cyan-500/40 disabled:opacity-50"
+            onClick={() => void playTorrent(t)}
+            title="Play in browser"
+            disabled={busy}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
     );
   };
 

@@ -183,7 +183,8 @@ export default function MovieQuickView({
   }
 
   function playTorrent(t: TorrentRow) {
-    const src = t.magnetUri || t.torrentUrl || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "");
+    // Prefer magnet links over HTTP torrent URLs (which can fail if indexer returns HTML)
+    const src = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
     if (!src) return;
     const qs = new URLSearchParams();
     qs.set("src", src);
