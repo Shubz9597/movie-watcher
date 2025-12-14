@@ -210,11 +210,18 @@ impl MpvHandle {
   pub fn init(&self, _options: Option<Object>) -> Result<()> {
     let funcs = get_mpv_funcs()?;
     unsafe {
-      // force window, keep-open, no-ytdl
+      // Video output options (set before init)
+      // Note: wid should already be set via attach_hwnd before calling init
+      // Video output options - try gpu first, fallback to direct3d if needed
+      // wid should already be set via attach_hwnd
       let opts = [
         ("force-window", "yes"),
         ("keep-open", "yes"),
         ("ytdl", "no"),
+        ("vo", "gpu"), // Use gpu VO with wid for hardware acceleration
+        ("gpu-context", "d3d11"), // Direct3D 11 context for Windows
+        ("hwdec", "auto-safe"), // Hardware decoding
+        ("video-sync", "display-resample"), // Sync to display
       ];
       for (k, v) in opts {
         let ck = CString::new(k).unwrap();
@@ -225,6 +232,17 @@ impl MpvHandle {
     }
   }
 
+  /// Set an mpv string option (must be called before init where applicable).
+  #[napi]
+  pub fn set_option_string(&self, key: String, value: String) -> Result<()> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let ck = CString::new(key).map_err(|e| Error::from_reason(e.to_string()))?;
+      let cv = CString::new(value).map_err(|e| Error::from_reason(e.to_string()))?;
+      check_err((funcs.set_option_string)(self.handle, ck.as_ptr(), cv.as_ptr()), "set_option_string")
+    }
+  }
+
   /// Attach to a native HWND (Windows). This sets the "wid" option.
   #[napi]
   pub fn attach_hwnd(&mut self, hwnd: u32) -> Result<()> {
@@ -232,15 +250,45 @@ impl MpvHandle {
     unsafe {
       let key = CString::new("wid").unwrap();
       let hwnd64: i64 = hwnd as i64;
-      check_err(
-        (funcs.set_option)(
+      
+      // Try setting as option first (works before init) - CHECK THE RESULT
+      let opt_result = (funcs.set_option)(
+        self.handle,
+        key.as_ptr(),
+        mpv_format::MPV_FORMAT_INT64,
+        &hwnd64 as *const i64 as *const c_void,
+      );
+      
+      if opt_result < 0 {
+        // If setting as option failed, try as property (works after init)
+        let prop_key = CString::new("wid").unwrap();
+        let prop_result = (funcs.set_property)(
           self.handle,
-          key.as_ptr(),
+          prop_key.as_ptr(),
           mpv_format::MPV_FORMAT_INT64,
           &hwnd64 as *const i64 as *const c_void,
-        ),
-        "set wid",
-      )?;
+        );
+        if prop_result < 0 {
+          return Err(Error::from_reason(format!(
+            "Failed to set wid: option={}, property={}, hwnd={}",
+            opt_result, prop_result, hwnd
+          )));
+        }
+        // Property set succeeded
+      } else {
+        // Option was set successfully, also set as property for redundancy
+        let prop_key = CString::new("wid").unwrap();
+        let prop_result = (funcs.set_property)(
+          self.handle,
+          prop_key.as_ptr(),
+          mpv_format::MPV_FORMAT_INT64,
+          &hwnd64 as *const i64 as *const c_void,
+        );
+        // Don't fail if property set fails - option was already set
+        if prop_result < 0 {
+          // Log but don't fail
+        }
+      }
       self.attached = true;
       Ok(())
     }

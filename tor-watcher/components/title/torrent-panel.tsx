@@ -223,12 +223,28 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage, ki
     if (!isElectron) return;
     const magnet = t.magnetUri || (t.infoHash ? `magnet:?xt=urn:btih:${t.infoHash}` : "") || t.torrentUrl || "";
     if (!magnet) return;
+    
+    // Wait for mpv to be ready before attempting playback
+    try {
+      const readyCheck = await (window as any).electronAPI.isMpvReady();
+      if (!readyCheck?.ready) {
+        console.log("[TorrentPanel] Waiting for mpv to be ready...");
+        await (window as any).electronAPI.waitForMpvReady();
+        console.log("[TorrentPanel] mpv is ready, proceeding with playback");
+      }
+    } catch (err) {
+      console.error("[TorrentPanel] Error checking mpv readiness", err);
+    }
+    
     const params = new URLSearchParams();
     params.set("cat", isAnime ? "anime" : "movie");
     params.set("magnet", magnet);
     const streamUrl = `${VOD_BASE}/stream?${params.toString()}`;
     try {
-      await (window as any).electronAPI.playInMpv(streamUrl);
+      await (window as any).electronAPI.playInMpv({
+        url: streamUrl,
+        title,
+      });
     } catch (err) {
       console.error("mpv play failed", err);
     }
@@ -380,4 +396,3 @@ export default function TorrentPanel({ title, year, imdbId, originalLanguage, ki
     </aside>
   );
 }
-

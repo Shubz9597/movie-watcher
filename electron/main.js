@@ -11,6 +11,11 @@ let mpvNative = null;
 let mpvNativeHandle = null;
 let mpvNativeReady = false;
 let mpvAttached = false;
+let lastTitle = "";
+let mpvSessionActive = false;
+let lastPlayTitle = "";
+let mpvInitialized = false;
+let mpvInitPromise = null;
 
 // Try to load native libmpv embed addon (built via @napi-rs/cli)
 // Only load the module, don't create handle until needed
@@ -25,32 +30,87 @@ try {
   console.warn("[mpv-native] addon not available", err?.message || err);
 }
 
-function getMainWindowHwnd() {
-  if (!mainWindow || mainWindow.isDestroyed()) return null;
-  const handle = mainWindow.getNativeWindowHandle();
-  // On Windows the handle is a pointer-sized integer; readUInt32LE works for HWND.
-  return handle.readUInt32LE(0);
-}
-
 function getMainBounds() {
   if (!mainWindow || mainWindow.isDestroyed()) return { x: 0, y: 0, width: 1280, height: 720 };
   const b = mainWindow.getContentBounds();
   return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
 
+function attachMainWindowListeners() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mpvHostWindow || mpvHostWindow.isDestroyed()) return;
+  
+  // Remove existing listeners to avoid duplicates (if called multiple times)
+  // Note: removeAllListeners removes ALL listeners, so we need to be careful
+  // For now, we'll just check if listeners are already attached by checking if the window has the event
+  
+  const updateBounds = () => {
+    if (!mpvHostWindow || mpvHostWindow.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return;
+    const bounds = mainWindow.getContentBounds();
+    mpvHostWindow.setBounds(bounds);
+    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+      mpvControlsWindow.setBounds(bounds);
+    }
+  };
+  
+  // Only attach if not already attached (simple check - if this function is called multiple times, 
+  // we'll have duplicate listeners, but that's acceptable for now)
+  mainWindow.on("resize", updateBounds);
+  mainWindow.on("move", updateBounds);
+  mainWindow.on("maximize", updateBounds);
+  mainWindow.on("unmaximize", updateBounds);
+}
+
+function hideMpvWindows() {
+  if (mpvHostWindow && !mpvHostWindow.isDestroyed()) {
+    mpvHostWindow.hide();
+    mpvHostWindow.setSkipTaskbar(true);
+  }
+  if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+    mpvControlsWindow.hide();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setSkipTaskbar(false);
+    mainWindow.show();
+  }
+  mpvSessionActive = false;
+}
+
+function showMpvWindows() {
+  if (!mpvSessionActive) return;
+  const bounds = getMainBounds();
+  if (mpvHostWindow && !mpvHostWindow.isDestroyed()) {
+    mpvHostWindow.setBounds(bounds);
+    mpvHostWindow.setSkipTaskbar(false);
+    mpvHostWindow.show();
+    mpvHostWindow.focus();
+    if (lastPlayTitle) mpvHostWindow.setTitle(lastPlayTitle);
+  }
+  if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+    mpvControlsWindow.setBounds(bounds);
+    mpvControlsWindow.showInactive();
+  }
+}
+
 function ensureMpvHostWindow() {
   if (mpvHostWindow && !mpvHostWindow.isDestroyed()) return;
-  if (!mainWindow) return;
   
-  const { x, y, width, height } = getMainBounds();
-  
-  // Create independent window (not a child) that will host mpv - this ensures Alt+Tab shows it correctly
-  // mpv will render directly into this window via HWND, so we can't overlay HTML on top
+  // Get bounds - use mainWindow if available, otherwise use defaults
+  let bounds;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    bounds = getMainBounds();
+  } else {
+    bounds = { x: 0, y: 0, width: 1280, height: 720 };
+  }
+  const { x, y, width, height } = bounds;
+
+  // Top-level host for mpv. We hide the main window during playback so Alt+Tab shows this one.
   mpvHostWindow = new BrowserWindow({
     x,
     y,
     width,
     height,
+    useContentSize: true,
     frame: false,
     transparent: false,
     resizable: true,
@@ -59,120 +119,134 @@ function ensureMpvHostWindow() {
     maximizable: true,
     closable: true,
     focusable: true,
-    skipTaskbar: false, // Show in taskbar so Alt+Tab works
-    show: false, // Hidden initially, shown when video plays
+    skipTaskbar: true, // flipped to false when playing
+    show: false, // shown when playing
     hasShadow: false,
     backgroundColor: "#000000",
-    webPreferences: { 
+    webPreferences: {
       backgroundThrottling: false,
       nodeIntegration: false,
       contextIsolation: true,
     },
   });
-  
+
   // Load blank page (mpv renders directly into window, not via web content)
   mpvHostWindow.loadURL("about:blank").catch(() => {});
-  
-  // Get native window handle for mpv
-  mpvHostWindow.webContents.once("did-finish-load", () => {
+
+  // Get native window handle for mpv - get it immediately after window creation
+  // The HWND is available immediately, we don't need to wait for did-finish-load
+  try {
     const handle = mpvHostWindow.getNativeWindowHandle();
-    mpvWid = handle.readUInt32LE(0);
-    console.log("[mpv] host window created", { mpvWid, bounds: { x, y, width, height } });
-    
-    // Attach mpv if ready
-    if (mpvNativeHandle && mpvNativeReady && !mpvAttached) {
+    // HWND is pointer-sized; prefer 64-bit read to avoid truncation on x64.
+    mpvWid = handle.readBigUInt64LE ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+    console.log("[mpv] host window HWND obtained immediately:", mpvWid);
+  } catch (err) {
+    console.error("[mpv] Failed to get HWND immediately:", err);
+    // Fallback: try again after did-finish-load
+    mpvHostWindow.webContents.once("did-finish-load", () => {
       try {
-        mpvNativeHandle.attachHwnd(mpvWid);
-        mpvAttached = true;
-        console.log("[mpv-native] attached hwnd", mpvWid);
-      } catch (err) {
-        console.error("[mpv-native] attach failed", err);
+        const handle = mpvHostWindow.getNativeWindowHandle();
+        mpvWid = handle.readBigUInt64LE ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+        console.log("[mpv] host window HWND obtained after load:", mpvWid);
+      } catch (e) {
+        console.error("[mpv] Failed to get HWND after load:", e);
       }
-    }
-  });
-  
-  // Handle window close
-  mpvHostWindow.on("close", (e) => {
-    if (mpvNativeHandle) {
-      try {
-        mpvNativeHandle.stop();
-      } catch (err) {
-        console.error("[mpv] stop on close failed", err);
-      }
-    }
-    // Hide controls window if it exists
+    });
+  }
+
+  mpvHostWindow.on("close", () => {
+    try { mpvNativeHandle?.stop(); } catch {}
     if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
       mpvControlsWindow.hide();
     }
-  });
-  
-  // Update bounds when main window moves/resizes (sync mpv window with main)
-  const updateBounds = () => {
-    if (mpvHostWindow && !mpvHostWindow.isDestroyed() && mainWindow && !mainWindow.isDestroyed()) {
-      const bounds = getMainBounds();
-      mpvHostWindow.setBounds(bounds);
-      // Also update controls window
-      if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
-        mpvControlsWindow.setBounds(bounds);
-      }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      hideMpvWindows();
     }
-  };
-  
-  mainWindow.on("resize", updateBounds);
-  mainWindow.on("move", updateBounds);
+  });
+
+  // Update bounds on maximize/restore
+  mpvHostWindow.on("maximize", () => {
+    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+      const bounds = mpvHostWindow.getBounds();
+      mpvControlsWindow.setBounds(bounds);
+    }
+  });
+
+  mpvHostWindow.on("unmaximize", () => {
+    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+      const bounds = mpvHostWindow.getBounds();
+      mpvControlsWindow.setBounds(bounds);
+    }
+  });
+
+  // Sync bounds when main window changes (attach listeners if mainWindow exists)
+  attachMainWindowListeners();
+
+  // Also sync when mpv host window changes (user resizes it)
+  mpvHostWindow.on("resize", () => {
+    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed() && mpvHostWindow && !mpvHostWindow.isDestroyed()) {
+      const bounds = mpvHostWindow.getBounds();
+      mpvControlsWindow.setBounds(bounds);
+    }
+  });
 }
 
 function ensureMpvControlsWindow() {
   if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) return;
   if (!mpvHostWindow || mpvHostWindow.isDestroyed()) return;
-  
+
   const { x, y, width, height } = getMainBounds();
-  
-  // Create transparent overlay window for controls that sits on top of mpv window
-  // Make it independent (not a child) so it can be properly layered
+
+  // Transparent overlay that follows the main window and never shows in taskbar.
   mpvControlsWindow = new BrowserWindow({
+    parent: mpvHostWindow,
+    modal: false,
     x,
     y,
     width,
     height,
     frame: false,
-    transparent: true, // Transparent so mpv video shows through
+    transparent: true,
     resizable: false,
     movable: false,
     minimizable: false,
     maximizable: false,
     closable: false,
-    focusable: true, // Allow focus for keyboard shortcuts
-    skipTaskbar: true, // Don't show in taskbar
+    focusable: false, // Don't steal focus from video window
+    skipTaskbar: true,
     show: false,
     hasShadow: false,
-    backgroundColor: "#00000000", // Fully transparent
-    webPreferences: { 
+    backgroundColor: "#00000000",
+    webPreferences: {
       backgroundThrottling: false,
       nodeIntegration: true,
       contextIsolation: false,
     },
   });
-  
-  // Load controls overlay
+
   mpvControlsWindow.loadFile(path.join(__dirname, "controls.html")).catch((err) => {
     console.error("[mpv] failed to load controls", err);
   });
-  
-  // Always keep controls window on top of mpv window
-  mpvControlsWindow.setAlwaysOnTop(true, "floating");
-  
-  // Sync position with mpv window
+
+  mpvControlsWindow.webContents.on("did-finish-load", () => {
+    if (lastTitle) {
+      mpvControlsWindow.webContents.send("mpv:title", lastTitle);
+    }
+  });
+
   const syncPosition = () => {
     if (mpvHostWindow && !mpvHostWindow.isDestroyed() && mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
       const bounds = mpvHostWindow.getBounds();
       mpvControlsWindow.setBounds(bounds);
     }
   };
-  
-  mpvHostWindow.on("resize", syncPosition);
-  mpvHostWindow.on("move", syncPosition);
-  
+
+  // Only attach listeners if mainWindow exists
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.on("resize", syncPosition);
+    mainWindow.on("move", syncPosition);
+  }
+
   console.log("[mpv] controls window created");
 }
 
@@ -203,42 +277,136 @@ async function startDockerStack() {
 }
 
 // ----- mpv helpers -----
-function ensureMpvReady() {
-  // Create handle if not exists
-  if (!mpvNativeHandle && mpvNative) {
+async function initializeMpvAtStartup() {
+  if (mpvInitPromise) return mpvInitPromise;
+  
+  mpvInitPromise = (async () => {
     try {
-      mpvNativeHandle = mpvNative.MpvHandle.create();
-      console.log("[mpv-native] handle created", Boolean(mpvNativeHandle));
+      console.log("[mpv] Starting initialization at app startup...");
+      
+      if (!mpvNative) {
+        throw new Error("mpv native addon not loaded");
+      }
+      
+      // Create handle
+      if (!mpvNativeHandle) {
+        mpvNativeHandle = mpvNative.MpvHandle.create();
+        console.log("[mpv-native] handle created");
+      }
+      
+      if (!mpvNativeHandle) {
+        throw new Error("mpv handle creation failed");
+      }
+      
+      // Create window (ensureMpvHostWindow will use default bounds if mainWindow doesn't exist)
+      ensureMpvHostWindow();
+      
+      if (!mpvHostWindow || mpvHostWindow.isDestroyed()) {
+        throw new Error("mpv host window creation failed");
+      }
+      
+      // Show window to ensure it's fully created and has valid rendering context
+      mpvHostWindow.show();
+      mpvHostWindow.setSkipTaskbar(false);
+      
+      // Ensure HWND is available - get it now if not already set
+      if (!mpvWid) {
+        try {
+          const handle = mpvHostWindow.getNativeWindowHandle();
+          mpvWid = handle.readBigUInt64LE ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+          console.log("[mpv] HWND obtained:", mpvWid);
+        } catch (err) {
+          console.error("[mpv] Failed to get HWND:", err);
+        }
+      }
+      
+      // Wait for HWND with timeout
+      let attempts = 0;
+      while (!mpvWid && attempts < 100) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (!mpvWid) {
+          try {
+            const handle = mpvHostWindow.getNativeWindowHandle();
+            mpvWid = handle.readBigUInt64LE ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+          } catch {}
+        }
+        attempts++;
+      }
+      
+      if (!mpvWid) {
+        throw new Error("Window HWND not available after waiting");
+      }
+      
+      console.log("[mpv] HWND confirmed:", mpvWid, "Window visible:", mpvHostWindow.isVisible());
+      
+      // Wait a bit for window to be fully ready (rendering context)
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Attach HWND (window MUST be visible for mpv to render)
+      if (!mpvAttached) {
+        try {
+          mpvNativeHandle.attachHwnd(mpvWid);
+          mpvAttached = true;
+          console.log("[mpv-native] attached hwnd", mpvWid);
+        } catch (err) {
+          console.error("[mpv-native] attachHwnd failed:", err);
+          throw err;
+        }
+      }
+      
+      // Initialize mpv (AFTER wid is set, window is visible)
+      if (!mpvNativeReady) {
+        try {
+          mpvNativeHandle.init({});
+          mpvNativeReady = true;
+          console.log("[mpv-native] init ok");
+        } catch (err) {
+          console.error("[mpv-native] init failed with error:", err);
+          throw err;
+        }
+      }
+      
+      // Keep window visible but behind main window (don't hide or move off-screen)
+      // mpv needs the window to remain visible for rendering context
+      mpvHostWindow.setSkipTaskbar(true);
+      // Keep it visible but send it behind main window
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mpvHostWindow.setAlwaysOnTop(false);
+        mainWindow.setAlwaysOnTop(true);
+        mainWindow.setAlwaysOnTop(false);
+      }
+      
+      mpvInitialized = true;
+      console.log("[mpv] Initialization complete! mpv is ready for playback.");
+      return true;
     } catch (err) {
-      console.error("[mpv-native] handle creation failed", err);
+      console.error("[mpv] Initialization failed", err);
+      mpvInitialized = false;
+      throw err;
+    }
+  })();
+  
+  return mpvInitPromise;
+}
+
+async function ensureMpvReady() {
+  // If not initialized, try to initialize now (fallback)
+  if (!mpvInitialized) {
+    try {
+      await initializeMpvAtStartup();
+    } catch (err) {
+      console.error("[mpv] ensureMpvReady: initialization failed", err);
       return false;
     }
   }
-  
-  // Create window if not exists
-  ensureMpvHostWindow();
-  
-  // Initialize mpv if needed
-  if (mpvNativeHandle && !mpvNativeReady) {
-    try {
-      mpvNativeHandle.init({});
-      mpvNativeReady = true;
-      console.log("[mpv-native] init ok");
-    } catch (err) {
-      console.error("[mpv-native] init failed", err);
-      return false;
-    }
-  }
-  
-  // Attach to window if not already attached (will be done in ensureMpvHostWindow after page loads)
-  // Just ensure window is created and ready
-  return mpvNativeHandle && mpvNativeReady;
+  return mpvInitialized && mpvNativeHandle && mpvNativeReady && mpvAttached;
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    backgroundColor: "#000000",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -247,9 +415,26 @@ function createWindow() {
 
   const startUrl = process.env.FRONTEND_URL || "http://localhost:3000";
   mainWindow.loadURL(startUrl);
+  
+  // Attach event listeners now that mainWindow exists
+  // This ensures mpvHostWindow bounds sync with mainWindow even if mpv was initialized first
+  attachMainWindowListeners();
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Initialize mpv first, before creating main window
+  if (mpvNative) {
+    try {
+      console.log("[mpv] Pre-initializing mpv at app startup...");
+      await initializeMpvAtStartup();
+    } catch (err) {
+      console.error("[mpv] Failed to pre-initialize mpv at startup", err);
+      // Continue anyway - will try lazy initialization as fallback
+    }
+  } else {
+    console.warn("[mpv] Native addon not available, skipping pre-initialization");
+  }
+  
   createWindow();
 
   app.on("activate", () => {
@@ -262,44 +447,70 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-ipcMain.handle("mpv:play", async (_event, url) => {
+ipcMain.handle("mpv:play", async (_event, payload) => {
   try {
-    console.log("[mpv] play requested", url);
+    const url = typeof payload === "string" ? payload : payload?.url;
+    const title = typeof payload === "object" && payload ? payload.title : "";
+    lastTitle = title || "";
+    lastPlayTitle = title || "";
+    console.log("[mpv] play requested", url, "title:", title);
     
-    const ready = ensureMpvReady();
+    // Ensure window is created first
+    ensureMpvHostWindow();
+    
+    // Wait for ensureMpvReady (which now handles attach + init in correct order)
+    const ready = await ensureMpvReady();
     if (!ready || !mpvNativeHandle) {
       return { ok: false, error: "mpv native addon not ready" };
     }
     
-    // Ensure window is created
-    ensureMpvHostWindow();
+  // Show the host + controls layered over the main window
+  if (mpvHostWindow && !mpvHostWindow.isDestroyed()) {
+    const bounds = getMainBounds();
     
-    // Wait for window to be ready and mpv attached
-    let attempts = 0;
-    while ((!mpvWid || !mpvAttached) && attempts < 20) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      attempts++;
+    // Update window position and size
+    mpvHostWindow.setBounds({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    });
+    
+    // Verify HWND is still valid (shouldn't change, but check anyway)
+    try {
+      const handle = mpvHostWindow.getNativeWindowHandle();
+      const currentWid = handle.readBigUInt64LE ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+      if (currentWid !== mpvWid) {
+        console.log("[mpv] HWND changed, re-attaching:", currentWid, "was:", mpvWid);
+        mpvWid = currentWid;
+        try {
+          mpvNativeHandle.attachHwnd(mpvWid);
+          mpvAttached = true;
+          console.log("[mpv-native] re-attached hwnd", mpvWid);
+        } catch (err) {
+          console.error("[mpv-native] re-attach failed", err);
+          throw err;
+        }
+      }
+    } catch (err) {
+      console.error("[mpv] Failed to verify HWND:", err);
     }
     
-    if (!mpvWid || !mpvAttached) {
-      return { ok: false, error: "mpv window not ready" };
-    }
+    mpvHostWindow.setTitle(title || "Player");
+    mpvHostWindow.setSkipTaskbar(false);
+    // Ensure window is visible on all workspaces
+    mpvHostWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     
-    // Show the mpv window - it's independent so Alt+Tab will show it
-    if (mpvHostWindow && !mpvHostWindow.isDestroyed()) {
-      const bounds = getMainBounds();
-      mpvHostWindow.setBounds({
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      });
-      mpvHostWindow.show();
-      mpvHostWindow.focus(); // Focus so it appears in Alt+Tab
-      console.log("[mpv] host window shown with bounds", bounds);
-    }
+    // CRITICAL: Window must be visible and have focus for mpv to render
+    mpvHostWindow.show();
+    // Wait a moment for window to be fully ready
+    await new Promise(resolve => setTimeout(resolve, 100));
+    mpvHostWindow.focus();
     
-    // Create and show controls overlay
+    console.log("[mpv] host window shown with bounds", bounds, "HWND:", mpvWid, "Visible:", mpvHostWindow.isVisible());
+  }
+    
+    // Create and show controls overlay (AFTER video window is shown)
     ensureMpvControlsWindow();
     if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
       const bounds = getMainBounds();
@@ -309,20 +520,47 @@ ipcMain.handle("mpv:play", async (_event, url) => {
         width: bounds.width,
         height: bounds.height,
       });
-      mpvControlsWindow.show();
+      mpvControlsWindow.showInactive(); // Don't focus controls window
+      // Don't call focus() on controls window - it should not steal focus
       console.log("[mpv] controls window shown");
     }
-    
-    // Hide main window web content when mpv is playing
+
+    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+      mpvControlsWindow.webContents.send("mpv:title", title);
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setSkipTaskbar(true);
       mainWindow.hide();
     }
     
-    mpvNativeHandle.load(url);
-    return { ok: true, native: true };
-  } catch (err) {
-    console.error("[mpv] play failed", err);
-    return { ok: false, error: err?.message || String(err) };
+    // CRITICAL: Wait for window to be fully ready before loading video
+    // mpv needs the window to be visible and have a valid rendering context
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // Load video (window is now visible and HWND is attached)
+    console.log("[mpv] Loading video URL:", url);
+    try {
+      mpvNativeHandle.load(url);
+      console.log("[mpv] Video load command sent successfully");
+    } catch (err) {
+      console.error("[mpv] Failed to load video:", err);
+      throw err;
+    }
+  try { mpvNativeHandle.pause(false); } catch {}
+  mpvSessionActive = true;
+    setTimeout(async () => {
+      try {
+        const st = await mpvNativeHandle.getState();
+        console.log("[mpv] post-load state", st);
+      } catch (err) {
+        console.warn("[mpv] post-load state failed", err);
+      }
+    }, 500);
+  return { ok: true, native: true };
+} catch (err) {
+  console.error("[mpv] play failed", err);
+  hideMpvWindows();
+  return { ok: false, error: err?.message || String(err) };
   }
 });
 
@@ -350,8 +588,12 @@ ipcMain.handle("mpv:seek", async (_event, seconds, relative = true) => {
 
 ipcMain.handle("mpv:state", async () => {
   try {
-    if (!ensureMpvReady() || !mpvNativeHandle) return { ok: false, error: "mpv not ready" };
+    if (!mpvNativeHandle || !mpvNativeReady) return { ok: false, error: "mpv not ready" };
     const state = mpvNativeHandle.getState(); // napi-rs converts snake_case to camelCase
+    // Convert mpv volume (0-100) to 0-1 range for UI
+    if (state && typeof state.volume === "number") {
+      state.volume = state.volume / 100;
+    }
     return { ok: true, state };
   } catch (err) {
     console.error("[mpv] state failed", err);
@@ -366,24 +608,13 @@ ipcMain.handle("mpv:stop", async () => {
     // Stop playback
     mpvNativeHandle.stop();
     
-    // Hide the host window and controls when video stops
-    if (mpvHostWindow && !mpvHostWindow.isDestroyed()) {
-      mpvHostWindow.hide();
-      console.log("[mpv] host window hidden");
-    }
-    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
-      mpvControlsWindow.hide();
-      console.log("[mpv] controls window hidden");
-    }
-    
-    // Show main window again
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
-    }
+    hideMpvWindows();
+    console.log("[mpv] stop -> windows hidden");
     
     return { ok: true };
   } catch (err) {
     console.error("[mpv] stop failed", err);
+    hideMpvWindows();
     return { ok: false, error: err?.message || String(err) };
   }
 });
@@ -391,7 +622,9 @@ ipcMain.handle("mpv:stop", async () => {
 ipcMain.handle("mpv:setVolume", async (_event, volume) => {
   try {
     if (!mpvNativeHandle) return { ok: false, error: "mpv not ready" };
-    mpvNativeHandle.setVolume(Number(volume));
+    // Convert 0-1 range to mpv's 0-100 range
+    const mpvVolume = Math.max(0, Math.min(100, Number(volume) * 100));
+    mpvNativeHandle.setVolume(mpvVolume);
     return { ok: true };
   } catch (err) {
     console.error("[mpv] setVolume failed", err);
@@ -410,6 +643,24 @@ ipcMain.handle("mpv:setMute", async (_event, mute) => {
   }
 });
 
+ipcMain.handle("mpv:isReady", () => {
+  return { ok: true, ready: mpvInitialized && mpvNativeHandle && mpvNativeReady && mpvAttached };
+});
+
+ipcMain.handle("window:toggleFullscreen", async () => {
+  // Toggle fullscreen on the mpv host window if it exists, otherwise main window
+  const targetWindow = (mpvHostWindow && !mpvHostWindow.isDestroyed()) ? mpvHostWindow : mainWindow;
+  if (!targetWindow || targetWindow.isDestroyed()) return { ok: false, error: "window missing" };
+  const next = !targetWindow.isFullScreen();
+  targetWindow.setFullScreen(next);
+  // Update controls window bounds if it exists
+  if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+    const bounds = targetWindow.getBounds();
+    mpvControlsWindow.setBounds(bounds);
+  }
+  return { ok: true, fullscreen: next };
+});
+
 ipcMain.handle("stack:up", async () => {
   try {
     const result = await startDockerStack();
@@ -420,3 +671,17 @@ ipcMain.handle("stack:up", async () => {
   }
 });
 
+// Safety: if main window regains focus while a session is active, ensure host is visible; if not active, hide overlays.
+app.on("browser-window-focus", () => {
+  if (mpvSessionActive) {
+    if (mpvHostWindow && !mpvHostWindow.isDestroyed()) {
+      mpvHostWindow.show();
+      mpvHostWindow.setSkipTaskbar(false);
+    }
+    if (mpvControlsWindow && !mpvControlsWindow.isDestroyed()) {
+      mpvControlsWindow.showInactive();
+    }
+  } else {
+    hideMpvWindows();
+  }
+});

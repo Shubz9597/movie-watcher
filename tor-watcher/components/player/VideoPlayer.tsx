@@ -555,10 +555,21 @@ export default function VideoPlayer(props: Props) {
     if (!isElectron) return;
     if (!src) { console.warn("[VideoPlayer] No stream URL available for mpv"); return; }
     try {
+      // Wait for mpv to be ready before attempting playback
+      const readyCheck = await (window as any).electronAPI.isMpvReady();
+      if (!readyCheck?.ready) {
+        console.log("[VideoPlayer] Waiting for mpv to be ready...");
+        await (window as any).electronAPI.waitForMpvReady();
+        console.log("[VideoPlayer] mpv is ready, proceeding with playback");
+      }
+      
       // Ensure the in-page video stays paused to avoid double playback
       const v = videoRef.current; v?.pause();
       setPlaying(true);
-      const res = await (window as any).electronAPI.playInMpv(src);
+      const res = await (window as any).electronAPI.playInMpv({
+        url: src,
+        title: props.title || props.seriesTitle || "Video",
+      });
       if (!res?.ok) {
         console.error("[VideoPlayer] mpv play failed", res?.error);
         setPlaying(false);
@@ -567,7 +578,7 @@ export default function VideoPlayer(props: Props) {
       console.error("[VideoPlayer] mpv play error", err);
       setPlaying(false);
     }
-  }, [isElectron, src]);
+  }, [isElectron, props.seriesTitle, props.title, src]);
 
   const togglePlay = useCallback(() => {
     if (isElectron) {
