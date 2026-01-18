@@ -213,6 +213,7 @@ export default function VideoPlayer(props: Props) {
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [buffering, setBuffering] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [mpvActive, setMpvActive] = useState(false);
 
   const [uiVisible, setUiVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -505,6 +506,30 @@ export default function VideoPlayer(props: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [volume, seekBy]);
 
+  // Listen for mpv focus events to hide VideoPlayer when mpv is active
+  useEffect(() => {
+    if (!isElectron) return;
+    
+    const handleMpvFocus = (focused: boolean) => {
+      setMpvActive(focused);
+      if (focused) {
+        // CRITICAL: Pause and hide browser video when mpv is active
+        const v = videoRef.current;
+        if (v) {
+          v.pause();
+          v.src = ""; // Clear src to stop any loading
+          console.log("[VideoPlayer] mpv active - paused and cleared browser video");
+        }
+        setPlaying(false);
+        setLoadingMeta(false);
+        setBuffering(false);
+      }
+    };
+    
+    const unsubscribe = (window as any).electronAPI?.on?.("mpv:focus", handleMpvFocus);
+    return unsubscribe;
+  }, [isElectron]);
+
   // Poll mpv state when in Electron mode to sync UI (time, duration, playing state)
   useEffect(() => {
     if (!isElectron || !playing) return;
@@ -515,13 +540,23 @@ export default function VideoPlayer(props: Props) {
         if (state?.ok && state?.state) {
           const s = state.state;
           if (typeof s.time === "number") setTime(s.time);
-          if (typeof s.duration === "number" && s.duration > 0) setDuration(s.duration);
+          if (typeof s.duration === "number" && s.duration > 0) {
+            setDuration(s.duration);
+            // Clear loading state once we have duration (video metadata loaded)
+            if (loadingMeta) {
+              setLoadingMeta(false);
+              setBuffering(false);
+            }
+          }
           if (typeof s.paused === "boolean") setPlaying(!s.paused);
           if (typeof s.volume === "number") setVolume(s.volume);
           if (typeof s.mute === "boolean") setMuted(s.mute);
+        } else if (state?.ok === false) {
+          // mpv returned an error - log it but don't spam
+          console.warn("[VideoPlayer] mpv state error:", state?.error);
         }
       } catch (err) {
-        // Silently fail - mpv might not be ready yet
+        console.warn("[VideoPlayer] mpv state poll error:", err);
       }
     };
     
@@ -530,7 +565,7 @@ export default function VideoPlayer(props: Props) {
     pollMpvState(); // Initial poll
     
     return () => clearInterval(interval);
-  }, [isElectron, playing]);
+  }, [isElectron, playing, loadingMeta]);
 
   const prepareNextEpisode = useCallback(async () => {
     if (!seriesId || kind === "movie") return;
@@ -566,17 +601,33 @@ export default function VideoPlayer(props: Props) {
       // Ensure the in-page video stays paused to avoid double playback
       const v = videoRef.current; v?.pause();
       setPlaying(true);
+      setLoadingMeta(true); // Show loading while starting
+      setBuffering(true);
+      
       const res = await (window as any).electronAPI.playInMpv({
         url: src,
         title: props.title || props.seriesTitle || "Video",
       });
+      
       if (!res?.ok) {
         console.error("[VideoPlayer] mpv play failed", res?.error);
         setPlaying(false);
+        setLoadingMeta(false);
+        setBuffering(false);
+        setErrorMsg(res?.error || "Failed to start playback");
+      } else {
+        // Playback started successfully - clear loading states
+        // The polling will update duration and other state
+        setLoadingMeta(false);
+        setBuffering(false);
+        console.log("[VideoPlayer] mpv playback started successfully");
       }
     } catch (err) {
       console.error("[VideoPlayer] mpv play error", err);
       setPlaying(false);
+      setLoadingMeta(false);
+      setBuffering(false);
+      setErrorMsg(err?.message || "Playback error");
     }
   }, [isElectron, props.seriesTitle, props.title, src]);
 
@@ -758,6 +809,11 @@ export default function VideoPlayer(props: Props) {
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
   // ---------- UI ----------
+  // Don't render VideoPlayer UI when mpv is active (controls.html handles it)
+  if (isElectron && mpvActive) {
+    return null;
+  }
+  
   return (
     <div ref={containerRef} className="group relative w-full aspect-video bg-black overflow-hidden select-none" onMouseMove={showUI} onMouseLeave={() => setVolumeHover(false)} onTouchStart={showUI}>
       {/* Cinematic gradients */}
@@ -1003,11 +1059,52 @@ export default function VideoPlayer(props: Props) {
 
           {/* Volume */}
           <div className="relative flex items-center" onMouseEnter={() => setVolumeHover(true)} onMouseLeave={() => setVolumeHover(false)}>
-            <button onClick={() => { const v = videoRef.current; if (v) { v.muted = !v.muted; setMuted(v.muted); if (!v.muted && volume === 0) setVolume(0.5); } }} className="p-2 rounded-full hover:bg-white/10 transition-colors">
+            <button onClick={() => {
+              if (isElectron) {
+                (window as any).electronAPI?.setMute?.(!muted);
+                setMuted(!muted);
+                if (!muted && volume === 0) {
+                  setVolume(0.5);
+                  (window as any).electronAPI?.setVolume?.(0.5);
+                }
+              } else {
+                const v = videoRef.current; 
+                if (v) { 
+                  v.muted = !v.muted; 
+                  setMuted(v.muted); 
+                  if (!v.muted && volume === 0) setVolume(0.5); 
+                }
+              }
+            }} className="p-2 rounded-full hover:bg-white/10 transition-colors">
               <VolumeIcon className="w-5 h-5 text-white" />
             </button>
             <div className={`overflow-hidden transition-all duration-300 ${volumeHover ? "w-20 opacity-100 ml-1" : "w-0 opacity-0"}`}>
-              <input type="range" min={0} max={1} step={0.01} value={muted ? 0 : volume} onChange={(e) => setVolume(Number(e.target.value))}
+              <input 
+                type="range" 
+                min={0} 
+                max={1} 
+                step={0.01} 
+                value={muted ? 0 : volume} 
+                onChange={(e) => {
+                  const newVol = Number(e.target.value);
+                  setVolume(newVol);
+                  if (isElectron) {
+                    (window as any).electronAPI?.setVolume?.(newVol);
+                    if (newVol > 0 && muted) {
+                      setMuted(false);
+                      (window as any).electronAPI?.setMute?.(false);
+                    }
+                  } else {
+                    const v = videoRef.current;
+                    if (v) {
+                      v.volume = newVol;
+                      if (newVol > 0 && v.muted) {
+                        v.muted = false;
+                        setMuted(false);
+                      }
+                    }
+                  }
+                }}
                 className="w-full h-1 rounded-full appearance-none cursor-pointer bg-white/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-0" />
             </div>
           </div>

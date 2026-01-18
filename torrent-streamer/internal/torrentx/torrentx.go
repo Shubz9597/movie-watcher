@@ -201,7 +201,18 @@ func CountTrackers(raw string) (udp, http, https, other int) {
 
 func ParseSrc(q url.Values) (string, error) {
 	if s := q.Get("magnet"); s != "" {
-		return sanitizeMagnet(s), nil
+		result := sanitizeMagnet(s)
+		// Debug: log what we're receiving and returning
+		srcPreview := s
+		if len(srcPreview) > 60 {
+			srcPreview = srcPreview[:60] + "..."
+		}
+		resultPreview := result
+		if len(resultPreview) > 60 {
+			resultPreview = resultPreview[:60] + "..."
+		}
+		log.Printf("[ParseSrc] magnet param: %q -> %q", srcPreview, resultPreview)
+		return result, nil
 	}
 	if s := q.Get("src"); s != "" {
 		if strings.HasPrefix(s, "magnet:") {
@@ -269,12 +280,24 @@ func GetClientFor(cat string) *torrent.Client {
 }
 
 func AddOrGetTorrent(cl *torrent.Client, src string) (*torrent.Torrent, error) {
+	// Trim whitespace to handle any encoding issues
+	src = strings.TrimSpace(src)
+	
+	// Debug logging to understand what we're receiving
+	srcPreview := src
+	if len(srcPreview) > 60 {
+		srcPreview = srcPreview[:60] + "..."
+	}
+	log.Printf("[AddOrGetTorrent] src=%q (len=%d)", srcPreview, len(src))
+	
 	if ih := mustParseMagnet(src); ih != (metainfo.Hash{}) {
 		if t, ok := cl.Torrent(ih); ok {
+			log.Printf("[AddOrGetTorrent] torrent already exists: %s", ih.HexString())
 			return t, nil
 		}
 	}
 	if strings.HasPrefix(src, "magnet:") {
+		log.Printf("[AddOrGetTorrent] adding magnet URI")
 		t, err := cl.AddMagnet(src)
 		if err != nil {
 			return nil, err
@@ -286,13 +309,24 @@ func AddOrGetTorrent(cl *torrent.Client, src string) (*torrent.Torrent, error) {
 	}
 	// Handle HTTP/HTTPS torrent URLs (e.g., from indexers like Prowlarr/Jackett)
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		log.Printf("[AddOrGetTorrent] fetching from HTTP URL")
 		return addTorrentFromURL(cl, src)
 	}
+	log.Printf("[AddOrGetTorrent] unrecognized src format, trying as file")
 	return cl.AddTorrentFromFile(src)
 }
 
 // addTorrentFromURL fetches a .torrent file from an HTTP URL and adds it to the client
 func addTorrentFromURL(cl *torrent.Client, torrentURL string) (*torrent.Torrent, error) {
+	// Safety check: reject magnet URIs - they should be handled by AddMagnet
+	if strings.HasPrefix(torrentURL, "magnet:") {
+		preview := torrentURL
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
+		return nil, fmt.Errorf("addTorrentFromURL received magnet URI instead of HTTP URL (check URL encoding): %s", preview)
+	}
+
 	log.Printf("[torrent] fetching torrent from URL: %s", torrentURL)
 
 	httpClient := &http.Client{

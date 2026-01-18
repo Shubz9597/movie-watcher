@@ -23,8 +23,8 @@ node_modules/
 native/**/index.d.ts # Generated TypeScript definitions for native addons
 
 # Electron build outputs
-electron/dist/
-electron/out/
+electron-app/dist/
+electron-app/out/
 
 # Native addon build artifacts
 native/**/target/

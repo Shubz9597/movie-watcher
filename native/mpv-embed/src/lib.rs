@@ -124,6 +124,18 @@ fn load_mpv_library() -> std::result::Result<MpvFunctions, String> {
         if parent_mpv_sdk.exists() {
           search_paths.push(parent_mpv_sdk);
         }
+        // Also check for electron-app/mpv-sdk (new Electron app structure)
+        let electron_app_mpv_sdk = parent.join("electron-app").join("mpv-sdk");
+        if electron_app_mpv_sdk.exists() {
+          search_paths.push(electron_app_mpv_sdk);
+        }
+      }
+      // Check if we're in electron-app directory
+      if current_dir.ends_with("electron-app") {
+        let electron_app_mpv_sdk = current_dir.join("mpv-sdk");
+        if electron_app_mpv_sdk.exists() {
+          search_paths.push(electron_app_mpv_sdk);
+        }
       }
     }
     
@@ -214,12 +226,13 @@ impl MpvHandle {
       // Note: wid should already be set via attach_hwnd before calling init
       // Video output options - try gpu first, fallback to direct3d if needed
       // wid should already be set via attach_hwnd
+      // Try direct3d first - more reliable on Windows for embedding
+      // If that doesn't work, we can fall back to gpu or gdi
       let opts = [
         ("force-window", "yes"),
         ("keep-open", "yes"),
         ("ytdl", "no"),
-        ("vo", "gpu"), // Use gpu VO with wid for hardware acceleration
-        ("gpu-context", "d3d11"), // Direct3D 11 context for Windows
+        ("vo", "direct3d"), // Use direct3d VO - more reliable for embedding on Windows
         ("hwdec", "auto-safe"), // Hardware decoding
         ("video-sync", "display-resample"), // Sync to display
       ];
@@ -245,11 +258,16 @@ impl MpvHandle {
 
   /// Attach to a native HWND (Windows). This sets the "wid" option.
   #[napi]
-  pub fn attach_hwnd(&mut self, hwnd: u32) -> Result<()> {
+  pub fn attach_hwnd(&mut self, hwnd: String) -> Result<()> {
     let funcs = get_mpv_funcs()?;
     unsafe {
       let key = CString::new("wid").unwrap();
-      let hwnd64: i64 = hwnd as i64;
+      // On 64-bit Windows, HWND is pointer-sized (u64). mpv expects INT64 for wid.
+      let hwnd_u64: u64 = hwnd
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| Error::from_reason(format!("Invalid HWND (expected decimal u64 string): {e}")))?;
+      let hwnd64: i64 = hwnd_u64 as i64;
       
       // Try setting as option first (works before init) - CHECK THE RESULT
       let opt_result = (funcs.set_option)(
@@ -259,7 +277,9 @@ impl MpvHandle {
         &hwnd64 as *const i64 as *const c_void,
       );
       
+      // Log the result for debugging
       if opt_result < 0 {
+        eprintln!("[mpv-native] set_option wid failed: {} (hwnd={})", opt_result, hwnd_u64);
         // If setting as option failed, try as property (works after init)
         let prop_key = CString::new("wid").unwrap();
         let prop_result = (funcs.set_property)(
@@ -269,13 +289,16 @@ impl MpvHandle {
           &hwnd64 as *const i64 as *const c_void,
         );
         if prop_result < 0 {
+          eprintln!("[mpv-native] set_property wid also failed: {} (hwnd={})", prop_result, hwnd_u64);
           return Err(Error::from_reason(format!(
             "Failed to set wid: option={}, property={}, hwnd={}",
-            opt_result, prop_result, hwnd
+            opt_result, prop_result, hwnd_u64
           )));
         }
+        eprintln!("[mpv-native] set_property wid succeeded: {} (hwnd={})", prop_result, hwnd_u64);
         // Property set succeeded
       } else {
+        eprintln!("[mpv-native] set_option wid succeeded: {} (hwnd={})", opt_result, hwnd_u64);
         // Option was set successfully, also set as property for redundancy
         let prop_key = CString::new("wid").unwrap();
         let prop_result = (funcs.set_property)(
@@ -286,7 +309,9 @@ impl MpvHandle {
         );
         // Don't fail if property set fails - option was already set
         if prop_result < 0 {
-          // Log but don't fail
+          eprintln!("[mpv-native] set_property wid failed (non-critical): {}", prop_result);
+        } else {
+          eprintln!("[mpv-native] set_property wid also succeeded: {}", prop_result);
         }
       }
       self.attached = true;
@@ -303,6 +328,21 @@ impl MpvHandle {
       let replace = CString::new("replace").unwrap();
       let args: [*const c_char; 4] = [load.as_ptr(), c_url.as_ptr(), replace.as_ptr(), ptr::null()];
       check_err((funcs.command)(self.handle, args.as_ptr()), "loadfile")
+    }
+  }
+
+  /// Force mpv to reload the video output (useful when window becomes visible)
+  #[napi]
+  pub fn reload_video_output(&self) -> Result<()> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      // Try to reload video output by setting vo property
+      // This forces mpv to recreate the rendering context
+      let vo_reload = CString::new("vo-reload").unwrap();
+      let args: [*const c_char; 2] = [vo_reload.as_ptr(), ptr::null()];
+      // This command might not exist, so we don't fail if it errors
+      let _ = (funcs.command)(self.handle, args.as_ptr());
+      Ok(())
     }
   }
 
@@ -390,6 +430,53 @@ impl MpvHandle {
     Ok(())
   }
 
+  /// Get the current wid (window ID) that mpv is using
+  #[napi]
+  pub fn get_wid(&self) -> Result<Option<String>> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let key = CString::new("wid").unwrap();
+      let mut wid: i64 = 0;
+      let result = (funcs.get_property)(
+        self.handle,
+        key.as_ptr(),
+        mpv_format::MPV_FORMAT_INT64,
+        &mut wid as *mut i64 as *mut c_void,
+      );
+      if result < 0 {
+        Ok(None)
+      } else {
+        Ok(Some((wid as u64).to_string()))
+      }
+    }
+  }
+
+  /// Get the current video output driver being used
+  #[napi]
+  pub fn get_vo(&self) -> Result<Option<String>> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let key = CString::new("vo").unwrap();
+      let mut vo: *mut c_char = ptr::null_mut();
+      let result = (funcs.get_property)(
+        self.handle,
+        key.as_ptr(),
+        mpv_format::MPV_FORMAT_STRING,
+        &mut vo as *mut *mut c_char as *mut c_void,
+      );
+      if result < 0 {
+        Ok(None)
+      } else {
+        let vo_str = if vo.is_null() {
+          None
+        } else {
+          Some(CString::from_raw(vo).to_string_lossy().into_owned())
+        };
+        Ok(vo_str)
+      }
+    }
+  }
+
   /// Minimal state poll: paused, time-pos, duration, volume, mute.
   #[napi]
   pub fn get_state(&self, env: Env) -> Result<Object> {
@@ -444,6 +531,72 @@ impl MpvHandle {
       obj.set("mute", mute != 0)?;
     }
     Ok(obj)
+  }
+
+  /// Load a subtitle file
+  #[napi]
+  pub fn load_subtitle(&self, url: String) -> Result<()> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let sub_add = CString::new("sub-add").unwrap();
+      let c_url = CString::new(url).unwrap();
+      let args: [*const c_char; 3] = [sub_add.as_ptr(), c_url.as_ptr(), ptr::null()];
+      check_err((funcs.command)(self.handle, args.as_ptr()), "sub-add")
+    }
+  }
+
+  /// Set the active audio track by index
+  #[napi]
+  pub fn set_audio_track(&self, index: i32) -> Result<()> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let key = CString::new("aid").unwrap();
+      check_err(
+        (funcs.set_property)(
+          self.handle,
+          key.as_ptr(),
+          mpv_format::MPV_FORMAT_INT64,
+          &(index as i64) as *const i64 as *const c_void,
+        ),
+        "aid",
+      )
+    }
+  }
+
+  /// Set the active subtitle track by index (-1 to disable)
+  #[napi]
+  pub fn set_subtitle_track(&self, index: i32) -> Result<()> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let key = CString::new("sid").unwrap();
+      check_err(
+        (funcs.set_property)(
+          self.handle,
+          key.as_ptr(),
+          mpv_format::MPV_FORMAT_INT64,
+          &(index as i64) as *const i64 as *const c_void,
+        ),
+        "sid",
+      )
+    }
+  }
+
+  /// Set playback speed (1.0 = normal, 2.0 = 2x, 0.5 = half speed)
+  #[napi]
+  pub fn set_speed(&self, speed: f64) -> Result<()> {
+    let funcs = get_mpv_funcs()?;
+    unsafe {
+      let key = CString::new("speed").unwrap();
+      check_err(
+        (funcs.set_property)(
+          self.handle,
+          key.as_ptr(),
+          mpv_format::MPV_FORMAT_DOUBLE,
+          &speed as *const f64 as *const c_void,
+        ),
+        "speed",
+      )
+    }
   }
 }
 
