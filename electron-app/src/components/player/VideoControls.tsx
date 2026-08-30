@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, X, Settings } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { ArrowLeft, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize } from 'lucide-react';
 import { formatTime } from '../../lib/player-utils';
 import { Button } from '../ui/button';
 
@@ -34,7 +34,6 @@ export default function VideoControls({
   onClose,
   visible,
 }: Props) {
-  const [isDragging, setIsDragging] = useState(false);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
   const volumeBarRef = useRef<HTMLDivElement>(null);
@@ -67,26 +66,32 @@ export default function VideoControls({
   if (!visible) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-40 flex flex-col justify-between bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 transition-opacity duration-300">
+    <div className="pointer-events-none absolute inset-0 z-40 flex flex-col justify-between bg-[linear-gradient(180deg,rgba(0,0,0,.64),transparent_24%),linear-gradient(0deg,rgba(0,0,0,.78),transparent_30%)] p-6 transition-opacity duration-300 md:p-10">
       {/* Top bar */}
       <div className="pointer-events-auto flex items-center justify-between">
-        <h2 className="truncate text-lg font-semibold text-white">{title}</h2>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onFullscreen}
-            className="h-9 w-9 rounded-full border-white/20 bg-white/10 p-0 text-white hover:bg-white/20"
-          >
-            <Maximize className="h-4 w-4" />
-          </Button>
+        <div className="flex min-w-0 items-center gap-3">
           <Button
             variant="ghost"
             size="sm"
             onClick={onClose}
-            className="h-9 w-9 rounded-full border-white/20 bg-white/10 p-0 text-white hover:bg-white/20"
+            aria-label="Stop playback and return to title"
+            className="h-10 w-10 shrink-0 rounded-full border border-white/15 bg-black/20 p-0 text-white/70 hover:border-white/30 hover:bg-white/[0.06] hover:text-white"
           >
-            <X className="h-4 w-4" />
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div className="min-w-0">
+            <p className="font-label text-white/65">Now playing</p>
+            <h2 className="type-panel-title mt-1 truncate text-white">{title}</h2>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onFullscreen}
+            className="h-10 w-10 rounded-full border border-white/15 bg-black/20 p-0 text-white/70 hover:border-white/30 hover:bg-white/[0.06] hover:text-white"
+          >
+            <Maximize className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -95,7 +100,7 @@ export default function VideoControls({
       <div className="pointer-events-auto flex items-center justify-center">
         <Button
           onClick={onPlayPause}
-          className="h-16 w-16 rounded-full border-2 border-white/30 bg-white/10 p-0 text-white backdrop-blur-sm hover:bg-white/20"
+          className="h-14 w-14 rounded-full border border-white bg-white p-0 text-black hover:bg-white/85"
         >
           {paused ? <Play className="ml-1 h-8 w-8" /> : <Pause className="h-8 w-8" />}
         </Button>
@@ -106,19 +111,16 @@ export default function VideoControls({
         {/* Progress bar */}
         <div
           ref={progressBarRef}
-          className="group relative h-2 w-full cursor-pointer rounded-full bg-white/20"
+          className="group relative h-5 w-full cursor-pointer"
           onClick={handleProgressClick}
           onMouseMove={handleProgressMouseMove}
           onMouseLeave={() => setHoverTime(null)}
         >
           <div
-            className="absolute left-0 top-0 h-full rounded-full bg-cyan-500 transition-all duration-100"
+            className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-[#ff7a17] transition-all duration-100 before:absolute before:left-full before:top-1/2 before:h-3 before:w-3 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full before:bg-white before:opacity-0 before:transition group-hover:before:opacity-100"
             style={{ width: `${progress}%` }}
           />
-          <div
-            className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
-            style={{ left: `calc(${progress}% - 6px)` }}
-          />
+          <div className="absolute inset-x-0 top-1/2 -z-10 h-1 -translate-y-1/2 rounded-full bg-white/20" />
         </div>
 
         {/* Control buttons */}
@@ -128,7 +130,7 @@ export default function VideoControls({
               variant="ghost"
               size="sm"
               onClick={onPlayPause}
-              className="h-10 w-10 rounded-full border-white/20 bg-white/10 p-0 text-white hover:bg-white/20"
+              className="h-11 w-11 rounded-full bg-white p-0 text-black hover:bg-white/85"
             >
               {paused ? <Play className="ml-0.5 h-5 w-5" /> : <Pause className="h-5 w-5" />}
             </Button>
@@ -136,7 +138,7 @@ export default function VideoControls({
               variant="ghost"
               size="sm"
               onClick={() => onSeek(-10, true)}
-              className="h-10 w-10 rounded-full border-white/20 bg-white/10 p-0 text-white hover:bg-white/20"
+              className="h-10 w-10 rounded-full border border-transparent bg-transparent p-0 text-white/70 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
             >
               <SkipBack className="h-5 w-5" />
             </Button>
@@ -144,11 +146,11 @@ export default function VideoControls({
               variant="ghost"
               size="sm"
               onClick={() => onSeek(10, true)}
-              className="h-10 w-10 rounded-full border-white/20 bg-white/10 p-0 text-white hover:bg-white/20"
+              className="h-10 w-10 rounded-full border border-transparent bg-transparent p-0 text-white/70 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
             >
               <SkipForward className="h-5 w-5" />
             </Button>
-            <div className="ml-2 font-mono text-sm text-white tabular-nums">
+            <div className="font-label text-numeric ml-2 text-white/65">
               {formatTime(displayTime)} / {formatTime(duration)}
             </div>
           </div>
@@ -160,7 +162,7 @@ export default function VideoControls({
                 variant="ghost"
                 size="sm"
                 onClick={onMuteToggle}
-                className="h-10 w-10 rounded-full border-white/20 bg-white/10 p-0 text-white hover:bg-white/20"
+                className="h-10 w-10 rounded-full border border-transparent bg-transparent p-0 text-white/70 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
               >
                 {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
               </Button>

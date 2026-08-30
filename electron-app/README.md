@@ -1,4 +1,4 @@
-# Movie Watcher Desktop App
+# TorWatch Desktop App
 
 Desktop application with embedded MPV player for streaming movies and TV shows.
 
@@ -75,12 +75,17 @@ This will create an installer in the `dist/` directory.
 
 ```
 electron-app/
-├── main.js          # Electron main process
-├── preload.js       # Preload script (exposes safe APIs)
-├── index.html       # Main UI
-├── renderer.js      # Frontend logic
+├── main.js          # Electron main-process bootstrap
+├── electron/        # Main-process support modules
+│   ├── diagnostics/
+│   ├── config/
+│   ├── ipc/
+│   ├── playback/
+│   ├── preloads/
+│   ├── runtime/
+│   └── windows/
+├── src/             # React renderer entries, including setup/startup/player controls
 ├── package.json     # Dependencies and build config
-├── README.md        # This file
 └── mpv-sdk/         # Place MPV DLL here
     └── libmpv-2.dll
 ```
@@ -102,6 +107,38 @@ electron-app/
 - `POST /v1/session/ended` - End playback session
 - `GET /buffer/info` - Get buffer information
 - `GET /subtitles/list` - Get available subtitles
+- `GET /subtitles/torrent` - Serve a subtitle included in the selected torrent
+- `GET /subtitles/external` - Download and normalize an OpenSubtitles fallback
+
+### Subtitle configuration
+
+Subtitle discovery is owned by the Go backend. It checks matching text subtitle
+files in the selected torrent first and only calls OpenSubtitles when none are
+available. Configure the backend process (for example in
+`torrent-streamer/.env`) with:
+
+```env
+OPENSUB_API_KEY=your_opensubtitles_api_key
+```
+
+Packaged installations collect this key in the first-run setup instead of
+shipping an `.env` file. The key is stored with the application's encrypted
+runtime secrets and passed only to the bundled Go backend. The legacy
+`OPENSUBTITLES_API_KEY` name is accepted during local migration, but
+`OPENSUB_API_KEY` is the canonical backend variable.
+
+`OS_KEY` is also accepted as an alias for `OPENSUB_API_KEY`. The optional
+language preference belongs in `electron-app/.env` (or the Electron config)
+and defaults to `en,hi`:
+
+```env
+SUBTITLE_LANGS=en,hi
+```
+
+For personal-account safety, the Go backend caches identical searches for 30
+minutes and downloaded subtitle content for 24 hours, serializes download-link
+generation, spaces OpenSubtitles API requests by at least 300 ms, and retries a
+single `429 Too Many Requests` response after the provider's requested delay.
 
 ## Features
 

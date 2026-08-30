@@ -1,7 +1,9 @@
 package torrentx
 
 import (
+	"context"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,11 +26,18 @@ type torznabFeed struct {
 			Size    int64  `xml:"size"`
 			Seeders int    `xml:"seeders"`
 			Peers   int    `xml:"peers"`
+			Attrs   []struct {
+				Name  string `xml:"name,attr"`
+				Value string `xml:"value,attr"`
+			} `xml:"attr"`
 		} `xml:"item"`
 	} `xml:"channel"`
 }
 
-func (c *TorznabClient) Query(title string, season, episode int, abs *int) ([]types.Candidate, error) {
+func (c *TorznabClient) Query(ctx context.Context, title string, season, episode int, abs *int) ([]types.Candidate, error) {
+	if strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(c.APIKey) == "" {
+		return nil, fmt.Errorf("Prowlarr is not configured")
+	}
 	q := title
 	if abs != nil {
 		q = title + " " + pad2(*abs)
@@ -37,7 +46,10 @@ func (c *TorznabClient) Query(title string, season, episode int, abs *int) ([]ty
 	} else {
 		q = title + " S" + pad2(season) + "E" + pad2(episode)
 	}
-	u, _ := url.Parse(c.BaseURL)
+	u, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse Prowlarr URL: %w", err)
+	}
 	u.Path = "/api/v1/indexers/all/results/torznab/api"
 	v := url.Values{}
 	v.Set("apikey", c.APIKey)
@@ -45,21 +57,45 @@ func (c *TorznabClient) Query(title string, season, episode int, abs *int) ([]ty
 	v.Set("q", q)
 	u.RawQuery = v.Encode()
 
-	req, _ := http.NewRequest("GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Prowlarr request: %w", err)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query Prowlarr: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Prowlarr returned status %d", resp.StatusCode)
+	}
 
 	var feed torznabFeed
 	if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode Prowlarr response: %w", err)
 	}
 
 	var out []types.Candidate
 	for _, it := range feed.Channel.Items {
-		ih, magnet := parseLink(it.Link)
+		attrs := make(map[string]string, len(it.Attrs))
+		for _, attr := range it.Attrs {
+			attrs[strings.ToLower(attr.Name)] = attr.Value
+		}
+		ih, magnet := parseLink(firstNonEmptyString(attrs["magneturl"], it.Link))
+		if ih == "" {
+			ih = strings.ToUpper(strings.TrimSpace(attrs["infohash"]))
+		}
+		if !validInfoHash(ih) {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(magnet), "magnet:") {
+			magnet = "magnet:?xt=urn:btih:" + strings.ToUpper(ih)
+		}
+		sourceKind := "single"
+		lowerTitle := strings.ToLower(it.Title)
+		if strings.Contains(lowerTitle, "complete") || strings.Contains(lowerTitle, "batch") || strings.Contains(lowerTitle, "season pack") {
+			sourceKind = "season_pack"
+		}
 		out = append(out, types.Candidate{
 			InfoHash: ih, Magnet: magnet, Title: it.Title,
 			ReleaseGroup: pickGroup(it.Title),
@@ -68,10 +104,34 @@ func (c *TorznabClient) Query(title string, season, episode int, abs *int) ([]ty
 			Source:       pickSource(it.Title),
 			Seeders:      it.Seeders, Leechers: it.Peers, SizeBytes: it.Size,
 			ParsedSeason: season, ParsedEpisode: episode,
-			SourceKind: "single",
+			SourceKind: sourceKind,
 		})
 	}
 	return out, nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func validInfoHash(value string) bool {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if len(value) == 40 {
+		return strings.IndexFunc(value, func(r rune) bool {
+			return !((r >= '0' && r <= '9') || (r >= 'A' && r <= 'F'))
+		}) == -1
+	}
+	if len(value) == 32 {
+		return strings.IndexFunc(value, func(r rune) bool {
+			return !((r >= 'A' && r <= 'Z') || (r >= '2' && r <= '7'))
+		}) == -1
+	}
+	return false
 }
 
 func pad2(n int) string {
@@ -132,7 +192,7 @@ func parseLink(link string) (string, string) {
 	l := strings.ToLower(link)
 	if strings.HasPrefix(l, "magnet:") {
 		if i := strings.Index(l, "btih:"); i >= 0 && len(l) >= i+45 {
-			return l[i+5 : i+45], link
+			return strings.ToUpper(l[i+5 : i+45]), link
 		}
 	}
 	return "", link

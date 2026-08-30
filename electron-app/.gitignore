@@ -5,6 +5,5 @@ dist/
 mpv-sdk/*.dll
 !mpv-sdk/.gitkeep
 .env
-
-
-
+build/
+release/

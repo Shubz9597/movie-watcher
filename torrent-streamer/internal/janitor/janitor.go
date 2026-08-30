@@ -3,9 +3,9 @@ package janitor
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
-	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
 
 	"torrent-streamer/internal/config"
@@ -30,21 +30,30 @@ func Run(ctx context.Context) {
 			return
 		case <-t.C:
 			now := time.Now()
+			entries, err := torrentx.ListCacheEntries()
+			if err != nil {
+				log.Printf("[janitor] cannot read cache manifests: %v", err)
+				continue
+			}
 
-			// age-based drop
+			// Age-based eviction uses durable manifests, so files from torrents
+			// loaded by an earlier process are still eligible after restart.
 			if config.EvictTTL() > 0 {
-				torrentx.ForEachClient(func(cat string, c *torrent.Client) {
-					for _, tt := range c.Torrents() {
-						if last, ok := torrentx.GetLastTouch(cat, tt.InfoHash()); ok && now.Sub(last) > config.EvictTTL() {
-							if !torrentx.CanDrop(cat, tt.InfoHash()) {
-								continue
-							}
-							log.Printf("[janitor] dropping idle [%s] %s", cat, tt.Name())
-							tt.Drop()
-							torrentx.ClearTouch(cat, tt.InfoHash())
-						}
+				for _, entry := range entries {
+					if now.Sub(entry.LastTouched) <= config.EvictTTL() {
+						continue
 					}
-				})
+					ih := metainfo.NewHashFromHex(strings.ToUpper(entry.InfoHash))
+					if !torrentx.CanDrop(entry.Category, ih) {
+						continue
+					}
+					freed, evictErr := torrentx.EvictCachedInfoHash(entry.Category, ih)
+					if evictErr != nil {
+						log.Printf("[janitor] failed idle eviction [%s] %s: %v", entry.Category, entry.Name, evictErr)
+						continue
+					}
+					log.Printf("[janitor] evicted idle [%s] %s freed=%d", entry.Category, entry.Name, freed)
+				}
 			}
 
 			// size-based cap
@@ -55,47 +64,38 @@ func Run(ctx context.Context) {
 			used := torrentx.DirSize(config.DataRoot())
 			for used > max {
 				var cands []cand
-
-				torrentx.ForEachClient(func(cat string, c *torrent.Client) {
-					for _, tt := range c.Torrents() {
-						ih := tt.InfoHash()
-						if !torrentx.CanDrop(cat, ih) {
-							continue
-						}
-						at, _ := torrentx.GetLastTouch(cat, ih)
-						var sz int64
-						for _, f := range tt.Files() {
-							sz += f.Length()
-						}
-						cands = append(cands, cand{
-							cat:  cat,
-							ih:   ih,
-							at:   at,
-							size: sz,
-							name: tt.Name(),
-						})
+				entries, err = torrentx.ListCacheEntries()
+				if err != nil {
+					log.Printf("[janitor] cannot refresh cache manifests: %v", err)
+					break
+				}
+				for _, entry := range entries {
+					ih := metainfo.NewHashFromHex(strings.ToUpper(entry.InfoHash))
+					if !torrentx.CanDrop(entry.Category, ih) {
+						continue
 					}
-				})
+					cands = append(cands, cand{
+						cat:  entry.Category,
+						ih:   ih,
+						at:   entry.LastTouched,
+						size: entry.Size,
+						name: entry.Name,
+					})
+				}
 				if len(cands) == 0 {
 					log.Printf("[janitor] cache %d > %d but no safe candidate to evict; will retry later", used, max)
 					break
 				}
 				best := pickBest(cands)
-				torrentx.ForEachClient(func(cat string, c *torrent.Client) {
-					if cat != best.cat {
-						return
-					}
-					for _, tt := range c.Torrents() {
-						if tt.InfoHash() == best.ih {
-							log.Printf("[janitor] evicting [%s] %s ih=%s (age=%s size=%d) | used=%d max=%d",
-								best.cat, best.name, best.ih.HexString(),
-								time.Since(best.at).Truncate(time.Second), best.size, used, max)
-							tt.Drop()
-							return
-						}
-					}
-				})
-				torrentx.ClearTouch(best.cat, best.ih)
+				log.Printf("[janitor] evicting [%s] %s ih=%s (age=%s size=%d) | used=%d max=%d",
+					best.cat, best.name, best.ih.HexString(),
+					time.Since(best.at).Truncate(time.Second), best.size, used, max)
+				freed, evictErr := torrentx.EvictCachedInfoHash(best.cat, best.ih)
+				if evictErr != nil {
+					log.Printf("[janitor] eviction failed [%s] %s: %v", best.cat, best.name, evictErr)
+					break
+				}
+				log.Printf("[janitor] reclaimed %d bytes [%s] %s", freed, best.cat, best.name)
 				used = torrentx.DirSize(config.DataRoot())
 			}
 		}

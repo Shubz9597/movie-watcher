@@ -1,0 +1,56 @@
+:root {
+  color-scheme: dark;
+  background: #0a0a0a;
+  color: #fff;
+  font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  display: grid;
+  height: 100vh;
+  margin: 0;
+  place-items: center;
+  background: #0a0a0a;
+  -webkit-app-region: drag;
+}
+
+main {
+  text-align: center;
+}
+
+.mark {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 18px;
+  border-radius: 14px;
+  animation: breathe 1.8s cubic-bezier(.25, 1, .5, 1) infinite;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 400;
+}
+
+p {
+  margin: 0;
+  color: #dadbdf;
+  font-size: 13px;
+}
+
+@keyframes breathe {
+  50% {
+    opacity: .76;
+    transform: scale(1.025);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mark {
+    animation: none;
+  }
+}

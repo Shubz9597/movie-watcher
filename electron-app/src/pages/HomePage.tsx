@@ -1,26 +1,14 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
-import { Button } from '../components/ui/button';
-import { Play, Sparkles } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import type { MovieCard } from '../lib/types';
 import { getMovies, getTvShows } from '../lib/services/tmdb-service';
-import { getAnimeList, searchAnime } from '../lib/services/jikan-service';
-import { cardFromTmdbMovie, cardFromTmdbTv, cardFromJikan } from '../lib/adapters/media';
+import { getTrendingAnime } from '../lib/services/anilist-service';
+import { cardFromAniList, cardFromTmdbMovie, cardFromTmdbTv } from '../lib/adapters/media';
 import { getContinueList } from '../lib/services/continue-service';
-
-function getDeviceId(): string {
-  const KEY = 'mw_device_id';
-  const existing = localStorage.getItem(KEY);
-  if (existing && existing !== 'null' && existing !== 'undefined') {
-    return existing;
-  }
-  const canUseUUID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function';
-  const newId = canUseUUID
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36);
-  localStorage.setItem(KEY, newId);
-  return newId;
-}
+import { getDeviceId } from '../lib/device-id';
+import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
+import { loadTitlePage } from '../lib/route-loaders';
 
 type ContinueItem = {
   seriesId: string;
@@ -36,16 +24,63 @@ type ContinueItem = {
   kind: 'movie' | 'tv' | 'anime';
   tmdbId?: number;
   malId?: number;
+  anilistId?: number;
+  sourceAvailable: boolean;
+  sourceName?: string;
+  upNext: boolean;
 };
 
 // Module-level cache to prevent duplicate calls across React Strict Mode re-renders
 const continueFetchCache = new Map<string, { timestamp: number; data: ContinueItem[] }>();
 const CONTINUE_CACHE_TTL = 5000; // 5 seconds cache
+const catalogRequests = {
+  movies: null as AbortController | null,
+  tv: null as AbortController | null,
+  anime: null as AbortController | null,
+};
+
+type FeaturedItem = MovieCard & { kind: 'movie' | 'tv' | 'anime' };
+
+function buildFeaturedQueue(movies: MovieCard[], series: MovieCard[], anime: MovieCard[]): FeaturedItem[] {
+  const candidates: FeaturedItem[] = [
+    ...movies.slice(0, 6).map((item) => ({ ...item, kind: 'movie' as const })),
+    ...series.slice(0, 6).map((item) => ({ ...item, kind: 'tv' as const })),
+    ...anime.slice(0, 6).map((item) => ({ ...item, kind: 'anime' as const })),
+  ].filter((item) => Boolean(item.title && item.backdropUrl));
+
+  for (let index = candidates.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
+  }
+
+  return candidates.slice(0, 8);
+}
+
+function preloadBackdrop(url?: string | null): Promise<void> {
+  if (!url) return Promise.resolve();
+  return new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const timeout = window.setTimeout(finish, 5000);
+    function finish() {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve();
+    }
+    image.onload = finish;
+    image.onerror = finish;
+    image.src = url;
+    if (image.complete) resolve();
+  });
+}
 
 function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
   const subjectId = useMemo(getDeviceId, []);
   const [rows, setRows] = useState<ContinueItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dismissError, setDismissError] = useState<string | null>(null);
+  const [dismissingKey, setDismissingKey] = useState<string | null>(null);
   const fetchingRef = React.useRef(false);
 
   useEffect(() => {
@@ -90,72 +125,72 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
   }, [subjectId]);
 
   const dismiss = async (it: ContinueItem) => {
-    await fetch('http://localhost:4001/v1/continue/dismiss', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subjectId,
-        seriesId: it.seriesId,
-        season: it.season,
-        episode: it.episode,
-      }),
-    }).catch(() => {});
-    setRows((xs) =>
-      xs.filter((x) => !(x.seriesId === it.seriesId && x.season === it.season && x.episode === it.episode))
-    );
-  };
-
-  const resumeWeb = async (it: ContinueItem) => {
-    const kind = it.kind || (it.seriesId?.startsWith('tmdb:movie:') ? 'movie' : it.seriesId?.startsWith('mal:') ? 'anime' : 'tv');
+    const itemKey = `${it.seriesId}-${it.season}-${it.episode}`;
+    if (dismissingKey) return;
+    setDismissingKey(itemKey);
+    setDismissError(null);
     try {
-      const body = {
-        seriesId: it.seriesId,
-        seriesTitle: '',
-        kind,
-        season: kind === 'movie' ? 0 : it.season,
-        episode: kind === 'movie' ? 0 : it.episode,
-        profileHash: 'caps:h264|v1',
-        estRuntimeMin: kind === 'movie' ? 120 : 42,
-      };
-      const res = await fetch('http://localhost:4001/v1/session/start', {
+      const response = await fetch('http://localhost:4001/v1/continue/dismiss', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          subjectId,
+          seriesId: it.seriesId,
+          season: it.season,
+          episode: it.episode,
+        }),
       });
-      if (!res.ok) throw new Error('start failed');
-      const json = await res.json();
-      const magnet: string = json?.pick?.magnet || '';
-      const fileIndex: number | undefined = json?.pick?.fileIndex ?? undefined;
-
-      const params: Record<string, string> = {
-        cat: kind,
-        seriesId: it.seriesId,
-        season: String(it.season),
-        episode: String(it.episode),
-        title: it.title || 'Unknown',
-      };
-      if (magnet) params.magnet = magnet;
-      if (fileIndex != null) params.fileIndex = String(fileIndex);
-      navigate('watch', params);
-    } catch (e) {
-      console.error('resume web failed', e);
+      if (!response.ok) throw new Error(`Dismiss failed (${response.status})`);
+      setRows((items) => {
+        const nextRows = items.filter((item) => !(
+          item.seriesId === it.seriesId && item.season === it.season && item.episode === it.episode
+        ));
+        continueFetchCache.set(subjectId, { timestamp: Date.now(), data: nextRows });
+        return nextRows;
+      });
+    } catch (error) {
+      console.error('[ContinueRail] Could not remove item:', error);
+      setDismissError('Could not remove that title. Check the backend connection and try again.');
+    } finally {
+      setDismissingKey(null);
     }
+  };
+
+  const openResumeSources = (it: ContinueItem) => {
+    const isAnimeSeries = it.seriesId?.startsWith('mal:') || it.seriesId?.startsWith('anilist:');
+    const kind = it.kind || (it.seriesId?.startsWith('tmdb:movie:') ? 'movie' : isAnimeSeries ? 'anime' : 'tv');
+    const id = kind === 'anime' ? it.anilistId : it.tmdbId;
+    if (!id) {
+      console.error('[ContinueRail] Cannot open source list without a provider title id', it.seriesId);
+      return;
+    }
+
+    const titleParams: Record<string, string> = {
+      kind,
+      id: String(id),
+      resumeSubjectId: subjectId,
+      resumeSeriesId: it.seriesId,
+      resumeSeason: String(it.season),
+      resumeEpisode: String(it.episode),
+    };
+    if (kind === 'anime' && it.malId) titleParams.malId = String(it.malId);
+    navigate('title', titleParams);
   };
 
   if (loading) {
     return (
-      <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#0a1520] via-[#060d14] to-[#040810] p-5 md:p-7 shadow-2xl shadow-black/30">
+      <section className="border-t border-white/[0.08] py-8 md:py-10">
         <div className="mb-4">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Pick up where you left off</p>
-          <h2 className="text-2xl font-semibold text-white">Continue Watching</h2>
+          <p className="type-secondary mb-2 font-medium text-white/65">Your library</p>
+          <h2 className="type-section-title text-white">Continue watching</h2>
         </div>
-        <div className="flex gap-4 overflow-x-auto pb-2">
+        <div className="hide-scrollbar flex gap-4 overflow-x-auto pb-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="min-w-[180px] max-w-[180px] flex-shrink-0">
-              <div className="aspect-[2/3] rounded-2xl bg-slate-800/40 animate-pulse" />
+            <div key={i} className="w-[148px] shrink-0 sm:w-[164px] md:w-[178px] xl:w-[190px]">
+              <div className="aspect-[2/3] rounded-lg bg-white/[0.06] animate-pulse" />
               <div className="mt-2 flex gap-1.5">
-                <div className="flex-1 h-7 rounded-lg bg-slate-800/40 animate-pulse" />
-                <div className="w-8 h-7 rounded-lg bg-slate-800/40 animate-pulse" />
+                <div className="h-7 flex-1 animate-pulse rounded-lg bg-white/[0.05]" />
+                <div className="h-7 w-8 animate-pulse rounded-lg bg-white/[0.05]" />
               </div>
             </div>
           ))}
@@ -167,46 +202,58 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
   if (!rows.length) return null;
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#0a1520] via-[#060d14] to-[#040810] p-5 md:p-7 shadow-2xl shadow-black/30">
+    <section className="border-t border-white/[0.08] py-8 md:py-10">
       <div className="mb-4">
-        <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Pick up where you left off</p>
-        <h2 className="text-2xl font-semibold text-white">Continue Watching</h2>
+        <p className="type-secondary mb-2 font-medium text-white/65">Your library</p>
+        <h2 className="type-section-title text-white">Continue watching</h2>
       </div>
-      <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-700">
+      {dismissError ? (
+        <p className="type-body mb-4 rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3 text-red-100" role="alert">
+          {dismissError}
+        </p>
+      ) : null}
+      <div className="hide-scrollbar flex snap-x snap-mandatory gap-3.5 overflow-x-auto pb-2 md:gap-4">
         {rows.map((it) => {
-          const kind = it.kind || (it.seriesId?.startsWith('tmdb:movie:') ? 'movie' : it.seriesId?.startsWith('mal:') ? 'anime' : 'tv');
-          const pct = Math.round(it.percent);
+          const isAnimeSeries = it.seriesId?.startsWith('mal:') || it.seriesId?.startsWith('anilist:');
+          const kind = it.kind || (it.seriesId?.startsWith('tmdb:movie:') ? 'movie' : isAnimeSeries ? 'anime' : 'tv');
+          const pct = Math.max(0, Math.min(100, Math.round(Number(it.percent) || 0)));
           const displayTitle = it.title || it.seriesId;
           return (
             <div
               key={`${it.seriesId}-${it.season}-${it.episode}`}
-              className="group relative min-w-[180px] max-w-[180px] flex-shrink-0"
+              className="group relative w-[148px] shrink-0 snap-start sm:w-[164px] md:w-[178px] xl:w-[190px]"
             >
               <button
                 type="button"
-                onClick={() => void resumeWeb(it)}
-                className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl border border-slate-800/60 bg-[#0b111f] shadow-lg shadow-black/40 transition-all duration-300 group-hover:-translate-y-1 group-hover:border-cyan-500/40"
+                onClick={() => openResumeSources(it)}
+                onPointerEnter={() => void loadTitlePage()}
+                onFocus={() => void loadTitlePage()}
+                className="relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] transition duration-300 group-hover:-translate-y-1 group-hover:border-white/30"
               >
                 {it.posterPath ? (
                   <img
                     src={it.posterPath}
                     alt={displayTitle}
+                    width="342"
+                    height="513"
+                    loading="lazy"
+                    decoding="async"
                     className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                   />
                 ) : (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900">
+                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
                     <span className="text-4xl opacity-30">🎬</span>
                   </div>
                 )}
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-90" />
 
-                <div className="absolute inset-x-0 bottom-0 h-1 bg-slate-800/80">
-                  <div className="h-full bg-cyan-500 transition-all" style={{ width: `${pct}%` }} />
+                <div className="absolute inset-x-0 bottom-0 h-1 bg-white/10">
+                  <div className="h-full bg-[#ff7a17] transition-all" style={{ width: `${pct}%` }} />
                 </div>
 
                 <div className="absolute left-2 top-2">
-                  <span className="rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-sm">
+                  <span className="font-label text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90 backdrop-blur-sm">
                     {kind !== 'movie'
                       ? `S${String(it.season).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}`
                       : `${pct}%`}
@@ -214,34 +261,30 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
                 </div>
 
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/90 text-black shadow-lg shadow-cyan-500/30">
-                    <Play className="h-5 w-5 ml-0.5" />
+                  <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-black">
+                    <Play className="h-4 w-4 ml-0.5 fill-current" />
                   </div>
                 </div>
 
                 <div className="absolute inset-x-2 bottom-3 space-y-0.5">
-                  <div className="text-sm font-semibold leading-tight text-white line-clamp-2">{displayTitle}</div>
-                  {it.year && <div className="text-[10px] text-slate-300">{it.year}</div>}
+                  <div className="line-clamp-2 text-sm font-medium leading-5 text-white">{displayTitle}</div>
+                  {it.upNext ? (
+                    <div className="type-caption text-white/70">Up next</div>
+                  ) : it.year ? (
+                    <div className="type-caption text-numeric text-white/70">{it.year}</div>
+                  ) : null}
                 </div>
               </button>
 
-              <div className="mt-2 flex items-center gap-1.5">
-                <a
-                  className="flex-1 rounded-lg bg-slate-800/80 px-2 py-1.5 text-center text-[10px] font-medium text-slate-300 hover:bg-slate-700 transition-colors"
-                  href={`http://localhost:4001/v1/resume.m3u?subjectId=${encodeURIComponent(subjectId)}&seriesId=${encodeURIComponent(it.seriesId)}&kind=${kind}`}
-                  download
-                  title="Open in VLC"
-                >
-                  VLC
-                </a>
-                <button
-                  className="rounded-lg bg-slate-800/80 px-2 py-1.5 text-[10px] font-medium text-slate-400 hover:bg-red-900/50 hover:text-red-300 transition-colors"
-                  onClick={() => void dismiss(it)}
-                  title="Remove from Continue"
-                >
-                  ✕
-                </button>
-              </div>
+              <button
+                type="button"
+                className="absolute right-2 top-2 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/70 text-white/70 backdrop-blur-sm transition hover:border-red-500 hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-wait disabled:opacity-50"
+                onClick={() => void dismiss(it)}
+                disabled={Boolean(dismissingKey)}
+                aria-label={`Remove ${displayTitle} from Continue watching`}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
             </div>
           );
         })}
@@ -253,104 +296,114 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
 export default function HomePage({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
   const [movies, setMovies] = useState<MovieCard[]>([]);
   const [moviesLoading, setMoviesLoading] = useState(true);
+  const [moviesError, setMoviesError] = useState<string | null>(null);
 
   const [series, setSeries] = useState<MovieCard[]>([]);
   const [seriesLoading, setSeriesLoading] = useState(true);
+  const [seriesError, setSeriesError] = useState<string | null>(null);
 
   const [anime, setAnime] = useState<MovieCard[]>([]);
   const [animeLoading, setAnimeLoading] = useState(true);
-
-  // Module-level request tracking to prevent duplicate calls (persists across React Strict Mode)
-  const activeRequests = {
-    movies: null as AbortController | null,
-    tv: null as AbortController | null,
-    anime: null as AbortController | null,
-  };
+  const [animeError, setAnimeError] = useState<string | null>(null);
+  const [catalogReloadToken, setCatalogReloadToken] = useState(0);
+  const [featuredItems, setFeaturedItems] = useState<FeaturedItem[]>([]);
+  const [featuredIndex, setFeaturedIndex] = useState(0);
+  const [featuredUserPaused, setFeaturedUserPaused] = useState(false);
+  const [featuredPointerPaused, setFeaturedPointerPaused] = useState(false);
+  const [featuredFocusPaused, setFeaturedFocusPaused] = useState(false);
+  const featuredMoveId = useRef(0);
+  const featuredPaused = featuredUserPaused || featuredPointerPaused || featuredFocusPaused;
 
   useEffect(() => {
     const ac = new AbortController();
 
     async function loadMovies() {
       // Skip if already fetching
-      if (activeRequests.movies) {
+      if (catalogRequests.movies) {
         console.log('[HomePage] Movies request already in flight, skipping');
         return;
       }
       const requestAc = new AbortController();
-      activeRequests.movies = requestAc;
+      catalogRequests.movies = requestAc;
       try {
         setMoviesLoading(true);
+        setMoviesError(null);
         console.log('[HomePage] Fetching movies');
         const data = await getMovies(1, 'trending');
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         const cards = (data.results || []).map(cardFromTmdbMovie);
         console.log('[HomePage] Received', cards.length, 'movies');
-        setMovies(cards);
+        setMovies(cards.filter((card: MovieCard) => !isTmdbAnime(card)));
       } catch (err) {
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading movies:', err);
         setMovies([]);
+        setMoviesError('Movies could not be loaded. Check your connection or TMDb setting.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setMoviesLoading(false);
         }
-        activeRequests.movies = null;
+        catalogRequests.movies = null;
       }
     }
 
     async function loadTv() {
       // Skip if already fetching
-      if (activeRequests.tv) {
+      if (catalogRequests.tv) {
         console.log('[HomePage] TV request already in flight, skipping');
         return;
       }
       const requestAc = new AbortController();
-      activeRequests.tv = requestAc;
+      catalogRequests.tv = requestAc;
       try {
         setSeriesLoading(true);
+        setSeriesError(null);
         console.log('[HomePage] Fetching TV shows');
         const data = await getTvShows(1, 'trending');
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         const cards = (data.results || []).map(cardFromTmdbTv);
         console.log('[HomePage] Received', cards.length, 'TV shows');
-        setSeries(cards);
+        setSeries(cards.filter((card: MovieCard) => !isTmdbAnime(card)));
       } catch (err) {
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading TV:', err);
         setSeries([]);
+        setSeriesError('Series could not be loaded. Check your connection or TMDb setting.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setSeriesLoading(false);
         }
-        activeRequests.tv = null;
+        catalogRequests.tv = null;
       }
     }
 
     async function loadAnime() {
       // Skip if already fetching
-      if (activeRequests.anime) {
+      if (catalogRequests.anime) {
         console.log('[HomePage] Anime request already in flight, skipping');
         return;
       }
       const requestAc = new AbortController();
-      activeRequests.anime = requestAc;
+      catalogRequests.anime = requestAc;
       try {
         setAnimeLoading(true);
-        console.log('[HomePage] Fetching anime');
-        const data = await getAnimeList(1, 'bypopularity');
+        setAnimeError(null);
+        console.log('[HomePage] Fetching anime from AniList');
+        const data = await getTrendingAnime(1);
         if (ac.signal.aborted || requestAc.signal.aborted) return;
-        const cards = ((data.data || []) as any[]).map(cardFromJikan);
-        console.log('[HomePage] Received', cards.length, 'anime');
+        const cards = selectAniListCatalog((data.media || []).map(cardFromAniList));
+        console.log('[HomePage] Received', cards.length, 'AniList anime');
         setAnime(cards);
       } catch (err) {
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading anime:', err);
         setAnime([]);
+        setAnimeError('Anime could not be loaded. Check the AniList connection, then try again.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setAnimeLoading(false);
         }
-        activeRequests.anime = null;
+        catalogRequests.anime = null;
       }
     }
 
@@ -361,125 +414,266 @@ export default function HomePage({ navigate }: { navigate: (path: string, params
     return () => {
       ac.abort();
       // Abort any active requests
-      if (activeRequests.movies) {
-        activeRequests.movies.abort();
-        activeRequests.movies = null;
+      if (catalogRequests.movies) {
+        catalogRequests.movies.abort();
+        catalogRequests.movies = null;
       }
-      if (activeRequests.tv) {
-        activeRequests.tv.abort();
-        activeRequests.tv = null;
+      if (catalogRequests.tv) {
+        catalogRequests.tv.abort();
+        catalogRequests.tv = null;
       }
-      if (activeRequests.anime) {
-        activeRequests.anime.abort();
-        activeRequests.anime = null;
+      if (catalogRequests.anime) {
+        catalogRequests.anime.abort();
+        catalogRequests.anime = null;
       }
     };
-  }, []);
+  }, [catalogReloadToken]);
 
-  const heroHighlights = [
-    {
-      title: 'Instant playback',
-      desc: 'Search any movie, show, or anime and jump directly into the best available torrent stream.',
-    },
-    {
-      title: 'Continue watching',
-      desc: 'Stop mid-episode? Pick up exactly where you left off thanks to the persistent progress rail.',
-    },
-    {
-      title: 'Verified sources',
-      desc: 'Every card shown here already has seeds, so you never waste time chasing dead links.',
-    },
-  ];
+  useEffect(() => {
+    if (moviesLoading || seriesLoading || animeLoading) return;
+    const queue = buildFeaturedQueue(movies, series, anime);
+    let cancelled = false;
 
-  const openItem = (k: 'movie' | 'tv' | 'anime', id: number) => {
-    navigate('title', { kind: k, id: String(id) });
+    void preloadBackdrop(queue[0]?.backdropUrl).then(() => {
+      if (cancelled) return;
+      featuredMoveId.current += 1;
+      setFeaturedIndex(0);
+      setFeaturedItems(queue);
+      for (const item of queue.slice(1)) {
+        void preloadBackdrop(item.backdropUrl);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [movies, series, anime, moviesLoading, seriesLoading, animeLoading]);
+
+  const featuredItem = featuredItems[featuredIndex % Math.max(featuredItems.length, 1)];
+  const featuredLoading = !featuredItems.length && (moviesLoading || seriesLoading || animeLoading);
+
+  useEffect(() => {
+    if (featuredIndex >= featuredItems.length && featuredItems.length) setFeaturedIndex(0);
+  }, [featuredIndex, featuredItems.length]);
+
+  useEffect(() => {
+    if (featuredPaused || featuredItems.length < 2) return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (reducedMotion.matches) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (document.hidden) return;
+      const moveId = featuredMoveId.current + 1;
+      featuredMoveId.current = moveId;
+      const nextIndex = (featuredIndex + 1) % featuredItems.length;
+      void preloadBackdrop(featuredItems[nextIndex]?.backdropUrl).then(() => {
+        if (!cancelled && featuredMoveId.current === moveId) setFeaturedIndex(nextIndex);
+      });
+    }, 8000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [featuredIndex, featuredItems, featuredPaused]);
+
+  const moveFeatured = async (direction: -1 | 1) => {
+    if (!featuredItems.length) return;
+    const moveId = featuredMoveId.current + 1;
+    featuredMoveId.current = moveId;
+    const nextIndex = (featuredIndex + direction + featuredItems.length) % featuredItems.length;
+    await preloadBackdrop(featuredItems[nextIndex]?.backdropUrl);
+    if (featuredMoveId.current === moveId) setFeaturedIndex(nextIndex);
   };
 
-  const prefetchItem = (k: 'movie' | 'tv' | 'anime', id: number) => {
-    // Prefetch logic if needed
+  const openItem = (k: 'movie' | 'tv' | 'anime', item: MovieCard) => {
+    const params: Record<string, string> = { kind: k, id: String(item.id) };
+    if (k === 'anime' && item.malId) params.malId = String(item.malId);
+    if (k === 'anime' && item.sourceProvider === 'tmdb') {
+      params.provider = 'tmdb';
+      params.mediaKind = item.sourceKind === 'movie' ? 'movie' : 'tv';
+    }
+    navigate('title', params);
+  };
+
+  const prefetchItem = (_k: 'movie' | 'tv' | 'anime', _item: MovieCard) => {
+    void loadTitlePage();
   };
 
   return (
-    <div className="space-y-10">
-      <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-[#050a1a] via-[#060c1f] to-[#0b142b] p-6 shadow-2xl shadow-black/40 md:p-10">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
-          <div className="flex-1 space-y-4">
-            <div className="inline-flex items-center gap-2 text-sm font-medium text-cyan-300">
-              <Sparkles className="h-4 w-4" />
-              Curated torrents, always online.
-            </div>
-            <h1 className="text-4xl font-semibold text-white md:text-5xl">
-              Find something binge-worthy in seconds.
-            </h1>
-            <p className="text-base text-slate-300 md:text-lg">
-              We aggregate TMDb metadata with live torrent availability, so every card you see is ready to stream.
-              Jump back in or discover a new obsession.
+    <div>
+      <section
+        className="relative isolate min-h-[520px] overflow-hidden border-b border-white/[0.08] md:min-h-[610px]"
+        onMouseEnter={() => setFeaturedPointerPaused(true)}
+        onMouseLeave={() => setFeaturedPointerPaused(false)}
+        onFocusCapture={() => setFeaturedFocusPaused(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setFeaturedFocusPaused(false);
+          }
+        }}
+        aria-label="Trending highlights"
+      >
+        {featuredItem?.backdropUrl ? (
+          <img
+            key={`${featuredItem.kind}-${featuredItem.id}`}
+            src={featuredItem.backdropUrl}
+            alt=""
+            fetchPriority="high"
+            decoding="async"
+            className="absolute inset-0 -z-20 h-full w-full object-cover object-center opacity-70"
+          />
+        ) : (
+          <div className="absolute inset-0 -z-20 bg-[#151515]" />
+        )}
+        <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/80 to-[#0a0a0a]/15" />
+        <div className="absolute inset-0 -z-10 bg-gradient-to-t from-[#0a0a0a] via-transparent to-black/10" />
+
+        <div className="mx-auto flex min-h-[520px] max-w-[1600px] items-end px-5 pb-12 pt-20 md:min-h-[610px] md:px-8 md:pb-16 xl:px-12">
+          <div className="max-w-2xl">
+            <p className="type-secondary mb-5 font-medium text-white/70">
+              {featuredLoading
+                ? 'Loading highlights'
+                : `Trending now · ${featuredItem?.kind === 'tv' ? 'Series' : featuredItem?.kind === 'anime' ? 'Anime' : 'Film'}`}
             </p>
-            <div className="flex flex-wrap gap-3">
-              <Button
-                className="rounded-2xl bg-cyan-500 px-6 py-3 text-base font-semibold text-black shadow-lg shadow-cyan-500/30 hover:bg-cyan-400"
-                onClick={() =>
-                  navigate('see-all', {
-                    title: 'Movies – Trending',
-                    api: 'tmdb:trending:movie',
-                    kind: 'movie',
-                  })
-                }
-              >
-                <Play className="mr-2 h-4 w-4" />
-                Watch something now
-              </Button>
-            </div>
-          </div>
-          <div className="grid flex-1 gap-4 text-sm text-white sm:grid-cols-2">
-            {heroHighlights.map((item) => (
-              <div key={item.title} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                <div className="text-base font-semibold">{item.title}</div>
-                <p className="mt-1 text-slate-200 text-sm leading-relaxed">{item.desc}</p>
+            {featuredLoading ? (
+              <div aria-label="Loading featured title">
+                <div className="h-16 w-3/4 animate-pulse rounded bg-white/10 md:h-20" />
+                <div className="mt-6 h-4 w-full max-w-xl animate-pulse rounded bg-white/[0.07]" />
+                <div className="mt-2 h-4 w-2/3 animate-pulse rounded bg-white/[0.07]" />
               </div>
-            ))}
+            ) : (
+              <>
+                <h1 className="type-feature-title text-white">
+                  {featuredItem?.title || 'Find your next great watch.'}
+                </h1>
+                <div className="type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
+                  {featuredItem?.year ? <span>{featuredItem.year}</span> : null}
+                  {featuredItem?.year && typeof featuredItem?.tmdbRatingPct === 'number' ? <span>·</span> : null}
+                  {typeof featuredItem?.tmdbRatingPct === 'number' ? (
+                    <span>{featuredItem.tmdbRatingPct}% viewer score</span>
+                  ) : null}
+                </div>
+                {featuredItem?.overview ? (
+                  <p className="measure-compact mt-5 line-clamp-3 text-base leading-7 text-white/70 md:text-lg">
+                    {featuredItem.overview}
+                  </p>
+                ) : null}
+              </>
+            )}
+
+            <div className="mt-8 flex flex-wrap gap-3">
+              {featuredItem ? (
+                <button
+                  type="button"
+                  onClick={() => openItem(featuredItem.kind, featuredItem)}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                >
+                  <Play className="h-4 w-4 fill-current" />
+                  View title
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  const kind = featuredItem?.kind || 'movie';
+                  navigate('see-all', {
+                    title: kind === 'tv' ? 'Trending series' : kind === 'anime' ? 'Trending anime' : 'Trending movies',
+                    api: kind === 'tv' ? 'tmdb:trending:tv' : kind === 'anime' ? 'anilist:trending:anime' : 'tmdb:trending:movie',
+                    kind,
+                  });
+                }}
+                className="group inline-flex min-h-11 items-center gap-2 rounded-full border border-white/25 bg-black/10 px-5 py-2.5 text-sm text-white transition hover:border-white/50 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+              >
+                Browse {featuredItem?.kind === 'tv' ? 'series' : featuredItem?.kind === 'anime' ? 'anime' : 'movies'}
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </button>
+            </div>
           </div>
         </div>
+
+        {featuredItems.length > 1 ? (
+          <>
+            <div className="absolute right-5 top-5 flex items-center gap-2 md:right-8 md:top-8 xl:right-12">
+              <span className="font-label text-numeric mr-1 text-white/70">
+                {String(featuredIndex + 1).padStart(2, '0')} / {String(featuredItems.length).padStart(2, '0')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setFeaturedUserPaused((paused) => !paused)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/20 text-white/70 backdrop-blur transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                aria-label={featuredUserPaused ? 'Resume featured title rotation' : 'Pause featured title rotation'}
+                aria-pressed={featuredUserPaused}
+              >
+                {featuredUserPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => void moveFeatured(-1)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/20 text-white/70 backdrop-blur transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                aria-label="Previous featured title"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void moveFeatured(1)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/20 text-white/70 backdrop-blur transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                aria-label="Next featured title"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+
+          </>
+        ) : null}
       </section>
 
-      <ContinueRail navigate={navigate} />
+      <div className="mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
+        <ContinueRail navigate={navigate} />
 
-      <div className="space-y-8">
-        <CarouselRow
+        <div>
+          <CarouselRow
           title="Movies – Trending"
-          subtitle="Crowd favorites with active seeds."
-          accent="cyan"
+          subtitle="The films getting the most attention right now."
           items={movies}
           loading={moviesLoading}
-          onOpen={(id) => openItem('movie', id)}
-          onPrefetch={(id) => prefetchItem('movie', id)}
+          error={moviesError}
+          onRetry={() => setCatalogReloadToken((token) => token + 1)}
+          onOpenSettings={() => void window.electronAPI?.openSetup()}
+          onOpen={(item) => openItem('movie', item)}
+          onPrefetch={(item) => prefetchItem('movie', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Movies – Trending')}&api=${encodeURIComponent('tmdb:trending:movie')}&kind=movie`}
           navigate={navigate}
         />
 
-        <CarouselRow
+          <CarouselRow
           title="Series – Trending"
-          subtitle="Season drops and binge-ready arcs."
-          accent="purple"
+          subtitle="Current favorites, from premieres to returning seasons."
           items={series}
           loading={seriesLoading}
-          onOpen={(id) => openItem('tv', id)}
-          onPrefetch={(id) => prefetchItem('tv', id)}
+          error={seriesError}
+          onRetry={() => setCatalogReloadToken((token) => token + 1)}
+          onOpenSettings={() => void window.electronAPI?.openSetup()}
+          onOpen={(item) => openItem('tv', item)}
+          onPrefetch={(item) => prefetchItem('tv', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Series – Trending')}&api=${encodeURIComponent('tmdb:trending:tv')}&kind=tv`}
           navigate={navigate}
         />
 
-        <CarouselRow
-          title="Anime – Trending"
-          subtitle="Simulcasts, movies, and evergreen classics."
-          accent="rose"
+          <CarouselRow
+          title="Anime – Trending this season"
+          subtitle="Current releases getting the most audience attention."
           items={anime}
-          loading={animeLoading}
-          onOpen={(id) => openItem('anime', id)}
-          onPrefetch={(id) => prefetchItem('anime', id)}
-          seeAllHref={`/see-all?title=${encodeURIComponent('Anime – Trending')}&api=${encodeURIComponent('jikan:top:anime')}&kind=anime`}
+          loading={animeLoading && !anime.length}
+          error={animeError}
+          onRetry={() => setCatalogReloadToken((token) => token + 1)}
+          emptyMessage="Anime providers are temporarily unavailable. Reopen the app or try again shortly."
+          onOpen={(item) => openItem('anime', item)}
+          onPrefetch={(item) => prefetchItem('anime', item)}
+          seeAllHref={`/see-all?title=${encodeURIComponent('Anime – Trending')}&api=${encodeURIComponent('anilist:trending:anime')}&kind=anime`}
           navigate={navigate}
         />
+        </div>
       </div>
     </div>
   );

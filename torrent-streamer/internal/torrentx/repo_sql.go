@@ -13,22 +13,22 @@ import (
 type Repo struct{ DB *sql.DB }
 
 type PickRow struct {
-	ID           int64
-	SeriesID     string
-	Season       int
-	Episode      int
-	ProfileHash  string
-	InfoHash     string
-	Magnet       string
-	ReleaseGroup *string
-	Resolution   string
-	Codec        string
-	FileIndex    *int
-	SourceKind   string
-	SizeBytes    *int64
-	ScoreJSON    []byte
-	PickedAt     time.Time
-	ReplacesPick *int64
+	ID           int64     `json:"id"`
+	SeriesID     string    `json:"seriesId"`
+	Season       int       `json:"season"`
+	Episode      int       `json:"episode"`
+	ProfileHash  string    `json:"profileHash"`
+	InfoHash     string    `json:"infoHash"`
+	Magnet       string    `json:"magnet"`
+	ReleaseGroup *string   `json:"releaseGroup,omitempty"`
+	Resolution   string    `json:"resolution"`
+	Codec        string    `json:"codec"`
+	FileIndex    *int      `json:"fileIndex,omitempty"`
+	SourceKind   string    `json:"sourceKind"`
+	SizeBytes    *int64    `json:"sizeBytes,omitempty"`
+	ScoreJSON    []byte    `json:"-"`
+	PickedAt     time.Time `json:"pickedAt"`
+	ReplacesPick *int64    `json:"replacesPickId,omitempty"`
 }
 
 func (r *Repo) GetPick(ctx context.Context, seriesID string, season, episode int, profileHash string) (PickRow, bool, error) {
@@ -72,23 +72,32 @@ func searchKey(seriesID string, season, episode int, profileHash string) string 
 	return seriesID + "|S" + strconv.Itoa(season) + "E" + strconv.Itoa(episode) + "|" + profileHash
 }
 
-func (r *Repo) GetSearchCache(ctx context.Context, key string) ([]types.Candidate, bool, error) {
+func (r *Repo) GetSearchCache(ctx context.Context, key string, maxAge time.Duration) ([]types.Candidate, bool, error) {
 	var raw []byte
-	err := r.DB.QueryRowContext(ctx, `SELECT candidates FROM search_cache WHERE key=$1`, key).Scan(&raw)
+	var fetchedAt time.Time
+	err := r.DB.QueryRowContext(ctx, `SELECT candidates, fetched_at FROM search_cache WHERE key=$1`, key).Scan(&raw, &fetchedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
+	if maxAge <= 0 || time.Since(fetchedAt) > maxAge {
+		return nil, false, nil
+	}
 	var out []types.Candidate
-	_ = json.Unmarshal(raw, &out)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false, err
+	}
 	return out, true, nil
 }
 
 func (r *Repo) PutSearchCache(ctx context.Context, key string, cands []types.Candidate) error {
-	raw, _ := json.Marshal(cands)
-	_, err := r.DB.ExecContext(ctx, `
+	raw, err := json.Marshal(cands)
+	if err != nil {
+		return err
+	}
+	_, err = r.DB.ExecContext(ctx, `
 INSERT INTO search_cache (key, candidates, fetched_at) VALUES ($1,$2,now())
 ON CONFLICT (key) DO UPDATE SET candidates=EXCLUDED.candidates, fetched_at=now()`, key, raw)
 	return err

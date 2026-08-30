@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,8 @@ type playState string
 const (
 	StatePlaying playState = "playing"
 	StatePaused  playState = "paused"
+	// StateStopped prevents a closed player from retaining warmer demand.
+	StateStopped playState = "stopped"
 )
 
 type Key struct {
@@ -35,8 +38,8 @@ type Controller struct {
 	targetAheadSec int64
 
 	// warmer control
-	warmCtx    context.Context
 	warmCancel context.CancelFunc
+	warmDone   chan struct{}
 }
 
 var (
@@ -67,6 +70,34 @@ func Get(k Key) *Controller {
 	return c
 }
 
+// StopTorrent cancels and waits for every warmer associated with a torrent.
+// It does not add, drop, or delete the torrent or its cached data.
+func StopTorrent(ctx context.Context, cat, infoHash string) error {
+	bufMu.Lock()
+	controllers := make([]*Controller, 0)
+	for k, c := range ctrls {
+		if strings.EqualFold(k.Cat, cat) && strings.EqualFold(k.IH, infoHash) {
+			controllers = append(controllers, c)
+		}
+	}
+	bufMu.Unlock()
+
+	done := make([]<-chan struct{}, 0, len(controllers))
+	for _, c := range controllers {
+		if ch := c.stop(); ch != nil {
+			done = append(done, ch)
+		}
+	}
+	for _, ch := range done {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
 func (c *Controller) State() playState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -75,12 +106,17 @@ func (c *Controller) State() playState {
 
 func (c *Controller) SetState(ps playState) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.state = ps
 	if ps == StatePlaying {
 		c.targetAheadSec = config.TargetPlaySec()
-	} else {
+	} else if ps == StatePaused {
 		c.targetAheadSec = config.TargetPauseSec()
+	}
+	cancel := c.warmCancel
+	c.mu.Unlock()
+
+	if ps != StatePaused && cancel != nil {
+		cancel()
 	}
 }
 
@@ -149,6 +185,16 @@ func (c *Controller) SetTargetSeconds(playSec, pauseSec int64) {
 	}
 }
 
+func (c *Controller) warmState() (playState, int64, int64) {
+	c.mu.RLock()
+	state := c.state
+	playhead := c.playhead
+	c.mu.RUnlock()
+	// TargetBytes takes the controller read lock itself, so it must be called
+	// after releasing the snapshot lock.
+	return state, playhead, c.TargetBytes()
+}
+
 func IsFirstHit(k Key) bool {
 	firstHit.Lock()
 	defer firstHit.Unlock()
@@ -163,13 +209,14 @@ func IsFirstHit(k Key) bool {
 
 func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, start int64) {
 	c.mu.Lock()
-	if c.warmCancel != nil {
+	if c.state != StatePaused || c.warmCancel != nil {
 		c.mu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c.warmCtx = ctx
+	done := make(chan struct{})
 	c.warmCancel = cancel
+	c.warmDone = done
 	c.mu.Unlock()
 
 	go func() {
@@ -178,30 +225,42 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 				log.Printf("[buffer] StartWarm panic recovered: %v", r)
 			}
 			c.mu.Lock()
-			if c.warmCancel != nil {
+			if c.warmDone == done {
 				c.warmCancel = nil
-				c.warmCtx = nil
+				c.warmDone = nil
 			}
 			c.mu.Unlock()
+			close(done)
 		}()
 
 		rd := f.NewReader()
-		defer rd.Close()
+		readerDone := make(chan struct{})
+		readerWatcherDone := make(chan struct{})
+		defer func() {
+			close(readerDone)
+			<-readerWatcherDone
+			rd.Close()
+		}()
+		go func() {
+			defer close(readerWatcherDone)
+			select {
+			case <-ctx.Done():
+				rd.Close()
+			case <-readerDone:
+			}
+		}()
 
 		for {
-			c.mu.Lock()
-			st := c.state
-			ctx := c.warmCtx
-			target := c.TargetBytes()
-			pos := c.playhead
-			c.mu.Unlock()
+			st, pos, target := c.warmState()
 
-			if st != StatePaused || ctx == nil {
+			if st != StatePaused {
 				return
 			}
 
 			if _, err := rd.Seek(pos, io.SeekStart); err != nil {
-				time.Sleep(300 * time.Millisecond)
+				if !waitWarm(ctx, 300*time.Millisecond) {
+					return
+				}
 				continue
 			}
 			rd.SetResponsive()
@@ -209,8 +268,7 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 
 			need := target - ContiguousAheadPieceExact(t, f, pos)
 			if need <= 256<<10 {
-				time.Sleep(750 * time.Millisecond)
-				continue
+				return
 			}
 
 			chunk := need
@@ -231,9 +289,7 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 			got := torrentx.Prebuffer(rd, chunk, 5*time.Second)
 			c.UpdateThroughput(got, int64(time.Since(start).Milliseconds()))
 
-			select {
-			case <-time.After(150 * time.Millisecond):
-			case <-ctx.Done():
+			if !waitWarm(ctx, 150*time.Millisecond) {
 				return
 			}
 		}
@@ -242,11 +298,33 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 
 func (c *Controller) StopWarm() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.warmCancel != nil {
-		c.warmCancel()
-		c.warmCancel = nil
-		c.warmCtx = nil
+	cancel := c.warmCancel
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (c *Controller) stop() <-chan struct{} {
+	c.mu.Lock()
+	c.state = StateStopped
+	cancel := c.warmCancel
+	done := c.warmDone
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return done
+}
+
+func waitWarm(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 

@@ -6,13 +6,19 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   root: './src',
   build: {
     outDir: '../dist',
     emptyOutDir: true,
     rollupOptions: {
-      input: path.resolve(__dirname, 'src/index.html'),
+      input: {
+        index: path.resolve(__dirname, 'src/index.html'),
+        playerControls: path.resolve(__dirname, 'src/player-controls.html'),
+        setup: path.resolve(__dirname, 'src/setup.html'),
+        startup: path.resolve(__dirname, 'src/startup.html'),
+      },
     },
   },
   resolve: {

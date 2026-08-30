@@ -80,11 +80,16 @@ CREATE TABLE IF NOT EXISTS watch_progress (
   position_s INT NOT NULL,
   duration_s INT NOT NULL,
   percent NUMERIC NOT NULL,
+  source_uri TEXT NULL,
+  source_name TEXT NULL,
+  source_kind TEXT NULL,
+  source_file_index INT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(subject_id, series_id, season, episode)
 );
 CREATE INDEX IF NOT EXISTS idx_wp_subject_series ON watch_progress(subject_id, series_id);
+CREATE INDEX IF NOT EXISTS idx_wp_subject_updated ON watch_progress(subject_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wp_updated ON watch_progress(updated_at DESC);
 DROP TRIGGER IF EXISTS trg_wp_upd ON watch_progress;
 CREATE TRIGGER trg_wp_upd BEFORE UPDATE ON watch_progress FOR EACH ROW EXECUTE PROCEDURE set_updated_at();

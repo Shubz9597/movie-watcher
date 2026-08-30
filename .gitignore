@@ -1,5 +1,6 @@
 # Infrastructure and data
 infra/*
+!infra/*.env.example
 data/*
 
 # Node.js dependencies (all subdirectories)
@@ -7,9 +8,9 @@ data/*
 node_modules/
 
 # Package manager files (uncomment if you don't want to commit lock files)
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Build outputs
 **/dist/
@@ -111,3 +112,12 @@ mpv/
 mpv-sdk/
 # Uncomment to keep mpv-sdk headers (if you want to commit them):
 # !mpv-sdk/include/
+
+
+PRODUCT.md
+DESIGN.md
+.impeccable
+
+packagers/*
+
+.arch-context

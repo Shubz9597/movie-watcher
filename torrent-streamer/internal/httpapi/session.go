@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"torrent-streamer/internal/middleware"
 	"torrent-streamer/internal/scoring"
@@ -25,6 +27,15 @@ type SessionHandlers struct {
 	d SessionDeps
 }
 
+const resumeRewindSeconds = 15
+
+func rewindResumePosition(position int) int {
+	if position <= resumeRewindSeconds {
+		return 0
+	}
+	return position - resumeRewindSeconds
+}
+
 func NewSessionHandlers(d SessionDeps) *SessionHandlers { return &SessionHandlers{d: d} }
 
 // Register mounts all /v1 session/resume routes with the same CORS behavior you use elsewhere.
@@ -33,6 +44,8 @@ func (h *SessionHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/session/heartbeat", cors(h.Heartbeat))
 	mux.HandleFunc("/v1/session/ended", cors(h.Ended))
 	mux.HandleFunc("/v1/resume", cors(h.Resume))
+	mux.HandleFunc("/v1/resume/source", cors(h.ResumeSource))
+	mux.HandleFunc("/v1/resume/source/probe", cors(h.ResumeSourceProbe))
 	mux.HandleFunc("/v1/continue", cors(h.ContinueList))
 	mux.HandleFunc("/v1/continue/dismiss", cors(h.ContinueDismiss))
 	mux.HandleFunc("/v1/resume.m3u", cors(h.ResumeM3U))
@@ -86,13 +99,24 @@ func (h *SessionHandlers) Start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var in struct {
-		SubjectID string `json:"subjectId"`
-		SeriesID  string `json:"seriesId"`
-		Season    int    `json:"season"`
-		Episode   int    `json:"episode"`
-		PositionS int    `json:"position_s"`
-		DurationS int    `json:"duration_s"`
+		SubjectID       string `json:"subjectId"`
+		SeriesID        string `json:"seriesId"`
+		Season          int    `json:"season"`
+		Episode         int    `json:"episode"`
+		PositionS       int    `json:"position_s"`
+		DurationS       int    `json:"duration_s"`
+		SourceURI       string `json:"sourceUri"`
+		SourceName      string `json:"sourceName"`
+		SourceKind      string `json:"sourceKind"`
+		SourceFileIndex *int   `json:"sourceFileIndex"`
+		NextSeason      *int   `json:"nextSeason"`
+		NextEpisode     *int   `json:"nextEpisode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -102,45 +126,218 @@ func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "subjectId & seriesId required", http.StatusBadRequest)
 		return
 	}
-	if err := h.d.Watch.SaveProgress(r.Context(), in.SubjectID, in.SeriesID, in.Season, in.Episode, in.PositionS, in.DurationS); err != nil {
+	var source *watch.ProgressSource
+	if strings.TrimSpace(in.SourceURI) != "" {
+		source = &watch.ProgressSource{
+			URI: in.SourceURI, Name: in.SourceName, Kind: in.SourceKind, FileIndex: in.SourceFileIndex,
+		}
+	}
+	var next *watch.EpisodeRef
+	if in.NextSeason != nil || in.NextEpisode != nil {
+		if in.NextSeason == nil || in.NextEpisode == nil {
+			http.Error(w, "nextSeason & nextEpisode must be provided together", http.StatusBadRequest)
+			return
+		}
+		if *in.NextSeason < 0 || *in.NextEpisode <= 0 || (*in.NextSeason == in.Season && *in.NextEpisode == in.Episode) {
+			http.Error(w, "invalid next episode", http.StatusBadRequest)
+			return
+		}
+		next = &watch.EpisodeRef{Season: *in.NextSeason, Episode: *in.NextEpisode}
+	}
+	if err := h.d.Watch.SaveProgressUpdate(r.Context(), watch.ProgressUpdate{
+		SubjectID: in.SubjectID,
+		SeriesID:  in.SeriesID,
+		Season:    in.Season,
+		Episode:   in.Episode,
+		Position:  in.PositionS,
+		Duration:  in.DurationS,
+		Source:    source,
+		Next:      next,
+	}); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	// auto-complete at ≥95%
-	if in.DurationS > 0 && float64(in.PositionS)/float64(in.DurationS)*100.0 >= 95.0 {
-		_ = h.d.Watch.MarkCompleted(r.Context(), in.SubjectID, in.SeriesID, in.Season, in.Episode)
-	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
+func (h *SessionHandlers) ResumeSource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	subject, series := strings.TrimSpace(q.Get("subjectId")), strings.TrimSpace(q.Get("seriesId"))
+	season, seasonErr := strconv.Atoi(q.Get("season"))
+	episode, episodeErr := strconv.Atoi(q.Get("episode"))
+	if subject == "" || series == "" || seasonErr != nil || episodeErr != nil || season < 0 || episode < 0 {
+		http.Error(w, "subjectId, seriesId, season & episode required", http.StatusBadRequest)
+		return
+	}
+	source, ok, err := h.d.Watch.GetProgressSource(r.Context(), subject, series, season, episode)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	if !ok {
+		_ = json.NewEncoder(w).Encode(map[string]any{"found": false})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"found":      true,
+		"sourceUri":  source.URI,
+		"sourceName": source.Name,
+		"sourceKind": source.Kind,
+		"fileIndex":  source.FileIndex,
+	})
+}
+
+func (h *SessionHandlers) ResumeSourceProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	respondUnavailable := func(reason string) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"playable": false, "reason": reason})
+	}
+
+	q := r.URL.Query()
+	subject, series := strings.TrimSpace(q.Get("subjectId")), strings.TrimSpace(q.Get("seriesId"))
+	season, seasonErr := strconv.Atoi(q.Get("season"))
+	episode, episodeErr := strconv.Atoi(q.Get("episode"))
+	if subject == "" || series == "" || seasonErr != nil || episodeErr != nil || season < 0 || episode < 0 {
+		http.Error(w, "subjectId, seriesId, season & episode required", http.StatusBadRequest)
+		return
+	}
+	source, ok, err := h.d.Watch.GetProgressSource(r.Context(), subject, series, season, episode)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		respondUnavailable("source_missing")
+		return
+	}
+
+	kind := source.Kind
+	if kind == "" {
+		kind = "movie"
+	}
+	t, err := torrentx.AddOrGetTorrent(torrentx.GetClientFor(kind), source.URI)
+	if err != nil {
+		respondUnavailable("invalid_source")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	if err := torrentx.WaitForInfo(ctx, t); err != nil {
+		respondUnavailable("metadata_timeout")
+		return
+	}
+
+	fileIndex := -1
+	var fileLength, completed int64
+	if source.FileIndex != nil {
+		if *source.FileIndex < 0 || *source.FileIndex >= len(t.Files()) {
+			respondUnavailable("file_missing")
+			return
+		}
+		fileIndex = *source.FileIndex
+		fileLength = t.Files()[fileIndex].Length()
+		completed = t.Files()[fileIndex].BytesCompleted()
+	} else if file, index := torrentx.ChooseBestVideoFile(t); file != nil {
+		fileIndex = index
+		fileLength = file.Length()
+		completed = file.BytesCompleted()
+	} else {
+		respondUnavailable("file_missing")
+		return
+	}
+
+	stats := t.Stats()
+	for fileLength > 0 && completed < fileLength && stats.ActivePeers == 0 {
+		select {
+		case <-ctx.Done():
+			respondUnavailable("no_peers")
+			return
+		case <-time.After(250 * time.Millisecond):
+			stats = t.Stats()
+			completed = t.Files()[fileIndex].BytesCompleted()
+		}
+	}
+
+	name := source.Name
+	if name == "" {
+		name = t.Name()
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"playable":    true,
+		"sourceUri":   source.URI,
+		"sourceName":  name,
+		"sourceKind":  kind,
+		"fileIndex":   fileIndex,
+		"activePeers": stats.ActivePeers,
+		"cached":      fileLength > 0 && completed >= fileLength,
+	})
+}
+
 func (h *SessionHandlers) Resume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	subject := r.URL.Query().Get("subjectId")
 	series := r.URL.Query().Get("seriesId")
 	if subject == "" || series == "" {
 		http.Error(w, "subjectId & seriesId required", http.StatusBadRequest)
 		return
 	}
-	res, ok, err := h.d.Watch.GetResume(r.Context(), subject, series)
+	var res watch.Resume
+	var ok bool
+	var err error
+	seasonRaw, episodeRaw := r.URL.Query().Get("season"), r.URL.Query().Get("episode")
+	if seasonRaw != "" || episodeRaw != "" {
+		season, seasonErr := strconv.Atoi(seasonRaw)
+		episode, episodeErr := strconv.Atoi(episodeRaw)
+		if seasonErr != nil || episodeErr != nil || season < 0 || episode < 0 {
+			http.Error(w, "valid season & episode required together", http.StatusBadRequest)
+			return
+		}
+		res, ok, err = h.d.Watch.GetEpisodeResume(r.Context(), subject, series, season, episode)
+	} else {
+		res, ok, err = h.d.Watch.GetResume(r.Context(), subject, series)
+	}
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
+		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"found": false})
 		return
 	}
-	pos := res.Position
-	if pos > 10 {
-		pos -= 10
-	} else {
-		pos = 0
-	} // ← rewind
+	pos := rewindResumePosition(res.Position)
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"seriesId": res.SeriesID, "season": res.Season, "episode": res.Episode, "position_s": res.Position,
+		"found": true, "seriesId": res.SeriesID, "season": res.Season, "episode": res.Episode,
+		"position_s": pos, "duration_s": res.Duration, "percent": res.Percent,
 	})
 }
 
 func (h *SessionHandlers) ContinueList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	subject := r.URL.Query().Get("subjectId")
 	if subject == "" {
 		http.Error(w, "subjectId required", http.StatusBadRequest)
@@ -158,10 +355,19 @@ func (h *SessionHandlers) ContinueList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	if items == nil {
+		items = []watch.ContinueItem{}
+	}
 	_ = json.NewEncoder(w).Encode(items)
 }
 
 func (h *SessionHandlers) ContinueDismiss(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var in struct {
 		SubjectID, SeriesID string
 		Season, Episode     int
@@ -248,13 +454,8 @@ func (h *SessionHandlers) ResumeM3U(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no resume state", http.StatusNotFound)
 		return
 	}
-	// rewind 10s (already done in /v1/resume, but we include here too)
-	pos := res.Position
-	if pos > 10 {
-		pos -= 10
-	} else {
-		pos = 0
-	}
+	// Match the in-app resume behavior so external players get the same context.
+	pos := rewindResumePosition(res.Position)
 
 	// 2) ensure we have a pick for that S/E
 	// if runtime/profile missing, apply safe defaults
@@ -269,21 +470,43 @@ func (h *SessionHandlers) ResumeM3U(w http.ResponseWriter, r *http.Request) {
 		profileHash = "caps:h264|v1"
 	}
 
-	p, err := torrentx.EnsurePick(r.Context(), h.d.Picks, torrentx.EnsureInput{
-		SeriesID: series, SeriesTitle: title, Kind: kind,
-		Season: res.Season, Episode: res.Episode,
-		ProfileHash: profileHash, EstRuntimeMin: estRuntimeMin,
-		ProfileCaps: h.d.ProfileCaps,
-	})
-	if err != nil {
-		http.Error(w, "pick error: "+err.Error(), http.StatusInternalServerError)
+	magnet := ""
+	var fileIndex *int
+	if source, found, sourceErr := h.d.Watch.GetProgressSource(r.Context(), subject, series, res.Season, res.Episode); sourceErr != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
 		return
+	} else if found {
+		magnet = source.URI
+		fileIndex = source.FileIndex
+		if source.Kind != "" {
+			kind = source.Kind
+		}
+	}
+
+	// Older progress rows do not have a source snapshot, so retain the pick
+	// system as a compatibility fallback.
+	if magnet == "" {
+		p, pickErr := torrentx.EnsurePick(r.Context(), h.d.Picks, torrentx.EnsureInput{
+			SeriesID: series, SeriesTitle: title, Kind: kind,
+			Season: res.Season, Episode: res.Episode,
+			ProfileHash: profileHash, EstRuntimeMin: estRuntimeMin,
+			ProfileCaps: h.d.ProfileCaps,
+		})
+		if pickErr != nil {
+			http.Error(w, "pick error: "+pickErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		magnet = p.Magnet
+		if p.FileIndex != nil {
+			value := *p.FileIndex
+			fileIndex = &value
+		}
 	}
 
 	// 3) build /stream URL (append cat so the right client pool is used)
-	streamURL := "/stream?magnet=" + url.QueryEscape(p.Magnet)
-	if p.FileIndex != nil {
-		streamURL += "&fileIndex=" + strconv.Itoa(*p.FileIndex)
+	streamURL := "/stream?magnet=" + url.QueryEscape(magnet)
+	if fileIndex != nil {
+		streamURL += "&fileIndex=" + strconv.Itoa(*fileIndex)
 	}
 	streamURL += "&cat=" + url.QueryEscape(kind)
 

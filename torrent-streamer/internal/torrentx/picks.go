@@ -25,9 +25,11 @@ type EnsureInput struct {
 type EnsureDeps struct {
 	Repo   *Repo
 	Search interface {
-		Query(title string, season, episode int, abs *int) ([]types.Candidate, error)
+		Query(ctx context.Context, title string, season, episode int, abs *int) ([]types.Candidate, error)
 	}
 }
+
+const searchCacheTTL = 10 * time.Minute
 
 func EnsurePick(ctx context.Context, d EnsureDeps, in EnsureInput) (PickRow, error) {
 	if p, ok, err := d.Repo.GetPick(ctx, in.SeriesID, in.Season, in.Episode, in.ProfileHash); err != nil {
@@ -38,10 +40,10 @@ func EnsurePick(ctx context.Context, d EnsureDeps, in EnsureInput) (PickRow, err
 
 	key := searchKey(in.SeriesID, in.Season, in.Episode, in.ProfileHash)
 	var cands []types.Candidate
-	if cached, ok, _ := d.Repo.GetSearchCache(ctx, key); ok && len(cached) > 0 {
+	if cached, ok, _ := d.Repo.GetSearchCache(ctx, key, searchCacheTTL); ok && len(cached) > 0 {
 		cands = cached
 	} else {
-		found, err := d.Search.Query(in.SeriesTitle, in.Season, in.Episode, in.AbsEpisode)
+		found, err := d.Search.Query(ctx, in.SeriesTitle, in.Season, in.Episode, in.AbsEpisode)
 		if err != nil {
 			return PickRow{}, err
 		}

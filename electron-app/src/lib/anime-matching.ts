@@ -80,7 +80,7 @@ export function extractEpisodeHints(title: string): {
   const generic = new Set<number>();
   const normalized = title.replace(/_/g, ' ');
 
-  const seasonRegex = /S(\d{1,2})E(\d{1,3})(?:[-–]E?(\d{1,3}))?/gi;
+  const seasonRegex = /S(\d{1,2})E(\d{1,3})(?:[-–~]E?(\d{1,3}))?/gi;
   let match: RegExpExecArray | null;
   while ((match = seasonRegex.exec(normalized)) !== null) {
     const season = Number(match[1]);
@@ -94,14 +94,14 @@ export function extractEpisodeHints(title: string): {
 
   const cleaned = cleanTitleForEpisodeExtraction(normalized);
 
-  const wordRegex = /\b(?:EP|Episode|#)\s*(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?/gi;
+  const wordRegex = /\b(?:EP|Episode|#)\s*(\d{1,3})(?:\s*[-–~]\s*(\d{1,3}))?/gi;
   while ((match = wordRegex.exec(cleaned)) !== null) {
     const start = Number(match[1]);
     const end = match[2] ? Number(match[2]) : start;
     addRange(generic, start, end);
   }
 
-  const looseRegex = /(?:^|[\s\-\[\(])(\d{2,3})(?:\s*[-–]\s*(\d{2,3}))?(?=[\]\s\-\)\._]|$)/g;
+  const looseRegex = /(?:^|[\s\-\[\(])(\d{2,3})(?:\s*[-–~]\s*(\d{2,3}))?(?=[\]\s\-\)\._]|$)/g;
   while ((match = looseRegex.exec(cleaned)) !== null) {
     const start = Number(match[1]);
     const end = match[2] ? Number(match[2]) : start;
@@ -134,8 +134,44 @@ export function matchesEpisode(title: string, season?: number, episode?: number,
   return false;
 }
 
+/**
+ * A named batch/complete pack without explicit episode numbers may contain the
+ * requested episode. When the title does advertise a range, only keep it if
+ * that range actually includes the requested episode.
+ */
+export function seasonPackContainsEpisode(
+  title: string,
+  season?: number,
+  episode?: number,
+  absolute?: number,
+): boolean {
+  const detection = detectSeasonPack(title, season);
+  if (!detection.isSeasonPack) return false;
+
+  const hints = extractEpisodeHints(title);
+  const hasExplicitEpisodes = hints.generic.size > 0 ||
+    [...hints.bySeason.values()].some((episodes) => episodes.size > 0);
+  if (!hasExplicitEpisodes) return true;
+
+  return matchesEpisode(title, season, episode, absolute);
+}
+
 export function detectSeasonPack(title: string, season?: number): SeasonPackDetection {
   const keywords = PACK_KEYWORDS.filter((rule) => rule.rx.test(title)).map((rule) => rule.tag);
+  const rangePatterns = [
+    /\bS\d{1,2}E(\d{1,3})\s*[-–~]\s*E?(\d{1,3})\b/i,
+    /\b(?:episodes?|eps?|ep)\s*(\d{1,3})\s*[-–~]\s*(\d{1,3})\b/i,
+    /[\[(]\s*(\d{1,3})\s*[-–~]\s*(\d{1,3})\s*[\])]/,
+    /(?:^|\s)(\d{1,3})\s*[-–~]\s*(\d{1,3})(?=\s|$)/,
+  ];
+  const hasEpisodeRange = rangePatterns.some((pattern) => {
+    const match = title.match(pattern);
+    if (!match) return false;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    return Number.isFinite(start) && Number.isFinite(end) && start >= 1 && end > start;
+  });
+  if (hasEpisodeRange) keywords.push('episode-range');
   const hasKeywords = keywords.length > 0;
 
   let seasonMatch = false;
@@ -148,9 +184,9 @@ export function detectSeasonPack(title: string, season?: number): SeasonPackDete
     seasonMatch = rxList.some((rx) => rx.test(title));
   }
 
-  const mentionsSeasonWord = /\bseason\b/i.test(title) || /\bs\d{1,2}\b/i.test(title);
-  const mentionsSeries = /\bseries\b/i.test(title);
-  const isSeasonPack = hasKeywords && (seasonMatch || mentionsSeasonWord || mentionsSeries);
+  // Anime releases commonly use just "Batch" or "[01-12]" without an Sxx
+  // marker. Those still require selecting the correct file before playback.
+  const isSeasonPack = hasEpisodeRange || hasKeywords;
 
   return {
     isSeasonPack,

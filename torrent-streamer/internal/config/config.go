@@ -14,16 +14,16 @@ var (
 	waitMetadata     = 25 * time.Second
 	prebufferBytes   = int64(1 << 20) // 1 MiB
 	prebufferTimeout = 15 * time.Second
-	trackersMode     = "udp" // all|http|udp|none
+	trackersMode     = "all" // all|http|udp|none
 
-	targetPlaySec   int64 = 45   // seconds of video to buffer while playing
-	targetPauseSec  int64 = 60   // seconds of video to buffer before autoplay (was 360!)
-	targetMaxBytes  int64 = 200 << 20 // 200 MB cap on prebuffer target
-	warmReadAheadMB int64 = 100
+	targetPlaySec   int64 = 45        // seconds of video to buffer while playing
+	targetPauseSec  int64 = 60        // seconds of video to buffer before autoplay (was 360!)
+	targetMaxBytes  int64 = 384 << 20 // allow high-bitrate files to keep a meaningful time buffer
+	warmReadAheadMB int64 = 192
 
 	targetPlay4KSec   int64 = 90
-	targetPause4KSec  int64 = 120  // was 600!
-	warmReadAhead4KMB int64 = 128
+	targetPause4KSec  int64 = 120 // was 600!
+	warmReadAhead4KMB int64 = 384
 
 	endgameDuplicate = true
 	watchDropGuard   = 10 * time.Minute
@@ -32,8 +32,10 @@ var (
 
 	// logging
 	logFilePath   = "debug.log"
-	logAllowRegex = `^\[(init|boot|http|add|files|prefetch|stream|watch|janitor|stats|trackers)\]`
-	logDenyRegex  = `FlushFileBuffers|fsync|WriteFile|The handle is invalid|Access is denied|Permission denied`
+	errorLogPath  = "errors.log"
+	logConsole    = true
+	logAllowRegex = `\[(init|boot|http|add|files|prefetch|stream|subtitles|watch|janitor|stats|trackers)\]`
+	logDenyRegex  = `(?i)msg="error flushing piece storage".*FlushFileBuffers:\s*The handle is invalid`
 	logDedupWin   = 3 * time.Second
 )
 
@@ -76,33 +78,37 @@ func Load() {
 	listenAddr = getenv("LISTEN", listenAddr)
 
 	logFilePath = getenv("LOG_FILE", logFilePath)
+	errorLogPath = getenv("ERROR_LOG_FILE", errorLogPath)
+	logConsole = strings.ToLower(getenv("LOG_CONSOLE", strconv.FormatBool(logConsole))) != "false"
 	logAllowRegex = getenv("LOG_ALLOW", logAllowRegex)
 	logDenyRegex = getenv("LOG_DENY", logDenyRegex)
 	logDedupWin = getenvDuration("LOG_DEDUP_WINDOW", logDedupWin)
 }
 
 // getters
-func DataRoot() string                   { return dataRoot }
-func CacheMaxBytes() int64               { return cacheMaxBytes }
-func EvictTTL() time.Duration            { return evictTTL }
-func WaitMetadata() time.Duration        { return waitMetadata }
-func PrebufferBytes() int64              { return prebufferBytes }
-func PrebufferTimeout() time.Duration    { return prebufferTimeout }
-func TrackersMode() string               { return trackersMode }
-func TargetPlaySec() int64               { return targetPlaySec }
-func TargetPauseSec() int64              { return targetPauseSec }
-func TargetMaxBytes() int64              { return targetMaxBytes }
-func WarmReadAheadMB() int64             { return warmReadAheadMB }
-func TargetPlay4KSec() int64             { return targetPlay4KSec }
-func TargetPause4KSec() int64            { return targetPause4KSec }
-func WarmReadAhead4KMB() int64           { return warmReadAhead4KMB }
-func EndgameDuplicate() bool             { return endgameDuplicate }
-func WatchDropGuard() time.Duration      { return watchDropGuard }
-func ListenAddr() string                 { return listenAddr }
-func LogFilePath() string                { return logFilePath }
-func LogAllowRegex() string              { return logAllowRegex }
-func LogDenyRegex() string               { return logDenyRegex }
-func LogDedupWindow() time.Duration      { return logDedupWin }
+func DataRoot() string                { return dataRoot }
+func CacheMaxBytes() int64            { return cacheMaxBytes }
+func EvictTTL() time.Duration         { return evictTTL }
+func WaitMetadata() time.Duration     { return waitMetadata }
+func PrebufferBytes() int64           { return prebufferBytes }
+func PrebufferTimeout() time.Duration { return prebufferTimeout }
+func TrackersMode() string            { return trackersMode }
+func TargetPlaySec() int64            { return targetPlaySec }
+func TargetPauseSec() int64           { return targetPauseSec }
+func TargetMaxBytes() int64           { return targetMaxBytes }
+func WarmReadAheadMB() int64          { return warmReadAheadMB }
+func TargetPlay4KSec() int64          { return targetPlay4KSec }
+func TargetPause4KSec() int64         { return targetPause4KSec }
+func WarmReadAhead4KMB() int64        { return warmReadAhead4KMB }
+func EndgameDuplicate() bool          { return endgameDuplicate }
+func WatchDropGuard() time.Duration   { return watchDropGuard }
+func ListenAddr() string              { return listenAddr }
+func LogFilePath() string             { return logFilePath }
+func ErrorLogPath() string            { return errorLogPath }
+func LogConsole() bool                { return logConsole }
+func LogAllowRegex() string           { return logAllowRegex }
+func LogDenyRegex() string            { return logDenyRegex }
+func LogDedupWindow() time.Duration   { return logDedupWin }
 
 // helpers
 func getenv(k, def string) string {

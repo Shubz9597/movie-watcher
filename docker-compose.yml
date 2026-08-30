@@ -1,53 +1,74 @@
 services:
   gluetun:
     image: qmcgaw/gluetun:latest
-    container_name: gluetun
+    container_name: "${MW_CONTAINER_PREFIX:-torwatch}-gluetun"
+    profiles: ["embedded-vpn"]
     restart: unless-stopped
-    cap_add: [ NET_ADMIN ]
-    devices: [ "/dev/net/tun:/dev/net/tun" ]
-    env_file: [ ./infra/gluetun.env ]        # VPN creds live here (infra-only)
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    env_file:
+      - path: ./infra/gluetun.env
+        required: false
+      - path: ${MW_RUNTIME_ENV_FILE:-./infra/runtime.env}
+        required: false
     volumes:
-      - ./data/gluetun:/gluetun
+      - ${MW_DATA_DIR:-./data}/gluetun:/gluetun
+    environment:
+      HTTPPROXY: "on"
+      HTTPPROXY_LOG: "off"
     ports:
-      - "9696:9696"   # Prowlarr UI via VPN (host -> gluetun -> prowlarr)
-      - "8191:8191"   # FlareSolverr via VPN
+      - "${MW_BIND_HOST:-127.0.0.1}:${MW_GLUETUN_HTTP_PROXY_PORT:-8888}:8888"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://google.com"]
-      interval: 30s
+      test: ["CMD", "wget", "-q", "--spider", "https://1.1.1.1"]
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 8
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    container_name: "${MW_CONTAINER_PREFIX:-torwatch}-flaresolverr"
     restart: unless-stopped
-    network_mode: "service:gluetun"
+    env_file:
+      - path: ${MW_PROXY_ENV_FILE:-./infra/proxy.env}
+        required: false
+    ports:
+      - "${MW_BIND_HOST:-127.0.0.1}:${MW_FLARESOLVERR_PORT:-8191}:8191"
     environment:
-      - LOG_LEVEL=info
-      - TZ=Asia/Kolkata
-    depends_on: [ gluetun ]
+      LOG_LEVEL: info
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
-    container_name: prowlarr
+    container_name: "${MW_CONTAINER_PREFIX:-torwatch}-prowlarr"
     restart: unless-stopped
-    network_mode: "service:gluetun"          # shares netns with gluetun
-    env_file: [ ./infra/prowlarr.env ]       # PUID/PGID/TZ etc (infra-only)
+    env_file:
+      - path: ./infra/prowlarr.env
+        required: false
+      - path: ${MW_RUNTIME_ENV_FILE:-./infra/runtime.env}
+        required: false
+      - path: ${MW_PROXY_ENV_FILE:-./infra/proxy.env}
+        required: false
     volumes:
-      - ./data/prowlarr:/config
-    depends_on: [ gluetun, flaresolverr ]
+      - ${MW_DATA_DIR:-./data}/prowlarr:/config
+    ports:
+      - "${MW_BIND_HOST:-127.0.0.1}:${MW_PROWLARR_PORT:-9696}:9696"
 
   postgres:
-    image: postgres:16
-    container_name: postgres
+    image: postgres:16.9-alpine
+    container_name: "${MW_CONTAINER_PREFIX:-torwatch}-postgres"
     restart: unless-stopped
-    env_file: [ ./torrent-streamer/.env ]    # PG_* live with the Go app
+    env_file:
+      - path: ./infra/postgres.env
+        required: false
+      - path: ${MW_RUNTIME_ENV_FILE:-./infra/runtime.env}
+        required: false
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - ${MW_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
     ports:
-      - "5433:5432"                           # expose to host (Go runs on host) - using 5433 to avoid conflict with local PostgreSQL
+      - "${MW_BIND_HOST:-127.0.0.1}:${MW_POSTGRES_PORT:-54329}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 12

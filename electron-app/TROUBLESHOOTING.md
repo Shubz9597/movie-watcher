@@ -1,5 +1,15 @@
 # Troubleshooting Guide
 
+## Logs to attach to a bug report
+
+After reproducing the problem, open the diagnostic folder in PowerShell:
+
+```powershell
+explorer "$env:APPDATA\TorWatch\logs"
+```
+
+Attach `errors.log` first, then attach the `source_log` named by the relevant correlated entry. The frontend file records Electron/React context; the backend file records Go context and is not restricted by the console allow-list. Rotated history is stored as `.1`, `.2`, and `.3` files.
+
 ## API Keys Not Loading from .env
 
 ### Check .env File Location
@@ -17,8 +27,6 @@ Your `.env` file should look like this (no quotes, no spaces around `=`):
 ```env
 TMDB_API_KEY=your_key_here
 TMDB_ACCESS_TOKEN=your_token_here
-PROWLARR_URL=http://localhost:9696
-PROWLARR_API_KEY=your_key_here
 ```
 
 **Common mistakes:**
@@ -30,7 +38,7 @@ When you start the app, check the Electron console (main process) for:
 ```
 [Config] Loaded .env file from: D:\Projects\movie-watcher\electron-app\.env
 [Config] Found keys: TMDB_API_KEY, TMDB_ACCESS_TOKEN, ...
-[Config] Configuration status: { hasTmdbKey: true, hasProwlarr: true }
+[Config] Configuration status: { hasTmdbKey: true }
 ```
 
 If you see warnings, the .env file isn't being loaded.

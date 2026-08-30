@@ -1,13 +1,24 @@
 {
-  "name": "movie-watcher-desktop",
+  "name": "torwatch-desktop",
   "version": "1.0.0",
-  "description": "Movie Watcher Desktop App with Embedded MPV",
+  "description": "TorWatch desktop cinema with embedded MPV",
   "main": "main.js",
   "type": "module",
+  "author": "fsociety",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "build": "vite build && electron-builder",
+    "build": "npm run build:backend && vite build && npm run build:installer",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build:installer": "node scripts/build-windows-installer.mjs",
     "build:renderer": "vite build",
+    "test:skip-segments": "node --test scripts/skip-segments.test.mjs",
+    "test:diagnostics": "node --test scripts/diagnostic-logger.test.mjs",
+    "test:player-contracts": "node --test scripts/player-state-contracts.test.mjs",
+    "test:network-routing": "node --test scripts/network-routing.test.mjs",
+    "test": "npm run test:skip-segments && npm run test:diagnostics && npm run test:player-contracts && npm run test:network-routing",
+    "smoke:ui": "electron scripts/titlebar-smoke.cjs",
+    "smoke:titlebar": "electron scripts/titlebar-smoke.cjs",
+    "smoke:embedded": "electron scripts/embedded-playback-smoke.cjs",
     "rebuild-native": "cd ../native/mpv-embed && npm run build",
     "electron": "electron .",
     "vite": "vite"
@@ -26,8 +37,6 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "dotenv": "^16.4.7",
-    "electron": "^31.2.0",
-    "fast-xml-parser": "^5.2.5",
     "lucide-react": "^0.536.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -39,50 +48,82 @@
     "@tailwindcss/postcss": "^4.0.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
-    "electron-builder": "^24.13.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.49",
+    "rcedit": "^5.0.2",
     "tailwindcss": "^4.0.0",
     "typescript": "^5",
-    "vite": "^5.4.0",
+    "vite": "^8.2.2",
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.moviewatcher.desktop",
-    "productName": "Movie Watcher",
+    "appId": "com.torwatch.desktop",
+    "productName": "TorWatch",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
-      "dist/**/*",
+      "dist/index.html",
+      "dist/player-controls.html",
+      "dist/setup.html",
+      "dist/startup.html",
+      "dist/assets/**/*",
       "main.js",
-      "preload.js",
+      "electron/**/*.js",
+      "electron/**/*.cjs",
+      "build/torwatch-icon.png",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "../native/mpv-embed/index.node",
-        "to": "mpv-embed.node"
+        "from": "../torrent-streamer/bin/torWatcher.exe",
+        "to": "backend/torWatcher.exe"
+      },
+      {
+        "from": "../docker-compose.yml",
+        "to": "infrastructure/compose.yaml"
+      },
+      {
+        "from": "../native/mpv-embed",
+        "to": "mpv-embed",
+        "filter": [
+          "index.js",
+          "index.node",
+          "index.*.node"
+        ]
       },
       {
         "from": "mpv-sdk",
         "to": "mpv-sdk",
         "filter": [
-          "*.dll"
+          "*.dll",
+          "*.so",
+          "*.so.*"
         ]
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/torwatch-icons/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "AudioVideo"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/torwatch-icons/icon.ico",
+      "uninstallerIcon": "build/torwatch-icons/icon.ico",
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "TorWatch",
+      "runAfterFinish": true
     }
   }
 }
-
-
-

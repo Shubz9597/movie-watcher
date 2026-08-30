@@ -224,14 +224,72 @@ switch (platform) {
         }
         break
       case 'arm':
+        if (isMusl()) {
+          localFileExisted = existsSync(
+            join(__dirname, 'index.linux-arm-musleabihf.node')
+          )
+          try {
+            if (localFileExisted) {
+              nativeBinding = require('./index.linux-arm-musleabihf.node')
+            } else {
+              nativeBinding = require('mpv-embed-linux-arm-musleabihf')
+            }
+          } catch (e) {
+            loadError = e
+          }
+        } else {
+          localFileExisted = existsSync(
+            join(__dirname, 'index.linux-arm-gnueabihf.node')
+          )
+          try {
+            if (localFileExisted) {
+              nativeBinding = require('./index.linux-arm-gnueabihf.node')
+            } else {
+              nativeBinding = require('mpv-embed-linux-arm-gnueabihf')
+            }
+          } catch (e) {
+            loadError = e
+          }
+        }
+        break
+      case 'riscv64':
+        if (isMusl()) {
+          localFileExisted = existsSync(
+            join(__dirname, 'index.linux-riscv64-musl.node')
+          )
+          try {
+            if (localFileExisted) {
+              nativeBinding = require('./index.linux-riscv64-musl.node')
+            } else {
+              nativeBinding = require('mpv-embed-linux-riscv64-musl')
+            }
+          } catch (e) {
+            loadError = e
+          }
+        } else {
+          localFileExisted = existsSync(
+            join(__dirname, 'index.linux-riscv64-gnu.node')
+          )
+          try {
+            if (localFileExisted) {
+              nativeBinding = require('./index.linux-riscv64-gnu.node')
+            } else {
+              nativeBinding = require('mpv-embed-linux-riscv64-gnu')
+            }
+          } catch (e) {
+            loadError = e
+          }
+        }
+        break
+      case 's390x':
         localFileExisted = existsSync(
-          join(__dirname, 'index.linux-arm-gnueabihf.node')
+          join(__dirname, 'index.linux-s390x-gnu.node')
         )
         try {
           if (localFileExisted) {
-            nativeBinding = require('./index.linux-arm-gnueabihf.node')
+            nativeBinding = require('./index.linux-s390x-gnu.node')
           } else {
-            nativeBinding = require('mpv-embed-linux-arm-gnueabihf')
+            nativeBinding = require('mpv-embed-linux-s390x-gnu')
           }
         } catch (e) {
           loadError = e
@@ -252,6 +310,10 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { MpvHandle } = nativeBinding
+const { createVideoHost, resizeVideoHost, showVideoHost, destroyVideoHost, MpvHandle } = nativeBinding
 
+module.exports.createVideoHost = createVideoHost
+module.exports.resizeVideoHost = resizeVideoHost
+module.exports.showVideoHost = showVideoHost
+module.exports.destroyVideoHost = destroyVideoHost
 module.exports.MpvHandle = MpvHandle

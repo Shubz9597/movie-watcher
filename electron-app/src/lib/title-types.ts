@@ -7,6 +7,8 @@ export type EpisodeSummary = {
   episodeNumber: number;
   seasonNumber: number;
   airDate?: string | null;
+  availableAt?: string | null;
+  continuationAvailable?: boolean;
   runtime?: number | null;
   absoluteNumber?: number | null;
 };

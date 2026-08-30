@@ -3,15 +3,6 @@ import { pickFileIndexForEpisode, type TorrentFileEntry } from '../anime-matchin
 
 const VOD_BASE = 'http://localhost:4001';
 
-function coerceNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim().length) {
-    const num = Number(value);
-    if (Number.isFinite(num)) return num;
-  }
-  return undefined;
-}
-
 function normalizeFiles(raw: unknown): TorrentFileEntry[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -97,7 +88,7 @@ export async function resolveTorrentFile(params: {
   }
 
   const pick = pickFileIndexForEpisode(files, { season, episode, absolute });
-  if (!pick) {
+  if (!pick || !pick.matched) {
     throw new Error('No matching file for requested episode');
   }
 

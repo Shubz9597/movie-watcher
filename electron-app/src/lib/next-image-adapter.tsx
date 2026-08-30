@@ -13,7 +13,7 @@ type ImageProps = ImgHTMLAttributes<HTMLImageElement> & {
 
 export default function Image({ src, alt, fill, className, ...props }: ImageProps) {
   if (!src) {
-    return <div className={className} style={{ backgroundColor: '#1e293b' }} />;
+    return <div className={className} style={{ backgroundColor: '#171717' }} />;
   }
 
   const imgProps: ImgHTMLAttributes<HTMLImageElement> = {

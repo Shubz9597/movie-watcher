@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,11 +16,14 @@ import (
 
 	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/httpapi"
+	"torrent-streamer/internal/imdb"
 	"torrent-streamer/internal/janitor"
 	"torrent-streamer/internal/middleware"
 	"torrent-streamer/internal/scoring"
+	"torrent-streamer/internal/search"
 	"torrent-streamer/internal/torrentx"
 	"torrent-streamer/internal/watch"
+	"torrent-streamer/migrations"
 )
 
 var (
@@ -32,34 +36,42 @@ var (
 func mustOpenDB() {
 	dsn := os.Getenv("PG_DSN")
 	if dsn == "" {
-		log.Fatal("PG_DSN missing")
+		exitOnError("database configuration missing", errors.New("environment variable PG_DSN is missing"))
 	}
 	var err error
 	db, err = sql.Open("pgx", dsn)
 	if err != nil {
-		log.Fatal(err)
+		exitOnError("database initialization failed", err)
 	}
 	if err := db.PingContext(context.Background()); err != nil {
-		log.Fatal(err)
+		exitOnError("database connection failed", err)
+	}
+	if err := migrations.Apply(context.Background(), db); err != nil {
+		exitOnError("database migrations failed", err)
 	}
 	log.Println("[db] connected")
 }
 
 func main() {
-	_ = godotenv.Load(".env")
+	_ = godotenv.Load(".env", "../infra/prowlarr.env")
 
 	// initialize config & logging
 	config.Load()
-	config.SetupLogging()
+	closeLog := config.SetupLogging()
+	defer closeLog()
 
 	mustOpenDB()
+	imdbStore := imdb.NewStore(db)
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
 	httpapi.SetProgressStore(progressDB) // Enable server-side progress tracking for VLC
-	searchCli = &torrentx.TorznabClient{
-		BaseURL: os.Getenv("INDEXER_URL"),
-		APIKey:  os.Getenv("INDEXER_API_KEY"),
-		HTTP:    &http.Client{Timeout: 20 * time.Second},
+	prowlarrURL := firstEnv("INDEXER_URL", "PROWLARR_URL")
+	prowlarrAPIKey := firstEnv("INDEXER_API_KEY", "PROWLARR_API_KEY")
+	prowlarrHTTP := &http.Client{Timeout: 25 * time.Second}
+	searchCli = &torrentx.TorznabClient{BaseURL: prowlarrURL, APIKey: prowlarrAPIKey, HTTP: prowlarrHTTP}
+	torrentSearch, err := search.NewService(prowlarrURL, prowlarrAPIKey, prowlarrHTTP)
+	if err != nil {
+		exitOnError("Prowlarr configuration failed", err)
 	}
 
 	// prepare torrentx (root dirs, initial state)
@@ -69,6 +81,8 @@ func main() {
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux)         // /add, /files, /prefetch, /stream, /stats, /buffer/*
 	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external
+	httpapi.TorrentSearchHandlers{Service: torrentSearch}.Register(mux)
+	httpapi.IMDbRatingHandlers{Ratings: imdbStore}.Register(mux)
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
 		Picks: torrentx.EnsureDeps{
@@ -79,6 +93,20 @@ func main() {
 		ProfileCaps: scoring.ProfileCaps{CodecAllow: map[string]bool{"h264": true, "hevc": true, "av1": true}},
 	})
 	sess.Register(mux)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 	// watch/lease manager wiring — same semantics as your main.go
 	mgr := watch.NewManager(
 		20*time.Second, // staleAfter
@@ -125,6 +153,7 @@ func main() {
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	go refreshIMDbRatings(rootCtx, imdbStore)
 
 	// start janitor
 	go janitor.Run(rootCtx)
@@ -133,13 +162,13 @@ func main() {
 	srv := &http.Server{
 		Addr:     addr,
 		Handler:  middleware.Recover(mux),
-		ErrorLog: log.New(log.Writer(), "[http] ", 0),
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
 	}
 
 	// serve
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
+			exitOnError("HTTP server stopped unexpectedly", err)
 		}
 	}()
 
@@ -159,4 +188,51 @@ func main() {
 	torrentx.CloseAllClients()
 
 	log.Printf("[boot] shutdown complete")
+}
+
+func exitOnError(message string, err error) {
+	slog.Error(message, "err", err)
+	os.Exit(1)
+}
+
+func refreshIMDbRatings(ctx context.Context, store *imdb.Store) {
+	const (
+		refreshInterval = 24 * time.Hour
+		retryInterval   = 6 * time.Hour
+	)
+	client := &http.Client{Timeout: 15 * time.Minute}
+	datasetURL := os.Getenv("IMDB_RATINGS_URL")
+	refresh := func() {
+		refreshContext, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		defer cancel()
+		result, err := store.RefreshIfDue(refreshContext, client, datasetURL, time.Now(), refreshInterval)
+		if err != nil {
+			log.Printf("[imdb] ratings refresh failed: %v", err)
+			return
+		}
+		if result.Updated {
+			log.Printf("[imdb] imported %d current ratings", result.RowCount)
+		}
+	}
+
+	refresh()
+	ticker := time.NewTicker(retryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }

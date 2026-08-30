@@ -66,7 +66,7 @@ export function useRouter() {
 // Hook that mimics Next.js useSearchParams
 export function useSearchParams() {
   const hash = window.location.hash.slice(1);
-  const [path, query] = hash.split('?');
+  const [, query] = hash.split('?');
   return new URLSearchParams(query || '');
 }
 

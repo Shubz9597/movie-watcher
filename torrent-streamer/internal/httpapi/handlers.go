@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/metainfo"
 
 	"torrent-streamer/internal/buffer"
 	"torrent-streamer/internal/config"
@@ -167,7 +168,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 
 	ih := t.InfoHash()
 	log.Printf("[add] connected cat=%s ih=%s name=%q files=%d", cat, ih.HexString(), t.Name(), len(t.Files()))
-	torrentx.SetLastTouch(cat, ih)
+	torrentx.TouchTorrent(cat, t)
 
 	var files []fileEntry
 	if t.Info() != nil {
@@ -205,7 +206,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "metadata timeout", http.StatusGatewayTimeout)
 		return
 	}
-	torrentx.SetLastTouch(cat, t.InfoHash())
+	torrentx.TouchTorrent(cat, t)
 
 	var files []fileEntry
 	for i, f := range t.Files() {
@@ -245,7 +246,7 @@ func handlePrefetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metaMs := time.Since(metaStart).Milliseconds()
-	torrentx.SetLastTouch(cat, t.InfoHash())
+	torrentx.TouchTorrent(cat, t)
 
 	// Find and prebuffer subtitle files first (they're small, typically <500KB)
 	subtitleFiles := torrentx.FindSubtitleFiles(t)
@@ -332,16 +333,23 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bound metadata wait to avoid hanging with no headers written
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	// Bound metadata discovery using the same configured deadline as /files and
+	// /prefetch. A hard-coded shorter stream timeout made the player fail while
+	// the rest of the backend was still legitimately looking for peers.
+	ctx, cancel := context.WithTimeout(r.Context(), config.WaitMetadata())
 	defer cancel()
 	metaStart := time.Now()
 	if err := torrentx.WaitForInfo(ctx, t); err != nil {
-		log.Printf("[stream] cat=%s name=%q metadata TIMEOUT after %s", cat, t.Name(), time.Since(metaStart))
-		http.Error(w, "metadata timeout", http.StatusGatewayTimeout)
+		elapsed := time.Since(metaStart)
+		log.Printf("[stream] cat=%s name=%q metadata unavailable after %s: %v", cat, t.Name(), elapsed, err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			http.Error(w, "torrent metadata unavailable: no reachable peers before timeout", http.StatusGatewayTimeout)
+			return
+		}
+		http.Error(w, "torrent metadata unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	torrentx.SetLastTouch(cat, t.InfoHash())
+	torrentx.TouchTorrent(cat, t)
 
 	var f *torrent.File
 	fidx := 0
@@ -364,7 +372,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	torrentx.IncActive(cat, t.InfoHash())
 	defer torrentx.DecActive(cat, t.InfoHash())
 
-	torrentx.SetLastTouch(cat, t.InfoHash())
+	torrentx.TouchTorrent(cat, t)
 
 	// Progress tracking params (for VLC/external players)
 	q := r.URL.Query()
@@ -523,7 +531,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		n, readErr := reader.Read(buf[:toRead])
 		if n > 0 {
 			ctl.UpdateThroughput(int64(n), int64(time.Since(readStart).Milliseconds()))
-			torrentx.SetLastTouch(cat, t.InfoHash())
+			torrentx.TouchTorrent(cat, t)
 
 			if _, err := w.Write(buf[:n]); err != nil {
 				if torrentx.ClientGone(err) {
@@ -536,6 +544,9 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			written += int64(n)
+			// Keep buffer accounting and pause warming anchored near the current
+			// streamed position instead of the beginning of the HTTP range.
+			ctl.SetPlayhead(start + written)
 			if time.Since(lastProg) >= progressEvery {
 				lastProg = time.Now()
 				ctlBytes := ctl.TargetBytes()
@@ -614,8 +625,10 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 			}
 			haveInfo := t.Info() != nil
 			size := torrentx.TorrentTotalSize(t)
+			numFiles := 0
 			best, bestIdx := (*torrent.File)(nil), -1
 			if haveInfo {
+				numFiles = len(t.Files())
 				if bf, idx := torrentx.ChooseBestVideoFile(t); bf != nil {
 					best, bestIdx = bf, idx
 				}
@@ -634,7 +647,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 				Name:      t.Name(),
 				HaveInfo:  haveInfo,
 				Size:      size,
-				NumFiles:  len(t.Files()),
+				NumFiles:  numFiles,
 				BestIndex: bestIdx,
 				BestName: func() string {
 					if best != nil {
@@ -685,13 +698,33 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 	middleware.EnableCORS(w)
 	q := r.URL.Query()
 	cat := parseCat(q)
-
-	cl := torrentx.GetClientFor(cat)
-	src, err := torrentx.ParseSrc(q)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
+	state := strings.ToLower(q.Get("state"))
+	if state != "pause" && state != "play" && state != "stop" {
+		http.Error(w, "state must be pause|play|stop", http.StatusBadRequest)
 		return
 	}
+
+	src, err := torrentx.ParseSrc(q)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if state == "stop" {
+		magnet, err := metainfo.ParseMagnetUri(src)
+		if err != nil {
+			http.Error(w, "invalid magnet URI", http.StatusBadRequest)
+			return
+		}
+		if err := buffer.StopTorrent(r.Context(), cat, magnet.InfoHash.HexString()); err != nil {
+			http.Error(w, "stop warmer: "+err.Error(), http.StatusGatewayTimeout)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "stopped"})
+		return
+	}
+
+	cl := torrentx.GetClientFor(cat)
 	t, err := torrentx.AddOrGetTorrent(cl, src)
 	if err != nil {
 		http.Error(w, "add torrent: "+err.Error(), 400)
@@ -733,11 +766,11 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 	k := buffer.Key{Cat: cat, IH: t.InfoHash().HexString(), FIdx: fidx}
 	ctl := buffer.Get(k)
 
-	switch strings.ToLower(q.Get("state")) {
+	switch state {
 	case "pause":
 		ctl.SetState(buffer.StatePaused)
 		ctlStart := ctl.Playhead()
-		go ctl.StartWarm(cat, t, f, ctlStart)
+		ctl.StartWarm(cat, t, f, ctlStart)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "paused"})
 		return
@@ -745,9 +778,6 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 		ctl.SetState(buffer.StatePlaying)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "state": "playing"})
-		return
-	default:
-		http.Error(w, "state must be pause|play", 400)
 		return
 	}
 }
@@ -861,7 +891,7 @@ func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[buffer/info] Flush error: %v", err)
 				return false
 			}
-			torrentx.SetLastTouch(cat, t.InfoHash())
+			torrentx.TouchTorrent(cat, t)
 			return true
 		}
 
@@ -971,14 +1001,23 @@ func max64(a, b int64) int64 {
 }
 
 func buildBufferInfoOut(t *torrent.Torrent, f *torrent.File, fidx int, ctl *buffer.Controller) map[string]any {
+	stats := t.Stats()
 	return map[string]any{
-		"state":           string(ctl.State()),
-		"playheadBytes":   ctl.Playhead(),
-		"targetBytes":     ctl.TargetBytes(),
-		"targetAheadSec":  ctl.TargetAheadSeconds(),
-		"rollingBps":      nil,
-		"contiguousAhead": buffer.ContiguousAheadPieceExact(t, f, ctl.Playhead()),
-		"fileIndex":       fidx,
-		"fileLength":      f.Length(),
+		"state":            string(ctl.State()),
+		"infoHash":         t.InfoHash().HexString(),
+		"activePeers":      stats.ActivePeers,
+		"connectedSeeders": stats.ConnectedSeeders,
+		"totalPeers":       stats.TotalPeers,
+		"pendingPeers":     stats.PendingPeers,
+		"downloadedBytes":  stats.BytesReadUsefulData.Int64(),
+		"uploadedBytes":    stats.BytesWrittenData.Int64(),
+		"completedBytes":   f.BytesCompleted(),
+		"piecesComplete":   stats.PiecesComplete,
+		"playheadBytes":    ctl.Playhead(),
+		"targetBytes":      ctl.TargetBytes(),
+		"targetAheadSec":   ctl.TargetAheadSeconds(),
+		"contiguousAhead":  buffer.ContiguousAheadPieceExact(t, f, ctl.Playhead()),
+		"fileIndex":        fidx,
+		"fileLength":       f.Length(),
 	}
 }

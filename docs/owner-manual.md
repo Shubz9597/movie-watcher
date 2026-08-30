@@ -48,7 +48,7 @@ All tables include `created_at timestamptz default now()`, `updated_at timestamp
 * **episodes**: `id bigserial PK`, `series_id text FK`, `season int`, `episode int`, `absolute_ep int null`, `name text`, `runtime_s int null`, `air_date date null`.
 * **picks** *(chosen source)*: `id bigserial PK`, `series_id text`, `season int`, `episode int`, `profile_hash text`, `infohash text`, `magnet text`, `release_group text null`, `resolution text`, `codec text`, `file_index int null`, `source_kind text` (single|season\_pack), `score jsonb`, `picked_at timestamptz`, `replaces_pick_id bigint null`, **UNIQUE** (`series_id`,`season`,`episode`,`profile_hash`).
 * **search\_cache**: `key text PK` (`series|SxxExx|profile_hash`), `candidates jsonb`, `fetched_at timestamptz`.
-* **watch\_progress**: `id bigserial PK`, `subject_id text` (user/device), `series_id text`, `season int`, `episode int`, `position_s int`, `duration_s int`, `percent numeric`, `updated_at timestamptz`. Index: (`subject_id`,`series_id`), (`updated_at desc`).
+* **watch\_progress**: `id bigserial PK`, `subject_id text` (user/device), `series_id text`, `season int`, `episode int`, `position_s int`, `duration_s int`, `percent numeric`, nullable source snapshot fields `source_uri text`, `source_name text`, `source_kind text`, `source_file_index int`, `updated_at timestamptz`. The source snapshot rehydrates the exact evicted torrent/file before source search is used as a fallback. Index: (`subject_id`,`series_id`), (`subject_id`,`updated_at desc`).
 * **devices**: `id text PK`, `capabilities jsonb` (h264/hevc/av1,hdr,dv,maxBitrate).
 * **group\_preferences** *(optional)*: `series_id text PK`, `preferred_group text`, `confidence int`, `updated_at timestamptz`.
 

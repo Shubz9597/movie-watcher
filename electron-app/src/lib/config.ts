@@ -12,17 +12,22 @@ async function loadConfig(): Promise<Record<string, string>> {
   
   configLoadPromise = (async () => {
     const config: Record<string, string> = {};
+    let secureBridgeState: 'available' | 'unavailable' | 'failed' = 'unavailable';
     
     // Get from Electron main process (secure storage)
     if (typeof window !== 'undefined' && (window as any).electronAPI?.getConfig) {
+      secureBridgeState = 'available';
       try {
         const mainConfig = await (window as any).electronAPI.getConfig();
         if (mainConfig && typeof mainConfig === 'object') {
           Object.assign(config, mainConfig);
         }
       } catch (err) {
-        console.warn('[Config] Failed to load from secure storage:', err);
+        secureBridgeState = 'failed';
+        console.error('[Config] Secure settings bridge failed while loading credentials:', err);
       }
+    } else {
+      console.error('[Config] Secure settings bridge is unavailable; packaged credentials cannot be loaded.');
     }
 
     // Fallback to localStorage (less secure but works)
@@ -40,12 +45,14 @@ async function loadConfig(): Promise<Record<string, string>> {
 
     // Log missing keys for debugging
     if (!config.TMDB_API_KEY && !config.TMDB_ACCESS_TOKEN) {
-      console.warn('[Config] TMDb API key or access token not found. Please configure in settings.');
+      if (secureBridgeState === 'available') {
+        console.warn('[Config] Secure settings loaded, but no TMDb credential is stored.');
+      } else if (secureBridgeState === 'failed') {
+        console.error('[Config] TMDb credential is unavailable because secure settings failed to load.');
+      } else {
+        console.error('[Config] TMDb credential is unavailable because the secure settings bridge is missing.');
+      }
     }
-    if (!config.PROWLARR_URL || !config.PROWLARR_API_KEY) {
-      console.warn('[Config] Prowlarr configuration not found. Please configure in settings.');
-    }
-
     configCache = config;
     return config;
   })();

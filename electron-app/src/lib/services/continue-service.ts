@@ -1,7 +1,7 @@
 // Continue watching service - standalone, no Next.js needed
-import { getConfig } from '../config';
 import { getMovie as getTmdbMovie, getTv as getTmdbTv } from './tmdb-service';
-import { getAnime as getJikanAnime } from './jikan-service';
+import { getAnime as getAniListAnime, getAnimeByMalId } from './anilist-service';
+import type { ResumeSourceContext, SavedResumeSource } from '../types';
 
 const VOD_BASE = 'http://localhost:4001';
 
@@ -13,6 +13,8 @@ type RawContinueItem = {
   duration_s: number;
   percent: number;
   updated_at: string;
+  sourceAvailable: boolean;
+  sourceName?: string;
 };
 
 export type EnrichedContinueItem = RawContinueItem & {
@@ -22,6 +24,8 @@ export type EnrichedContinueItem = RawContinueItem & {
   kind: 'movie' | 'tv' | 'anime';
   tmdbId?: number;
   malId?: number;
+  anilistId?: number;
+  upNext: boolean;
 };
 
 function parseSeriesId(seriesId: string): { provider: string; type: string; id: string } {
@@ -60,14 +64,21 @@ async function fetchTmdbTv(id: string): Promise<{ title: string; posterPath: str
   }
 }
 
-async function fetchJikanAnime(id: string): Promise<{ title: string; posterPath: string | null; year?: number } | null> {
+async function fetchAniListAnime(
+  id: string,
+  provider: 'anilist' | 'mal',
+): Promise<{ title: string; posterPath: string | null; year?: number; anilistId: number; malId?: number } | null> {
   try {
-    const data = await getJikanAnime(Number(id));
+    const data = provider === 'anilist'
+      ? await getAniListAnime(Number(id))
+      : await getAnimeByMalId(Number(id));
     if (!data) return null;
     return {
-      title: data.title_english || data.title || '',
-      posterPath: data.images?.jpg?.image_url || data.images?.webp?.image_url || null,
-      year: data.aired?.from ? new Date(data.aired.from).getFullYear() : undefined,
+      title: data.title?.english || data.title?.userPreferred || data.title?.romaji || '',
+      posterPath: data.coverImage?.large || data.coverImage?.extraLarge || data.coverImage?.medium || null,
+      year: data.startDate?.year || undefined,
+      anilistId: data.id,
+      malId: data.idMal || undefined,
     };
   } catch {
     return null;
@@ -77,10 +88,11 @@ async function fetchJikanAnime(id: string): Promise<{ title: string; posterPath:
 async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> {
   const { provider, type, id } = parseSeriesId(item.seriesId);
 
-  let metadata: { title: string; posterPath: string | null; year?: number } | null = null;
+  let metadata: { title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
   let kind: 'movie' | 'tv' | 'anime' = 'tv';
   let tmdbId: number | undefined;
   let malId: number | undefined;
+  let anilistId: number | undefined;
 
   if (provider === 'tmdb' && type === 'movie') {
     kind = 'movie';
@@ -92,10 +104,9 @@ async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> 
     metadata = await fetchTmdbTv(id);
   } else if (provider === 'mal' || provider === 'anilist') {
     kind = 'anime';
-    if (provider === 'mal') {
-      malId = Number(id);
-      metadata = await fetchJikanAnime(id);
-    }
+    metadata = await fetchAniListAnime(id, provider);
+    malId = metadata?.malId || (provider === 'mal' ? Number(id) : undefined);
+    anilistId = metadata?.anilistId || (provider === 'anilist' ? Number(id) : undefined);
   }
 
   return {
@@ -106,6 +117,8 @@ async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> 
     kind,
     tmdbId,
     malId,
+    anilistId,
+    upNext: item.position_s === 0 && item.duration_s === 0 && item.percent === 0,
   };
 }
 
@@ -130,6 +143,39 @@ export async function getContinueList(subjectId: string, limit = 12): Promise<En
     return enrichedItems;
   } catch (e) {
     return [];
+  }
+}
+
+export type SavedResumeSourceResult =
+  | { found: true; source: SavedResumeSource }
+  | { found: false; reason: string };
+
+export async function getSavedResumeSource(context: ResumeSourceContext): Promise<SavedResumeSourceResult> {
+  const query = new URLSearchParams({
+    subjectId: context.subjectId,
+    seriesId: context.seriesId,
+    season: String(context.season),
+    episode: String(context.episode),
+  });
+  try {
+    const response = await fetch(`${VOD_BASE}/v1/resume/source?${query.toString()}`, { cache: 'no-store' });
+    if (!response.ok) return { found: false, reason: `source_${response.status}` };
+    const data = await response.json();
+    if (data?.found !== true || typeof data?.sourceUri !== 'string' || !data.sourceUri) {
+      return { found: false, reason: 'saved_source_missing' };
+    }
+    const parsedFileIndex = Number(data.fileIndex);
+    return {
+      found: true,
+      source: {
+        sourceUri: data.sourceUri,
+        sourceName: data.sourceName || 'Previously used source',
+        sourceKind: data.sourceKind || '',
+        fileIndex: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : undefined,
+      },
+    };
+  } catch {
+    return { found: false, reason: 'source_lookup_failed' };
   }
 }
 

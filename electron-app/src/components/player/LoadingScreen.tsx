@@ -42,11 +42,6 @@ export default function LoadingScreen({ title, year, posterUrl, bufferPercentage
   const fullPosterUrl = getPosterUrl(posterUrl, 'w780');
   const statusText = status === 'connecting' ? 'Connecting...' : status === 'buffering' ? 'Buffering...' : 'Ready';
 
-  // Calculate stroke-dasharray for progress ring
-  const radius = 40;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (displayPercentage / 100) * circumference;
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]">
       {/* Blurred poster background */}
@@ -55,73 +50,43 @@ export default function LoadingScreen({ title, year, posterUrl, bufferPercentage
           className="absolute inset-0 bg-cover bg-center"
           style={{
             backgroundImage: `url(${fullPosterUrl})`,
-            filter: 'blur(40px) brightness(0.3)',
-            transform: 'scale(1.1)', // Slight zoom to avoid edges
+            filter: 'blur(40px) brightness(0.18) saturate(0.7)',
+            transform: 'scale(1.1)',
           }}
         />
       )}
 
       {/* Dark overlay */}
-      <div className="absolute inset-0 bg-black/60" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/95 via-[#0a0a0a]/70 to-[#0a0a0a]/80" />
 
       {/* Content */}
-      <div className="relative z-10 flex flex-col items-center gap-8 text-center">
+      <div className="relative z-10 flex w-full max-w-4xl flex-col items-center gap-8 px-8 text-center md:flex-row md:gap-14 md:text-left">
         {/* Poster */}
         {fullPosterUrl && (
-          <div className="relative">
+          <div className="relative shrink-0 overflow-hidden rounded-lg border border-white/10 bg-[#171717]">
             <img
               src={fullPosterUrl}
               alt={title}
-              className="h-64 w-44 rounded-lg object-cover shadow-2xl"
+              className="h-[360px] w-60 object-cover"
             />
-            {/* Progress ring overlay */}
-            <svg
-              className="absolute inset-0 -rotate-90"
-              width="176"
-              height="256"
-              viewBox="0 0 176 256"
-            >
-              <circle
-                cx="88"
-                cy="128"
-                r={radius}
-                fill="none"
-                stroke="rgba(255,255,255,0.1)"
-                strokeWidth="3"
-              />
-              <circle
-                cx="88"
-                cy="128"
-                r={radius}
-                fill="none"
-                stroke="#06b6d4"
-                strokeWidth="3"
-                strokeDasharray={circumference}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-                className="transition-all duration-300"
-              />
-            </svg>
+            <div className="absolute inset-x-0 bottom-0 h-1 bg-white/15">
+              <div className="h-full bg-[#ff7a17] transition-all duration-300" style={{ width: `${displayPercentage}%` }} />
+            </div>
           </div>
         )}
 
         {/* Title and year */}
-        <div className="space-y-2">
-          <h1 className="text-3xl font-bold text-white">{title}</h1>
-          {year && <p className="text-lg text-slate-400">{year}</p>}
-        </div>
+        <div className="min-w-0">
+          <p className="font-label text-white/65">Preparing playback</p>
+          <div className="mt-5">
+            <h1 className="type-page-title text-white">{title}</h1>
+            {year ? <p className="type-secondary text-numeric mt-3 text-white/65">{year}</p> : null}
+          </div>
 
-        {/* Status and percentage */}
-        <div className="space-y-3">
-          <p className="text-sm font-medium text-slate-300">{statusText}</p>
-          <div className="flex items-center gap-2">
-            <div className="h-1 w-32 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full bg-cyan-500 transition-all duration-300"
-                style={{ width: `${displayPercentage}%` }}
-              />
-            </div>
-            <span className="text-sm font-mono text-cyan-400 tabular-nums">
+          <div className="mt-8 flex items-center gap-3">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#ff7a17] shadow-[0_0_12px_rgba(255,122,23,.55)]" />
+            <p className="font-label text-[#ffc285]">{statusText}</p>
+            <span className="font-label text-numeric text-white/65">
               {Math.round(displayPercentage)}%
             </span>
           </div>
