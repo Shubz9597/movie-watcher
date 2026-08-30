@@ -119,5 +119,6 @@ DESIGN.md
 .impeccable
 
 packagers/*
+package
 
 .arch-context
