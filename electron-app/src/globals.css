@@ -570,3 +570,78 @@ body,
     forced-color-adjust: auto;
   }
 }
+
+:root {
+  /* Shared alpha tokens (feature 002 M2.1): single semantic source for the
+     shared UI. The numeric values live only here; shared components consume
+     them via var(--â€¦). design-tokens.ts holds class fragments only. */
+  --touch-target: 3rem; /* 48px minimum interactive control size */
+  --motion-fast: 160ms; /* micro feedback */
+  --motion-route: 180ms; /* route/enter transitions (160-220ms budget) */
+  --motion-sheet: 240ms; /* sheet enter/exit (200-260ms budget) */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 1ms;
+    --motion-route: 1ms;
+    --motion-sheet: 1ms;
+  }
+}
+
+@keyframes torwatch-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes torwatch-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes torwatch-route-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes torwatch-sheet-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes torwatch-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Shared route-enter motion (feature 002 M2.4): animates opacity and
+   transform only — never layout properties. Reduced motion collapses the
+   duration via --motion-route. */
+.torwatch-route-enter {
+  animation: torwatch-route-in var(--motion-route) var(--ease-standard);
+}

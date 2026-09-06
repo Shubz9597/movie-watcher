@@ -1,0 +1,20 @@
+{
+  "version": "1.0.4",
+  "integration_state_schema": 1,
+  "installed_integrations": [
+    "codex",
+    "opencode"
+  ],
+  "integration_settings": {
+    "codex": {
+      "script": "ps",
+      "invoke_separator": "-"
+    },
+    "opencode": {
+      "script": "ps",
+      "invoke_separator": "."
+    }
+  },
+  "integration": "opencode",
+  "default_integration": "opencode"
+}

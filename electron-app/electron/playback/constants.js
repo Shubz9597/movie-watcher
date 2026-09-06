@@ -1,4 +1,8 @@
-export const VOD_BASE = "http://localhost:4001";
+import { resolveBackendOrigin } from "../../backend-origin.mjs";
+
+// Backend origin: BACKEND_URL override, else the shared V1 default
+// (see backend-origin.mjs for the default origin).
+export const VOD_BASE = resolveBackendOrigin(process.env);
 export const RESUME_TOLERANCE_SECONDS = 3;
 export const RESUME_VERIFY_TIMEOUT_MS = 90000;
 export const PLAYER_WINDOW_CHROME_HEIGHT = 40;

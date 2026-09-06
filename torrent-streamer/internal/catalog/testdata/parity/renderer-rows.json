@@ -1,0 +1,75 @@
+{
+  "scenario": "frieren-search",
+  "pipeline": "GlobalSearch/HomePage characterization: cardFromTmdb* -> isTmdbAnime rail filter; cardFromAniList -> selectAniListCatalog dedupe",
+  "tmdb": {
+    "movies": [
+      {
+        "provider": "tmdb",
+        "id": 100,
+        "title": "Frieren Movie",
+        "year": 2026,
+        "originalLanguage": "en",
+        "genreIds": [
+          28
+        ],
+        "sourceKind": "movie"
+      }
+    ],
+    "tv": [
+      {
+        "provider": "tmdb",
+        "id": 300,
+        "title": "Live Action Show",
+        "year": 2020,
+        "originalLanguage": "en",
+        "genreIds": [
+          16
+        ],
+        "sourceKind": "tv"
+      }
+    ],
+    "droppedAnimeCards": [
+      {
+        "provider": "tmdb",
+        "id": 209867,
+        "title": "Frieren: Beyond Journey's End",
+        "year": 2023,
+        "originalLanguage": "ja",
+        "genreIds": [
+          16,
+          10759
+        ],
+        "sourceKind": "tv"
+      }
+    ]
+  },
+  "anilist": {
+    "anime": [
+      {
+        "provider": "anilist",
+        "id": 154587,
+        "title": "Frieren: Beyond Journey's End",
+        "year": 2023,
+        "originalLanguage": "ja",
+        "genreIds": [
+          16
+        ],
+        "sourceKind": "anime"
+      },
+      {
+        "provider": "anilist",
+        "id": 21,
+        "title": "One Piece",
+        "year": 1999,
+        "originalLanguage": "ja",
+        "genreIds": [
+          16
+        ],
+        "sourceKind": "anime"
+      }
+    ]
+  },
+  "jikan": {
+    "anime": []
+  }
+}

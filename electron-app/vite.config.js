@@ -2,12 +2,26 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { resolveBackendOrigin } from './backend-origin.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Injects the configured backend origin into the CSP meta tags of every HTML
+// entry (dev server and build). With no override configured the resulting
+// policy is byte-identical to V1 (http://localhost:4001).
+const backendOriginHtmlPlugin = () => {
+  const origin = resolveBackendOrigin(process.env);
+  return {
+    name: 'torwatch-backend-origin-csp',
+    transformIndexHtml(html) {
+      return html.split('__TORWATCH_BACKEND_ORIGIN__').join(origin);
+    },
+  };
+};
+
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  plugins: [react(), backendOriginHtmlPlugin()],
   root: './src',
   build: {
     outDir: '../dist',

@@ -1,0 +1,25 @@
+{
+  "label": "before-m23",
+  "when": "2026-09-06T08:42:10.343Z",
+  "viewport": "390x844@2x mobile emulation (development Chromium, headless)",
+  "scenarios": {
+    "routeSwitch": {
+      "latencyMs": 18
+    },
+    "tabSwitch": {
+      "latencyMs": 7
+    },
+    "sheetOpen": {
+      "latencyMs": 5
+    },
+    "scroll100": {
+      "renderedTitles": 100,
+      "scrollDurationMs": 10001,
+      "longTaskCount": 0,
+      "longTaskTotalMs": 0,
+      "longTaskMaxMs": 0,
+      "frameGapsOver32ms": 0,
+      "frameGapsOver67ms": 0
+    }
+  }
+}

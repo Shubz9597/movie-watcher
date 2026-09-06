@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getMovie as getTmdbMovie, getTv as getTmdbTv } from '../lib/services/tmdb-service';
-import { getAnime } from '../lib/services/anilist-service';
+import { getCatalogSource } from '../lib/catalog-source';
+import { bffTitleDetail } from '../lib/services/catalog-bff';
 import { getDeviceId } from '../lib/device-id';
+import { usePlatform } from '../platform/PlatformProvider';
+
+// Legacy provider metadata loads lazily: bff mode never imports them (T042.4).
+async function legacyMetadataProviders() {
+  const [tmdb, anilist] = await Promise.all([import('../lib/services/tmdb-service'), import('../lib/services/anilist-service')]);
+  return { getTmdbMovie: tmdb.getMovie, getTmdbTv: tmdb.getTv, getAnime: anilist.getAnime };
+}
 
 type Props = {
   navigate: (path: string, params?: Record<string, string>) => void;
@@ -27,6 +34,7 @@ export default function PlayerPage({ navigate, params }: Props) {
     nextEpisode,
     nextEpisodeRoute,
   } = params;
+  const platform = usePlatform();
 
   const didStartPlaybackRef = useRef(false);
   const returningRef = useRef(false);
@@ -53,7 +61,7 @@ export default function PlayerPage({ navigate, params }: Props) {
   }, [navigate, nextEpisodeRoute]);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI?.onMpvStopped?.((event) => {
+    const unsubscribe = platform.player?.onStopped((event) => {
       returnToSource(event);
     });
     return () => {
@@ -82,48 +90,68 @@ export default function PlayerPage({ navigate, params }: Props) {
 
         // Resolve display metadata before starting MPV. Keeping this work in
         // the playback effect prevents metadata state updates from stopping
-        // and restarting an active playback session.
+        // and restarting an active playback session. BFF mode resolves the
+        // metadata through the catalog contract (T042.4).
         if (tmdbId && cat !== 'anime') {
           try {
-            const data = cat === 'movie'
-              ? await getTmdbMovie(Number(tmdbId))
-              : await getTmdbTv(Number(tmdbId));
-            playbackPosterUrl = data.poster_path || null;
-            playbackImdbId = data.imdb_id || data.external_ids?.imdb_id || playbackImdbId;
-            const date = data.release_date || data.first_air_date;
-            playbackYear = date ? Number(date.slice(0, 4)) : undefined;
-            playbackTitle = data.title || data.name || playbackTitle;
+            if (await getCatalogSource() === 'bff') {
+              const row = await bffTitleDetail(`tmdb:${tmdbId}`);
+              playbackPosterUrl = row.artwork?.poster ?? null;
+              playbackImdbId = row.imdbId || playbackImdbId;
+              playbackYear = row.year;
+              playbackTitle = row.title || playbackTitle;
+            } else {
+              const { getTmdbMovie, getTmdbTv } = await legacyMetadataProviders();
+              const data = cat === 'movie'
+                ? await getTmdbMovie(Number(tmdbId))
+                : await getTmdbTv(Number(tmdbId));
+              playbackPosterUrl = data.poster_path || null;
+              playbackImdbId = data.imdb_id || data.external_ids?.imdb_id || playbackImdbId;
+              const date = data.release_date || data.first_air_date;
+              playbackYear = date ? Number(date.slice(0, 4)) : undefined;
+              playbackTitle = data.title || data.name || playbackTitle;
+            }
           } catch (err) {
             console.error('[PlayerPage] Failed to fetch TMDB metadata:', err);
           }
         } else if (anilistId && cat === 'anime') {
           try {
-            const data = await getAnime(Number(anilistId));
-            playbackPosterUrl = data.coverImage?.extraLarge || data.coverImage?.large || null;
-            playbackYear = data.startDate?.year || undefined;
-            playbackTitle = data.title?.english || data.title?.userPreferred || data.title?.romaji || playbackTitle;
-            playbackMalId = data.idMal || playbackMalId;
+            if (await getCatalogSource() === 'bff') {
+              const row = await bffTitleDetail(`anilist:${anilistId}`);
+              playbackPosterUrl = row.artwork?.poster ?? null;
+              playbackYear = row.year;
+              playbackTitle = row.title || playbackTitle;
+              playbackMalId = row.providerIds?.jikan ? Number(row.providerIds.jikan) : playbackMalId;
+            } else {
+              const { getAnime } = await legacyMetadataProviders();
+              const data = await getAnime(Number(anilistId));
+              playbackPosterUrl = data.coverImage?.extraLarge || data.coverImage?.large || null;
+              playbackYear = data.startDate?.year || undefined;
+              playbackTitle = data.title?.english || data.title?.userPreferred || data.title?.romaji || playbackTitle;
+              playbackMalId = data.idMal || playbackMalId;
+            }
           } catch (err) {
             console.error('[PlayerPage] Failed to fetch anime metadata:', err);
           }
         }
         if (cancelled) return;
 
-        window.electronAPI?.debugLog?.('[PlayerPage] startPlayback', {
-          hasElectronAPI: Boolean(window.electronAPI),
+        platform.desktop?.debugLog?.('[PlayerPage] startPlayback', {
+          hasElectronAPI: Boolean(platform.desktop),
           hasMagnet: Boolean(magnet),
           cat,
           fileIndex,
         });
 
-        window.electronAPI?.debugLog?.('[PlayerPage] calling playInMpv', {
+        platform.desktop?.debugLog?.('[PlayerPage] calling playInMpv', {
           title: playbackTitle,
           cat,
           fileIndex,
         });
-        const api = window.electronAPI;
-        if (!api) throw new Error('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
-        const result = await api.playInMpv({
+        if (!platform.player) {
+          throw new Error('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
+        }
+        await platform.player.start({
           url: magnet,
           magnet,
           title: playbackTitle,
@@ -146,11 +174,6 @@ export default function PlayerPage({ navigate, params }: Props) {
         });
         if (cancelled) return;
 
-        if (!result?.ok) {
-          setPlaybackError(result?.error || 'The selected source could not be played.');
-          return;
-        }
-
         didStartPlaybackRef.current = true;
       } catch (err) {
         console.error('[PlayerPage] Playback initialization failed:', err);
@@ -165,7 +188,7 @@ export default function PlayerPage({ navigate, params }: Props) {
       // In dev (React strict mode / HMR), effects can mount/unmount rapidly.
       // Only stop MPV if this page actually started playback.
       if (!didStartPlaybackRef.current) return;
-      window.electronAPI?.stopMpv().catch((err) => {
+      platform.player?.stop().catch((err) => {
         console.error('[PlayerPage] Error stopping MPV on unmount:', err);
       });
     };

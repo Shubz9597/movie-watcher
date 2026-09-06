@@ -1,0 +1,81 @@
+# torWatch homeserver stack (plan P7, FR-008/FR-009).
+# Standalone package: never the root docker-compose.yml (Electron-owned).
+# Only the Caddy gateway exposes ports; postgres/prowlarr/vod stay on the
+# internal network (FR-008). Secrets come exclusively from the operator's
+# .env file (constitution principle VI) — never committed, never baked into
+# images.
+name: torwatch-server
+
+networks:
+  gateway:
+  internal:
+    internal: true
+
+volumes:
+  pgdata:
+  torrentdata:
+  subcache:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-torwatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-torwatch}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torwatch}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - torrentdata:/config
+    networks:
+      - internal
+
+  vod:
+    image: ${TORWATCH_IMAGE:?TORWATCH_IMAGE must pin an immutable tag, e.g. torwatch-server:1.0.0}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_DSN: postgres://${POSTGRES_USER:-torwatch}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-torwatch}?sslmode=disable
+      PROWLARR_URL: http://prowlarr:9696
+      PROWLARR_API_KEY: ${PROWLARR_API_KEY:?PROWLARR_API_KEY is required}
+      LISTEN: 0.0.0.0:4001
+      TORRENT_DATA_ROOT: /data/torrents
+      SUB_CACHE_DIR: /data/subcache
+      WATCH_MAX_ACTIVE_TITLES: ${WATCH_MAX_ACTIVE_TITLES:-1}
+      TORWATCH_APP_VERSION: ${TORWATCH_VERSION:-dev}
+    volumes:
+      - torrentdata:/data/torrents
+      - subcache:/data/subcache
+    networks:
+      - gateway
+      - internal
+
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - vod
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - gateway

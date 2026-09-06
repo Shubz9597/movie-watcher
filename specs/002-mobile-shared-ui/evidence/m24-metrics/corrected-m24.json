@@ -1,0 +1,229 @@
+{
+  "label": "corrected-m24",
+  "when": "2026-09-06T10:15:05.931Z",
+  "environment": {
+    "browser": "Chrome/152.0.7977.75",
+    "host": {
+      "platform": "win32",
+      "release": "10.0.26200",
+      "cpuModel": "AMD Ryzen 7 9800X3D 8-Core Processor           ",
+      "cores": 16,
+      "memoryTotalGB": 31
+    },
+    "source": {
+      "head": "bd11a90a6f3c207392bdadd0c89377dcf240752f",
+      "dirtyFiles": 100
+    },
+    "conditions": "headless Chromium, no network throttling, fixture data, 390x844@2x mobile emulation",
+    "evidenceClass": "development measurement; DOM/rAF timing proxies; NOT device presentation evidence"
+  },
+  "scenarios": {
+    "routeSwitch": {
+      "runs": [
+        {
+          "run": 1,
+          "latencyMs": 110
+        },
+        {
+          "run": 2,
+          "latencyMs": 30
+        },
+        {
+          "run": 3,
+          "latencyMs": 29
+        }
+      ]
+    },
+    "tabSwitch": {
+      "runs": [
+        {
+          "run": 1,
+          "latencyMs": 52
+        },
+        {
+          "run": 2,
+          "latencyMs": 5
+        },
+        {
+          "run": 3,
+          "latencyMs": 5
+        }
+      ]
+    },
+    "sheetOpen": {
+      "runs": [
+        {
+          "run": 1,
+          "latencyMs": 5
+        },
+        {
+          "run": 2,
+          "latencyMs": 4
+        },
+        {
+          "run": 3,
+          "latencyMs": 3
+        }
+      ]
+    },
+    "scroll100_text": {
+      "runs": [
+        {
+          "run": 1,
+          "renderedTitles": 100,
+          "scrollVerified": true,
+          "scroll": {
+            "endY": 4600,
+            "maxY": 5440,
+            "startY": 0,
+            "elapsed": 10015
+          },
+          "intervals": {
+            "frames": 3252,
+            "medianIntervalMs": 2.8,
+            "p95IntervalMs": 5.5,
+            "maxIntervalMs": 6,
+            "pctWithin16_7ms": 100,
+            "gapsOver32ms": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "totalMs": 0,
+            "maxMs": 0
+          },
+          "gapsOver32ms": 0
+        },
+        {
+          "run": 2,
+          "renderedTitles": 100,
+          "scrollVerified": true,
+          "scroll": {
+            "endY": 5020,
+            "maxY": 5440,
+            "startY": 0,
+            "elapsed": 10010
+          },
+          "intervals": {
+            "frames": 3236,
+            "medianIntervalMs": 2.8,
+            "p95IntervalMs": 5.5,
+            "maxIntervalMs": 5.7,
+            "pctWithin16_7ms": 100,
+            "gapsOver32ms": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "totalMs": 0,
+            "maxMs": 0
+          },
+          "gapsOver32ms": 0
+        },
+        {
+          "run": 3,
+          "renderedTitles": 100,
+          "scrollVerified": true,
+          "scroll": {
+            "endY": 5040,
+            "maxY": 5440,
+            "startY": 0,
+            "elapsed": 10004
+          },
+          "intervals": {
+            "frames": 3203,
+            "medianIntervalMs": 2.8,
+            "p95IntervalMs": 5.6,
+            "maxIntervalMs": 5.7,
+            "pctWithin16_7ms": 100,
+            "gapsOver32ms": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "totalMs": 0,
+            "maxMs": 0
+          },
+          "gapsOver32ms": 0
+        }
+      ]
+    },
+    "scroll100_artwork": {
+      "runs": [
+        {
+          "run": 1,
+          "renderedTitles": 100,
+          "scrollVerified": true,
+          "scroll": {
+            "endY": 5440,
+            "maxY": 5440,
+            "startY": 0,
+            "elapsed": 10010
+          },
+          "intervals": {
+            "frames": 3236,
+            "medianIntervalMs": 2.8,
+            "p95IntervalMs": 5.5,
+            "maxIntervalMs": 5.7,
+            "pctWithin16_7ms": 100,
+            "gapsOver32ms": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "totalMs": 0,
+            "maxMs": 0
+          },
+          "gapsOver32ms": 0
+        },
+        {
+          "run": 2,
+          "renderedTitles": 100,
+          "scrollVerified": true,
+          "scroll": {
+            "endY": 5440,
+            "maxY": 5440,
+            "startY": 0,
+            "elapsed": 10005
+          },
+          "intervals": {
+            "frames": 3237,
+            "medianIntervalMs": 2.8,
+            "p95IntervalMs": 5.5,
+            "maxIntervalMs": 5.7,
+            "pctWithin16_7ms": 100,
+            "gapsOver32ms": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "totalMs": 0,
+            "maxMs": 0
+          },
+          "gapsOver32ms": 0
+        },
+        {
+          "run": 3,
+          "renderedTitles": 100,
+          "scrollVerified": true,
+          "scroll": {
+            "endY": 4200,
+            "maxY": 5440,
+            "startY": 0,
+            "elapsed": 10005
+          },
+          "intervals": {
+            "frames": 3170,
+            "medianIntervalMs": 2.8,
+            "p95IntervalMs": 5.6,
+            "maxIntervalMs": 5.7,
+            "pctWithin16_7ms": 100,
+            "gapsOver32ms": 0
+          },
+          "longTasks": {
+            "count": 0,
+            "totalMs": 0,
+            "maxMs": 0
+          },
+          "gapsOver32ms": 0
+        }
+      ]
+    }
+  },
+  "tracePath": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\m24-metrics\\corrected-m24-trace.json.gz"
+}

@@ -1,0 +1,21 @@
+# Gateway entrypoint (FR-008): the ONLY client-facing surface.
+# /stream and /buffer/info (SSE + media byte-ranges) must never be buffered
+# (plan P7 performance goal; T061 verification).
+
+:8080 {
+	encode zstd gzip
+
+	# SSE: flush every event immediately, disable buffering entirely.
+	@sse path /buffer/info
+	reverse_proxy @sse vod:4001 {
+		flush_interval -1
+	}
+
+	# Media streaming: pass byte-ranges through untouched, flush aggressively.
+	@media path /stream
+	reverse_proxy @media vod:4001 {
+		flush_interval -1
+	}
+
+	reverse_proxy vod:4001
+}

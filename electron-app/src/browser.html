@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Browser development entry (feature 002 M1.2): same CSP shape as the
+         Electron renderer, but the origin is injected by the build plugin so
+         the mobile graph stays free of Electron assumptions. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' __TORWATCH_BACKEND_ORIGIN__ http://fixture.local; font-src 'self' data:"
+    />
+    <title>TorWatch — shared UI preview</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./browser/main.tsx"></script>
+  </body>
+</html>

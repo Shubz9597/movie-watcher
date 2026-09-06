@@ -1,9 +1,32 @@
 // Continue watching service - standalone, no Next.js needed
-import { getMovie as getTmdbMovie, getTv as getTmdbTv } from './tmdb-service';
-import { getAnime as getAniListAnime, getAnimeByMalId } from './anilist-service';
+import { getVodBase } from '../api-client';
+import { getCatalogSource } from '../catalog-source';
+import { bffTitleDetail, catalogIdForSeriesId, continueEnrichmentFromBackend } from './catalog-bff';
 import type { ResumeSourceContext, SavedResumeSource } from '../types';
 
-const VOD_BASE = 'http://localhost:4001';
+// Legacy provider services load lazily: bff mode never imports them and pure
+// node tests never trigger the legacy path (T042.4).
+type LegacyProviders = {
+  getTmdbMovie: typeof import('./tmdb-service').getMovie;
+  getTmdbTv: typeof import('./tmdb-service').getTv;
+  getAniListAnime: typeof import('./anilist-service').getAnime;
+  getAnimeByMalId: typeof import('./anilist-service').getAnimeByMalId;
+};
+
+let legacyPromise: Promise<LegacyProviders> | null = null;
+
+function loadLegacy(): Promise<LegacyProviders> {
+  legacyPromise ??= (async () => {
+    const [tmdb, anilist] = await Promise.all([import('./tmdb-service'), import('./anilist-service')]);
+    return {
+      getTmdbMovie: tmdb.getMovie,
+      getTmdbTv: tmdb.getTv,
+      getAniListAnime: anilist.getAnime,
+      getAnimeByMalId: anilist.getAnimeByMalId,
+    };
+  })();
+  return legacyPromise;
+}
 
 type RawContinueItem = {
   seriesId: string;
@@ -38,9 +61,9 @@ function parseSeriesId(seriesId: string): { provider: string; type: string; id: 
   return { provider: 'unknown', type: 'unknown', id: seriesId };
 }
 
-async function fetchTmdbMovie(id: string): Promise<{ title: string; posterPath: string | null; year?: number } | null> {
+async function fetchTmdbMovie(legacy: LegacyProviders, id: string): Promise<{ title: string; posterPath: string | null; year?: number } | null> {
   try {
-    const data = await getTmdbMovie(Number(id));
+    const data = await legacy.getTmdbMovie(Number(id));
     return {
       title: data.title || '',
       posterPath: data.poster_path ? `https://image.tmdb.org/t/p/w342${data.poster_path}` : null,
@@ -51,9 +74,9 @@ async function fetchTmdbMovie(id: string): Promise<{ title: string; posterPath: 
   }
 }
 
-async function fetchTmdbTv(id: string): Promise<{ title: string; posterPath: string | null; year?: number } | null> {
+async function fetchTmdbTv(legacy: LegacyProviders, id: string): Promise<{ title: string; posterPath: string | null; year?: number } | null> {
   try {
-    const data = await getTmdbTv(Number(id));
+    const data = await legacy.getTmdbTv(Number(id));
     return {
       title: data.name || '',
       posterPath: data.poster_path ? `https://image.tmdb.org/t/p/w342${data.poster_path}` : null,
@@ -65,13 +88,14 @@ async function fetchTmdbTv(id: string): Promise<{ title: string; posterPath: str
 }
 
 async function fetchAniListAnime(
+  legacy: LegacyProviders,
   id: string,
   provider: 'anilist' | 'mal',
 ): Promise<{ title: string; posterPath: string | null; year?: number; anilistId: number; malId?: number } | null> {
   try {
     const data = provider === 'anilist'
-      ? await getAniListAnime(Number(id))
-      : await getAnimeByMalId(Number(id));
+      ? await legacy.getAniListAnime(Number(id))
+      : await legacy.getAnimeByMalId(Number(id));
     if (!data) return null;
     return {
       title: data.title?.english || data.title?.userPreferred || data.title?.romaji || '',
@@ -85,7 +109,21 @@ async function fetchAniListAnime(
   }
 }
 
-async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> {
+// BFF-mode enrichment (T042.4): resolve the title through the catalog
+// contract. Enrichment failures keep the raw seriesId as display fallback.
+async function fetchBffEnrichment(seriesId: string): Promise<{
+  title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number;
+} | null> {
+  const catalogId = catalogIdForSeriesId(seriesId);
+  if (!catalogId) return null;
+  try {
+    return continueEnrichmentFromBackend(await bffTitleDetail(catalogId));
+  } catch {
+    return null;
+  }
+}
+
+async function enrichItem(item: RawContinueItem, useBff: boolean, legacy: LegacyProviders | null): Promise<EnrichedContinueItem> {
   const { provider, type, id } = parseSeriesId(item.seriesId);
 
   let metadata: { title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
@@ -97,14 +135,14 @@ async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> 
   if (provider === 'tmdb' && type === 'movie') {
     kind = 'movie';
     tmdbId = Number(id);
-    metadata = await fetchTmdbMovie(id);
+    metadata = useBff ? await fetchBffEnrichment(item.seriesId) : await fetchTmdbMovie(legacy!, id);
   } else if (provider === 'tmdb' && type === 'tv') {
     kind = 'tv';
     tmdbId = Number(id);
-    metadata = await fetchTmdbTv(id);
+    metadata = useBff ? await fetchBffEnrichment(item.seriesId) : await fetchTmdbTv(legacy!, id);
   } else if (provider === 'mal' || provider === 'anilist') {
     kind = 'anime';
-    metadata = await fetchAniListAnime(id, provider);
+    metadata = useBff ? await fetchBffEnrichment(item.seriesId) : await fetchAniListAnime(legacy!, id, provider);
     malId = metadata?.malId || (provider === 'mal' ? Number(id) : undefined);
     anilistId = metadata?.anilistId || (provider === 'anilist' ? Number(id) : undefined);
   }
@@ -124,7 +162,7 @@ async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> 
 
 export async function getContinueList(subjectId: string, limit = 12): Promise<EnrichedContinueItem[]> {
   try {
-    const vodUrl = `${VOD_BASE}/v1/continue?subjectId=${encodeURIComponent(subjectId)}&limit=${limit}`;
+    const vodUrl = `${getVodBase()}/v1/continue?subjectId=${encodeURIComponent(subjectId)}&limit=${limit}`;
     const res = await fetch(vodUrl, { cache: 'no-store' });
 
     if (!res.ok) {
@@ -137,8 +175,13 @@ export async function getContinueList(subjectId: string, limit = 12): Promise<En
       return [];
     }
 
+    // Resolve the catalog flag once; legacy provider services load lazily
+    // and only in renderer mode (T042.4).
+    const useBff = await getCatalogSource() === 'bff';
+    const legacy = useBff ? null : await loadLegacy();
+
     // Enrich items with metadata in parallel
-    const enrichedItems = await Promise.all(rawItems.map(enrichItem));
+    const enrichedItems = await Promise.all(rawItems.map((item) => enrichItem(item, useBff, legacy)));
 
     return enrichedItems;
   } catch (e) {
@@ -158,7 +201,7 @@ export async function getSavedResumeSource(context: ResumeSourceContext): Promis
     episode: String(context.episode),
   });
   try {
-    const response = await fetch(`${VOD_BASE}/v1/resume/source?${query.toString()}`, { cache: 'no-store' });
+    const response = await fetch(`${getVodBase()}/v1/resume/source?${query.toString()}`, { cache: 'no-store' });
     if (!response.ok) return { found: false, reason: `source_${response.status}` };
     const data = await response.json();
     if (data?.found !== true || typeof data?.sourceUri !== 'string' || !data.sourceUri) {

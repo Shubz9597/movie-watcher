@@ -4,16 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver
 	"github.com/joho/godotenv"
 
+	"torrent-streamer/internal/buildinfo"
+	"torrent-streamer/internal/catalog"
 	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/httpapi"
 	"torrent-streamer/internal/imdb"
@@ -33,8 +38,7 @@ var (
 	progressDB *watch.Store
 )
 
-func mustOpenDB() {
-	dsn := os.Getenv("PG_DSN")
+func mustOpenDB(dsn string) {
 	if dsn == "" {
 		exitOnError("database configuration missing", errors.New("environment variable PG_DSN is missing"))
 	}
@@ -60,13 +64,14 @@ func main() {
 	closeLog := config.SetupLogging()
 	defer closeLog()
 
-	mustOpenDB()
+	serverConfig := config.LoadServerConfig()
+	mustOpenDB(serverConfig.PGDSN)
 	imdbStore := imdb.NewStore(db)
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
 	httpapi.SetProgressStore(progressDB) // Enable server-side progress tracking for VLC
-	prowlarrURL := firstEnv("INDEXER_URL", "PROWLARR_URL")
-	prowlarrAPIKey := firstEnv("INDEXER_API_KEY", "PROWLARR_API_KEY")
+	prowlarrURL := serverConfig.ProwlarrURL
+	prowlarrAPIKey := serverConfig.ProwlarrAPIKey
 	prowlarrHTTP := &http.Client{Timeout: 25 * time.Second}
 	searchCli = &torrentx.TorznabClient{BaseURL: prowlarrURL, APIKey: prowlarrAPIKey, HTTP: prowlarrHTTP}
 	torrentSearch, err := search.NewService(prowlarrURL, prowlarrAPIKey, prowlarrHTTP)
@@ -83,6 +88,38 @@ func main() {
 	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external
 	httpapi.TorrentSearchHandlers{Service: torrentSearch}.Register(mux)
 	httpapi.IMDbRatingHandlers{Ratings: imdbStore}.Register(mux)
+
+	// V2 system surface (additive): readiness + version/protocol negotiation.
+	// catalog.bff.v2 is advertised from the catalog phase onward; further
+	// capabilities are added only when they actually land.
+	catalogProviders := buildCatalogProviders(prowlarrHTTP)
+	build := buildinfo.New(buildinfo.Options{
+		ServerVersion: serverConfig.AppVersion,
+		Capabilities:  []string{"catalog.bff.v2", "leases.shared", "progress.serverOrdered"},
+	})
+	// Explicit CORS origin allowlist for the versioned browser/mobile
+	// surfaces; default preserves the Electron file:// and dev-server origins.
+	allowedOrigins, corsWarnings := serverConfig.AllowedClientOriginList()
+	for _, warning := range corsWarnings {
+		log.Printf("[boot] config warning: %s", warning)
+	}
+	for _, origin := range allowedOrigins {
+		if origin == "null" {
+			log.Printf("[boot] opaque origin \"null\" allowed on read-only versioned surfaces (packaged file:// renderer compatibility; override TORWATCH_ALLOWED_CLIENT_ORIGINS to harden)")
+		}
+	}
+	httpapi.SystemHandlers{
+		Build:          build,
+		Postgres:       func(ctx context.Context) error { return db.PingContext(ctx) },
+		Prowlarr:       prowlarrReadinessCheck(prowlarrHTTP, prowlarrURL, prowlarrAPIKey),
+		AllowedOrigins: allowedOrigins,
+	}.Register(mux)
+	httpapi.CatalogHandlers{
+		Catalog:        catalog.NewService(catalogProviders, catalog.Options{}),
+		Build:          build,
+		Ratings:        imdbStore,
+		AllowedOrigins: allowedOrigins,
+	}.Register(mux)
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
 		Picks: torrentx.EnsureDeps{
@@ -107,13 +144,18 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	// watch/lease manager wiring — same semantics as your main.go
+	// watch/lease manager wiring — V1 lease semantics preserved with
+	// configurable stale/reaper timings and the T056/T057 admission policy
+	// (distinct-key counting; denial never touches healthy leases).
 	mgr := watch.NewManager(
-		20*time.Second, // staleAfter
-		30*time.Second, // ticker
+		config.WatchStaleAfter(),
+		config.WatchReaperInterval(),
 		func(k watch.Key) error { return torrentx.EnsureTorrentForKey(k.Cat, k.ID) },
 		func(k watch.Key) { torrentx.StopTorrentForKey(k.Cat, k.ID) },
 	)
+	mgr.SetMaxActiveTitles(config.MaxActiveTitles())
+	mgr.SetCapacityRetryAfter(config.WatchReaperInterval())
+	httpapi.SetAdmissionSnapshot(mgr.AdmissionSnapshot)
 
 	// CORS-wrapped watch endpoints
 	mux.HandleFunc("/watch/open", func(w http.ResponseWriter, r *http.Request) {
@@ -235,4 +277,59 @@ func firstEnv(names ...string) string {
 		}
 	}
 	return ""
+}
+
+// buildCatalogProviders assembles the server-side catalog providers in fixed
+// priority order (contracts/v2-catalog-api.md §Merge determinism). Provider
+// credentials never leave the backend (FR-003/FR-012); a provider without
+// its credentials is simply absent from the registry. Base URLs are
+// overridable for disposable-stack testing.
+func buildCatalogProviders(client *http.Client) []catalog.Provider {
+	var providers []catalog.Provider
+	if apiKey := os.Getenv("TMDB_API_KEY"); apiKey != "" {
+		providers = append(providers, catalog.NewTMDb(catalog.TMDbOptions{
+			BaseURL: envOr("TORWATCH_TMDB_BASE_URL", ""), APIKey: apiKey, HTTP: client,
+		}))
+	}
+	providers = append(providers,
+		catalog.NewAniList(catalog.AniListOptions{BaseURL: envOr("TORWATCH_ANILIST_BASE_URL", ""), HTTP: client}),
+		catalog.NewJikan(catalog.JikanOptions{BaseURL: envOr("TORWATCH_JIKAN_BASE_URL", ""), HTTP: client}),
+		catalog.NewCinemeta(catalog.CinemetaOptions{BaseURL: envOr("TORWATCH_CINEMETA_BASE_URL", ""), HTTP: client}),
+		catalog.NewAniZip(catalog.AniZipOptions{BaseURL: envOr("TORWATCH_ANIZIP_BASE_URL", ""), HTTP: client}),
+	)
+	return providers
+}
+
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// prowlarrReadinessCheck probes the Prowlarr health endpoint; failures mark
+// the component degraded for /readyz without leaking credentials (FR-012).
+func prowlarrReadinessCheck(client *http.Client, baseURL, apiKey string) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		if baseURL == "" {
+			return errors.New("prowlarr url is not configured")
+		}
+		endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/health"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("X-Api-Key", apiKey)
+		req.Header.Set("Accept", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("prowlarr health status %d", resp.StatusCode)
+		}
+		return nil
+	}
 }

@@ -12,7 +12,7 @@ var (
 	magnetPattern        = regexp.MustCompile(`(?i)magnet:\?[^\s"']+`)
 	postgresPattern      = regexp.MustCompile(`(?i)\b(postgres(?:ql)?://[^:\s/@]+:)[^@\s/]+@`)
 	querySecretPattern   = regexp.MustCompile(`(?i)([?&](?:api[_-]?key|access[_-]?token|token|password|private[_-]?key|secret)=)[^&\s]+`)
-	keySecretPattern     = regexp.MustCompile(`(?i)\b((?:api[_-]?key|access[_-]?token|authorization|password|private[_-]?key|secret|token)\s*[:=]\s*)([^,;\s]+)`)
+	keySecretPattern     = regexp.MustCompile(`(?i)\b((?:api[_-]?key|access[_-]?token|authorization|password|private[_-]?key|secret|token)\s*"?\s*[:=]\s*)([^,;\s]+)`)
 	torrentHeaderPattern = regexp.MustCompile(`^\[[^\r\n\]]+\s+(?:WRN|ERR)\s+github\.com/anacrolix/torrent\S*\s+[^\r\n\]]+\]\r?\n?$`)
 	torrentDetailPattern = regexp.MustCompile(`^[\t ]+`)
 )

@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import PosterCard from '../components/PosterCard';
 import type { MovieCard } from '../lib/types';
-import { getMovies, getTitlesByGenre, getTvShows } from '../lib/services/tmdb-service';
-import { getAnimeList, getTrendingAnime } from '../lib/services/anilist-service';
-import { cardFromAniList, cardFromTmdbMovie, cardFromTmdbTv } from '../lib/adapters/media';
+import { getTitlesByGenre, getMovies, getTvShows, getAnimeList, getTrendingAnime } from '../lib/services/catalog-gateway';
 import { selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
 
@@ -57,35 +55,39 @@ export default function SeeAllPage({
         console.log('[SeeAllPage] Loading', api, 'page', page);
 
         // Parse API identifiers such as "tmdb:trending:movie" and "tmdb:genre:movie:28".
+        // All collections dispatch through the flag-routed catalog gateway
+        // (T042.5): renderer mode keeps the provider services, bff mode uses
+        // /v2/catalog/* including genre rails and paging.
         const [service, type, category, qualifier] = api.split(':');
 
         if (service === 'tmdb') {
           if (category === 'movie' || category === 'tv') {
+            const kind = category === 'movie' ? 'movie' as const : 'tv' as const;
             const genreId = Number(qualifier);
             const data = type === 'genre' && Number.isFinite(genreId)
-              ? await getTitlesByGenre(category, genreId, page)
+              ? await getTitlesByGenre(kind, genreId, page)
               : category === 'movie'
                 ? await getMovies(page, type === 'trending' ? 'trending' : 'popular')
                 : await getTvShows(page, type === 'trending' ? 'trending' : 'popular');
             if (cancelled) return;
-            const cards = (data.results || []).map(category === 'movie' ? cardFromTmdbMovie : cardFromTmdbTv);
+            const cards = data.items;
             if (page === 1) {
               setItems(cards);
             } else {
               setItems((prev) => [...prev, ...cards]);
             }
-            setTotalPages(data.total_pages);
+            setTotalPages(data.totalPages);
           }
         } else if (service === 'anilist') {
           const data = type === 'trending' ? await getTrendingAnime(page) : await getAnimeList(page);
           if (cancelled) return;
-          const cards = selectAniListCatalog((data.media || []).map(cardFromAniList));
+          const cards = selectAniListCatalog(data.items);
           if (page === 1) {
             setItems(cards);
           } else {
             setItems((previous) => selectAniListCatalog([...previous, ...cards]));
           }
-          setTotalPages(data.pageInfo?.lastPage || undefined);
+          setTotalPages(data.totalPages);
         }
       } catch (err) {
         if (cancelled) return;

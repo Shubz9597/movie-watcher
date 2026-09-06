@@ -46,6 +46,31 @@ func getProgressStore() *watch.Store {
 	return progressStore
 }
 
+// admissionSnapshot supplies sanitized admission observability (counts only)
+// for /stats; nil keeps the field absent for pre-admission consumers.
+var (
+	admissionSnapshotMu sync.RWMutex
+	admissionSnapshot   func() watch.AdmissionSnapshot
+)
+
+// SetAdmissionSnapshot wires the admission limiter into /stats (T057).
+func SetAdmissionSnapshot(snapshot func() watch.AdmissionSnapshot) {
+	admissionSnapshotMu.Lock()
+	admissionSnapshot = snapshot
+	admissionSnapshotMu.Unlock()
+}
+
+func getAdmissionSnapshot() *watch.AdmissionSnapshot {
+	admissionSnapshotMu.RLock()
+	snapshotFunc := admissionSnapshot
+	admissionSnapshotMu.RUnlock()
+	if snapshotFunc == nil {
+		return nil
+	}
+	snapshot := snapshotFunc()
+	return &snapshot
+}
+
 type fileEntry struct {
 	Index  int    `json:"index"`
 	Name   string `json:"name"`
@@ -89,13 +114,14 @@ type categoryStats struct {
 	Torrents []torrentStat `json:"torrents"`
 }
 type statsResp struct {
-	UptimeSeconds   int64           `json:"uptimeSeconds"`
-	DataRoot        string          `json:"dataRoot"`
-	TotalCacheBytes int64           `json:"totalCacheBytes"`
-	CacheMaxBytes   int64           `json:"cacheMaxBytes"`
-	EvictTTL        string          `json:"evictTTL"`
-	TrackersMode    string          `json:"trackersMode"`
-	Categories      []categoryStats `json:"categories"`
+	UptimeSeconds   int64                    `json:"uptimeSeconds"`
+	DataRoot        string                   `json:"dataRoot"`
+	TotalCacheBytes int64                    `json:"totalCacheBytes"`
+	CacheMaxBytes   int64                    `json:"cacheMaxBytes"`
+	EvictTTL        string                   `json:"evictTTL"`
+	TrackersMode    string                   `json:"trackersMode"`
+	Categories      []categoryStats          `json:"categories"`
+	Admission       *watch.AdmissionSnapshot `json:"admission,omitempty"`
 }
 
 func RegisterRoutes(mux *http.ServeMux) {
@@ -553,14 +579,24 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 				pct := float64(start+written) / float64(size) * 100
 				log.Printf("[stream] progress %0.1f%% (%d/%d) target=%d", pct, start+written, size, ctlBytes)
 
-				// Auto-save progress for VLC/external players
+				// Auto-save progress for VLC/external players — the
+				// LOW-FIDELITY byte-ratio estimate. It participates in the
+				// ordered write path so it can never overwrite a newer
+				// explicit heartbeat (contract rule 6).
 				if trackProgress && trackSubjectID != "" && trackSeriesID != "" {
 					if ps := getProgressStore(); ps != nil {
-						// Estimate position in seconds based on byte position
 						estDurationS := estimateDuration(size)
 						positionS := int(float64(start+written) / float64(size) * float64(estDurationS))
 
-						if err := ps.SaveProgress(r.Context(), trackSubjectID, trackSeriesID, trackSeason, trackEpisode, positionS, estDurationS); err != nil {
+						if _, err := ps.SaveProgressUpdate(r.Context(), watch.ProgressUpdate{
+							SubjectID:   trackSubjectID,
+							SeriesID:    trackSeriesID,
+							Season:      trackSeason,
+							Episode:     trackEpisode,
+							Position:    positionS,
+							Duration:    estDurationS,
+							LowFidelity: true,
+						}); err != nil {
 							log.Printf("[stream] failed to save progress: %v", err)
 						}
 					}
@@ -578,13 +614,21 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Final progress save when stream ends
+	// Final progress save when stream ends (low-fidelity estimate)
 	if trackProgress && trackSubjectID != "" && trackSeriesID != "" {
 		if ps := getProgressStore(); ps != nil {
 			estDurationS := estimateDuration(size)
 			positionS := int(float64(start+written) / float64(size) * float64(estDurationS))
 			pctWatched := float64(start+written) / float64(size) * 100
-			if err := ps.SaveProgress(r.Context(), trackSubjectID, trackSeriesID, trackSeason, trackEpisode, positionS, estDurationS); err != nil {
+			if _, err := ps.SaveProgressUpdate(r.Context(), watch.ProgressUpdate{
+				SubjectID:   trackSubjectID,
+				SeriesID:    trackSeriesID,
+				Season:      trackSeason,
+				Episode:     trackEpisode,
+				Position:    positionS,
+				Duration:    estDurationS,
+				LowFidelity: true,
+			}); err != nil {
 				log.Printf("[stream] final progress save failed: %v", err)
 			} else {
 				log.Printf("[stream] saved progress: %s S%dE%d pos=%ds pct=%.1f%%", trackSeriesID, trackSeason, trackEpisode, positionS, pctWatched)
@@ -690,6 +734,9 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	})
 
 	resp.Categories = cats
+	if admissionState := getAdmissionSnapshot(); admissionState != nil {
+		resp.Admission = admissionState
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

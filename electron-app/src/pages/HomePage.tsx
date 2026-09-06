@@ -2,13 +2,13 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import type { MovieCard } from '../lib/types';
-import { getMovies, getTvShows } from '../lib/services/tmdb-service';
-import { getTrendingAnime } from '../lib/services/anilist-service';
-import { cardFromAniList, cardFromTmdbMovie, cardFromTmdbTv } from '../lib/adapters/media';
+import { getMovies, getTvShows, getTrendingAnime } from '../lib/services/catalog-gateway';
 import { getContinueList } from '../lib/services/continue-service';
+import { getVodBase } from '../lib/api-client';
 import { getDeviceId } from '../lib/device-id';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
+import { ContinueCarousel } from '../components/shared/ContinueCarousel';
 
 type ContinueItem = {
   seriesId: string;
@@ -75,7 +75,13 @@ function preloadBackdrop(url?: string | null): Promise<void> {
   });
 }
 
-function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
+function ContinueRail({ navigate, variant = 'rail', onResumeRequest }: {
+  navigate: (path: string, params?: Record<string, string>) => void;
+  // 'rail' is the characterized desktop presentation (default); 'carousel'
+  // is the accepted compact alpha presentation (ContinueCarousel).
+  variant?: 'rail' | 'carousel';
+  onResumeRequest?: (item: ContinueItem) => void;
+}) {
   const subjectId = useMemo(getDeviceId, []);
   const [rows, setRows] = useState<ContinueItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,7 +136,7 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
     setDismissingKey(itemKey);
     setDismissError(null);
     try {
-      const response = await fetch('http://localhost:4001/v1/continue/dismiss', {
+      const response = await fetch(`${getVodBase()}/v1/continue/dismiss`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -212,6 +218,14 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
           {dismissError}
         </p>
       ) : null}
+      {variant === 'carousel' ? (
+        <ContinueCarousel
+          items={rows}
+          onResumeRequest={(item) => onResumeRequest?.(item)}
+          onOpenTitle={openResumeSources}
+          onDismiss={(item) => void dismiss(item)}
+        />
+      ) : (
       <div className="hide-scrollbar flex snap-x snap-mandatory gap-3.5 overflow-x-auto pb-2 md:gap-4">
         {rows.map((it) => {
           const isAnimeSeries = it.seriesId?.startsWith('mal:') || it.seriesId?.startsWith('anilist:');
@@ -289,11 +303,16 @@ function ContinueRail({ navigate }: { navigate: (path: string, params?: Record<s
           );
         })}
       </div>
+      )}
     </section>
   );
 }
 
-export default function HomePage({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
+export default function HomePage({ navigate, continueVariant = 'rail', onResumeRequest }: {
+  navigate: (path: string, params?: Record<string, string>) => void;
+  continueVariant?: 'rail' | 'carousel';
+  onResumeRequest?: (item: ContinueItem) => void;
+}) {
   const [movies, setMovies] = useState<MovieCard[]>([]);
   const [moviesLoading, setMoviesLoading] = useState(true);
   const [moviesError, setMoviesError] = useState<string | null>(null);
@@ -331,7 +350,7 @@ export default function HomePage({ navigate }: { navigate: (path: string, params
         console.log('[HomePage] Fetching movies');
         const data = await getMovies(1, 'trending');
         if (ac.signal.aborted || requestAc.signal.aborted) return;
-        const cards = (data.results || []).map(cardFromTmdbMovie);
+        const cards = data.items;
         console.log('[HomePage] Received', cards.length, 'movies');
         setMovies(cards.filter((card: MovieCard) => !isTmdbAnime(card)));
       } catch (err) {
@@ -361,7 +380,7 @@ export default function HomePage({ navigate }: { navigate: (path: string, params
         console.log('[HomePage] Fetching TV shows');
         const data = await getTvShows(1, 'trending');
         if (ac.signal.aborted || requestAc.signal.aborted) return;
-        const cards = (data.results || []).map(cardFromTmdbTv);
+        const cards = data.items;
         console.log('[HomePage] Received', cards.length, 'TV shows');
         setSeries(cards.filter((card: MovieCard) => !isTmdbAnime(card)));
       } catch (err) {
@@ -391,7 +410,7 @@ export default function HomePage({ navigate }: { navigate: (path: string, params
         console.log('[HomePage] Fetching anime from AniList');
         const data = await getTrendingAnime(1);
         if (ac.signal.aborted || requestAc.signal.aborted) return;
-        const cards = selectAniListCatalog((data.media || []).map(cardFromAniList));
+        const cards = selectAniListCatalog(data.items);
         console.log('[HomePage] Received', cards.length, 'AniList anime');
         setAnime(cards);
       } catch (err) {
@@ -629,7 +648,7 @@ export default function HomePage({ navigate }: { navigate: (path: string, params
       </section>
 
       <div className="mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
-        <ContinueRail navigate={navigate} />
+        <ContinueRail navigate={navigate} variant={continueVariant} onResumeRequest={onResumeRequest} />
 
         <div>
           <CarouselRow

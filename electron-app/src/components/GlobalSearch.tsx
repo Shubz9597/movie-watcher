@@ -2,9 +2,11 @@ import * as React from 'react';
 import { Clapperboard, Film, History, LoaderCircle, MonitorPlay, RefreshCw, Tv } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
-import { cardFromAniList, cardFromTmdbMovie, cardFromTmdbTv, type Card } from '../lib/adapters/media';
+import type { Card } from '../lib/adapters/media';
+import { catalogGateway } from '../lib/services/catalog-gateway';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { loadSeeAllPage, loadTitlePage } from '../lib/route-loaders';
+import { SelectionSurface } from './primitives';
 
 type SearchKind = 'movie' | 'tv' | 'anime';
 type ResultFilter = 'all' | SearchKind;
@@ -89,6 +91,7 @@ export default function GlobalSearch({
   const [debouncedQuery, setDebouncedQuery] = React.useState('');
   const [results, setResults] = React.useState<SearchResults>(EMPTY_RESULTS);
   const [resultFilter, setResultFilter] = React.useState<ResultFilter>('all');
+  const [filterSheetOpen, setFilterSheetOpen] = React.useState(false);
   const [genreKind, setGenreKind] = React.useState<'movie' | 'tv'>('movie');
   const [recentSearches, setRecentSearches] = React.useState<RecentSearch[]>(loadRecentSearches);
   const [suggestions, setSuggestions] = React.useState<SuggestedTitle[]>([]);
@@ -120,10 +123,7 @@ export default function GlobalSearch({
 
     void (async () => {
       setSuggestionsLoading(true);
-      const [{ getMovies, getTvShows }, { getTrendingAnime }] = await Promise.all([
-        import('../lib/services/tmdb-service'),
-        import('../lib/services/anilist-service'),
-      ]);
+      const { getMovies, getTvShows, getTrendingAnime } = catalogGateway;
       const [movieResult, tvResult, animeResult] = await Promise.allSettled([
         getMovies(1, 'trending'),
         getTvShows(1, 'trending'),
@@ -134,21 +134,19 @@ export default function GlobalSearch({
 
       const pool: SuggestedTitle[] = [];
       if (movieResult.status === 'fulfilled') {
-        pool.push(...(movieResult.value.results || [])
-          .map(cardFromTmdbMovie)
+        pool.push(...movieResult.value.items
           .filter((item: Card) => !isTmdbAnime(item))
           .slice(0, 10)
           .map((item: Card) => ({ kind: 'movie' as const, item: basicFromCard(item) })));
       }
       if (tvResult.status === 'fulfilled') {
-        pool.push(...(tvResult.value.results || [])
-          .map(cardFromTmdbTv)
+        pool.push(...tvResult.value.items
           .filter((item: Card) => !isTmdbAnime(item))
           .slice(0, 10)
           .map((item: Card) => ({ kind: 'tv' as const, item: basicFromCard(item) })));
       }
       if (animeResult.status === 'fulfilled') {
-        pool.push(...selectAniListCatalog((animeResult.value.media || []).map(cardFromAniList), 10)
+        pool.push(...selectAniListCatalog(animeResult.value.items, 10)
           .map((item: Card) => ({ kind: 'anime' as const, item: basicFromCard(item) })));
       }
 
@@ -183,10 +181,7 @@ export default function GlobalSearch({
     void (async () => {
       setLoading(true);
       setError(null);
-      const [{ searchMulti }, { searchAnime }] = await Promise.all([
-        import('../lib/services/tmdb-service'),
-        import('../lib/services/anilist-service'),
-      ]);
+      const { searchMulti, searchAnime } = catalogGateway;
       const [tmdbResult, animeResult] = await Promise.allSettled([
         searchMulti(debouncedQuery, 1),
         searchAnime(debouncedQuery, 1, MAX_ITEMS_PER_GROUP),
@@ -195,25 +190,13 @@ export default function GlobalSearch({
       if (latestRequest.current !== requestId) return;
 
       const tmdbMovies: Basic[] = tmdbResult.status === 'fulfilled'
-        ? (tmdbResult.value.movie ?? []).map((item: Basic) => ({ ...item, title: item.title || 'Untitled' }))
+        ? (tmdbResult.value.movie ?? []).map(basicFromCard)
         : [];
       const tmdbTv: Basic[] = tmdbResult.status === 'fulfilled'
-        ? (tmdbResult.value.tv ?? []).map((item: Basic) => ({ ...item, title: item.title || 'Untitled' }))
+        ? (tmdbResult.value.tv ?? []).map(basicFromCard)
         : [];
       const aniListAnime: Basic[] = animeResult.status === 'fulfilled'
-        ? (animeResult.value.media ?? []).map((item) => ({
-            id: item.id,
-            title: item.title?.english || item.title?.userPreferred || item.title?.romaji || item.title?.native || 'Untitled',
-            year: item.startDate?.year || undefined,
-            rating: typeof item.averageScore === 'number' ? item.averageScore / 10 : undefined,
-            posterUrl: item.coverImage?.large || item.coverImage?.extraLarge || item.coverImage?.medium || null,
-            originalLanguage: item.countryOfOrigin?.toLocaleLowerCase() || undefined,
-            genreIds: [16],
-            sourceProvider: 'anilist',
-            sourceKind: 'anime',
-            sourceLabel: 'AniList',
-            malId: item.idMal ?? null,
-          }))
+        ? animeResult.value.items.map(basicFromCard)
         : [];
 
       const nextResults: SearchResults = {
@@ -458,23 +441,57 @@ export default function GlobalSearch({
             ) : null}
 
             {!showDiscovery && hasResults ? (
-              <div className="sticky top-0 z-10 flex gap-1 border-b border-white/[0.08] bg-[#0c0c0c] px-5 py-3" role="group" aria-label="Filter search results">
+              <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-[#0c0c0c] px-5 py-3" role="group" aria-label="Filter search results">
+                {/* Compact: filters open in the selection sheet (WF02a). */}
+                <button
+                  type="button"
+                  onClick={() => setFilterSheetOpen(true)}
+                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border border-white/15 px-3 text-xs text-white/75 hover:border-white/35 hover:text-white sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50`}
+                  aria-haspopup="dialog"
+                >
+                  Filters{resultFilter !== 'all' ? ' · on' : ''}
+                </button>
+                <div className="hidden gap-1 sm:flex">
+                  {RESULT_FILTERS.map((filter) => {
+                    const count = filter.value === 'all' ? results.movie.length + results.tv.length + results.anime.length : results[filter.value].length;
+                    return (
+                      <button
+                        key={filter.value}
+                        type="button"
+                        onClick={() => setResultFilter(filter.value)}
+                        aria-pressed={resultFilter === filter.value}
+                        className={`min-h-9 rounded-full px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${resultFilter === filter.value ? 'bg-white text-black' : 'text-white/60 hover:bg-white/[0.06] hover:text-white'}`}
+                      >
+                        {filter.label} <span className="text-numeric opacity-65">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {/* The filter sheet lives OUTSIDE the results conditional so a
+                loading/empty transition cannot unmount it mid-interaction —
+                focus inside the sheet survives parent rerenders (M2.3). */}
+            <SelectionSurface open={filterSheetOpen} title="Filter results" onClose={() => setFilterSheetOpen(false)}>
+              <div className="grid gap-2">
                 {RESULT_FILTERS.map((filter) => {
                   const count = filter.value === 'all' ? results.movie.length + results.tv.length + results.anime.length : results[filter.value].length;
                   return (
                     <button
                       key={filter.value}
                       type="button"
-                      onClick={() => setResultFilter(filter.value)}
+                      onClick={() => { setResultFilter(filter.value); setFilterSheetOpen(false); }}
                       aria-pressed={resultFilter === filter.value}
-                      className={`min-h-9 rounded-full px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${resultFilter === filter.value ? 'bg-white text-black' : 'text-white/60 hover:bg-white/[0.06] hover:text-white'}`}
+                      className={`flex min-h-11 items-center justify-between rounded-xl px-4 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${resultFilter === filter.value ? 'bg-white text-black' : 'bg-white/[0.05] text-white/75 hover:bg-white/[0.1] hover:text-white'}`}
                     >
-                      {filter.label} <span className="text-numeric opacity-65">{count}</span>
+                      {filter.label}
+                      <span className="text-numeric opacity-65">{count}</span>
                     </button>
                   );
                 })}
               </div>
-            ) : null}
+            </SelectionSurface>
 
             {loading && !hasResults ? (
               <div className="type-body flex items-center justify-center gap-2 py-14 text-white/65">

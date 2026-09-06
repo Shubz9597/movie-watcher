@@ -1,7 +1,6 @@
 // Torrent resolve service - resolves file index for season packs
 import { pickFileIndexForEpisode, type TorrentFileEntry } from '../anime-matching';
-
-const VOD_BASE = 'http://localhost:4001';
+import { getVodBase } from '../api-client';
 
 function normalizeFiles(raw: unknown): TorrentFileEntry[] {
   if (!Array.isArray(raw)) return [];
@@ -75,7 +74,7 @@ export async function resolveTorrentFile(params: {
     throw new Error('Unsupported source format');
   }
 
-  const target = `${VOD_BASE}/files?${urlParams.toString()}`;
+  const target = `${getVodBase()}/files?${urlParams.toString()}`;
   const filesRes = await fetch(target, { method: 'GET', cache: 'no-store' });
   if (!filesRes.ok) {
     throw new Error(`File listing failed (${filesRes.status})`);

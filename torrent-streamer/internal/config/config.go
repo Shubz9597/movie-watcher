@@ -28,6 +28,13 @@ var (
 	endgameDuplicate = true
 	watchDropGuard   = 10 * time.Minute
 
+	// Multi-client lease/admission (V2, plan P7). Defaults preserve V1 lease
+	// semantics; the admission default is the conservative one-distinct-title
+	// envelope pending the ROCK 3A measurements (T063).
+	watchStaleAfter = 20 * time.Second
+	watchReaperIntv = 30 * time.Second
+	maxActiveTitles = 1
+
 	listenAddr = ":4001"
 
 	// logging
@@ -73,6 +80,10 @@ func Load() {
 
 	watchDropGuard = getenvDuration("WATCH_DROP_GUARD", watchDropGuard)
 
+	watchStaleAfter = getenvDuration("WATCH_STALE_AFTER", watchStaleAfter)
+	watchReaperIntv = getenvDuration("WATCH_REAPER_INTERVAL", watchReaperIntv)
+	maxActiveTitles = int(getenvInt64("WATCH_MAX_ACTIVE_TITLES", int64(maxActiveTitles)))
+
 	endgameDuplicate = strings.ToLower(getenv("ENDGAME_DUPLICATE", "true")) != "false"
 
 	listenAddr = getenv("LISTEN", listenAddr)
@@ -86,29 +97,32 @@ func Load() {
 }
 
 // getters
-func DataRoot() string                { return dataRoot }
-func CacheMaxBytes() int64            { return cacheMaxBytes }
-func EvictTTL() time.Duration         { return evictTTL }
-func WaitMetadata() time.Duration     { return waitMetadata }
-func PrebufferBytes() int64           { return prebufferBytes }
-func PrebufferTimeout() time.Duration { return prebufferTimeout }
-func TrackersMode() string            { return trackersMode }
-func TargetPlaySec() int64            { return targetPlaySec }
-func TargetPauseSec() int64           { return targetPauseSec }
-func TargetMaxBytes() int64           { return targetMaxBytes }
-func WarmReadAheadMB() int64          { return warmReadAheadMB }
-func TargetPlay4KSec() int64          { return targetPlay4KSec }
-func TargetPause4KSec() int64         { return targetPause4KSec }
-func WarmReadAhead4KMB() int64        { return warmReadAhead4KMB }
-func EndgameDuplicate() bool          { return endgameDuplicate }
-func WatchDropGuard() time.Duration   { return watchDropGuard }
-func ListenAddr() string              { return listenAddr }
-func LogFilePath() string             { return logFilePath }
-func ErrorLogPath() string            { return errorLogPath }
-func LogConsole() bool                { return logConsole }
-func LogAllowRegex() string           { return logAllowRegex }
-func LogDenyRegex() string            { return logDenyRegex }
-func LogDedupWindow() time.Duration   { return logDedupWin }
+func DataRoot() string                   { return dataRoot }
+func CacheMaxBytes() int64               { return cacheMaxBytes }
+func EvictTTL() time.Duration            { return evictTTL }
+func WaitMetadata() time.Duration        { return waitMetadata }
+func PrebufferBytes() int64              { return prebufferBytes }
+func PrebufferTimeout() time.Duration    { return prebufferTimeout }
+func TrackersMode() string               { return trackersMode }
+func TargetPlaySec() int64               { return targetPlaySec }
+func TargetPauseSec() int64              { return targetPauseSec }
+func TargetMaxBytes() int64              { return targetMaxBytes }
+func WarmReadAheadMB() int64             { return warmReadAheadMB }
+func TargetPlay4KSec() int64             { return targetPlay4KSec }
+func TargetPause4KSec() int64            { return targetPause4KSec }
+func WarmReadAhead4KMB() int64           { return warmReadAhead4KMB }
+func EndgameDuplicate() bool             { return endgameDuplicate }
+func WatchDropGuard() time.Duration      { return watchDropGuard }
+func WatchStaleAfter() time.Duration     { return watchStaleAfter }
+func WatchReaperInterval() time.Duration { return watchReaperIntv }
+func MaxActiveTitles() int               { return maxActiveTitles }
+func ListenAddr() string                 { return listenAddr }
+func LogFilePath() string                { return logFilePath }
+func ErrorLogPath() string               { return errorLogPath }
+func LogConsole() bool                   { return logConsole }
+func LogAllowRegex() string              { return logAllowRegex }
+func LogDenyRegex() string               { return logDenyRegex }
+func LogDedupWindow() time.Duration      { return logDedupWin }
 
 // helpers
 func getenv(k, def string) string {

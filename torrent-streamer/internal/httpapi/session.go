@@ -105,18 +105,21 @@ func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		SubjectID       string `json:"subjectId"`
-		SeriesID        string `json:"seriesId"`
-		Season          int    `json:"season"`
-		Episode         int    `json:"episode"`
-		PositionS       int    `json:"position_s"`
-		DurationS       int    `json:"duration_s"`
-		SourceURI       string `json:"sourceUri"`
-		SourceName      string `json:"sourceName"`
-		SourceKind      string `json:"sourceKind"`
-		SourceFileIndex *int   `json:"sourceFileIndex"`
-		NextSeason      *int   `json:"nextSeason"`
-		NextEpisode     *int   `json:"nextEpisode"`
+		SubjectID       string  `json:"subjectId"`
+		SeriesID        string  `json:"seriesId"`
+		Season          int     `json:"season"`
+		Episode         int     `json:"episode"`
+		PositionS       int     `json:"position_s"`
+		DurationS       int     `json:"duration_s"`
+		SourceURI       string  `json:"sourceUri"`
+		SourceName      string  `json:"sourceName"`
+		SourceKind      string  `json:"sourceKind"`
+		SourceFileIndex *int    `json:"sourceFileIndex"`
+		NextSeason      *int    `json:"nextSeason"`
+		NextEpisode     *int    `json:"nextEpisode"`
+		ClientID        string  `json:"clientId"`
+		SessionID       string  `json:"sessionId"`
+		Seq             int64   `json:"seq"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -144,7 +147,9 @@ func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 		next = &watch.EpisodeRef{Season: *in.NextSeason, Episode: *in.NextEpisode}
 	}
-	if err := h.d.Watch.SaveProgressUpdate(r.Context(), watch.ProgressUpdate{
+	// Server-ordered write path (FR-006): commit-order LWW with per-session
+	// seq guard. clientId is opaque last-writer metadata, never auth (FR-013).
+	result, err := h.d.Watch.SaveProgressUpdate(r.Context(), watch.ProgressUpdate{
 		SubjectID: in.SubjectID,
 		SeriesID:  in.SeriesID,
 		Season:    in.Season,
@@ -153,11 +158,21 @@ func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		Duration:  in.DurationS,
 		Source:    source,
 		Next:      next,
-	}); err != nil {
+		ClientID:  in.ClientID,
+		SessionID: in.SessionID,
+		Seq:       in.Seq,
+	})
+	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if result.Ignored != "" {
+		// Contract: naive callers get a 200 with an explicit ignored reason so
+		// a delayed retry never moves progress backward.
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "ignored": result.Ignored})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 

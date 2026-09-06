@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ExternalLink, Youtube } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Bookmark, ExternalLink, Heart, Play, SlidersHorizontal, Youtube } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
 import TorrentPanel from '../components/TorrentPanel';
-import { findAnimeIMDbId, getMovie as getTmdbMovie, getTv as getTmdbTv, getTvSeason } from '../lib/services/tmdb-service';
+import { findAnimeIMDbId, getMovie as getTmdbMovie, getTv as getTmdbTv } from '../lib/services/tmdb-service';
+import { getTvSeason, getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
+import { bffEpisodes, bffTitleDetail } from '../lib/services/catalog-bff';
+import { getCatalogSource } from '../lib/catalog-source';
 import { getAnime as getAniListAnime } from '../lib/services/anilist-service';
 import { getAnime as getJikanAnime } from '../lib/services/jikan-service';
-import { getAnimeEpisodeMetadata } from '../lib/services/anime-episode-metadata-service';
 import { getIMDbRating } from '../lib/services/imdb-service';
 import {
   detailFromTmdbMovie,
   detailFromTmdbTv,
   detailFromAniList,
   detailFromJikan,
+  detailFromBackendTitle,
   type Detail,
 } from '../lib/adapters/media';
 import { getSavedResumeSource } from '../lib/services/continue-service';
@@ -63,6 +66,9 @@ export default function TitlePage({
     return { subjectId, seriesId, season: resumeSeason, episode: resumeEpisode };
   }, [params?.resumeSubjectId, params?.resumeSeriesId, resumeSeason, resumeEpisode]);
   const [resumeSource, setResumeSource] = useState<SavedResumeSource | null>(null);
+  // Scroll target for the compact "Find sources" action; the ref must be
+  // created unconditionally (before any early return) to keep hook order.
+  const sourcesSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!resumeContext) {
@@ -141,6 +147,132 @@ export default function TitlePage({
         });
     };
 
+    // BFF-mode helpers (T042.3): map contract responses onto the episode
+    // shapes the panel consumes. Absolute server stills stay untouched.
+    type BffEpisodeRow = {
+      id: number;
+      episodeNumber: number;
+      absoluteNumber: number;
+      seasonNumber: number;
+      name: string;
+      overview?: string;
+      airDate?: string;
+      stillUrl?: string;
+      runtime?: number;
+      continuationAvailable?: boolean;
+    };
+
+    const stillUrlFrom = (still: string | null | undefined) =>
+      still ? (still.startsWith('http') ? still : `https://image.tmdb.org/t/p/w780${still}`) : undefined;
+
+    const bffEpisodeRows = async (catalogId: string, season: number): Promise<BffEpisodeRow[]> => {
+      const rows = await bffEpisodes(catalogId, season);
+      return rows.map((episode) => ({
+        id: episode.episode,
+        episodeNumber: episode.episode,
+        absoluteNumber: episode.episode,
+        seasonNumber: episode.season || season,
+        name: episode.title || `Episode ${episode.episode}`,
+        overview: episode.overview,
+        airDate: episode.airDate,
+        stillUrl: stillUrlFrom(episode.still),
+        runtime: episode.duration_s ? Math.round(episode.duration_s / 60) : undefined,
+        continuationAvailable: true,
+      }));
+    };
+
+    const loadBffTmdbEpisodes = async (tmdbId: number, season: number): Promise<BffEpisodeRow[]> => {
+      const seasonData = await getTvSeason(tmdbId, season);
+      return Array.isArray(seasonData.episodes)
+        ? seasonData.episodes.map((ep: any) => ({
+            id: ep.id,
+            episodeNumber: ep.episode_number,
+            seasonNumber: ep.season_number,
+            name: ep.name,
+            overview: ep.overview,
+            airDate: ep.air_date,
+            stillUrl: stillUrlFrom(ep.still_path),
+            runtime: ep.runtime,
+          }))
+        : [];
+    };
+
+    const loadBffTitle = async () => {
+      if (kind === 'movie' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'movie')) {
+        const row = await bffTitleDetail(`tmdb:${id}`);
+        publishDetail(detailFromBackendTitle(row));
+        setIsAnimeMovie(isTmdbBackedAnime);
+        setSeasons([]);
+        setInitialEpisodes([]);
+        return;
+      }
+
+      if (kind === 'tv' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'tv')) {
+        const row = await bffTitleDetail(`tmdb:${id}`);
+        publishDetail(detailFromBackendTitle(row));
+        setIsAnimeMovie(isTmdbBackedAnime);
+        const seasonsData = (row.seasons ?? [])
+          .filter((season) => season.number >= 0 && (season.episodeCount ?? 0) > 0)
+          .map((season) => ({
+            seasonNumber: season.number,
+            name: season.name || `Season ${season.number}`,
+            episodeCount: season.episodeCount,
+            airDate: season.airDate,
+            posterUrl: season.poster,
+          }));
+        setSeasons(seasonsData);
+        const firstSeason = Number.isInteger(requestedSeason) && seasonsData.some((s: any) => s.seasonNumber === requestedSeason)
+          ? requestedSeason
+          : seasonsData[0]?.seasonNumber ?? 1;
+        setInitialSeason(firstSeason);
+        setInitialEpisodes(await loadBffTmdbEpisodes(Number(id), firstSeason));
+        return;
+      }
+
+      // Anime (AniList-id route): the server detail already merges
+      // AniList/Jikan/Cinemeta enrichment, so no client-side Jikan fallback.
+      const catalogId = `anilist:${id}`;
+      const row = await bffTitleDetail(catalogId);
+      publishDetail(detailFromBackendTitle(row));
+      const seasonNumber = Number.isInteger(requestedSeason) && requestedSeason > 0 ? requestedSeason : 1;
+      let episodes: BffEpisodeRow[] = await bffEpisodeRows(catalogId, seasonNumber);
+      if (episodes.length === 0) {
+        const knownCount = row.seasons?.[0]?.episodeCount ?? 0;
+        episodes = Array.from({ length: Math.min(1000, Math.max(
+          knownCount,
+          Number.isInteger(requestedEpisode) && requestedEpisode > 0 ? requestedEpisode : 0,
+        )) }, (_, index) => {
+          const episodeNumber = index + 1;
+          return {
+            id: episodeNumber,
+            episodeNumber,
+            absoluteNumber: episodeNumber,
+            seasonNumber,
+            name: `Episode ${episodeNumber}`,
+            airDate: undefined,
+            continuationAvailable: undefined,
+          } as BffEpisodeRow;
+        });
+      }
+      if (Number.isInteger(requestedEpisode) && requestedEpisode > 0 &&
+          !episodes.some((episode) => episode.episodeNumber === requestedEpisode)) {
+        episodes.push({
+          id: requestedEpisode,
+          episodeNumber: requestedEpisode,
+          absoluteNumber: requestedEpisode,
+          seasonNumber,
+          name: `Episode ${requestedEpisode}`,
+          airDate: undefined,
+          continuationAvailable: false,
+        });
+        episodes.sort((left, right) => left.episodeNumber - right.episodeNumber);
+      }
+      setIsAnimeMovie(false);
+      setSeasons([{ seasonNumber, name: `Season ${seasonNumber}` }]);
+      setInitialSeason(seasonNumber);
+      setInitialEpisodes(episodes);
+    };
+
     async function load() {
       try {
         setLoading(true);
@@ -148,6 +280,13 @@ export default function TitlePage({
         setDetail(null);
         setEpisodeArtworkHydrating(false);
         console.log('[TitlePage] Loading', kind, id);
+
+        // BFF mode (T042.3): detail/seasons/episodes resolve through the
+        // /v2/catalog/* contract; renderer provider services are not called.
+        if (await getCatalogSource() === 'bff') {
+          await loadBffTitle();
+          return;
+        }
 
         if (kind === 'movie') {
           const raw = await getTmdbMovie(Number(id));
@@ -453,6 +592,36 @@ export default function TitlePage({
   const heroBackground = detail.backdropUrl || detail.posterUrl || null;
   const isMovie = kind === 'movie' || isAnimeMovie;
 
+  // WF03 compact toolbar (M2.3): bare Back / save / source tools. Save
+  // actions are DISABLED and truthful — library persistence lands with M3,
+  // so nothing here implies a saved change. Play appears only when a
+  // previously-used source can actually be resumed; otherwise the primary
+  // path is choosing a source in the panel below.
+  const canDirectResume = Boolean(resumeSource?.sourceUri && resumeSource.sourceUri.startsWith('magnet:'));
+  const scrollToSources = () => {
+    sourcesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const playResume = () => {
+    if (!canDirectResume || !resumeSource) return;
+    const params: Record<string, string> = {
+      magnet: resumeSource.sourceUri,
+      title: detail.title,
+      cat: isAnimeMovie ? 'anime' : kind === 'movie' ? 'movie' : 'tv',
+      sourceName: resumeSource.sourceName || 'Previously used source',
+    };
+    if (resumeContext) {
+      params.seriesId = resumeContext.seriesId;
+      params.season = String(resumeContext.season);
+      params.episode = String(resumeContext.episode);
+    }
+    if (kind === 'movie' || isTmdbBackedAnime || kind === 'tv') params.tmdbId = String(id);
+    if (detail.malId) params.malId = String(detail.malId);
+    if (resumeSource.fileIndex != null) params.fileIndex = String(resumeSource.fileIndex);
+    if (detail.year) params.year = String(detail.year);
+    navigate('player', params);
+  };
+  const saveUnavailableCopy = 'Library saving arrives with library sync (M3) — nothing is saved yet.';
+
   return (
     <div className="relative isolate min-h-screen px-5 pb-14 pt-6 md:px-8 lg:px-12">
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[#0a0a0a]">
@@ -474,10 +643,61 @@ export default function TitlePage({
       <div className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-t from-[#0a0a0a] via-transparent to-black/15" />
 
       <div className="mx-auto max-w-[1600px] space-y-6">
+        {/* Compact action toolbar (lg:hidden): desktop keeps the familiar
+            two-column layout unchanged (WF09). */}
+        <div className="flex items-center justify-between gap-2 lg:hidden">
+          <button
+            type="button"
+            onClick={() => navigate('home')}
+            aria-label="Back"
+            className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/80 backdrop-blur transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          >
+            <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <div className="flex items-center gap-1">
+            {canDirectResume ? (
+              <button
+                type="button"
+                onClick={playResume}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+                Resume
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled
+              aria-label="Save to Watch Later (unavailable: library sync not implemented)"
+              title={saveUnavailableCopy}
+              className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            >
+              <Bookmark className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              disabled
+              aria-label="Mark as Favourite (unavailable: library sync not implemented)"
+              title={saveUnavailableCopy}
+              className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            >
+              <Heart className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={scrollToSources}
+              aria-label="Find sources"
+              className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            >
+              <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white">
           <button
             onClick={() => navigate('home')}
-            className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-4 py-2 text-white/75 backdrop-blur transition hover:border-white/30 hover:text-white"
+            className="hidden lg:inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-4 py-2 text-white/75 backdrop-blur transition hover:border-white/30 hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to browse
@@ -623,7 +843,7 @@ export default function TitlePage({
             ) : null}
           </div>
 
-          <div className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+          <div ref={sourcesSectionRef} className="space-y-4 scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
             {isMovie ? (
               <TorrentPanel
                 title={detail.title}

@@ -1,5 +1,7 @@
 // Data adapters - copied from Next.js to transform API responses
 export type Card = {
+  catalogId?: string;
+  providerIds?: Record<string, string>;
   id: number;
   title: string;
   year?: number;
@@ -461,6 +463,62 @@ export function detailFromAniList(anime: Partial<AniListAnimeItem> & { id: numbe
     status: anime.status || null,
     totalEpisodes: anime.episodes ?? null,
     malId: anime.idMal ?? null,
+  };
+}
+
+// BackendTitleDetail mirrors the /v2/catalog/titles/{id} response
+// (contracts/v2-catalog-api.md). Declared structurally here so the adapter
+// stays import-cycle free from the BFF client.
+export type BackendTitleDetail = {
+  id: string;
+  type: 'movie' | 'series' | 'anime';
+  title: string;
+  originalTitle?: string;
+  year?: number;
+  overview?: string;
+  artwork?: Record<string, string>;
+  providerIds?: Record<string, string>;
+  imdbId?: string;
+  mergedFrom?: string[];
+  runtime?: number;
+  genres?: string[];
+  externalLinks?: Record<string, string>;
+  ratings?: { imdb?: { rating?: number; votes?: number; imdbId?: string } };
+  seasons?: Array<{ number: number; name?: string; episodeCount?: number; airDate?: string; poster?: string }>;
+};
+
+// detailFromBackendTitle maps the BFF title detail onto the renderer Detail
+// shape (T042.3). Fields the backend contract does not supply (cast, tagline,
+// directors, networks, trailer keys) stay unknown instead of being invented.
+export function detailFromBackendTitle(row: BackendTitleDetail): Detail {
+  const providerIds = row.providerIds ?? {};
+  const canonical = row.type === 'anime' && providerIds.anilist
+    ? 'anilist'
+    : (row.mergedFrom?.[0] ?? row.id.split(':', 1)[0] ?? 'tmdb');
+  const externalID = providerIds[canonical] ?? row.id.split(':').slice(1).join(':');
+  const numericID = /^\d+$/.test(externalID ?? '') ? Number(externalID) : 0;
+  const imdbRating = typeof row.ratings?.imdb?.rating === 'number' ? row.ratings.imdb.rating : null;
+  const totalEpisodes = (row.seasons ?? []).reduce((sum, season) => sum + (season.episodeCount ?? 0), 0);
+  return {
+    id: numericID,
+    title: row.title ?? '',
+    year: row.year,
+    overview: row.overview,
+    posterUrl: row.artwork?.poster ?? null,
+    backdropUrl: row.artwork?.background ?? null,
+    genres: Array.isArray(row.genres) ? row.genres.filter((genre): genre is string => Boolean(genre)) : [],
+    runtime: typeof row.runtime === 'number' && row.runtime > 0 ? row.runtime : null,
+    cast: [],
+    trailerKey: null,
+    imdbId: row.imdbId || providerIds.imdb || undefined,
+    tmdbPopularity: null,
+    tmdbRatingPct: null,
+    rating: null,
+    imdbRating,
+    imdbVotes: typeof row.ratings?.imdb?.votes === 'number' ? row.ratings.imdb.votes : null,
+    altTitles: row.originalTitle ? [row.originalTitle] : undefined,
+    totalEpisodes: totalEpisodes > 0 ? totalEpisodes : null,
+    malId: providerIds.jikan ? Number(providerIds.jikan) : null,
   };
 }
 

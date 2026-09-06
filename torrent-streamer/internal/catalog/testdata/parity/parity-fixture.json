@@ -1,0 +1,116 @@
+{
+  "scenario": "frieren-search",
+  "description": "Golden parity fixture: identical provider payloads consumed by the Electron renderer characterization harness (electron-app/scripts/parity/renderer-catalog.mjs) and the Go backend adapters (internal/catalog/parity_test.go). Payloads mirror the Phase 1 characterization fixtures (Frieren scenario).",
+  "query": "frieren",
+  "providers": {
+    "tmdb": {
+      "results": [
+        {
+          "media_type": "tv",
+          "id": 209867,
+          "name": "Frieren: Beyond Journey's End",
+          "original_name": "葬送のフリーレン",
+          "first_air_date": "2023-09-29",
+          "overview": "tv-overview",
+          "poster_path": "/frieren.jpg",
+          "backdrop_path": "/frieren-b.jpg",
+          "original_language": "ja",
+          "genre_ids": [16, 10759]
+        },
+        {
+          "media_type": "movie",
+          "id": 100,
+          "title": "Frieren Movie",
+          "original_title": "Frieren Movie",
+          "release_date": "2026-01-15",
+          "overview": "movie-overview",
+          "poster_path": "/movie.jpg",
+          "original_language": "en",
+          "genre_ids": [28]
+        },
+        {
+          "media_type": "tv",
+          "id": 300,
+          "name": "Live Action Show",
+          "original_name": "Live Action Show",
+          "first_air_date": "2020-01-01",
+          "overview": "live-overview",
+          "poster_path": "/live.jpg",
+          "original_language": "en",
+          "genre_ids": [16]
+        }
+      ]
+    },
+    "anilist": {
+      "data": {
+        "Page": {
+          "media": [
+            {
+              "id": 154587,
+              "idMal": 52991,
+              "title": { "english": "Frieren: Beyond Journey's End", "romaji": "Sousou no Frieren", "native": "葬送のフリーレン" },
+              "startDate": { "year": 2023, "month": 9, "day": 29 },
+              "description": "anilist-overview",
+              "averageScore": 89,
+              "popularity": 250000,
+              "countryOfOrigin": "JP",
+              "genres": ["Adventure"],
+              "coverImage": { "extraLarge": "xl.png", "large": "large.png" },
+              "bannerImage": "banner.png",
+              "externalLinks": [],
+              "episodes": 28,
+              "duration": 24
+            },
+            {
+              "id": 154587,
+              "idMal": 52991,
+              "title": { "english": "Frieren: Beyond Journey's End", "romaji": "Sousou no Frieren", "native": "葬送のフリーレン" },
+              "startDate": { "year": 2023, "month": 9, "day": 29 },
+              "description": "duplicate-entry",
+              "averageScore": 89,
+              "popularity": 250000,
+              "countryOfOrigin": "JP",
+              "genres": ["Adventure"],
+              "coverImage": { "large": "large.png" },
+              "bannerImage": null,
+              "externalLinks": [],
+              "episodes": 28,
+              "duration": 24
+            },
+            {
+              "id": 21,
+              "idMal": 21,
+              "title": { "english": "One Piece", "romaji": "One Piece", "native": "ワンピース" },
+              "startDate": { "year": 1999, "month": 10, "day": 20 },
+              "description": "op-overview",
+              "averageScore": 87,
+              "popularity": 900000,
+              "countryOfOrigin": "JP",
+              "genres": ["Action"],
+              "coverImage": { "large": "op.png" },
+              "bannerImage": null,
+              "externalLinks": [],
+              "episodes": 0,
+              "duration": 24
+            }
+          ]
+        }
+      }
+    },
+    "jikan": {
+      "data": [
+        {
+          "mal_id": 52991,
+          "title": "Sousou no Frieren",
+          "title_english": "Frieren: Beyond Journey's End",
+          "title_japanese": "葬送のフリーレン",
+          "synopsis": "jikan-overview",
+          "aired": { "from": "2023-09-29" },
+          "images": { "jpg": { "large_image_url": "jikan-large.jpg" } },
+          "genres": [],
+          "duration": "24 min per ep"
+        }
+      ]
+    }
+  }
+}

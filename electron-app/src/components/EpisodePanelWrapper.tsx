@@ -5,11 +5,13 @@ import { useRouter } from '../lib/router-adapter';
 import { ArrowLeft, ChevronRight, Clock3, Loader2 } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { getTvSeason } from '../lib/services/tmdb-service';
-import { getCinemetaSeasonMetadata } from '../lib/services/cinemeta-service';
+import { getTvSeason } from '../lib/services/catalog-gateway';
+import { getCinemetaSeasonMetadata } from '../lib/services/catalog-gateway';
 import { resolveTorrentSource, searchTvTorrents, searchAnimeTorrents } from '../lib/services/torrent-search-service';
 import { resolveTorrentFile } from '../lib/services/resolve-service';
 import { getSavedResumeSource } from '../lib/services/continue-service';
+import { getVodBase } from '../lib/api-client';
+import { usePlatform } from '../platform/PlatformProvider';
 import type { ResumeSourceContext, SavedResumeSource, TorrentRow } from '../lib/types';
 import { prioritizePreviouslyUsedTorrent, torrentInfoHash } from '../lib/torrent-identity';
 import {
@@ -102,8 +104,8 @@ const formatBytes = (value?: number) => {
   return `${size.toFixed(2)} ${units[idx]}`;
 };
 
-const VOD_BASE = 'http://localhost:4001';
-const isElectron = typeof window !== 'undefined' && Boolean(window.electronAPI);
+// The backend origin is read per call so runtime origin switches apply.
+const getStreamBase = () => getVodBase();
 
 function ArtworkLoadingDots() {
   return (
@@ -181,6 +183,7 @@ export default function EpisodePanel({
   resumeSource,
 }: Props) {
   const router = useRouter();
+  const platform = usePlatform();
   const [selectedSeason, setSelectedSeason] = useState(initialSeason);
   const [episodes, setEpisodes] = useState<EpisodeSummary[]>(initialEpisodes);
   const [seasonLoading, setSeasonLoading] = useState(false);
@@ -622,9 +625,9 @@ export default function EpisodePanel({
         params.seriesId = `tmdb:tv:${tmdbId}`;
       }
 
-      if (isElectron) {
-        if (!window.electronAPI) {
-          setTorrentError('Electron API is not available');
+      if (platform.kind === 'electron') {
+        if (!platform.desktop) {
+          setTorrentError('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
           return;
         }
         if (fileIndex != null) params.fileIndex = String(fileIndex);
@@ -643,15 +646,10 @@ export default function EpisodePanel({
         }
         router.push('player', params);
       } else {
-        // Web fallback - download M3U
-        const streamUrl = `${VOD_BASE}/stream?cat=${kind}&magnet=${encodeURIComponent(magnet)}&subjectId=${getDeviceId()}&trackProgress=1`;
-        const blob = new Blob([`#EXTM3U\n#EXTINF:-1,${params.title}\n${streamUrl}\n`], { type: 'audio/x-mpegurl' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${params.title}.m3u`;
-        a.click();
-        URL.revokeObjectURL(url);
+        // Truthful non-Electron fallback (M2.3): real mobile playback lands
+        // with the M1.3 player milestone — no M3U is silently downloaded.
+        setTorrentError('Playback arrives with the mobile player milestone — this preview did not start or save anything.');
+        return;
       }
     } catch (err) {
       setTorrentError(err instanceof Error ? err.message : 'Playback failed');
@@ -722,7 +720,7 @@ export default function EpisodePanel({
         ? `S${String(activeEpisode.seasonNumber || selectedSeason).padStart(2, '0')}E${String(activeEpisode.episodeNumber).padStart(2, '0')}`
         : '';
       const displayTitle = episodeCode ? `${title} — ${episodeCode}` : title;
-      const streamUrl = `${VOD_BASE}/stream?${streamParams.toString()}`;
+      const streamUrl = `${getStreamBase()}/stream?${streamParams.toString()}`;
       const m3u = `#EXTM3U\n#EXTINF:-1,${displayTitle}\n#EXTVLCOPT:http-reconnect=true\n${streamUrl}\n`;
       const blob = new Blob([m3u], { type: 'audio/x-mpegurl' });
       const url = URL.createObjectURL(blob);
@@ -901,13 +899,15 @@ export default function EpisodePanel({
           {torrentError ? (
             <div className="border-b border-white/[0.08] px-5 py-4 text-sm text-red-100" role="alert">
               <p>{torrentError}</p>
-              <button
-                type="button"
-                onClick={() => void window.electronAPI?.openSetup()}
-                className="mt-3 min-h-10 rounded-full border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-              >
-                Open settings
-              </button>
+              {platform.desktop ? (
+                <button
+                  type="button"
+                  onClick={() => platform.desktop?.openSetup()}
+                  className="mt-3 min-h-10 rounded-full border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                >
+                  Open settings
+                </button>
+              ) : null}
             </div>
           ) : null}
 

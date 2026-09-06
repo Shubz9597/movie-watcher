@@ -1,0 +1,214 @@
+{
+  "index": [
+    {
+      "name": "home-320x568",
+      "viewport": "320x568",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-320x568.png"
+    },
+    {
+      "name": "home-375x667",
+      "viewport": "375x667",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-375x667.png"
+    },
+    {
+      "name": "home-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-390x844.png"
+    },
+    {
+      "name": "home-430x932",
+      "viewport": "430x932",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-430x932.png"
+    },
+    {
+      "name": "home-360x800",
+      "viewport": "360x800",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-360x800.png"
+    },
+    {
+      "name": "home-844x390",
+      "viewport": "844x390",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-844x390.png"
+    },
+    {
+      "name": "home-768x1024",
+      "viewport": "768x1024",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-768x1024.png"
+    },
+    {
+      "name": "home-1440x900",
+      "viewport": "1440x900",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\home-1440x900.png"
+    },
+    {
+      "name": "library-320x568",
+      "viewport": "320x568",
+      "url": "?fixtures=1#/library",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\library-320x568.png"
+    },
+    {
+      "name": "title-320x568",
+      "viewport": "320x568",
+      "url": "?fixtures=1#title?kind=movie&id=693134",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\title-320x568.png"
+    },
+    {
+      "name": "library-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1#/library",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\library-390x844.png"
+    },
+    {
+      "name": "title-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1#title?kind=movie&id=693134",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\title-390x844.png"
+    },
+    {
+      "name": "library-768x1024",
+      "viewport": "768x1024",
+      "url": "?fixtures=1#/library",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\library-768x1024.png"
+    },
+    {
+      "name": "title-768x1024",
+      "viewport": "768x1024",
+      "url": "?fixtures=1#title?kind=movie&id=693134",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\title-768x1024.png"
+    },
+    {
+      "name": "library-1440x900",
+      "viewport": "1440x900",
+      "url": "?fixtures=1#/library",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\library-1440x900.png"
+    },
+    {
+      "name": "title-1440x900",
+      "viewport": "1440x900",
+      "url": "?fixtures=1#title?kind=movie&id=693134",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\title-1440x900.png"
+    },
+    {
+      "name": "search-sheet-320x568",
+      "viewport": "320x568",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\search-sheet-320x568.png"
+    },
+    {
+      "name": "search-sheet-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\search-sheet-390x844.png"
+    },
+    {
+      "name": "search-sheet-1440x900",
+      "viewport": "1440x900",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\search-sheet-1440x900.png"
+    },
+    {
+      "name": "text200-home-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\text200-home-390x844.png"
+    },
+    {
+      "name": "text200-library-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1#/library",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\text200-library-390x844.png"
+    },
+    {
+      "name": "text200-title-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1#/title?kind=movie&id=693134",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\text200-title-390x844.png"
+    },
+    {
+      "name": "reduced-motion-home-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\reduced-motion-home-390x844.png"
+    },
+    {
+      "name": "reduced-motion-sheet-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\reduced-motion-sheet-390x844.png"
+    },
+    {
+      "name": "stress100-library-category-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1&stress=100#/library-category?collection=watch-later&kind=movie",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\stress100-library-category-390x844.png"
+    },
+    {
+      "name": "carousel-start-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\carousel-start-390x844.png"
+    },
+    {
+      "name": "carousel-middle-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\carousel-middle-390x844.png"
+    },
+    {
+      "name": "carousel-end-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\carousel-end-390x844.png"
+    },
+    {
+      "name": "interaction-swipe-vs-tap",
+      "result": {
+        "swipeOk": true,
+        "tapOk": true,
+        "afterDrag": {
+          "noticeShown": false,
+          "hash": ""
+        },
+        "afterTap": {
+          "noticeShown": true,
+          "hash": ""
+        }
+      }
+    },
+    {
+      "name": "interaction-library-back",
+      "result": {
+        "restored": true,
+        "beforeBack": {
+          "hash": "#library-category?collection=watch-later&kind=movie",
+          "scrollY": 900
+        },
+        "afterBack": {
+          "hash": "#library?collection=watch-later",
+          "scrollY": 181,
+          "maxScroll": 181,
+          "tabWatchLater": "Watch Later"
+        }
+      }
+    },
+    {
+      "name": "simulated-keyboard-focus-search-390x844",
+      "viewport": "390x844",
+      "url": "?fixtures=1",
+      "file": "Z:\\Projects\\movie-watcher\\specs\\002-mobile-shared-ui\\evidence\\captures\\m25\\simulated-keyboard-focus-search-390x844.png"
+    },
+    {
+      "name": "note-simulated-keyboard",
+      "result": "Captured with an focused input at phone size; no native software keyboard is present in headless Chromium. Native IME occlusion is verified only on devices (M5/M6)."
+    }
+  ],
+  "failures": []
+}

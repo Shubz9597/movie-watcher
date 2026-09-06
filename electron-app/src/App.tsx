@@ -5,6 +5,8 @@ import RuntimeStatusBar from './components/RuntimeStatusBar';
 import TmdbConnectionGate from './components/TmdbConnectionGate';
 import WindowChrome from './components/WindowChrome';
 import HomePage from './pages/HomePage';
+import { PlatformProvider } from './platform/PlatformProvider';
+import { createElectronPlatform } from './platform/electron';
 import {
   loadPlayerPage,
   loadSeeAllPage,
@@ -12,6 +14,11 @@ import {
   loadWatchPage,
 } from './lib/route-loaders';
 import type { CatalogState } from './types/electron';
+
+// The Electron platform is composed once here (M2.3): shared components
+// consume ports via usePlatform() instead of window.electronAPI. The
+// adapter wraps the same bridge calls, so behavior is unchanged.
+const electronPlatform = createElectronPlatform();
 
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
@@ -96,7 +103,8 @@ export default function App() {
   const isKnownRoute = ['home', 'title', 'see-all', 'watch', 'player'].includes(route.path);
 
   return (
-    <RouterProvider navigate={navigate}>
+    <PlatformProvider platform={electronPlatform}>
+      <RouterProvider navigate={navigate}>
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <WindowChrome />
         {!isPlayerPage ? (
@@ -155,7 +163,8 @@ export default function App() {
           )}
         </main>
       </div>
-    </RouterProvider>
+      </RouterProvider>
+    </PlatformProvider>
   );
 }
 

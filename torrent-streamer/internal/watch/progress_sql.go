@@ -14,7 +14,7 @@ type Store struct{ DB *sql.DB }
 func NewStore(db *sql.DB) *Store { return &Store{DB: db} }
 
 func (s *Store) SaveProgress(ctx context.Context, subjectID, seriesID string, season, episode, pos, dur int) error {
-	return s.SaveProgressUpdate(ctx, ProgressUpdate{
+	_, err := s.SaveProgressUpdate(ctx, ProgressUpdate{
 		SubjectID: subjectID,
 		SeriesID:  seriesID,
 		Season:    season,
@@ -22,6 +22,7 @@ func (s *Store) SaveProgress(ctx context.Context, subjectID, seriesID string, se
 		Position:  pos,
 		Duration:  dur,
 	})
+	return err
 }
 
 type ProgressSource struct {
@@ -40,19 +41,36 @@ type EpisodeRef struct {
 // ProgressUpdate contains one playback checkpoint and its known successor.
 // Next is optional; when the checkpoint is complete, it becomes the series'
 // Continue Watching entry without overwriting any progress already saved for it.
+//
+// V2 ordering metadata (all optional — V1 callers omit them and behave
+// exactly as before, contract rule 7):
+//   - ClientID/SessionID/Seq enable the per-session sequence guard and
+//     last-writer metadata (FR-006; clientId is opaque, never auth).
+//   - LowFidelity marks the stream byte-ratio estimate so it never
+//     overwrites a row written by an explicit client session.
 type ProgressUpdate struct {
-	SubjectID string
-	SeriesID  string
-	Season    int
-	Episode   int
-	Position  int
-	Duration  int
-	Source    *ProgressSource
-	Next      *EpisodeRef
+	SubjectID   string
+	SeriesID    string
+	Season      int
+	Episode     int
+	Position    int
+	Duration    int
+	Source      *ProgressSource
+	Next        *EpisodeRef
+	ClientID    string
+	SessionID   string
+	Seq         int64
+	LowFidelity bool
+}
+
+// SaveResult reports whether the ordered write path accepted the update or
+// ignored it under the contracted rules.
+type SaveResult struct {
+	Ignored string // "" when accepted; "stale_seq" | "stale_estimate"
 }
 
 func (s *Store) SaveProgressWithSource(ctx context.Context, subjectID, seriesID string, season, episode, pos, dur int, source *ProgressSource) error {
-	return s.SaveProgressUpdate(ctx, ProgressUpdate{
+	_, err := s.SaveProgressUpdate(ctx, ProgressUpdate{
 		SubjectID: subjectID,
 		SeriesID:  seriesID,
 		Season:    season,
@@ -61,19 +79,23 @@ func (s *Store) SaveProgressWithSource(ctx context.Context, subjectID, seriesID 
 		Duration:  dur,
 		Source:    source,
 	})
+	return err
 }
 
-// SaveProgressUpdate persists a checkpoint and atomically queues its known
-// successor when the current episode reaches the completion threshold.
-func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) error {
+// SaveProgressUpdate persists a checkpoint through the server-ordered write
+// path and atomically queues its known successor when the current episode
+// reaches the completion threshold. Ordering: commit-order LWW with a
+// monotonic progress_revision; per-session seq guard; deliberate rewind is a
+// valid write; furthest-position-wins is prohibited.
+func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) (SaveResult, error) {
 	subjectID := strings.TrimSpace(update.SubjectID)
 	seriesID := strings.TrimSpace(update.SeriesID)
 	if subjectID == "" || seriesID == "" {
-		return fmt.Errorf("subjectID and seriesID are required")
+		return SaveResult{}, fmt.Errorf("subjectID and seriesID are required")
 	}
 	season, episode := update.Season, update.Episode
 	if season < 0 || episode < 0 {
-		return fmt.Errorf("season and episode cannot be negative")
+		return SaveResult{}, fmt.Errorf("season and episode cannot be negative")
 	}
 	pos, dur := update.Position, update.Duration
 	if pos < 0 {
@@ -93,23 +115,23 @@ func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) e
 		source.Name = strings.TrimSpace(source.Name)
 		source.Kind = strings.TrimSpace(source.Kind)
 		if source.URI == "" || len(source.URI) > 32768 || (source.FileIndex != nil && *source.FileIndex < 0) {
-			return fmt.Errorf("invalid playback source")
+			return SaveResult{}, fmt.Errorf("invalid playback source")
 		}
 		if nameRunes := []rune(source.Name); len(nameRunes) > 1000 {
 			source.Name = string(nameRunes[:1000])
 		}
 		if len(source.Kind) > 32 {
-			return fmt.Errorf("invalid source kind")
+			return SaveResult{}, fmt.Errorf("invalid source kind")
 		}
 	}
 	var next *EpisodeRef
 	if update.Next != nil {
 		nextCopy := *update.Next
 		if nextCopy.Season < 0 || nextCopy.Episode <= 0 {
-			return fmt.Errorf("invalid next episode")
+			return SaveResult{}, fmt.Errorf("invalid next episode")
 		}
 		if nextCopy.Season == season && nextCopy.Episode == episode {
-			return fmt.Errorf("next episode must differ from current episode")
+			return SaveResult{}, fmt.Errorf("next episode must differ from current episode")
 		}
 		next = &nextCopy
 	}
@@ -120,9 +142,51 @@ func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) e
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin progress transaction: %w", err)
+		return SaveResult{}, fmt.Errorf("begin progress transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Ensure the row exists before locking it. ON CONFLICT waits for another
+	// first writer, so concurrent inserts follow the same ordering as updates.
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, duration_s, percent, progress_revision)
+VALUES ($1,$2,$3,$4,0,0,0,0)
+ON CONFLICT (subject_id, series_id, season, episode) DO NOTHING`,
+		subjectID, seriesID, season, episode); err != nil {
+		return SaveResult{}, fmt.Errorf("ensure progress row: %w", err)
+	}
+	var state ProgressRowState
+	var progressID int64
+	err = tx.QueryRowContext(ctx, `
+SELECT id, progress_revision, COALESCE(stream_session_id, '')
+FROM watch_progress
+WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4
+FOR UPDATE`,
+		subjectID, seriesID, season, episode).Scan(&progressID, &state.Revision, &state.SessionID)
+	if err != nil {
+		return SaveResult{}, fmt.Errorf("lock progress row: %w", err)
+	}
+	state.Exists = state.Revision > 0
+	update.SessionID = strings.TrimSpace(update.SessionID)
+	if update.SessionID != "" {
+		var lastSeq int64
+		err := tx.QueryRowContext(ctx, `
+SELECT last_seq FROM watch_progress_sessions
+WHERE progress_id=$1 AND session_id=$2`, progressID, update.SessionID).Scan(&lastSeq)
+		switch {
+		case err == nil:
+			state.LastSeq = &lastSeq
+		case errors.Is(err, sql.ErrNoRows):
+			// This session has not written progress for this item yet.
+		default:
+			return SaveResult{}, fmt.Errorf("read session sequence: %w", err)
+		}
+	}
+
+	decision := DecideOrderedWrite(state, update)
+	if !decision.Accepted {
+		return SaveResult{Ignored: decision.Ignored}, tx.Commit()
+	}
 
 	var sourceURI, sourceName, sourceKind any
 	var sourceFileIndex any
@@ -132,24 +196,41 @@ func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) e
 			sourceFileIndex = *source.FileIndex
 		}
 	}
+	writerClientID := strings.TrimSpace(update.ClientID)
+	sessionID := strings.TrimSpace(update.SessionID)
+	var writerArg, sessionArg any
+	if sessionID != "" {
+		// Last-writer metadata is recorded only for explicit client sessions;
+		// anonymous (legacy/auto-save) writes leave it untouched.
+		writerArg, sessionArg = writerClientID, sessionID
+	}
+
 	if _, err = tx.ExecContext(ctx, `
-INSERT INTO watch_progress (
-  subject_id, series_id, season, episode, position_s, duration_s, percent,
-  source_uri, source_name, source_kind, source_file_index, created_at, updated_at
-)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), now())
-ON CONFLICT (subject_id, series_id, season, episode) DO UPDATE
-SET position_s=EXCLUDED.position_s,
-    duration_s=EXCLUDED.duration_s,
-    percent=EXCLUDED.percent,
-    source_uri=COALESCE(EXCLUDED.source_uri, watch_progress.source_uri),
-    source_name=COALESCE(EXCLUDED.source_name, watch_progress.source_name),
-    source_kind=COALESCE(EXCLUDED.source_kind, watch_progress.source_kind),
-    source_file_index=COALESCE(EXCLUDED.source_file_index, watch_progress.source_file_index),
-    updated_at=now()`,
+UPDATE watch_progress
+SET position_s=$5, duration_s=$6, percent=$7,
+    source_uri=COALESCE($8, source_uri),
+    source_name=COALESCE($9, source_name),
+    source_kind=COALESCE($10, source_kind),
+    source_file_index=COALESCE($11, source_file_index),
+    progress_revision=$12,
+    writer_client_id=COALESCE($13, writer_client_id),
+    stream_session_id=COALESCE($14, stream_session_id),
+    last_seq=CASE WHEN COALESCE($14, '') <> '' THEN $15 ELSE last_seq END,
+    updated_at=now()
+WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
 		subjectID, seriesID, season, episode, pos, dur, percent,
-		sourceURI, sourceName, sourceKind, sourceFileIndex); err != nil {
-		return fmt.Errorf("save episode progress: %w", err)
+		sourceURI, sourceName, sourceKind, sourceFileIndex,
+		decision.NextRevision, writerArg, sessionArg, update.Seq); err != nil {
+		return SaveResult{}, fmt.Errorf("save episode progress: %w", err)
+	}
+	if sessionID != "" {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO watch_progress_sessions (progress_id, session_id, last_seq)
+VALUES ($1,$2,$3)
+ON CONFLICT (progress_id, session_id) DO UPDATE SET last_seq=EXCLUDED.last_seq`,
+			progressID, sessionID, update.Seq); err != nil {
+			return SaveResult{}, fmt.Errorf("save session sequence: %w", err)
+		}
 	}
 
 	// A new partial watch makes any old dismissal for this item stale.
@@ -159,7 +240,7 @@ SET position_s=EXCLUDED.position_s,
 DELETE FROM continue_dismissals
 WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
 			subjectID, seriesID, season, episode); err != nil {
-			return fmt.Errorf("clear progress dismissal: %w", err)
+			return SaveResult{}, fmt.Errorf("clear progress dismissal: %w", err)
 		}
 	}
 
@@ -171,20 +252,20 @@ INSERT INTO watch_progress (
 VALUES ($1,$2,$3,$4,0,0,0,now(),now())
 ON CONFLICT (subject_id, series_id, season, episode) DO UPDATE
 SET updated_at=now()`, subjectID, seriesID, next.Season, next.Episode); err != nil {
-			return fmt.Errorf("queue next episode: %w", err)
+			return SaveResult{}, fmt.Errorf("queue next episode: %w", err)
 		}
 		if _, err = tx.ExecContext(ctx, `
 DELETE FROM continue_dismissals
 WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
 			subjectID, seriesID, next.Season, next.Episode); err != nil {
-			return fmt.Errorf("clear next episode dismissal: %w", err)
+			return SaveResult{}, fmt.Errorf("clear next episode dismissal: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit progress transaction: %w", err)
+		return SaveResult{}, fmt.Errorf("commit progress transaction: %w", err)
 	}
-	return nil
+	return SaveResult{}, nil
 }
 
 type Resume struct {

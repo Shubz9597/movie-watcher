@@ -12,11 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/anacrolix/torrent"
@@ -833,15 +831,7 @@ func ClientGone(err error) bool {
 	if strings.Contains(s, "broken pipe") || strings.Contains(s, "reset by peer") {
 		return true
 	}
-	var op *net.OpError
-	if errors.As(err, &op) {
-		if se, ok := op.Err.(*os.SyscallError); ok && runtime.GOOS == "windows" {
-			if se.Err == syscall.WSAECONNRESET || se.Err == syscall.WSAECONNABORTED {
-				return true
-			}
-		}
-	}
-	return false
+	return socketDisconnected(err)
 }
 
 func mustParseMagnet(src string) metainfo.Hash {

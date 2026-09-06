@@ -1,4 +1,5 @@
 import type { PlayerBridge, PlayerState } from './types';
+import { getVodBase } from '../lib/api-client';
 
 declare global {
   interface Window {
@@ -43,9 +44,9 @@ function createPreviewBridge(): PlayerBridge {
           source: 'opensub',
           providerConfigured: true,
           tracks: [
-            { source: 'opensub', lang: 'en', fileName: 'Movie.2026.WEBRip.AMZN.srt', format: 'srt', downloadCount: 18432, trusted: true, movieHashMatched: true, url: 'http://localhost:4001/subtitles/external?source=opensub&id=1&lang=en' },
-            { source: 'opensub', lang: 'en', fileName: 'Movie.2026.BluRay.x264.HI.srt', format: 'srt', downloadCount: 7821, hearingImpaired: true, url: 'http://localhost:4001/subtitles/external?source=opensub&id=2&lang=en' },
-            { source: 'opensub', lang: 'en', fileName: 'Movie.2026.WEB-DL.NTb.srt', format: 'srt', downloadCount: 3190, url: 'http://localhost:4001/subtitles/external?source=opensub&id=3&lang=en' },
+            { source: 'opensub', lang: 'en', fileName: 'Movie.2026.WEBRip.AMZN.srt', format: 'srt', downloadCount: 18432, trusted: true, movieHashMatched: true, url: `${getVodBase()}/subtitles/external?source=opensub&id=1&lang=en` },
+            { source: 'opensub', lang: 'en', fileName: 'Movie.2026.BluRay.x264.HI.srt', format: 'srt', downloadCount: 7821, hearingImpaired: true, url: `${getVodBase()}/subtitles/external?source=opensub&id=2&lang=en` },
+            { source: 'opensub', lang: 'en', fileName: 'Movie.2026.WEB-DL.NTb.srt', format: 'srt', downloadCount: 3190, url: `${getVodBase()}/subtitles/external?source=opensub&id=3&lang=en` },
           ],
         });
   }, 80);
