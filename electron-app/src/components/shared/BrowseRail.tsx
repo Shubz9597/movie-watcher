@@ -25,7 +25,7 @@ const DESTINATIONS: BrowseDestination[] = [
 
 export function BrowseRail({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
   return (
-    <nav aria-label="Browse categories" className="border-b border-white/[0.06]">
+    <nav aria-label="Browse categories" className="border-b border-white/[0.06] md:hidden">
       <div className="hide-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5 py-3 md:mx-0 md:flex-wrap md:px-0">
         {DESTINATIONS.map((destination) => (
           <button

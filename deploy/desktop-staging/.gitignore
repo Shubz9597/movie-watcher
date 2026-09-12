@@ -1,0 +1,7 @@
+# Desktop staging: local operator secrets and generated runtime state.
+.env
+build/
+logs/
+data/
+data-playback/
+state.json

@@ -1,6 +1,6 @@
-# Feature 002: shared mobile UI and household library
+﻿# Feature 002: shared mobile UI and household library
 
-Status: alpha design accepted on 2026-09-06; implementation not started. Visual refinement remains open because the owner considers the current design below the final quality target. Depends on verified Version 2 catalog, playback/session, and progress contracts in feature 001. User priority: iPhone first, Android second, shared behavior and UI with Electron; Watch Later, Favourites, light recommendations. Baseline behavior is unknown until M0 verification. See [architecture](../../docs/mobile-ui/architecture.md) and [change map](../../docs/mobile-ui/change-map.md) for the OpenCode implementation boundary.
+Status: implementation in progress as of 2026-09-12. The shared responsive UI, qualified catalog identity, household Library and sync, recommendations, desktop staging, and the server-side playback compatibility foundation are implemented with evidence; native Capacitor shells and physical-device playback remain open. Visual refinement also remains open because the owner considers the current design below the final quality target. User priority: iPhone first, Android second, with shared behavior and UI across mobile and Electron. See [plan](plan.md), [tasks](tasks.md), [architecture](../../docs/mobile-ui/architecture.md), and [change map](../../docs/mobile-ui/change-map.md).
 
 ## User stories and acceptance
 
@@ -23,6 +23,7 @@ Status: alpha design accepted on 2026-09-06; implementation not started. Visual 
 - FR07: Recommendations are deterministic, bounded, server-side and explainable. Favourite genre overlap is the initial signal; no trained model, external AI call, or embeddings. Missing data and upstream failure never block Home or playback. Detailed algorithm and cache rules are in plan.md.
 - FR08: Use the revised mobile design extension and wireframe screen IDs; support small phones, safe areas, keyboard, rotation, font scaling, accessible names, and screen reader navigation. Familiar toolbar actions use bare icons with 48px touch targets; no pill-shaped Back/Settings or search-like full-width Resume beneath cards. Bottom destinations keep icons and small labels; error/recovery copy stays readable. Desktop keyboard and MPV behavior stay intact.
 - FR09: Capability-negotiated playback must distinguish supported media from unsupported container/video/audio/subtitle combinations. Provide a useful retry/choose-another-source path. Do not claim iPhone support based on desktop MPV or a browser screenshot.
+- FR11 (OWNER DECISION 2026-09-12): The final mobile product is installed native iOS and Android applications; the shared React UI is packaged later with Capacitor. iOS playback uses a Swift AVPlayer adapter, Android a Kotlin Media3 adapter; both implement the shared TypeScript PlayerPort and consume ONE homeserver playback compatibility service (HLS/fMP4 + WebVTT; compatible sources direct-play). The browser/PWA player stays a development/staging tool. No separate mobile catalog/library/recommendation implementations are permitted.
 - FR10: All builds use compatible versioned BFF contracts. An older server without Library capability yields an explicit unavailable state; it must not cause a renderer to store a divergent local library or contact providers directly.
 
 ## State and data ranges

@@ -19,6 +19,8 @@ import {
   type Detail,
 } from '../lib/adapters/media';
 import { getSavedResumeSource } from '../lib/services/continue-service';
+import { useLibraryState } from '../lib/library-react';
+import { LibraryToggle } from '../components/shared/LibraryToggle';
 import type { ResumeSourceContext, SavedResumeSource } from '../lib/types';
 
 function IMDbMark({ className = '' }: { className?: string }) {
@@ -58,6 +60,24 @@ export default function TitlePage({
   const resumeEpisode = Number(params?.resumeEpisode);
   const isTmdbBackedAnime = kind === 'anime' && params?.provider === 'tmdb';
   const tmdbAnimeMediaKind = params?.mediaKind === 'movie' ? 'movie' : 'tv';
+  // Library membership (M3.3): the canonical id comes from the route's
+  // explicit media namespace — the same qualified identity rule as detail
+  // requests. It is never the ambiguous tmdb:N form and the qualifier is
+  // never stripped.
+  const libraryCanonicalId = !id
+    ? null
+    : kind === 'movie'
+      ? `tmdb:movie:${id}`
+      : kind === 'tv'
+        ? `tmdb:tv:${id}`
+        : isTmdbBackedAnime
+          ? `tmdb:${tmdbAnimeMediaKind}:${id}`
+          : kind === 'anime'
+            ? `anilist:${id}`
+            : null;
+  const libraryState = useLibraryState();
+  const libraryAvailable = Boolean(libraryState?.availability === 'available' && libraryCanonicalId);
+  const saveUnavailableCopy = 'Library saving arrives with library sync (M3) — nothing is saved yet.';
   const resumeContext = useMemo<ResumeSourceContext | null>(() => {
     const subjectId = params?.resumeSubjectId?.trim();
     const seriesId = params?.resumeSeriesId?.trim();
@@ -198,8 +218,12 @@ export default function TitlePage({
     };
 
     const loadBffTitle = async () => {
+      // M3.1.1: detail requests use the media-qualified canonical id built
+      // from the route's explicit media namespace (kind / mediaKind) — the
+      // unqualified `tmdb:N` form is a read-only legacy alias, never a
+      // detail lookup.
       if (kind === 'movie' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'movie')) {
-        const row = await bffTitleDetail(`tmdb:${id}`);
+        const row = await bffTitleDetail(`tmdb:movie:${id}`);
         publishDetail(detailFromBackendTitle(row));
         setIsAnimeMovie(isTmdbBackedAnime);
         setSeasons([]);
@@ -208,7 +232,7 @@ export default function TitlePage({
       }
 
       if (kind === 'tv' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'tv')) {
-        const row = await bffTitleDetail(`tmdb:${id}`);
+        const row = await bffTitleDetail(`tmdb:tv:${id}`);
         publishDetail(detailFromBackendTitle(row));
         setIsAnimeMovie(isTmdbBackedAnime);
         const seasonsData = (row.seasons ?? [])
@@ -620,7 +644,6 @@ export default function TitlePage({
     if (detail.year) params.year = String(detail.year);
     navigate('player', params);
   };
-  const saveUnavailableCopy = 'Library saving arrives with library sync (M3) — nothing is saved yet.';
 
   return (
     <div className="relative isolate min-h-screen px-5 pb-14 pt-6 md:px-8 lg:px-12">
@@ -665,24 +688,33 @@ export default function TitlePage({
                 Resume
               </button>
             ) : null}
-            <button
-              type="button"
-              disabled
-              aria-label="Save to Watch Later (unavailable: library sync not implemented)"
-              title={saveUnavailableCopy}
-              className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-            >
-              <Bookmark className="h-5 w-5" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              disabled
-              aria-label="Mark as Favourite (unavailable: library sync not implemented)"
-              title={saveUnavailableCopy}
-              className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-            >
-              <Heart className="h-5 w-5" aria-hidden="true" />
-            </button>
+            {libraryAvailable && libraryCanonicalId ? (
+              <>
+                <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" />
+                <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" />
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled
+                  aria-label="Save to Watch Later (unavailable: library sync not implemented)"
+                  title={saveUnavailableCopy}
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                >
+                  <Bookmark className="h-5 w-5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  aria-label="Mark as Favourite (unavailable: library sync not implemented)"
+                  title={saveUnavailableCopy}
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                >
+                  <Heart className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={scrollToSources}

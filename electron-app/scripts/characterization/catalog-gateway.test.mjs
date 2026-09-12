@@ -19,14 +19,14 @@ import { detailFromBackendTitle } from "../../src/lib/adapters/media.ts";
 import { createCatalogGateway } from "../../src/lib/services/catalog-gateway.ts";
 
 const bffTitleRow = {
-  id: "tmdb:209867",
+  id: "tmdb:tv:209867",
   type: "anime",
   title: "Frieren: Beyond Journey's End",
   originalTitle: "葬送のフリーレン",
   year: 2023,
   overview: "merged-overview",
   artwork: { poster: "https://poster.png", background: "https://bg.png" },
-  providerIds: { tmdb: "209867", anilist: "154587", jikan: "52991" },
+  providerIds: { tmdb: "tv:209867", anilist: "154587", jikan: "52991" },
   imdbId: "tt28015436",
   mergedFrom: ["tmdb", "anilist", "jikan"],
 };
@@ -53,7 +53,7 @@ test("backendTitleToCard maps the contract row onto the renderer Card shape", ()
   assert.equal(card.sourceKind, "anime");
   assert.equal(card.sourceLabel, "ANILIST");
   assert.equal(card.posterPath, "https://poster.png");
-  assert.equal(card.catalogId, "tmdb:209867");
+  assert.equal(card.catalogId, "tmdb:tv:209867");
   assert.equal(card.providerIds.anilist, "154587");
 });
 
@@ -86,7 +86,7 @@ test("bff search builds the contracted request and surfaces degraded errors with
 
 test("section summaries render without any title-detail requests", async () => {
   const requested = [];
-  const movie = { ...bffTitleRow, id: "tmdb:100", type: "movie", providerIds: { tmdb: "100" } };
+  const movie = { ...bffTitleRow, id: "tmdb:movie:100", type: "movie", providerIds: { tmdb: "movie:100" } };
   const fetchImpl = async (url) => {
     requested.push(String(url));
     assert.ok(url.includes("/v2/catalog/sections"));
@@ -106,7 +106,7 @@ test("older section responses produce an upgrade error instead of silent empty r
 
 function fakeLegacy(calls) {
   return Object.fromEntries(
-    ["searchMulti", "getMovies", "getTvShows", "getTvSeason", "searchAnime", "getTrendingAnime", "getAnimeList", "getCinemetaSeasonMetadata", "getAnimeEpisodeMetadata"].map(
+    ["searchMulti", "getMovies", "getTvShows", "getTvSeason", "getTitlesByGenre", "searchAnime", "getTrendingAnime", "getAnimeList", "getAnimeByGenre", "getCinemetaSeasonMetadata", "getAnimeEpisodeMetadata"].map(
       (name) => [
         name,
         async (...args) => {
@@ -179,8 +179,8 @@ test('catalog lists expose cards and pagination in renderer and BFF modes', asyn
   };
   const gateway = createCatalogGateway({ legacy });
   const titles = [
-    { id: 'tmdb:100', type: 'movie', title: 'Movie', year: 2024, artwork: { poster: 'https://image.tmdb.org/t/p/w342/movie.jpg' }, providerIds: { tmdb: '100' } },
-    { id: 'tmdb:200', type: 'series', title: 'Series', year: 2023, artwork: { poster: 'https://image.tmdb.org/t/p/w342/tv.jpg' }, providerIds: { tmdb: '200' } },
+    { id: 'tmdb:movie:100', type: 'movie', title: 'Movie', year: 2024, artwork: { poster: 'https://image.tmdb.org/t/p/w342/movie.jpg' }, providerIds: { tmdb: 'movie:100' } },
+    { id: 'tmdb:tv:200', type: 'series', title: 'Series', year: 2023, artwork: { poster: 'https://image.tmdb.org/t/p/w342/tv.jpg' }, providerIds: { tmdb: 'tv:200' } },
     { ...bffTitleRow, title: 'Anime' },
   ];
   const requests = [];
@@ -213,13 +213,13 @@ test("bffTitleDetail maps detail enrichment onto the renderer Detail shape", asy
   const fetchImpl = async (url) => {
     requests.push(String(url));
     return jsonResponse(200, {
-      id: "tmdb:209867",
+      id: "tmdb:tv:209867",
       type: "series",
       title: "Frieren",
       year: 2023,
       overview: "overview",
       artwork: { poster: "https://poster.png" },
-      providerIds: { tmdb: "209867", imdb: "tt28015436" },
+      providerIds: { tmdb: "tv:209867", imdb: "tt28015436" },
       imdbId: "tt28015436",
       runtime: 24,
       genres: ["Animation", "Adventure"],
@@ -230,8 +230,8 @@ test("bffTitleDetail maps detail enrichment onto the renderer Detail shape", asy
       ],
     });
   };
-  const detail = detailFromBackendTitle(await bffTitleDetail("tmdb:209867", { fetchImpl }));
-  assert.match(requests[0], /\/v2\/catalog\/titles\/tmdb:209867/);
+  const detail = detailFromBackendTitle(await bffTitleDetail("tmdb:tv:209867", { fetchImpl }));
+  assert.match(requests[0], /\/v2\/catalog\/titles\/tmdb:tv:209867/);
   assert.equal(detail.id, 209867);
   assert.equal(detail.title, "Frieren");
   assert.equal(detail.runtime, 24);
@@ -245,8 +245,11 @@ test("bffTitleDetail maps detail enrichment onto the renderer Detail shape", asy
 });
 
 test("continue enrichment mapping keeps provider ids and covers seriesId shapes", () => {
-  assert.equal(catalogIdForSeriesId("tmdb:movie:123"), "tmdb:123");
-  assert.equal(catalogIdForSeriesId("tmdb:tv:456"), "tmdb:456");
+  // M3.1.1: the media qualifier is PRESERVED — the catalog id is exactly the
+  // qualified progress vocabulary, so enrichment addresses the requested
+  // media type instead of the ambiguous legacy alias.
+  assert.equal(catalogIdForSeriesId("tmdb:movie:123"), "tmdb:movie:123");
+  assert.equal(catalogIdForSeriesId("tmdb:tv:456"), "tmdb:tv:456");
   assert.equal(catalogIdForSeriesId("anilist:154587"), "anilist:154587");
   assert.equal(catalogIdForSeriesId("mal:52991"), "jikan:52991");
   assert.equal(catalogIdForSeriesId("bogus"), null);
@@ -284,8 +287,12 @@ test("paged and genre section requests use the additive contract parameters", as
   assert.match(requests[1], /\/v2\/catalog\/sections\?kind=popular&genre=28&type=movie$/);
   assert.equal(genre.totalPages, 42);
 
+  const animeGenre = await bffSectionPage("popular", 1, { fetchImpl }, "anime", "Slice of Life");
+  assert.match(requests[2], /\/v2\/catalog\/sections\?kind=popular&genre=Slice\+of\+Life&type=anime$/);
+  assert.equal(animeGenre.totalPages, 42);
+
   const plain = await bffSectionPage("trending", 1, { fetchImpl });
-  assert.match(requests[2], /\/v2\/catalog\/sections\?kind=trending$/);
+  assert.match(requests[3], /\/v2\/catalog\/sections\?kind=trending$/);
   assert.equal(plain.totalPages, undefined, "page one without genre keeps the original response shape");
 });
 
@@ -312,6 +319,10 @@ test("gateway exposes genre rails and pages in bff mode without legacy calls", a
 
   const movies = await gateway.getMovies(2, "popular", { source: "bff", fetchImpl });
   assert.equal(movies.totalPages, 5);
+
+  const anime = await gateway.getAnimeByGenre("Slice of Life", 2, 25, { source: "bff", fetchImpl });
+  assert.ok(requests.some((url) => url.includes("kind=popular&page=2&genre=Slice+of+Life&type=anime")));
+  assert.equal(anime.items.length, 0, "non-anime rows cannot leak into the anime genre page");
   assert.deepEqual(calls, [], "legacy provider services must stay unloaded in bff mode");
 });
 
@@ -329,6 +340,22 @@ test("gateway getTitlesByGenre keeps the legacy discover path in renderer mode",
   assert.deepEqual(calls, [["getTitlesByGenre", "movie", 28, 1]]);
   assert.equal(page.items[0].id, 300);
   assert.equal(page.totalPages, 4);
+});
+
+test("gateway getAnimeByGenre keeps the AniList path in renderer mode", async () => {
+  const calls = [];
+  const legacy = {
+    ...fakeLegacy(calls),
+    getAnimeByGenre: async (genre, page, perPage) => {
+      calls.push(["getAnimeByGenre", genre, page, perPage]);
+      return { media: [legacyAnime], pageInfo: { lastPage: 6 } };
+    },
+  };
+  const gateway = createCatalogGateway({ legacy });
+  const page = await gateway.getAnimeByGenre("Fantasy", 2, 25, { source: "renderer" });
+  assert.deepEqual(calls, [["getAnimeByGenre", "Fantasy", 2, 25]]);
+  assert.equal(page.items[0].id, 154587);
+  assert.equal(page.totalPages, 6);
 });
 
 test("origin switch aborts and stale-guards bff requests", async () => {
@@ -388,38 +415,36 @@ test("fixture adapter is explicit and scenario-driven", async () => {
   assert.equal(storage.getPreference("k"), "v");
 });
 
-test("M3.1 identity trace: client keeps ids opaque; ambiguity surfaces only server-side", () => {
-  // A series row whose numeric TMDb id collides with a movie: the card
-  // carries the numeric id for display/navigation, its media kind, AND the
-  // opaque catalog id. The client never parses or re-derives the id, so a
-  // media-qualified server identity (tmdb:tv:123) can be adopted in the
-  // catalogId without any client change.
+test("M3.1.1 qualified identity trace: qualified ids survive the card, catalogId and enrichment mapping", () => {
+  // A series row whose numeric TMDb id collides with a movie: the server
+  // now emits the media-qualified canonical id (tmdb:tv:123) and the
+  // media-qualified provider id ("tv:123"). The card keeps the numeric id
+  // for display/navigation, its media kind, AND the opaque qualified
+  // catalogId. The client never re-derives the ambiguous numeric form.
   const seriesRow = {
-    id: "tmdb:123",
+    id: "tmdb:tv:123",
     type: "series",
     title: "Collision Series",
     year: 2021,
-    providerIds: { tmdb: "123" },
+    providerIds: { tmdb: "tv:123" },
   };
   const card = backendTitleToCard(seriesRow);
-  assert.equal(card.id, 123);
+  assert.equal(card.id, 123, "numeric display id survives the qualified id");
   assert.equal(card.sourceKind, "tv");
-  assert.equal(card.catalogId, "tmdb:123");
-  assert.equal(card.providerIds.tmdb, "123");
+  assert.equal(card.catalogId, "tmdb:tv:123", "opaque catalog id stays media-qualified");
+  assert.equal(card.providerIds.tmdb, "tv:123");
 
-  // The progress vocabulary is ALREADY media-qualified ("tmdb:movie:N" /
+  // The progress vocabulary was ALWAYS media-qualified ("tmdb:movie:N" /
   // "tmdb:tv:N" / "mal:N" / "anilist:N"), so watch progress never needs
-  // rekeying. FINDING (M3.1): the bff enrichment helper currently STRIPS
-  // the qualifier when mapping a seriesId onto a catalog id — an unqualified
-  // lookup that hits the same server-side ambiguity. M3.1.1 must preserve
-  // the qualifier end-to-end.
-  assert.equal(catalogIdForSeriesId("tmdb:tv:123"), "tmdb:123", "current lossy mapping (documented)");
-  assert.equal(catalogIdForSeriesId("tmdb:movie:123"), "tmdb:123", "current lossy mapping (documented)");
+  // rekeying. RESOLVED (M3.1.1): the bff enrichment helper now preserves the
+  // qualifier — enrichment detail lookups address exactly the requested
+  // media type and never collapse to the lossy `tmdb:123` alias.
+  assert.equal(catalogIdForSeriesId("tmdb:tv:123"), "tmdb:tv:123", "qualifier preserved");
+  assert.equal(catalogIdForSeriesId("tmdb:movie:123"), "tmdb:movie:123", "qualifier preserved");
 
-  // DOCUMENTED GAP (M3.1): TitlePage's bff loader currently builds
-  // `tmdb:<numeric id>` for detail requests � the unqualified form that the
-  // server resolves movie-first (see internal/catalog/identity_test.go).
-  // The bounded compatibility child task (M3.1.1) must switch detail
-  // requests to the card's opaque catalogId once the server emits
-  // media-qualified ids.
+  // RESOLVED (M3.1.1): TitlePage's bff loader requests detail by the
+  // media-qualified id built from the route's explicit media namespace
+  // (kind / mediaKind), and gateway.getTvSeason requests `tmdb:tv:<n>`
+  // — verified by the detail-request tests above and the bffTitleDetail
+  // URL assertion. The unqualified alias remains a read-only legacy form.
 });

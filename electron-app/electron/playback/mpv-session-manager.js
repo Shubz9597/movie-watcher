@@ -5,6 +5,18 @@ import { createRequire } from "module";
 import { applyAspectModeTo } from "./aspect-modes.js";
 import { attachMpvWindow, readNativeWindowId } from "./native-window.js";
 
+export const MPV_NATIVE_EXPORTS = Object.freeze([
+  "createVideoHost",
+  "resizeVideoHost",
+  "showVideoHost",
+  "destroyVideoHost",
+  "MpvHandle",
+]);
+
+export function missingMpvNativeExports(candidate) {
+  return MPV_NATIVE_EXPORTS.filter((name) => typeof candidate?.[name] !== "function");
+}
+
 export function createMpvSessionManager({
   appDirectory,
   getAspectMode,
@@ -48,7 +60,17 @@ export function createMpvSessionManager({
     for (const mpvPath of possiblePaths.filter(Boolean)) {
       if (fs.existsSync(mpvPath)) {
         try {
-          native = require(mpvPath);
+          const candidate = require(mpvPath);
+          const missingExports = missingMpvNativeExports(candidate);
+          if (missingExports.length > 0) {
+            console.warn(
+              "[MPV] Native module has an incomplete API at",
+              mpvPath,
+              `(missing: ${missingExports.join(", ")})`,
+            );
+            continue;
+          }
+          native = candidate;
           console.log("[MPV] Native module loaded from:", mpvPath);
           return true;
         } catch (err) {

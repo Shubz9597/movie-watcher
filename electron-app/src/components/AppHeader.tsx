@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Search, Settings2 } from 'lucide-react';
+import { LibraryBig, Search, Settings2 } from 'lucide-react';
 import { loadSeeAllPage } from '../lib/route-loaders';
 import torWatchLogo from '../assets/torwatch-symbol.png';
 
@@ -94,6 +94,16 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Shared Library destination (M3.3): the household library lives
+              on the server; the page renders its availability truthfully. */}
+          <button
+            type="button"
+            onClick={() => navigate('library', { collection: 'watch-later' })}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white/80 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 md:w-auto md:gap-2.5 md:px-3.5"
+          >
+            <LibraryBig className="h-5 w-5 shrink-0" strokeWidth={1.9} aria-hidden="true" />
+            <span className="hidden md:inline">Library</span>
+          </button>
           <button
             ref={searchTriggerRef}
             type="button"

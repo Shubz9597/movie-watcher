@@ -3,14 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TorWatch" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./torwatch-app-icon.png" />
     <!-- Browser development entry (feature 002 M1.2): same CSP shape as the
          Electron renderer, but the origin is injected by the build plugin so
          the mobile graph stays free of Electron assumptions. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' __TORWATCH_BACKEND_ORIGIN__ http://fixture.local; font-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' __TORWATCH_BACKEND_ORIGIN__ http://fixture.local; media-src 'self' __TORWATCH_BACKEND_ORIGIN__ blob:; font-src 'self' data:"
     />
-    <title>TorWatch — shared UI preview</title>
+    <title>TorWatch</title>
   </head>
   <body>
     <div id="root"></div>

@@ -7,6 +7,7 @@
   "author": "fsociety",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:mobile": "node scripts/mobile-preview.mjs",
     "build": "npm run build:backend && vite build && npm run build:installer",
     "build:backend": "node scripts/build-backend.mjs",
     "build:installer": "node scripts/build-windows-installer.mjs",
@@ -16,7 +17,7 @@
     "test:diagnostics": "node --test scripts/diagnostic-logger.test.mjs",
     "test:player-contracts": "node --test scripts/player-state-contracts.test.mjs",
     "test:network-routing": "node --test scripts/network-routing.test.mjs",
-    "test:characterization": "node --test --experimental-strip-types scripts/characterization/catalog-merge.test.mjs scripts/characterization/anime-matching.test.mjs scripts/characterization/api-client.test.mjs scripts/characterization/catalog-gateway.test.mjs scripts/characterization/connection-service.test.mjs scripts/characterization/shared-ui.test.mjs scripts/characterization/library-contract.test.mjs scripts/characterization/version-check.test.mjs",
+    "test:characterization": "node --test --experimental-strip-types scripts/characterization/catalog-merge.test.mjs scripts/characterization/anime-matching.test.mjs scripts/characterization/api-client.test.mjs scripts/characterization/catalog-gateway.test.mjs scripts/characterization/connection-service.test.mjs scripts/characterization/shared-ui.test.mjs scripts/characterization/library-contract.test.mjs scripts/characterization/library-store.test.mjs scripts/characterization/library-toggle.test.mjs scripts/characterization/library-sync.test.mjs scripts/characterization/recommendation-ui.test.mjs scripts/characterization/library-repair.test.mjs scripts/characterization/version-check.test.mjs scripts/characterization/browser-player.test.mjs",
     "test": "npm run test:skip-segments && npm run test:diagnostics && npm run test:player-contracts && npm run test:network-routing && npm run test:characterization",
     "smoke:ui": "electron scripts/titlebar-smoke.cjs",
     "smoke:titlebar": "electron scripts/titlebar-smoke.cjs",

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import PosterCard from '../components/PosterCard';
 import type { MovieCard } from '../lib/types';
-import { getTitlesByGenre, getMovies, getTvShows, getAnimeList, getTrendingAnime } from '../lib/services/catalog-gateway';
+import { getTitlesByGenre, getMovies, getTvShows, getAnimeByGenre, getAnimeList, getTrendingAnime } from '../lib/services/catalog-gateway';
 import { selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
+import { CatalogFilters } from '../components/shared/CatalogFilters';
 
 export default function SeeAllPage({
   navigate,
@@ -79,7 +80,11 @@ export default function SeeAllPage({
             setTotalPages(data.totalPages);
           }
         } else if (service === 'anilist') {
-          const data = type === 'trending' ? await getTrendingAnime(page) : await getAnimeList(page);
+          const data = type === 'genre' && category === 'anime' && qualifier
+            ? await getAnimeByGenre(qualifier, page)
+            : type === 'trending'
+              ? await getTrendingAnime(page)
+              : await getAnimeList(page);
           if (cancelled) return;
           const cards = selectAniListCatalog(data.items);
           if (page === 1) {
@@ -132,7 +137,8 @@ export default function SeeAllPage({
           <h1 className="type-page-title text-white">{title}</h1>
           <p className="type-body mt-3 text-white/70">Explore the full collection.</p>
         </div>
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <CatalogFilters kind={kind} api={api} navigate={navigate} />
           <button
             type="button"
             onClick={() => navigate('home')}

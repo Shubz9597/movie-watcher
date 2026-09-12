@@ -65,8 +65,9 @@ func TestEmptyProviderSectionIncludesEmptySummaries(t *testing.T) {
 
 type fakePagedCatalogProvider struct {
 	fakeCatalogProvider
-	pagedSectionFn func(ctx context.Context, kind string, page int) ([]catalog.Title, int, error)
-	genreSectionFn func(ctx context.Context, mediaType catalog.TitleType, genreID, page int) ([]catalog.Title, int, error)
+	pagedSectionFn      func(ctx context.Context, kind string, page int) ([]catalog.Title, int, error)
+	genreSectionFn      func(ctx context.Context, mediaType catalog.TitleType, genreID, page int) ([]catalog.Title, int, error)
+	namedGenreSectionFn func(ctx context.Context, genre string, page int) ([]catalog.Title, int, error)
 }
 
 func (f *fakePagedCatalogProvider) SectionPage(ctx context.Context, kind string, page int) ([]catalog.Title, int, error) {
@@ -81,6 +82,13 @@ func (f *fakePagedCatalogProvider) GenreSection(ctx context.Context, mediaType c
 		return nil, 0, errors.New("not supported")
 	}
 	return f.genreSectionFn(ctx, mediaType, genreID, page)
+}
+
+func (f *fakePagedCatalogProvider) NamedGenreSection(ctx context.Context, genre string, page int) ([]catalog.Title, int, error) {
+	if f.namedGenreSectionFn == nil {
+		return nil, 0, errors.New("not supported")
+	}
+	return f.namedGenreSectionFn(ctx, genre, page)
 }
 
 func TestSectionPageForwardsPageAndSurfacesTotalPages(t *testing.T) {
@@ -134,18 +142,52 @@ func TestSectionGenreRoutesToGenreProviders(t *testing.T) {
 	}
 }
 
+func TestSectionAnimeGenreRoutesToNamedGenreProviders(t *testing.T) {
+	providerCalls := 0
+	provider := &fakePagedCatalogProvider{fakeCatalogProvider: fakeCatalogProvider{name: "anilist"},
+		namedGenreSectionFn: func(_ context.Context, genre string, page int) ([]catalog.Title, int, error) {
+			providerCalls++
+			if genre != "Slice of Life" || page != 2 {
+				t.Fatalf("named genre request = %q page %d", genre, page)
+			}
+			return []catalog.Title{{ID: "anilist:10", Type: catalog.TypeAnime, Title: "Genre Match", ProviderIDs: map[string]string{"anilist": "10"}}}, 7, nil
+		}}
+	h := CatalogHandlers{Catalog: catalog.NewService([]catalog.Provider{provider}, catalog.Options{})}
+	mux := http.NewServeMux()
+	h.Register(mux)
+	for requestNumber := 1; requestNumber <= 2; requestNumber++ {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v2/catalog/sections?kind=popular&page=2&genre=Slice+of+Life&type=anime", nil))
+		var response struct {
+			Page       int             `json:"page"`
+			TotalPages int             `json:"totalPages"`
+			Results    []catalog.Title `json:"results"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if recorder.Code != http.StatusOK || response.Page != 2 || response.TotalPages != 7 || len(response.Results) != 1 || response.Results[0].ID != "anilist:10" {
+			t.Fatalf("anime genre section request %d = %d %s", requestNumber, recorder.Code, recorder.Body.String())
+		}
+	}
+	if providerCalls != 1 {
+		t.Fatalf("provider calls = %d, want one call plus one cache hit", providerCalls)
+	}
+}
+
 func TestSectionParameterValidation(t *testing.T) {
 	h := CatalogHandlers{Catalog: catalog.NewService(nil, catalog.Options{})}
 	mux := http.NewServeMux()
 	h.Register(mux)
 	for name, query := range map[string]string{
-		"page too low":            "kind=trending&page=0",
-		"page not integer":        "kind=trending&page=two",
-		"page too high":           "kind=trending&page=501",
-		"genre not int":           "kind=trending&genre=action",
-		"genre without type":      "kind=trending&genre=28",
-		"type without genre":      "kind=trending&type=movie",
-		"anime genre unsupported": "kind=trending&genre=28&type=anime",
+		"page too low":        "kind=trending&page=0",
+		"page not integer":    "kind=trending&page=two",
+		"page too high":       "kind=trending&page=501",
+		"genre not int":       "kind=trending&genre=action",
+		"genre without type":  "kind=trending&genre=28",
+		"type without genre":  "kind=trending&type=movie",
+		"numeric anime genre": "kind=trending&genre=28&type=anime",
+		"invalid anime genre": "kind=trending&genre=Action%3AComedy&type=anime",
 	} {
 		recorder := httptest.NewRecorder()
 		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v2/catalog/sections?"+query, nil))

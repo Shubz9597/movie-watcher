@@ -5,13 +5,18 @@ import RuntimeStatusBar from './components/RuntimeStatusBar';
 import TmdbConnectionGate from './components/TmdbConnectionGate';
 import WindowChrome from './components/WindowChrome';
 import HomePage from './pages/HomePage';
+import { LibraryCategoryPage, LibraryPage } from './pages/LibraryPage';
 import { PlatformProvider } from './platform/PlatformProvider';
 import { createElectronPlatform } from './platform/electron';
+import { LibraryContextProvider } from './lib/library-react';
+import { LibraryStore } from './lib/library-store';
+import { attachLibrarySync } from './lib/library-sync';
 import {
   loadPlayerPage,
   loadSeeAllPage,
   loadTitlePage,
   loadWatchPage,
+  loadRecommendationsPage,
 } from './lib/route-loaders';
 import type { CatalogState } from './types/electron';
 
@@ -20,10 +25,20 @@ import type { CatalogState } from './types/electron';
 // adapter wraps the same bridge calls, so behavior is unchanged.
 const electronPlatform = createElectronPlatform();
 
+// The server-backed household library (M3.3) is composed once for the
+// desktop entry. Availability is gated on the server's advertised
+// library.household.v1 capability; an origin switch clears the store's
+// origin-scoped state through its own subscription. M3.4: the shared sync
+// controller adds bounded 15s polling while visible plus refocus/reconnect/
+// visibility-resume refreshes.
+const libraryStore = new LibraryStore();
+attachLibrarySync(libraryStore);
+
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
 const WatchPage = lazy(loadWatchPage);
 const PlayerPage = lazy(loadPlayerPage);
+const RecommendationsAllPage = lazy(loadRecommendationsPage);
 
 // Simple hash-based router
 function useHashRouter() {
@@ -59,6 +74,10 @@ export default function App() {
     issue: '',
     hasSavedCredential: false,
   });
+
+  useEffect(() => {
+    void libraryStore.refreshCapability();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -100,10 +119,11 @@ export default function App() {
   }
 
   const isPlayerPage = route.path === 'player';
-  const isKnownRoute = ['home', 'title', 'see-all', 'watch', 'player'].includes(route.path);
+  const isKnownRoute = ['home', 'title', 'see-all', 'watch', 'player', 'library', 'library-category', 'recommendations'].includes(route.path);
 
   return (
     <PlatformProvider platform={electronPlatform}>
+      <LibraryContextProvider store={libraryStore}>
       <RouterProvider navigate={navigate}>
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <WindowChrome />
@@ -116,6 +136,27 @@ export default function App() {
         <main className={isPlayerPage ? '' : 'pb-16'}>
           <Suspense fallback={<RouteFallback />}>
             {route.path === 'home' && <HomePage navigate={navigate} />}
+            {route.path === 'library' && (
+              <LibraryPage
+                navigate={navigate}
+                library={libraryStore}
+                provider={null}
+                collection={route.params.get('collection') === 'favourites' ? 'favourites' : 'watch-later'}
+                sort={route.params.get('sort') === 'title' ? 'title' : 'recent'}
+              />
+            )}
+            {route.path === 'library-category' && (
+              <LibraryCategoryPage
+                navigate={navigate}
+                library={libraryStore}
+                provider={null}
+                collection={route.params.get('collection') === 'favourites' ? 'favourites' : 'watch-later'}
+                kind={(route.params.get('kind') === 'series' || route.params.get('kind') === 'anime'
+                  ? route.params.get('kind')
+                  : 'movie') as 'movie' | 'series' | 'anime'}
+                sort={route.params.get('sort') === 'title' ? 'title' : 'recent'}
+              />
+            )}
             {route.path === 'title' && (
               <TitlePage
                 navigate={navigate}
@@ -131,6 +172,9 @@ export default function App() {
                 api={route.params.get('api') || ''}
                 kind={route.params.get('kind') || 'movie'}
               />
+            )}
+            {route.path === 'recommendations' && (
+              <RecommendationsAllPage navigate={navigate} />
             )}
             {route.path === 'watch' && (
               <WatchPage
@@ -164,6 +208,7 @@ export default function App() {
         </main>
       </div>
       </RouterProvider>
+      </LibraryContextProvider>
     </PlatformProvider>
   );
 }

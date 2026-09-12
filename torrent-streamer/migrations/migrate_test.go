@@ -144,44 +144,142 @@ WHERE s.session_id='session-a'`).Scan(&seq, &position, &revision); err != nil {
 }
 
 // TestMigrationFilesAreWellFormed statically guards the embedded set: names
-// stay sortable (ordering contract) and 005 contains no destructive
-// statements (DROP/RENAME/TRUNCATE) — expand-phase discipline.
+// stay sortable (ordering contract) and expand migrations (005, 007) contain
+// no destructive statements (DROP/RENAME/TRUNCATE/DELETE) — expand-phase
+// discipline. (DROP TRIGGER IF EXISTS is dropped-index hygiene, not data
+// destruction, so the scan targets the destructive keywords on table data.)
 func TestMigrationFilesAreWellFormed(t *testing.T) {
 	entries, err := files.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read embedded migrations: %v", err)
 	}
 	previous := ""
-	found005 := false
+	found := map[string]bool{}
+	expandMigrations := map[string][]string{
+		"005_progress_multiclient.sql": {"DROP TABLE", "DROP COLUMN", "RENAME", "TRUNCATE", "DELETE FROM"},
+		"007_library_household.sql":    {"DROP TABLE", "DROP COLUMN", "RENAME", "TRUNCATE", "DELETE FROM"},
+	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if previous != "" && name <= previous {
 			t.Fatalf("migration %s breaks filename ordering (after %s)", name, previous)
 		}
 		previous = name
-		if name == "005_progress_multiclient.sql" {
-			found005 = true
+		if banned, ok := expandMigrations[name]; ok {
+			found[name] = true
 			data, err := files.ReadFile(name)
 			if err != nil {
-				t.Fatalf("read 005: %v", err)
+				t.Fatalf("read %s: %v", name, err)
 			}
 			content := stripSQLComments(string(data))
-			for _, banned := range []string{"DROP TABLE", "DROP COLUMN", "RENAME", "TRUNCATE", "DELETE FROM"} {
-				if containsFold(content, banned) {
-					t.Fatalf("expand migration 005 must not contain %q", banned)
+			for _, phrase := range banned {
+				if containsFold(content, phrase) {
+					t.Fatalf("expand migration %s must not contain %q", name, phrase)
 				}
 			}
 		}
 	}
-	if !found005 {
-		t.Fatal("005_progress_multiclient.sql missing from embedded migrations")
+	for name := range expandMigrations {
+		if !found[name] {
+			t.Fatalf("%s missing from embedded migrations", name)
+		}
 	}
 }
 
 // TestEmbedIntegrity keeps the embedded FS honest for static analysis.
 func TestEmbedIntegrity(t *testing.T) {
-	if err := fstest.TestFS(files, "001_core.sql", "005_progress_multiclient.sql"); err != nil {
+	if err := fstest.TestFS(files, "001_core.sql", "005_progress_multiclient.sql", "007_library_household.sql"); err != nil {
 		t.Fatalf("embedded migration FS invalid: %v", err)
+	}
+}
+
+// TestMigration007UpgradeFromPreviousSchema applies 001-006 in an isolated,
+// rolled-back schema, seeds pre-007 data (progress rows, session sequences),
+// then applies 007 twice (idempotent re-apply) and proves: the library tables
+// exist with the single household row at revision 0, and NO pre-existing
+// progress row changed — the additive expand guarantee.
+func TestMigration007UpgradeFromPreviousSchema(t *testing.T) {
+	dsn := os.Getenv("TORWATCH_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("TORWATCH_TEST_PG_DSN not set")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `CREATE SCHEMA migration007_test; SET LOCAL search_path TO migration007_test`); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := files.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() >= "007_library_household.sql" {
+			continue
+		}
+		data, err := files.ReadFile(entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, string(data)); err != nil {
+			t.Fatalf("apply %s: %v", entry.Name(), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, duration_s, percent, progress_revision)
+VALUES ('upgrade-007', 'tmdb:tv:1396', 1, 4, 600, 2820, 21.3, 7)`); err != nil {
+		t.Fatal(err)
+	}
+	data, err := files.ReadFile("007_library_household.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := tx.ExecContext(ctx, string(data)); err != nil {
+			t.Fatalf("apply 007: %v", err)
+		}
+	}
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=1`).Scan(&revision); err != nil {
+		t.Fatalf("household row after 007: %v", err)
+	}
+	if revision != 0 {
+		t.Fatalf("fresh household revision = %d, want 0", revision)
+	}
+	var position int
+	var progressRevision int64
+	if err := tx.QueryRowContext(ctx, `SELECT position_s, progress_revision FROM watch_progress
+WHERE subject_id='upgrade-007' AND series_id='tmdb:tv:1396'`).Scan(&position, &progressRevision); err != nil {
+		t.Fatal(err)
+	}
+	if position != 600 || progressRevision != 7 {
+		t.Fatalf("007 changed pre-existing progress: position=%d revision=%d", position, progressRevision)
+	}
+	var tables []string
+	rows, err := tx.QueryContext(ctx, `
+SELECT table_name FROM information_schema.tables
+WHERE table_schema='migration007_test' AND table_name LIKE 'library%' ORDER BY table_name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	if len(tables) != 2 {
+		t.Fatalf("library tables after 007 = %v", tables)
 	}
 }
 

@@ -95,7 +95,9 @@ export default function PlayerPage({ navigate, params }: Props) {
         if (tmdbId && cat !== 'anime') {
           try {
             if (await getCatalogSource() === 'bff') {
-              const row = await bffTitleDetail(`tmdb:${tmdbId}`);
+              // M3.1.1: request detail by the media-qualified canonical id
+              // derived from the route's explicit `cat` namespace.
+              const row = await bffTitleDetail(`tmdb:${cat === 'movie' ? 'movie' : 'tv'}:${tmdbId}`);
               playbackPosterUrl = row.artwork?.poster ?? null;
               playbackImdbId = row.imdbId || playbackImdbId;
               playbackYear = row.year;
@@ -149,7 +151,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           fileIndex,
         });
         if (!platform.player) {
-          throw new Error('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
+          throw new Error('Playback is unavailable on this device. Reconnect to the TorWatch server and try again.');
         }
         await platform.player.start({
           url: magnet,
@@ -196,8 +198,8 @@ export default function PlayerPage({ navigate, params }: Props) {
 
   return (
     <div className="fixed inset-x-0 bottom-0 top-10 z-40 bg-[#0a0a0a]">
-      {/* MPV renders into a native child surface inside the main Electron window. */}
-      {/* The loading screen and controls are supplied by the transparent overlay window. */}
+      {/* The platform player renders above this transition state: embedded MPV
+          on desktop, native HTML5 video in the mobile browser. */}
       <div className="absolute inset-0 flex items-center justify-center px-6">
         <div className="w-full max-w-lg text-center">
           <p className="font-label text-white/65">{playbackError ? 'Playback interrupted' : 'Preparing playback'}</p>

@@ -49,6 +49,7 @@ debug.log
 .env.local
 .env.*.local
 **/.env*
+!deploy/desktop-staging/.env.example
 
 # IDE and editor files
 .vscode/
@@ -128,3 +129,10 @@ package
 deploy/torwatch-server/.env
 deploy/torwatch-server/backups/
 !deploy/torwatch-server/.env.example
+
+
+# Local agent/runtime state (the tracked .opencode command catalog remains visible).
+.codex/
+.codex-*/
+session-ses_*.md
+/torrent-streamer/tools/stub-extract.mjs

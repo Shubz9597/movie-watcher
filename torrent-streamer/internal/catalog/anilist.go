@@ -52,6 +52,9 @@ fragment media on Media {
 type aniListPage struct {
 	Data struct {
 		Page struct {
+			PageInfo struct {
+				LastPage int `json:"lastPage"`
+			} `json:"pageInfo"`
 			Media []aniListMedia `json:"media"`
 		} `json:"page"`
 	} `json:"data"`
@@ -187,6 +190,22 @@ func (p *AniList) SectionPage(ctx context.Context, kind string, page int) ([]Tit
 		titles = append(titles, p.toTitle(media))
 	}
 	return titles, 0, nil
+}
+
+// NamedGenreSection implements NamedGenreSectionProvider using AniList's
+// genre_in GraphQL filter. Genres are passed as variables, never interpolated
+// into the query document.
+func (p *AniList) NamedGenreSection(ctx context.Context, genre string, page int) ([]Title, int, error) {
+	payload, err := p.query(ctx, "query ($genres: [String], $perPage: Int, $page: Int) { Page(page: $page, perPage: $perPage) { pageInfo { lastPage } media(type: ANIME, genre_in: $genres, isAdult: false, sort: [POPULARITY_DESC, SCORE_DESC]) { ...media } } } "+aniListMediaFields,
+		map[string]any{"genres": []string{genre}, "perPage": 20, "page": page})
+	if err != nil {
+		return nil, 0, err
+	}
+	titles := make([]Title, 0, len(payload.Data.Page.Media))
+	for _, media := range payload.Data.Page.Media {
+		titles = append(titles, p.toTitle(media))
+	}
+	return titles, payload.Data.Page.PageInfo.LastPage, nil
 }
 
 func (p *AniList) toTitle(media aniListMedia) Title {

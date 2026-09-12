@@ -118,13 +118,15 @@ as additional pages. Clients requiring summaries from an older IDs-only server
 show an actionable backend-upgrade error.
 
 Additive parameters (P5 gap closure, T042.1): provider sections accept an
-optional 1-based `page` (1–500) and, for genre rails, `genre={tmdbGenreId}`
-together with `type={movie|series}`. When `page > 1` or `genre` is set, the
+optional 1-based `page` (1–500) and, for genre rails, either
+`genre={tmdbGenreId}&type={movie|series}` or
+`genre={urlEncodedAniListGenreName}&type=anime`. When `page > 1` or `genre` is set, the
 response also carries `page` and `totalPages` (omitted when the contributing
 providers do not expose a total). Genre sections are served only by providers
-with genre-discovery capability (TMDb); other providers are skipped, not
+with the matching genre-discovery capability (TMDb for numeric movie/series
+genres; AniList for named anime genres); other providers are skipped, not
 degraded. Invalid parameter combinations (`type` without `genre`, `genre`
-without `type`, `type=anime`, out-of-range values) return
+without `type`, numeric anime genres, named movie/series genres, out-of-range values) return
 `400 {error:{code:"invalid_request"}}`.
 
 ## Merge determinism (normative for implementation)

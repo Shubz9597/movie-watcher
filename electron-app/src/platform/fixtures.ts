@@ -42,25 +42,28 @@ const TITLES: FixtureTitle[] = [
     seasons: [{ number: 1, name: 'Season 1', episodeCount: 28, airDate: '2023-09-29' }],
   },
   {
-    id: 'tmdb:693134',
+    // M3.1.1: fixture canonical ids mirror the media-qualified server
+    // identity (tmdb:movie:N / tmdb:tv:N) so the preview exercises the same
+    // detail lookups as the real BFF.
+    id: 'tmdb:movie:693134',
     type: 'movie',
     title: 'Dune: Part Two',
     year: 2024,
     overview: 'Paul Atreides unites with the Fremen while on a warpath of revenge.',
     artwork: { poster: 'https://image.tmdb.org/t/p/w342/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg' },
-    providerIds: { tmdb: '693134' },
+    providerIds: { tmdb: 'movie:693134' },
     mergedFrom: ['tmdb'],
     runtime: 167,
     genres: ['Science Fiction', 'Adventure'],
   },
   {
-    id: 'tmdb:1396',
+    id: 'tmdb:tv:1396',
     type: 'series',
     title: 'Breaking Bad',
     year: 2008,
     overview: 'A chemistry teacher turns to making methamphetamine.',
     artwork: { poster: 'https://image.tmdb.org/t/p/w342/ggFHVNu6YYI5L9pCfOacjizRGt.jpg' },
-    providerIds: { tmdb: '1396' },
+    providerIds: { tmdb: 'tv:1396' },
     mergedFrom: ['tmdb'],
     runtime: 47,
     genres: ['Drama', 'Crime'],

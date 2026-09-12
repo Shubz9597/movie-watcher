@@ -55,6 +55,37 @@ Then run:
 npm run dev
 ```
 
+### Preview the mobile UI on Windows
+
+From the repository root, run:
+
+```powershell
+.\run-mobile-preview.ps1
+```
+
+This opens the shared React UI in Chromium with a 390 x 844 mobile viewport,
+touch emulation, fixture data, and Vite hot reload. The fixture preview does not
+need a backend. Close the Chromium window or press Ctrl+C to stop it.
+
+Useful alternatives:
+
+```powershell
+# Use a different phone viewport
+.\run-mobile-preview.ps1 -Width 430 -Height 932
+
+# Exercise the unreachable-server UI
+.\run-mobile-preview.ps1 -FixtureScenario unreachable
+
+# Connect the browser UI to a running Go backend
+.\run-mobile-preview.ps1 -Mode Live -ServerOrigin http://localhost:4001
+```
+
+The live backend must allow `http://127.0.0.1:5173` in
+`TORWATCH_ALLOWED_CLIENT_ORIGINS`. This is a responsive browser preview of the
+mobile work completed so far; it is not an iOS/Android emulator, and native
+playback, permissions, interruptions, and device performance still require the
+future native wrapper and a real device/emulator.
+
 ### 5. Build for Distribution
 
 ```bash

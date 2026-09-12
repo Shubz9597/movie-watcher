@@ -5,6 +5,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'url';
 import { resolveBackendOrigin } from './backend-origin.mjs';
 
@@ -20,9 +21,42 @@ const backendOriginHtmlPlugin = () => {
   };
 };
 
+const mobileInstallAssetsPlugin = () => ({
+  name: 'torwatch-mobile-install-assets',
+  generateBundle() {
+    // True 512x512 square icon (generated from the artwork; the original
+    // torwatch-app-icon.png is 1672x941 and must NOT be advertised as 512x512).
+    this.emitFile({
+      type: 'asset',
+      fileName: 'torwatch-app-icon.png',
+      source: fs.readFileSync(path.resolve(__dirname, 'src/assets/torwatch-app-icon-512.png')),
+    });
+    this.emitFile({
+      type: 'asset',
+      fileName: 'manifest.webmanifest',
+      source: JSON.stringify({
+        name: 'TorWatch',
+        short_name: 'TorWatch',
+        description: 'Your private household cinema.',
+        start_url: './browser.html',
+        scope: './',
+        display: 'standalone',
+        background_color: '#0a0a0a',
+        theme_color: '#0a0a0a',
+        icons: [{
+          src: './torwatch-app-icon.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'any',
+        }],
+      }, null, 2),
+    });
+  },
+});
+
 export default defineConfig({
   base: './',
-  plugins: [react(), backendOriginHtmlPlugin()],
+  plugins: [react(), backendOriginHtmlPlugin(), mobileInstallAssetsPlugin()],
   root: './src',
   build: {
     outDir: '../dist-browser',

@@ -8,3 +8,11 @@ From the M2.5 bounded browser pass (see m2.5-visual-qa-report.md). Each item is 
 4. **Sheet close-button focus ring intensity** (info) — visible programmatic-focus ring at capture time is correct behavior; optionally soften the ring at rest for aesthetics in the later refinement phase.
 
 Later visual-refinement phase may address these together with the owner's outstanding alpha-quality feedback; none blocks M3.
+
+## M3.3 desktop Library consumer (2026-09-09)
+
+- LOW (library-toggle pending visibility): while a write is in flight the LibraryToggle shows aria-busy + a subtle animate-pulse on the glyph, but a static capture reads as near-idle. Add a small spinner overlay or reduced-opacity control in the next visual pass. Owner: shared LibraryToggle.
+- Confirmed fixed in this pass: a failed write previously showed the intended target state; the confirmed server state is now restored visually (filled/outline) with a red error ring and retry label (desktop-toggle-failed-retry.png).
+
+
+- LOW (recommendation card caption spacing, M4.2): on the phone width the seeded card's reason text wraps to two lines and its last line sits close to the card bottom edge (recs-phone-seeded.png). Consider one extra px of bottom padding in the caption block in the next visual pass. Owner: shared RecommendationRow.

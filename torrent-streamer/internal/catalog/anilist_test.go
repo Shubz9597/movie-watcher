@@ -145,3 +145,34 @@ func TestAniListSectionPageRequestsRequestedPage(t *testing.T) {
 		t.Fatalf("paged section = %d pages, %+v", totalPages, titles)
 	}
 }
+
+func TestAniListNamedGenreSectionUsesGenreVariable(t *testing.T) {
+	server := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(payload.Query, "genre_in: $genres") || !strings.Contains(payload.Query, "isAdult: false") {
+			t.Fatalf("genre query missing provider filters: %s", payload.Query)
+		}
+		genres, ok := payload.Variables["genres"].([]any)
+		if !ok || len(genres) != 1 || genres[0] != "Slice of Life" || payload.Variables["page"] != float64(2) {
+			t.Fatalf("genre variables = %#v", payload.Variables)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"Page":{"pageInfo":{"lastPage":7},"media":[{"id":10,"title":{"english":"Genre Match"},"startDate":{},"description":"","countryOfOrigin":"JP","genres":["Slice of Life"],"coverImage":{},"externalLinks":[],"episodes":0,"duration":0}]}}}`))
+	})
+	provider := NewAniList(AniListOptions{BaseURL: server.URL})
+
+	titles, totalPages, err := provider.NamedGenreSection(context.Background(), "Slice of Life", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totalPages != 7 || len(titles) != 1 || titles[0].ID != "anilist:10" {
+		t.Fatalf("genre section = %d pages, %+v", totalPages, titles)
+	}
+}

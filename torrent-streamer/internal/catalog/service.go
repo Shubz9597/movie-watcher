@@ -78,6 +78,13 @@ type GenreSectionProvider interface {
 	GenreSection(ctx context.Context, mediaType TitleType, genreID, page int) ([]Title, int, error)
 }
 
+// NamedGenreSectionProvider optionally serves named genre sections. AniList
+// uses stable genre names rather than numeric provider ids.
+type NamedGenreSectionProvider interface {
+	Provider
+	NamedGenreSection(ctx context.Context, genre string, page int) ([]Title, int, error)
+}
+
 // Options tunes the service. Zero values select the documented defaults.
 type Options struct {
 	// ProviderTimeout bounds each single provider call (default 8s).
@@ -376,12 +383,32 @@ type SectionResult struct {
 }
 
 // SectionQuery scopes a section request: the curated kind, an optional 1-based
-// page, and for genre sections the media type plus TMDb genre id (T042.1).
+// page, and for genre sections the media type plus either a numeric TMDb genre
+// id or a named provider genre (AniList).
 type SectionQuery struct {
 	Kind    string
 	Page    int
 	GenreID int
+	Genre   string
 	Type    TitleType
+}
+
+type sectionCacheEntry struct {
+	Titles     []Title
+	TotalPages int
+}
+
+func asSectionCacheEntry(value any) (sectionCacheEntry, bool) {
+	switch cached := value.(type) {
+	case sectionCacheEntry:
+		return cached, true
+	case []Title:
+		// Compatibility for entries created before total-page caching was
+		// introduced within the lifetime of a mixed test/service process.
+		return sectionCacheEntry{Titles: cached}, true
+	default:
+		return sectionCacheEntry{}, false
+	}
 }
 
 // Section resolves a curated/computed catalog section (page 1, no genre).
@@ -398,7 +425,7 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 	if page < 1 {
 		page = 1
 	}
-	cacheKey := "section:" + query.Kind + "\x00g" + strconv.Itoa(query.GenreID) + "\x00t" + string(query.Type) + "\x00p" + strconv.Itoa(page)
+	cacheKey := "section:" + query.Kind + "\x00g" + strconv.Itoa(query.GenreID) + "\x00n" + query.Genre + "\x00t" + string(query.Type) + "\x00p" + strconv.Itoa(page)
 	groups := make([][]Title, 0, len(s.providers))
 	degraded := []string{}
 	cachedAt := map[string]time.Time{}
@@ -407,14 +434,32 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 		var titles []Title
 		var providerTotal int
 		var err error
-		if query.GenreID > 0 {
+		if query.Genre != "" {
+			genreProvider, ok := provider.(NamedGenreSectionProvider)
+			if !ok {
+				continue
+			}
+			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
+				if entry, valid := asSectionCacheEntry(cached); valid {
+					groups = append(groups, entry.Titles)
+					totalPages = max(totalPages, entry.TotalPages)
+					continue
+				}
+			}
+			titles, providerTotal, err = callProviderPaged(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, int, error) {
+				return genreProvider.NamedGenreSection(ctx, query.Genre, page)
+			})
+		} else if query.GenreID > 0 {
 			genreProvider, ok := provider.(GenreSectionProvider)
 			if !ok {
 				continue
 			}
 			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				groups = append(groups, cached.([]Title))
-				continue
+				if entry, valid := asSectionCacheEntry(cached); valid {
+					groups = append(groups, entry.Titles)
+					totalPages = max(totalPages, entry.TotalPages)
+					continue
+				}
 			}
 			titles, providerTotal, err = callProviderPaged(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, int, error) {
 				return genreProvider.GenreSection(ctx, query.Type, query.GenreID, page)
@@ -425,8 +470,11 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 				continue
 			}
 			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				groups = append(groups, cached.([]Title))
-				continue
+				if entry, valid := asSectionCacheEntry(cached); valid {
+					groups = append(groups, entry.Titles)
+					totalPages = max(totalPages, entry.TotalPages)
+					continue
+				}
 			}
 			titles, providerTotal, err = callProviderPaged(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, int, error) {
 				return paged.SectionPage(ctx, query.Kind, page)
@@ -437,11 +485,14 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 				continue
 			}
 			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				groups = append(groups, cached.([]Title))
-				if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
-					cachedAt[provider.Name()] = at
+				if entry, valid := asSectionCacheEntry(cached); valid {
+					groups = append(groups, entry.Titles)
+					totalPages = max(totalPages, entry.TotalPages)
+					if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
+						cachedAt[provider.Name()] = at
+					}
+					continue
 				}
-				continue
 			}
 			titles, err = callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, error) {
 				return sectionProvider.Section(ctx, query.Kind)
@@ -450,14 +501,17 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 		if err != nil {
 			degraded = append(degraded, provider.Name())
 			if stale, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateStale {
-				groups = append(groups, stale.([]Title))
-				if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
-					cachedAt[provider.Name()] = at
+				if entry, valid := asSectionCacheEntry(stale); valid {
+					groups = append(groups, entry.Titles)
+					totalPages = max(totalPages, entry.TotalPages)
+					if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
+						cachedAt[provider.Name()] = at
+					}
 				}
 			}
 			continue
 		}
-		s.cache.Set(provider.Name(), cacheKey, titles, s.options.CacheTTL)
+		s.cache.Set(provider.Name(), cacheKey, sectionCacheEntry{Titles: titles, TotalPages: providerTotal}, s.options.CacheTTL)
 		groups = append(groups, titles)
 		if providerTotal > totalPages {
 			totalPages = providerTotal

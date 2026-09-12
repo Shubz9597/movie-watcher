@@ -5,7 +5,7 @@
 // the token source, accessible primitives, and the Continue carousel.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -44,10 +44,12 @@ function buildComponent(entry, name) {
 
 const primitives = buildComponent("src/components/primitives/index.tsx", "primitives");
 const carousel = buildComponent("src/components/shared/ContinueCarousel.tsx", "carousel");
+const catalogFilters = buildComponent("src/components/shared/CatalogFilters.tsx", "catalog-filters");
 
 process.on("exit", () => {
   primitives.cleanup();
   carousel.cleanup();
+  catalogFilters.cleanup();
 });
 
 test("IconButton enforces the shared 48px target, focus ring, and accessible name", async () => {
@@ -129,4 +131,55 @@ test("ContinueCarousel separates resume and detail targets with progress on artw
   assert.match(html, /width:21%/);
   assert.match(html, /Dune: Part Two/, "title text is a separate element (detail intent)");
   assert.doesNotMatch(html, /Resume bar/, "no full-width resume bar exists");
+});
+
+test("Home keeps the featured carousel, Continue, recommendations, then rotating catalog shelves", () => {
+  const home = readFileSync("src/pages/HomePage.tsx", "utf8");
+  const continueAt = home.indexOf("<ContinueRail navigate");
+  const recommendationsAt = home.indexOf("<RecommendationRow navigate");
+  const catalogAt = home.indexOf("<CarouselRow", recommendationsAt);
+  assert.ok(continueAt > 0 && continueAt < recommendationsAt && recommendationsAt < catalogAt, "personal rows precede broad trending shelves");
+  assert.doesNotMatch(readFileSync("src/components/CarouselRow.tsx", "utf8"), /Now in rotation/, "removed rotation label stays removed");
+  assert.match(readFileSync("src/components/shared/BrowseRail.tsx", "utf8"), /md:hidden/, "browse pills remain phone-only");
+});
+
+test("desktop Library destination has visual weight beside Search", () => {
+  const header = readFileSync("src/components/AppHeader.tsx", "utf8");
+  const libraryButton = header.match(/onClick=\{\(\) => navigate\('library'[\s\S]*?<\/button>/)?.[0];
+  assert.ok(libraryButton, "Library destination remains present");
+  assert.match(header, /LibraryBig/, "the stronger library glyph is used");
+  assert.match(libraryButton, /font-semibold/, "the label carries more weight than secondary browse links");
+  assert.match(libraryButton, /rounded-full[^\"]*hover:bg-white\/\[0\.06\]/, "the rounded surface appears on hover");
+  assert.doesNotMatch(libraryButton, /\bborder\b|bg-white\/\[0\.03\]|min-w-28/, "no permanent button container is shown");
+  assert.match(header, /LibraryBig className="h-5 w-5 shrink-0" strokeWidth=\{1\.9\}/, "the icon is optically larger and heavier");
+});
+
+test("CatalogFilters offers an inline desktop panel and a compact-screen selection sheet", () => {
+  const { CatalogFilters } = catalogFilters.load();
+  const html = renderToStaticMarkup(
+    React.createElement(CatalogFilters, {
+      kind: "movie",
+      api: "tmdb:trending:movie",
+      navigate: () => {},
+    }),
+  );
+  assert.match(html, /aria-haspopup="dialog"/, "compact trigger advertises the modal filter sheet");
+  assert.match(html, /hidden md:block/, "desktop filter disclosure is breakpoint-specific");
+  assert.match(html, /md:hidden/, "phone filter trigger is breakpoint-specific");
+  assert.match(html, /Science Fiction/, "provider-backed movie genres are offered");
+  assert.doesNotMatch(html, /Title type|>Series<|>Anime</, "the movie page does not repeat cross-catalog navigation inside its filters");
+  assert.doesNotMatch(html, /Ecchi/, "anime-only genres do not leak into movie filters");
+
+  const anime = renderToStaticMarkup(
+    React.createElement(CatalogFilters, {
+      kind: "anime",
+      api: "anilist:genre:anime:Slice of Life",
+      navigate: () => {},
+    }),
+  );
+  assert.match(anime, /Slice of Life/, "AniList named genres are exposed in the same responsive filter surface");
+  assert.match(anime, /Filters · Slice of Life/, "the active AniList genre is visible on the compact trigger");
+  assert.doesNotMatch(anime, /Title type|>Movies<|>Series</, "the anime page only filters anime");
+  assert.doesNotMatch(anime, /Documentary/, "movie-only genres do not leak into anime filters");
+  assert.doesNotMatch(anime, /not exposed by the current catalog provider/, "obsolete unsupported copy stays removed");
 });

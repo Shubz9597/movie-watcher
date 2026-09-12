@@ -7,9 +7,29 @@ import { fileURLToPath } from "node:url";
 
 import { isPlaybackEndedState, waitForDecodedVideo } from "../electron/ipc/mpv-ipc.js";
 import { createPlaybackController } from "../electron/playback/playback-controller.js";
+import { missingMpvNativeExports } from "../electron/playback/mpv-session-manager.js";
 import { progressFromPayload } from "../electron/playback/progress-api.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+
+test("native MPV loader rejects bindings without the child-window API", () => {
+  const staleBinding = { MpvHandle: class {} };
+  assert.deepEqual(missingMpvNativeExports(staleBinding), [
+    "createVideoHost",
+    "resizeVideoHost",
+    "showVideoHost",
+    "destroyVideoHost",
+  ]);
+
+  const completeBinding = {
+    createVideoHost() {},
+    resizeVideoHost() {},
+    showVideoHost() {},
+    destroyVideoHost() {},
+    MpvHandle: class {},
+  };
+  assert.deepEqual(missingMpvNativeExports(completeBinding), []);
+});
 
 test("decoded-video readiness ignores duration and resume time until video is stable", async () => {
   const states = [

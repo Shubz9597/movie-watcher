@@ -33,7 +33,13 @@ func (a OriginAllowlist) Allows(origin string) bool {
 }
 
 const corsAllowedHeaders = "Content-Type, Range, X-Torwatch-Protocol, X-Torwatch-Capability"
-const corsAllowedMethods = "GET, HEAD, OPTIONS"
+
+// PUT is part of the versioned household-library contract
+// (PUT /v2/library/{id}/watch-later|favourite, contracts/library-api.md) and
+// is reachable from allowlisted browser/mobile origins — omitting it here
+// made cross-origin library writes impossible from every browser (caught by
+// the desktop-staging two-client validation, repair pass).
+const corsAllowedMethods = "GET, HEAD, OPTIONS, PUT"
 
 // applyCORS sets the origin-scoped CORS headers for one request and reports
 // whether preflight handling should stop the handler chain (OPTIONS).

@@ -1,0 +1,41 @@
+# torWatch Windows desktop staging stack (temporary Radxa/homeserver substitute).
+#
+# ISOLATION CONTRACT:
+# - Compose project name `torwatch-staging` keeps every container and volume in
+#   a dedicated namespace. It NEVER touches the root docker-compose.yml
+#   (Electron-owned), deploy/torwatch-server (homeserver package), or any other
+#   stack.
+# - PostgreSQL is bound to 127.0.0.1 on a dedicated port (default 5433) and
+#   stores data in a project-scoped named volume, isolated from development
+#   and production databases.
+# - Data persists across ordinary stop/start. Wiping it requires the explicit
+#   `Reset` operation (docker compose down -v) - never automatic.
+#
+# The Go backend and the production browser build run from the working tree on
+# localhost (see staging.ps1); Tailscale Serve may privately proxy them to the
+# tailnet. Nothing here binds to 0.0.0.0.
+
+name: torwatch-staging
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: torwatch-staging-postgres
+    restart: no
+    ports:
+      - "127.0.0.1:${STAGING_PG_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: torwatch
+      POSTGRES_PASSWORD: ${STAGING_PG_PASSWORD:?STAGING_PG_PASSWORD is required (copy .env.example to .env)}
+      POSTGRES_DB: torwatch
+    volumes:
+      - staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U torwatch -d torwatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+volumes:
+  staging_pgdata:
+    name: torwatch-staging_pgdata

@@ -33,6 +33,7 @@ type Legacy = {
   searchAnime: typeof import('./anilist-service').searchAnime;
   getTrendingAnime: typeof import('./anilist-service').getTrendingAnime;
   getAnimeList: typeof import('./anilist-service').getAnimeList;
+  getAnimeByGenre: typeof import('./anilist-service').getAnimeByGenre;
   getCinemetaSeasonMetadata: typeof import('./cinemeta-service').getCinemetaSeasonMetadata;
   getAnimeEpisodeMetadata: typeof import('./anime-episode-metadata-service').getAnimeEpisodeMetadata;
 };
@@ -56,6 +57,7 @@ function loadLegacy(): Promise<Legacy> {
       searchAnime: anilist.searchAnime,
       getTrendingAnime: anilist.getTrendingAnime,
       getAnimeList: anilist.getAnimeList,
+      getAnimeByGenre: anilist.getAnimeByGenre,
       getCinemetaSeasonMetadata: cinemeta.getCinemetaSeasonMetadata,
       getAnimeEpisodeMetadata: animeMeta.getAnimeEpisodeMetadata,
     };
@@ -159,6 +161,19 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
       });
     },
 
+    async getAnimeByGenre(genre: string, page = 1, perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
+      return route(dispatch, legacyOverride, async (legacy) => {
+        const data = await legacy.getAnimeByGenre(genre, page, perPage);
+        return { items: (data.media ?? []).map(cardFromAniList), totalPages: data.pageInfo?.lastPage ?? undefined };
+      }, async () => {
+        const section = await bffSectionPage('popular', page, dispatch, 'anime', genre);
+        return {
+          items: section.titles.filter((row) => row.type === 'anime').map(backendTitleToCard),
+          totalPages: section.totalPages,
+        };
+      });
+    },
+
     // Genre rails (T042.5): renderer mode uses the tmdb discover service;
     // bff mode uses the additive genre section parameters.
     async getTitlesByGenre(kind: 'movie' | 'tv', genreId: number, page = 1, dispatch?: GatewayDispatch): Promise<CatalogPage> {
@@ -185,10 +200,11 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
     },
 
     // Season episodes: tmdb ids keep their numeric id path; anilist/imdb ids
-    // ride the opaque catalog id.
+    // ride the opaque catalog id. M3.1.1: the bff path requests the
+    // media-qualified tv id — the alias stays read-only for old clients.
     async getTvSeason(tvId: number, season: number, dispatch?: GatewayDispatch) {
       return route(dispatch, legacyOverride, (legacy) => legacy.getTvSeason(tvId, season), async () => {
-        const episodes = await bffEpisodes(`tmdb:${tvId}`, season, dispatch);
+        const episodes = await bffEpisodes(`tmdb:tv:${tvId}`, season, dispatch);
         return {
           id: Number(tvId),
           season_number: season,
@@ -247,6 +263,8 @@ export const getTrendingAnime = (page = 1, perPage = 25, dispatch?: GatewayDispa
   catalogGateway.getTrendingAnime(page, perPage, dispatch);
 export const getAnimeList = (page = 1, perPage = 25, dispatch?: GatewayDispatch) =>
   catalogGateway.getAnimeList(page, perPage, dispatch);
+export const getAnimeByGenre = (genre: string, page = 1, perPage = 25, dispatch?: GatewayDispatch) =>
+  catalogGateway.getAnimeByGenre(genre, page, perPage, dispatch);
 export const getTitlesByGenre = (kind: 'movie' | 'tv', genreId: number, page = 1, dispatch?: GatewayDispatch) =>
   catalogGateway.getTitlesByGenre(kind, genreId, page, dispatch);
 export const searchAnime = (query: string, page = 1, perPage = 24, dispatch?: GatewayDispatch) =>

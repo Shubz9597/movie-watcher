@@ -9,7 +9,14 @@ import ReactDOM from 'react-dom/client';
 import '../globals.css';
 import HomePage from '../pages/HomePage';
 import { LibraryCategoryPage, LibraryPage } from '../pages/LibraryPage';
-import { loadSeeAllPage, loadTitlePage } from '../lib/route-loaders';
+import { RecommendationRow, RecommendationsAllPage as SharedRecommendationsAllPage } from '../components/shared/RecommendationRow';
+import { LibraryToggle } from '../components/shared/LibraryToggle';
+import { LibraryContextProvider } from '../lib/library-react';
+import { LibraryStore } from '../lib/library-store';
+import { attachLibrarySync, type LibrarySync } from '../lib/library-sync';
+import { getDeviceId } from '../lib/device-id';
+import { loadPlayerPage, loadRecommendationsPage, loadSeeAllPage, loadTitlePage } from '../lib/route-loaders';
+import { RouterProvider } from '../lib/router-adapter';
 import { AppShell } from '../components/shared/AppShell';
 import { BrowseRail } from '../components/shared/BrowseRail';
 import { PlatformProvider, useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
@@ -18,16 +25,29 @@ import { BrowserConnection, BrowserStorage, resolveBrowserOrigin } from '../plat
 
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
+const PlayerPage = lazy(loadPlayerPage);
+const RecommendationsAllPage = lazy(loadRecommendationsPage);
 
-async function composePlatform(): Promise<{ platform: Platform; libraryProvider: import('../lib/services/library-service').LibraryProvider | null }> {
+async function composePlatform(): Promise<{
+  platform: Platform;
+  libraryProvider: import('../lib/services/library-service').LibraryProvider | null;
+  // Server-backed library controller. M3.4: enabled for BOTH production
+  // browser/phone mode and explicit fixture mode (the fixture path injects a
+  // deterministic controller for captures/tests). No local fork exists.
+  libraryController: import('../lib/library-store').LibraryController | null;
+  librarySync?: LibrarySync;
+  // M4.2 capture fixture transport (dev-only).
+  recsFetch?: typeof fetch;
+}> {
   const params = new URLSearchParams(window.location.search);
   const fixtureScenario = params.get('fixtures');
   if (fixtureScenario) {
     // Explicit, test-only: dynamically import the fixture modules so no
     // production path bundles or activates them.
-    const [{ FixtureConnection, FixtureStorage, installFixtureAdapter }, { fixtureLibraryProvider, createStressLibraryFixture }, { BrowserPlayer }] = await Promise.all([
+    const [{ FixtureConnection, FixtureStorage, installFixtureAdapter }, { fixtureLibraryProvider, createStressLibraryFixture, createLibraryStateFixture }, { createRecommendationsFixtureFetch }, { BrowserPlayer }] = await Promise.all([
       import('../platform/fixtures'),
       import('../platform/library-fixtures'),
+      import('../platform/recommendation-fixtures'),
       import('../platform/browser'),
     ]);
     const scenario = (['ok', 'unreachable', 'incompatible', 'provider-failure'].includes(fixtureScenario)
@@ -39,6 +59,12 @@ async function composePlatform(): Promise<{ platform: Platform; libraryProvider:
     // after first decode) for the cached-artwork scroll workload.
     const stressCount = Number(params.get('stress'));
     const stressArtwork = params.get('stressArtwork') === '1';
+    // M3.3 capture workload: ?library=<scenario> drives the REAL shared
+    // Library surfaces through a deterministic state fixture.
+    const libraryScenario = params.get('library');
+    // M4.2 capture workload: ?recs=<scenario> drives the REAL recommendation
+    // surfaces through the deterministic contract fixture.
+    const recsScenario = params.get('recs');
     return {
       platform: {
         kind: 'fixture',
@@ -50,11 +76,20 @@ async function composePlatform(): Promise<{ platform: Platform; libraryProvider:
       libraryProvider: Number.isFinite(stressCount) && stressCount > 0
         ? createStressLibraryFixture(Math.min(500, stressCount), stressArtwork ? '/fixtures/artwork/' : undefined)
         : fixtureLibraryProvider,
+      libraryController: libraryScenario && libraryScenario !== 'none' ? createLibraryStateFixture(libraryScenario) : null,
+      recsFetch: recsScenario ? createRecommendationsFixtureFetch(recsScenario) : undefined,
     };
   }
   const storage = new BrowserStorage();
   const origin = resolveBrowserOrigin(window.location.search) || storage.getPreference('mw_server_origin') || '';
   const { BrowserPlayer } = await import('../platform/browser');
+  // M3.4: the phone/browser entry now uses the SAME server-backed library
+  // store as desktop — no duplicate screen tree, no local fork. Availability
+  // is gated on the server's library.household.v1 capability; older or
+  // unreachable servers surface the explicit library-unavailable state.
+  const libraryStore = new LibraryStore();
+  await libraryStore.refreshCapability();
+  const librarySync = attachLibrarySync(libraryStore);
   return {
     platform: {
       kind: 'browser',
@@ -63,6 +98,8 @@ async function composePlatform(): Promise<{ platform: Platform; libraryProvider:
       player: new BrowserPlayer(),
     },
     libraryProvider: null,
+    libraryController: libraryStore,
+    librarySync,
   };
 }
 
@@ -123,7 +160,15 @@ function useScrollRestoration(routeKey: string) {
   }, [routeKey]);
 }
 
-function BrowserApp({ libraryProvider }: { libraryProvider: import('../lib/services/library-service').LibraryProvider | null }) {
+function BrowserApp({
+  libraryProvider,
+  libraryController,
+  recsFetch,
+}: {
+  libraryProvider: import('../lib/services/library-service').LibraryProvider | null;
+  libraryController: import('../lib/library-store').LibraryController | null;
+  recsFetch?: typeof fetch;
+}) {
   const { route, navigate } = useHashRouter();
   const compat = useConnectionStatus();
   const { connection } = usePlatform();
@@ -138,13 +183,37 @@ function BrowserApp({ libraryProvider }: { libraryProvider: import('../lib/servi
     );
   }
 
-  const requestResume = (title: string) => {
-    // Honest alpha boundary: real playback lands with the mobile player
-    // (M1.3/M2.3). Nothing is saved, queued, or claimed as played.
-    setResumeNotice(`Playback for “${title}” arrives with the mobile player milestone — this preview did not start or save anything.`);
+  const requestResume = (item: {
+    title: string;
+    seriesId: string;
+    season: number;
+    episode: number;
+    kind: 'movie' | 'tv' | 'anime';
+    tmdbId?: number;
+    anilistId?: number;
+    malId?: number;
+  }) => {
+    const kind = item.kind || (item.seriesId.startsWith('tmdb:movie:') ? 'movie' : item.seriesId.startsWith('tmdb:tv:') ? 'tv' : 'anime');
+    const id = kind === 'anime' ? item.anilistId : item.tmdbId;
+    if (!id) {
+      setResumeNotice(`TorWatch could not identify “${item.title || item.seriesId}”. Open it from Library and choose the source again.`);
+      return;
+    }
+    const params: Record<string, string> = {
+      kind,
+      id: String(id),
+      resumeSubjectId: getDeviceId(),
+      resumeSeriesId: item.seriesId,
+      resumeSeason: String(item.season),
+      resumeEpisode: String(item.episode),
+    };
+    if (item.malId) params.malId = String(item.malId);
+    navigate('title', params);
   };
 
   return (
+    <LibraryContextProvider store={libraryController}>
+    <RouterProvider navigate={navigate}>
     <AppShell
       routePath={route.path}
       navigate={navigate}
@@ -159,7 +228,7 @@ function BrowserApp({ libraryProvider }: { libraryProvider: import('../lib/servi
             className="min-h-8 shrink-0 rounded-full px-2 text-sm text-white/60 hover:text-white"
             aria-label="Dismiss notice"
           >
-            ✕
+          ✕
           </button>
         </div>
       ) : null}
@@ -171,24 +240,35 @@ function BrowserApp({ libraryProvider }: { libraryProvider: import('../lib/servi
             <HomePage
               navigate={navigate}
               continueVariant="carousel"
-              onResumeRequest={(item) => requestResume(item.title || item.seriesId)}
+              onResumeRequest={requestResume}
+              recommendationDeps={recsFetch ? { fetchImpl: recsFetch } : undefined}
             />
           </>
         )}
         {route.path === 'library' && (
           <LibraryPage
             navigate={navigate}
+            library={libraryController}
             provider={libraryProvider}
             collection={route.params.get('collection') === 'favourites' ? 'favourites' : 'watch-later'}
+            sort={route.params.get('sort') === 'title' ? 'title' : 'recent'}
           />
         )}
         {route.path === 'library-category' && (
           <LibraryCategoryPage
             navigate={navigate}
+            library={libraryController}
             provider={libraryProvider}
             collection={(route.params.get('collection') === 'favourites' ? 'favourites' : 'watch-later')}
             kind={(route.params.get('kind') === 'series' || route.params.get('kind') === 'anime' ? route.params.get('kind') : 'movie') as 'movie' | 'series' | 'anime'}
+            sort={route.params.get('sort') === 'title' ? 'title' : 'recent'}
           />
+        )}
+        {/* Dev-only (fixture entry): the REAL LibraryToggle pair inside the
+            title-action toolbar arrangement, driven by the fixture library
+            state, so toggle states are capturable without the Electron app. */}
+        {route.path === 'library-states' && (
+          <ToggleStateCapture />
         )}
         {route.path === 'title' && (
           <TitlePage
@@ -206,7 +286,24 @@ function BrowserApp({ libraryProvider }: { libraryProvider: import('../lib/servi
             kind={route.params.get('kind') || 'movie'}
           />
         )}
-        {!['home', 'library', 'library-category', 'title', 'see-all'].includes(route.path) && (
+        {route.path === 'player' && (
+          <PlayerPage navigate={navigate} params={Object.fromEntries(route.params)} />
+        )}
+        {/* Dev-only (fixture entry): the REAL recommendations surfaces driven
+            by the deterministic fixture fetch (?recs=<scenario>), so the
+            M4.2 states are capturable without a backend. */}
+        {route.path === 'recommendations' && recsFetch ? (
+          <SharedRecommendationsAllPage navigate={navigate} deps={{ fetchImpl: recsFetch }} />
+        ) : route.path === 'recommendations' ? (
+          <RecommendationsAllPage navigate={navigate} />
+        ) : null}
+        {route.path === 'recommendations-states' && recsFetch ? (
+          <div className="mx-auto max-w-[1600px] space-y-10 px-5 py-6 md:px-8">
+            <RecommendationRow navigate={navigate} deps={{ fetchImpl: recsFetch }} />
+            <SharedRecommendationsAllPage navigate={navigate} deps={{ fetchImpl: recsFetch }} />
+          </div>
+        ) : null}
+        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations'].includes(route.path) && (
           <section className="mx-auto flex min-h-[70vh] max-w-xl flex-col items-center justify-center px-6 text-center">
             <p className="text-sm text-white/60">This page is not available.</p>
             <h1 className="type-section-title mt-3 text-white">Return to your library</h1>
@@ -221,13 +318,15 @@ function BrowserApp({ libraryProvider }: { libraryProvider: import('../lib/servi
         )}
       </Suspense>
     </AppShell>
+    </RouterProvider>
+    </LibraryContextProvider>
   );
 }
 
 // Browse rail sits above Home content (WF02: open icon rail of categories).
 function BrowseRailSlot({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
   return (
-    <div className="mx-auto max-w-[1600px] px-5 pt-4 md:px-8 lg:px-12">
+    <div className="mx-auto max-w-[1600px] px-5 pt-4 md:hidden">
       <BrowseRail navigate={navigate} />
     </div>
   );
@@ -307,10 +406,34 @@ function RouteFallback() {
   );
 }
 
-void composePlatform().then(({ platform, libraryProvider }) => {
+// Dev-only toggle-state capture composition (fixture entry): the REAL
+// LibraryToggle components in the title-action toolbar arrangement. The
+// scenario comes from the ?library= fixture parameter.
+function ToggleStateCapture() {
+  const canonicalId = 'tmdb:movie:693134';
+  return (
+    <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
+      <h1 className="type-section-title text-white">Dune: Part Two</h1>
+<p className="mt-1 text-sm text-white/55">2024 · Movie</p>
+      <div className="mt-6 flex items-center gap-2" aria-label="Title actions">
+        <LibraryToggle canonicalId={canonicalId} field="watch-later" />
+        <LibraryToggle canonicalId={canonicalId} field="favourites" />
+        <span className="mx-2 h-6 w-px bg-white/15" aria-hidden="true" />
+        <span className="text-sm text-white/65" role="note">
+          Save states: {new URLSearchParams(window.location.search).get('library')}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+void composePlatform().then(({ platform, libraryProvider, libraryController, librarySync, recsFetch }) => {
+  // The sync controller lives for the page lifetime; the store itself clears
+  // origin-scoped state on switch through its own subscription.
+  void librarySync;
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <PlatformProvider platform={platform}>
-      <BrowserApp libraryProvider={libraryProvider} />
+      <BrowserApp libraryProvider={libraryProvider} libraryController={libraryController} recsFetch={recsFetch} />
     </PlatformProvider>,
   );
 });

@@ -122,6 +122,13 @@ export function sourceKindOf(type: BffTitle['type']): 'movie' | 'tv' | 'anime' {
   return 'anime';
 }
 
+// numericExternalId strips the media qualifier from a media-qualified tmdb
+// external id ("tv:209867" → "209867", M3.1.1). Non-tmdb values pass through.
+function numericExternalId(externalID: string | undefined): string | undefined {
+  const qualified = /^(movie|tv):(\d+)$/.exec(externalID ?? '');
+  return qualified ? qualified[2] : externalID;
+}
+
 // backendTitleToCard maps a contract Title row onto the renderer Card shape.
 // Preserve provider-aware navigation IDs alongside the opaque catalog ID.
 // Anime routes use AniList IDs when available, including merged titles.
@@ -129,7 +136,7 @@ export function backendTitleToCard(row: BffTitle): Card {
   const providerIds = row.providerIds ?? {};
   // Existing anime routes take AniList IDs, including for merged titles.
   const canonical = row.type === 'anime' && providerIds.anilist ? 'anilist' : canonicalProviderOf(row);
-  const externalID = providerIds[canonical] ?? row.id.split(':').slice(1).join(':');
+  const externalID = numericExternalId(providerIds[canonical] ?? row.id.split(':').slice(1).join(':'));
   const numericID = Number(externalID);
   return {
     id: Number.isFinite(numericID) && /^\d+$/.test(externalID ?? '') ? numericID : 0,
@@ -178,12 +185,15 @@ export async function bffTitleDetail(catalogId: string, deps?: BffDeps): Promise
 
 // catalogIdForSeriesId maps a progress seriesId ("tmdb:movie:123",
 // "tmdb:tv:456", "anilist:789", "mal:1011") onto its opaque catalog id for
-// bff-mode enrichment (T042.4). Unknown shapes return null; the caller keeps
-// the raw seriesId as display fallback.
+// bff-mode enrichment (T042.4). M3.1.1: the media qualifier is PRESERVED —
+// the catalog id is exactly the qualified progress vocabulary, so enrichment
+// addresses the requested media type and never collapses to the ambiguous
+// legacy `tmdb:N` alias. Unknown shapes return null; the caller keeps the
+// raw seriesId as display fallback.
 export function catalogIdForSeriesId(seriesId: string): string | null {
   const parts = seriesId.split(':');
   if (parts.length === 3 && parts[0] === 'tmdb' && (parts[1] === 'movie' || parts[1] === 'tv')) {
-    return /^\d+$/.test(parts[2]) ? `tmdb:${parts[2]}` : null;
+    return /^\d+$/.test(parts[2]) ? `tmdb:${parts[1]}:${parts[2]}` : null;
   }
   if (parts.length === 2 && /^\d+$/.test(parts[1])) {
     if (parts[0] === 'anilist') return `anilist:${parts[1]}`;
@@ -241,15 +251,16 @@ export type BffSectionPage = { titles: BffTitle[]; page: number; totalPages?: nu
 
 // bffSectionPage requests one section page. page 1 without a genre keeps the
 // original curated URL; paged/genre requests use the additive contract
-// parameters (T042.1: page 1-500, genre + type movie|series).
+// parameters (T042.1: page 1-500, numeric TMDb genre + movie|series, or
+// named AniList genre + anime).
 export async function bffSectionPage(
-  kind: string, page = 1, deps?: BffDeps, type?: BffTitle['type'], genreId?: number,
+  kind: string, page = 1, deps?: BffDeps, type?: BffTitle['type'], genre?: number | string,
 ): Promise<BffSectionPage> {
   const params = new URLSearchParams({ kind });
   if (page > 1) params.set('page', String(page));
-  if (genreId != null) {
-    params.set('genre', String(genreId));
-    params.set('type', type === 'series' ? 'series' : 'movie');
+  if (genre != null) {
+    params.set('genre', String(genre));
+    params.set('type', type === 'anime' ? 'anime' : type === 'series' ? 'series' : 'movie');
   }
   const payload = await catalogFetch<{
     results: BffTitle[];

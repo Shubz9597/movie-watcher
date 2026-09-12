@@ -9,6 +9,7 @@ import { getDeviceId } from '../lib/device-id';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
 import { ContinueCarousel } from '../components/shared/ContinueCarousel';
+import { RecommendationRow } from '../components/shared/RecommendationRow';
 
 type ContinueItem = {
   seriesId: string;
@@ -308,10 +309,11 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest }: {
   );
 }
 
-export default function HomePage({ navigate, continueVariant = 'rail', onResumeRequest }: {
+export default function HomePage({ navigate, continueVariant = 'rail', onResumeRequest, recommendationDeps }: {
   navigate: (path: string, params?: Record<string, string>) => void;
   continueVariant?: 'rail' | 'carousel';
   onResumeRequest?: (item: ContinueItem) => void;
+  recommendationDeps?: { fetchImpl?: typeof fetch };
 }) {
   const [movies, setMovies] = useState<MovieCard[]>([]);
   const [moviesLoading, setMoviesLoading] = useState(true);
@@ -649,6 +651,10 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
       <div className="mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
         <ContinueRail navigate={navigate} variant={continueVariant} onResumeRequest={onResumeRequest} />
+
+        {/* Recommendations follow personal progress, before the broader
+            rotating catalog shelves. Items remain mixed across title types. */}
+        <RecommendationRow navigate={navigate} deps={recommendationDeps} />
 
         <div>
           <CarouselRow

@@ -95,7 +95,6 @@ export default function CarouselRow({
     <section className="border-t border-white/[0.08] py-8 md:py-10">
       <div className="mb-5">
         <div className="min-w-0">
-          <p className="type-secondary mb-2 font-medium text-white/65">Now in rotation</p>
           <h2 className="type-section-title text-white">{title}</h2>
           {subtitle ? <p className="measure-compact type-body mt-2 text-white/70">{subtitle}</p> : null}
         </div>

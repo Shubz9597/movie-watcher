@@ -35,8 +35,14 @@ type ServerConfig struct {
 // with the opaque Chromium origin `Origin: null`. Accepting the literal
 // "null" entry is a NARROW, documented compatibility measure: it applies
 // only to the read-only, credential-free versioned surfaces
-// (/v1/version, /readyz, /v2/catalog/*); clientId is not authentication;
-// no write endpoint is reachable through it. Operators may harden by
+// (/v1/version, /readyz, /v2/catalog/*) AND the household library surface
+// — the packaged desktop renderer (M3.3) writes its Library from the same
+// opaque origin. KNOWN BOUNDARY: an opaque origin is not attributable, so a
+// sandboxed iframe on a public page shares `Origin: null`; Chromium Private
+// Network Access is the current mitigation. The durable fix is serving the
+// packaged renderer from a non-opaque origin (M5 native shell) and then
+// dropping "null" (or restricting it to reads) — see
+// internal/httpapi/library_handlers.go. Operators may still harden by
 // overriding TORWATCH_ALLOWED_CLIENT_ORIGINS without the "null" entry
 // (packaged bff-mode clients then require a served origin).
 const DefaultAllowedClientOrigins = "null,http://localhost:5173"

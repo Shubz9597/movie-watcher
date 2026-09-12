@@ -23,13 +23,37 @@ import (
 	"torrent-streamer/internal/httpapi"
 	"torrent-streamer/internal/imdb"
 	"torrent-streamer/internal/janitor"
+	"torrent-streamer/internal/library"
 	"torrent-streamer/internal/middleware"
+	"torrent-streamer/internal/playback"
+	"torrent-streamer/internal/recommendations"
 	"torrent-streamer/internal/scoring"
 	"torrent-streamer/internal/search"
 	"torrent-streamer/internal/torrentx"
 	"torrent-streamer/internal/watch"
 	"torrent-streamer/migrations"
 )
+
+// startPlaybackSweeper expires playback sessions on a bounded interval.
+func startPlaybackSweeper(manager *playback.Manager, interval time.Duration) (stop func()) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				manager.CleanupSweeper()
+			}
+		}
+	}()
+	return func() { close(done) }
+}
 
 var (
 	db         *sql.DB
@@ -93,9 +117,87 @@ func main() {
 	// catalog.bff.v2 is advertised from the catalog phase onward; further
 	// capabilities are added only when they actually land.
 	catalogProviders := buildCatalogProviders(prowlarrHTTP)
+	catalogService := catalog.NewService(catalogProviders, catalog.Options{})
+	// Household library (feature 002 M3.2): advertise library.household.v1
+	// ONLY when the schema is initialized and the storage-backed service
+	// opened; an uninitialized schema keeps the routes absent and the
+	// capability unadvertised (contracts/library-api.md §negotiation).
+	libraryStore, libraryErr := library.NewStore(context.Background(), db, library.CatalogResolver{Catalog: catalogService})
+	if libraryErr != nil {
+		log.Printf("[boot] library capability unavailable: %v", libraryErr)
+	}
+	capabilities := []string{"catalog.bff.v2", "leases.shared", "progress.serverOrdered"}
+	if libraryStore != nil {
+		capabilities = append(capabilities, library.Capability)
+	}
+	// Recommendations (M4.1): wired ONLY when the household library and a
+	// catalog candidate provider both exist; the capability is advertised only
+	// then (contracts/recommendations-api.md §Negotiation).
+	var recommendationService *recommendations.Service
+	if libraryStore != nil {
+		for _, provider := range catalogProviders {
+			if candidateProvider, ok := provider.(catalog.CandidateProvider); ok {
+				recommendationService = recommendations.New(recommendations.Deps{
+					Library:               libraryStore,
+					Candidates:            recommendations.CatalogCandidates{Provider: candidateProvider},
+					SeedGenres:            recommendations.CatalogSeedGenres{Catalog: catalogService},
+					CandidateCacheVersion: recommendations.CandidatePoolVersion,
+				})
+				break
+			}
+		}
+	}
+	if recommendationService != nil {
+		capabilities = append(capabilities, recommendations.Capability)
+	}
+	// Playback compatibility service (M1.3.x): the shared mobile playback
+	// foundation. The capability is advertised ONLY when BOTH ffprobe and
+	// ffmpeg are configured, executable, and self-identifying — an
+	// unconfigured toolchain keeps the routes absent and /v1/version honest.
+	var playbackManager *playback.Manager
+	{
+		tools := playback.Tools{FFprobePath: config.FFprobePath(), FFmpegPath: config.FFmpegPath()}
+		if ok, why := tools.Available(context.Background()); !ok {
+			log.Printf("[boot] playback.compat.v1 unavailable: %s", why)
+		} else if source, srcErr := playback.NewMediaSource(); srcErr != nil {
+			log.Printf("[boot] playback.compat.v1 unavailable: media source could not start: %v", srcErr)
+		} else {
+			// Source resolution: the torrent resolver is the production path.
+			// A configured fixture root (TORWATCH_PLAYBACK_FIXTURE_ROOT)
+			// replaces it for VALIDATION deployments so deterministic
+			// evidence can be produced without torrent peers. The fixture
+			// resolver only ever serves direct children of that root.
+			var playbackResolver playback.Resolver = &playback.TorrentResolver{WaitMetadata: config.WaitMetadata()}
+			if fixtureRoot := config.PlaybackFixtureRoot(); fixtureRoot != "" {
+				playbackResolver = &playback.FixtureResolver{Root: fixtureRoot}
+				log.Printf("[boot] playback fixture source ACTIVE (validation only): sessions resolve media from the configured fixture root")
+			}
+			manager := playback.NewManager(
+				playback.Config{
+					DataRoot:            config.PlaybackDataRoot(),
+					MaxActiveTranscodes: config.PlaybackMaxTranscodes(),
+					SessionTTL:          config.PlaybackSessionTTL(),
+					ProbeTimeout:        config.PlaybackProbeTimeout(),
+					MaxTranscodeHeight:  config.PlaybackMaxTranscodeHeight(),
+					MaxSessions:         config.PlaybackMaxSessions(),
+				},
+				tools,
+				&playback.FFprobeProber{Tools: tools, Timeout: config.PlaybackProbeTimeout()},
+				playbackResolver, source,
+			)
+			manager.SweepStaleAtStartup()
+			stopSweep := startPlaybackSweeper(manager, config.PlaybackSessionTTL()/4)
+			defer stopSweep()
+			defer manager.Stop()
+			playbackManager = manager
+			capabilities = append(capabilities, "playback.compat.v1")
+			log.Printf("[boot] playback.compat.v1 ready (transcodes<=%d, ttl=%s, root=%s)",
+				config.PlaybackMaxTranscodes(), config.PlaybackSessionTTL(), config.PlaybackDataRoot())
+		}
+	}
 	build := buildinfo.New(buildinfo.Options{
 		ServerVersion: serverConfig.AppVersion,
-		Capabilities:  []string{"catalog.bff.v2", "leases.shared", "progress.serverOrdered"},
+		Capabilities:  capabilities,
 	})
 	// Explicit CORS origin allowlist for the versioned browser/mobile
 	// surfaces; default preserves the Electron file:// and dev-server origins.
@@ -115,10 +217,26 @@ func main() {
 		AllowedOrigins: allowedOrigins,
 	}.Register(mux)
 	httpapi.CatalogHandlers{
-		Catalog:        catalog.NewService(catalogProviders, catalog.Options{}),
+		Catalog:        catalogService,
 		Build:          build,
 		Ratings:        imdbStore,
 		AllowedOrigins: allowedOrigins,
+	}.Register(mux)
+	httpapi.LibraryHandlers{
+		Library:        libraryStore,
+		Build:          build,
+		AllowedOrigins: allowedOrigins,
+	}.Register(mux)
+	httpapi.RecommendationHandlers{
+		Recommendations: recommendationService,
+		Build:           build,
+		AllowedOrigins:  allowedOrigins,
+	}.Register(mux)
+	httpapi.PlaybackHandlers{
+		Manager:        playbackManager,
+		Build:          build,
+		AllowedOrigins: allowedOrigins,
+		PlaybackRoot:   config.PlaybackDataRoot(),
 	}.Register(mux)
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{

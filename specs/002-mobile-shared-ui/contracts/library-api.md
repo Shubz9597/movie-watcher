@@ -49,6 +49,17 @@ Cursor-paginated canonical summaries.
 - `total` is the full-scope count for collection+kind (beyond page one). `nextCursor` is absent on the last page. `metadataAvailable: false` entries render from the stored snapshot (title fallback + placeholder artwork) — membership is preserved when upstream metadata disappears (data-model).
 - **Cursors are scope-bound**: the cursor embeds collection+kind+sort+last tuple. A cursor presented with mismatched scope → `400 invalid_request` (never silently mixed scopes).
 
+### `GET /v2/library/memberships?ids={a,b,…}` — per-title reconciliation (repair pass, additive)
+
+Returns the server-confirmed flag state for a bounded batch of canonical ids so clients can reconcile **cross-client removals** truthfully: bounded overview previews and page windows cannot prove absence, but this endpoint can.
+
+- `ids`: comma-separated canonical ids, percent-encoded once (the same form as the PUT path segments). Required, non-empty, at most 100 ids. Malformed/unknown namespaces are skipped silently; violations of the batch limit → `400 invalid_request`.
+- Response `200`: `{ "revision": "…", "memberships": [ { "canonicalId": "tmdb:tv:209867", "watchLater": true, "favourite": false }, … ] }`
+  - `revision` is the household revision the answer was read at (lossless decimal string).
+  - Every requested, server-known id is returned — including rows with both flags false (a retained removal row reports a CONFIRMED false).
+  - Ids the server does not know are **omitted**: an omission read at revision R proves, for a client whose per-title state is older than R, that the title has no active membership.
+- Client rule: run once per bounded poll over locally-known titles; apply per-title with the lossless revision compare (a locally newer per-title revision wins; omissions clear flags at the returned revision).
+
 ### `GET /v2/library/overview?collection={watch-later|favourites}&sort={recent|title}`
 
 Bounded shelf summaries for Movies/Series/Anime with full-scope totals and up to six previews each, one batched read.
@@ -58,7 +69,7 @@ Bounded shelf summaries for Movies/Series/Anime with full-scope totals and up to
 
 ### `PUT /v2/library/{encodedCanonicalId}/watch-later` and `/favourite`
 
-Body `{ "enabled": true|false }`. The canonical id is percent-encoded ONCE (the id itself contains `:`).
+Body `{ "enabled": true|false }`. The canonical id is percent-encoded ONCE (the id itself contains `:`). NOTE the path segment is SINGULAR `/favourite` (the collection query parameter is plural `favourites`).
 
 - Response `200`: `{ "canonicalId": "tmdb:tv:209867", "watchLater": false, "favourite": true, "revision": "18446744073709551616", "updatedAt": "…" }` — both flags always returned.
 - **Independent fields**: updating one flag never overwrites the other.

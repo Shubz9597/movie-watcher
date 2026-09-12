@@ -263,22 +263,15 @@ export default function TorrentPanel({
     setBusyActionId(`play:${actionKey(t)}`);
     setError(null);
     try {
-    console.log('[TorrentPanel] playInMpv called with torrent:', t);
+    // Never log the torrent row or route params: they contain the magnet URI.
     platform.desktop?.debugLog?.('[TorrentPanel] playInMpv click', {
       title: t.title,
       hasMagnetUri: Boolean(t.magnetUri),
       hasInfoHash: Boolean(t.infoHash),
     });
 
-    if (!isElectron) {
-      console.warn('[TorrentPanel] Not in Electron environment, cannot play');
-      setError('Playback arrives with the mobile player milestone — this preview did not start or save anything.');
-      return;
-    }
-
-    if (!window.electronAPI) {
-      console.error('[TorrentPanel] electronAPI is not available');
-      setError('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
+    if (!platform.player) {
+      setError('Playback is unavailable on this device. Reconnect to the server and try again.');
       return;
     }
 
@@ -310,7 +303,7 @@ export default function TorrentPanel({
     if (t.fileIndex != null) params.fileIndex = String(t.fileIndex);
     if (year) params.year = String(year);
 
-    console.log('[TorrentPanel] Navigating to player page with params:', params);
+    // Never log route params: they contain the magnet URI.
     router.push('player', params);
     } finally {
       actionInFlight.current = false;
@@ -427,8 +420,7 @@ export default function TorrentPanel({
                         className={`block min-w-0 flex-1 text-left ${FOCUS_RING_CLASS}`}
                         aria-label={`Select source ${t.title}`}
                       >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1">
                             <div className="mb-2 flex flex-wrap items-center gap-2">
                               <p className={`break-all text-sm ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{t.title}</p>
                               {quality ? (
@@ -455,12 +447,14 @@ export default function TorrentPanel({
                               {t.indexer && t.indexer !== '-' && <span>{t.indexer}</span>}
                               {t.publishDate && <span>{formatDate(t.publishDate)}</span>}
                             </div>
-                          </div>
-                          <div className="hidden shrink-0 sm:flex">
-                            {isElectron && (
+                        </div>
+                      </button>
+                      <div className="hidden shrink-0 sm:flex">
+                            {isElectron ? (
                               <PlaybackSplitButton
                                 onPlay={() => {
-                                  console.log('[TorrentPanel] Play button clicked for torrent:', t);
+                                  // Title only: torrent rows carry the magnet URI.
+                                  console.log('[TorrentPanel] Play clicked:', t.title);
                                   setSelectedKey(torrentActionKey);
                                   void playInMpv(t);
                                 }}
@@ -469,11 +463,23 @@ export default function TorrentPanel({
                                 playBusy={busyActionId === playActionId}
                                 externalBusy={busyActionId === externalActionId}
                               />
+                            ) : (
+                              <Button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSelectedKey(torrentActionKey);
+                                  void playInMpv(t);
+                                }}
+                                disabled={Boolean(busyActionId)}
+                                className="min-h-11 rounded-full bg-white px-5 text-black hover:bg-white/85"
+                              >
+                                <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
+                                {busyActionId === playActionId ? 'Opening…' : 'Play'}
+                              </Button>
                             )}
                           </div>
                         </div>
-                      </button>
-                    </div>
 
                     {/* WF06a: source-details disclosure — technical/source
                         metadata with explicit unknowns; "Use this torrent"
@@ -567,12 +573,7 @@ export default function TorrentPanel({
           {/* WF06: fixed Play footer — the explicit playback action for the
               selected source. Disabled without a selection; never auto-plays. */}
           <div className="sticky bottom-0 border-t border-white/[0.1] bg-[#0c0c0c]/95 px-5 py-3 backdrop-blur-xl sm:hidden">
-            {selectedKey && !isElectron ? (
-              <p className="text-center text-xs text-white/60" role="note">
-                Playback arrives with the mobile player milestone.
-              </p>
-            ) : (
-              <Button
+            <Button
                 type="button"
                 onClick={() => {
                   const selected = displayedTorrents.find((row) => actionKey(row) === selectedKey);
@@ -584,7 +585,6 @@ export default function TorrentPanel({
                 <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
                 {busyActionId ? 'Opening…' : selectedKey ? 'Play selected source' : 'Select a source to play'}
               </Button>
-            )}
           </div>
         </>
       )}

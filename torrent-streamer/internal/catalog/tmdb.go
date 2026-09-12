@@ -43,7 +43,7 @@ func (p *TMDb) endpoint(path string, params map[string]string) string {
 
 type tmdbSearchResponse struct {
 	TotalPages int `json:"total_pages"`
-	Results []struct {
+	Results    []struct {
 		MediaType        string `json:"media_type"`
 		ID               int64  `json:"id"`
 		Title            string `json:"title"`
@@ -82,6 +82,21 @@ func (p *TMDb) Search(ctx context.Context, query SearchQuery) ([]Title, error) {
 	return titles, nil
 }
 
+// splitTMDbExternalID splits a TMDb external id that may carry an explicit
+// media qualifier ("movie:123" / "tv:123", from the qualified canonical ids
+// tmdb:movie:N / tmdb:tv:N, M3.1.1) away from the legacy unqualified numeric
+// form. The qualifier selects exactly ONE upstream endpoint for Detail; the
+// legacy form keeps the documented movie→tv probe order as a read alias.
+func splitTMDbExternalID(externalID string) (mediaType, numericID string) {
+	if rest, ok := strings.CutPrefix(externalID, "movie:"); ok {
+		return "movie", rest
+	}
+	if rest, ok := strings.CutPrefix(externalID, "tv:"); ok {
+		return "tv", rest
+	}
+	return "", externalID
+}
+
 func (p *TMDb) titleFromMedia(mediaType string, id int64, title, name, originalTitle, originalName,
 	releaseDate, firstAirDate, overview, posterPath, backdropPath, originalLanguage string, genreIDs []int) Title {
 	display, original := title, originalTitle
@@ -104,15 +119,21 @@ func (p *TMDb) titleFromMedia(mediaType string, id int64, title, name, originalT
 			kind = TypeAnime
 		}
 	}
+	// M3.1.1: TMDb canonical ids are media-qualified ("tmdb:movie:N" /
+	// "tmdb:tv:N") because movie and tv numeric sequences are independent
+	// upstream. Anime keeps its structural media type in the id (classification
+	// is not a third namespace). The ProviderIDs value mirrors the qualified
+	// external id so Detail/Episodes address one endpoint deterministically.
+	qualifiedID := mediaType + ":" + strconv.FormatInt(id, 10)
 	return Title{
-		ID:            "tmdb:" + strconv.FormatInt(id, 10),
+		ID:            "tmdb:" + qualifiedID,
 		Type:          kind,
 		Title:         display,
 		OriginalTitle: original,
 		Year:          yearFromDate(date),
 		Overview:      overview,
 		Artwork:       artwork,
-		ProviderIDs:   map[string]string{"tmdb": strconv.FormatInt(id, 10)},
+		ProviderIDs:   map[string]string{"tmdb": qualifiedID},
 		MergedFrom:    []string{"tmdb"},
 	}
 }
@@ -164,30 +185,44 @@ type tmdbDetailResponse struct {
 	} `json:"seasons"`
 }
 
-// Detail resolves a tmdb:<id> title, trying the movie endpoint first, then
-// TV (deterministic; ids are not self-describing).
+// Detail resolves a tmdb:<id> title. Qualified external ids ("movie:N" /
+// "tv:N", from the canonical ids tmdb:movie:N / tmdb:tv:N) probe ONLY the
+// requested media-type endpoint — a qualified tv lookup never falls back to
+// the movie endpoint (M3.1.1 identity contract). The legacy unqualified
+// numeric form stays a read alias with the documented deterministic movie→tv
+// probe order (ids are not self-describing).
 func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error) {
 	if p.apiKey == "" {
 		return Title{}, errProviderUnavailable
 	}
-	externalID := request.ProviderIDs["tmdb"]
+	mediaType, externalID := splitTMDbExternalID(request.ProviderIDs["tmdb"])
 	if externalID == "" {
 		return Title{}, ErrNotFound
 	}
 	var payload tmdbDetailResponse
-	movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, nil), &payload)
-	if movieErr == nil {
-		return p.detailToTitle("movie", externalID, payload), nil
+	if mediaType == "" {
+		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, nil), &payload)
+		if movieErr == nil {
+			return p.detailToTitle("movie", externalID, payload), nil
+		}
+		if movieErr != ErrNotFound {
+			return Title{}, movieErr
+		}
+		payload = tmdbDetailResponse{}
+		tvErr := fetchJSON(ctx, p.http, p.endpoint("/3/tv/"+externalID, nil), &payload)
+		if tvErr == nil {
+			return p.detailToTitle("tv", externalID, payload), nil
+		}
+		return Title{}, ErrNotFound
 	}
-	if movieErr != ErrNotFound {
-		return Title{}, movieErr
+	path := "/3/movie/"
+	if mediaType == "tv" {
+		path = "/3/tv/"
 	}
-	payload = tmdbDetailResponse{}
-	tvErr := fetchJSON(ctx, p.http, p.endpoint("/3/tv/"+externalID, nil), &payload)
-	if tvErr == nil {
-		return p.detailToTitle("tv", externalID, payload), nil
+	if err := fetchJSON(ctx, p.http, p.endpoint(path+externalID, nil), &payload); err != nil {
+		return Title{}, err
 	}
-	return Title{}, ErrNotFound
+	return p.detailToTitle(mediaType, externalID, payload), nil
 }
 
 func (p *TMDb) detailToTitle(mediaType, externalID string, payload tmdbDetailResponse) Title {
@@ -248,7 +283,12 @@ func (p *TMDb) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode,
 	if p.apiKey == "" {
 		return nil, errProviderUnavailable
 	}
-	externalID := request.ProviderIDs["tmdb"]
+	// Episodes always resolve through the tv endpoint; a qualified external
+	// id ("tv:123") is expected from qualified canonical ids, the bare
+	// numeric form stays the legacy alias input. Episode ids embed the
+	// requested title-id form so the namespace follows the title (M3.1.1).
+	qualifiedExternal := request.ProviderIDs["tmdb"]
+	_, externalID := splitTMDbExternalID(qualifiedExternal)
 	if externalID == "" {
 		return nil, ErrNotFound
 	}
@@ -264,7 +304,7 @@ func (p *TMDb) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode,
 			still = "https://image.tmdb.org/t/p/w300" + episode.StillPath
 		}
 		episodes = append(episodes, Episode{
-			ID:          "tmdb:" + externalID + ":" + strconv.Itoa(episode.SeasonNumber) + ":" + strconv.Itoa(episode.EpisodeNumber),
+			ID:          "tmdb:" + qualifiedExternal + ":" + strconv.Itoa(episode.SeasonNumber) + ":" + strconv.Itoa(episode.EpisodeNumber),
 			Season:      episode.SeasonNumber,
 			Episode:     episode.EpisodeNumber,
 			Title:       episode.Name,
@@ -272,7 +312,7 @@ func (p *TMDb) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode,
 			Still:       still,
 			Overview:    episode.Overview,
 			DurationS:   episode.Runtime * 60,
-			ProviderIDs: map[string]string{"tmdb": externalID},
+			ProviderIDs: map[string]string{"tmdb": qualifiedExternal},
 		})
 	}
 	return episodes, nil
@@ -386,6 +426,83 @@ func (p *TMDb) titlesFromDiscoverResults(payload tmdbSearchResponse, mediaType T
 			result.Title, result.Name, result.OriginalTitle, result.OriginalName,
 			result.ReleaseDate, result.FirstAirDate, result.Overview,
 			result.PosterPath, result.BackdropPath, result.OriginalLanguage, result.GenreIDs))
+	}
+	return titles, nil
+}
+
+// CandidateProvider supplies popular candidates WITH genre names for
+// recommendation scoring (M4.1, contracts/recommendations-api.md). The
+// upstream cost is bounded per build: a handful of trending pages plus the
+// two genre-list lookups — never one call per candidate.
+type CandidateProvider interface {
+	Provider
+	// PopularCandidates returns up to limit popular titles ordered by the
+	// provider's popularity (rank = slice position).
+	PopularCandidates(ctx context.Context, limit int) ([]Title, error)
+}
+
+type tmdbGenreListResponse struct {
+	Genres []struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	} `json:"genres"`
+}
+
+// PopularCandidates merges the weekly trending pages (popularity order) and
+// maps each result's numeric genre ids onto names via the TMDb genre lists so
+// candidates carry genre metadata without a detail call per candidate.
+func (p *TMDb) PopularCandidates(ctx context.Context, limit int) ([]Title, error) {
+	if p.apiKey == "" {
+		return nil, errProviderUnavailable
+	}
+	var movieGenres, tvGenres tmdbGenreListResponse
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/movie/list", nil), &movieGenres); err != nil {
+		return nil, err
+	}
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/tv/list", nil), &tvGenres); err != nil {
+		return nil, err
+	}
+	genreName := map[int]string{}
+	for _, genre := range append(movieGenres.Genres, tvGenres.Genres...) {
+		genreName[genre.ID] = genre.Name
+	}
+
+	titles := make([]Title, 0, limit)
+	// Deduplication key is the QUALIFIED media identity (media type + numeric
+	// id): TMDb movie and tv numeric sequences are independent, so the same
+	// number in both namespaces is two different titles and must NOT collapse.
+	seen := map[string]bool{}
+	for page := 1; len(titles) < limit && page <= 5; page++ {
+		var payload tmdbSearchResponse
+		if err := fetchJSON(ctx, p.http, p.endpoint("/3/trending/all/week", map[string]string{"page": strconv.Itoa(page)}), &payload); err != nil {
+			return nil, err
+		}
+		for _, result := range payload.Results {
+			if result.MediaType != "movie" && result.MediaType != "tv" {
+				continue
+			}
+			key := result.MediaType + ":" + strconv.FormatInt(result.ID, 10)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			title := p.titleFromMedia(result.MediaType, result.ID,
+				result.Title, result.Name, result.OriginalTitle, result.OriginalName,
+				result.ReleaseDate, result.FirstAirDate, result.Overview,
+				result.PosterPath, result.BackdropPath, result.OriginalLanguage, result.GenreIDs)
+			for _, genreID := range result.GenreIDs {
+				if name, ok := genreName[genreID]; ok && name != "" {
+					title.Genres = append(title.Genres, name)
+				}
+			}
+			titles = append(titles, title)
+			if len(titles) >= limit {
+				break
+			}
+		}
+		if len(payload.Results) == 0 {
+			break
+		}
 	}
 	return titles, nil
 }

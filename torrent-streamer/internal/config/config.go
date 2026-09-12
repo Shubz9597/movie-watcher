@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,22 @@ var (
 	maxActiveTitles = 1
 
 	listenAddr = ":4001"
+
+	// Playback compatibility service (M1.3.x). Paths are configurable so the
+	// service never assumes tools on the host PATH; availability is verified
+	// before the capability is advertised.
+	ffmpegPath            = ""
+	ffprobePath           = ""
+	playbackDataRoot      = "" // default: <dataRoot>/playback-sessions
+	playbackMaxTranscodes = 1
+	playbackSessionTTL    = 2 * time.Hour
+	playbackProbeTimeout  = 20 * time.Second
+	playbackMaxTranscodeH = 1080
+	playbackMaxSessions   = 8
+	// Validation-only fixture root: when set, playback sessions may plan for
+	// files under this directory (deterministic staging evidence without
+	// peers). Empty in production — the local-file source is then disabled.
+	playbackFixtureRoot = ""
 
 	// logging
 	logFilePath   = "debug.log"
@@ -88,6 +105,16 @@ func Load() {
 
 	listenAddr = getenv("LISTEN", listenAddr)
 
+	ffmpegPath = getenv("FFMPEG_PATH", ffmpegPath)
+	ffprobePath = getenv("FFPROBE_PATH", ffprobePath)
+	playbackDataRoot = getenv("PLAYBACK_DATA_ROOT", playbackDataRoot)
+	playbackMaxTranscodes = int(getenvInt64("PLAYBACK_MAX_TRANSCODES", int64(playbackMaxTranscodes)))
+	playbackSessionTTL = getenvDuration("PLAYBACK_SESSION_TTL", playbackSessionTTL)
+	playbackProbeTimeout = getenvDuration("PLAYBACK_PROBE_TIMEOUT", playbackProbeTimeout)
+	playbackMaxTranscodeH = int(getenvInt64("PLAYBACK_MAX_TRANSCODE_HEIGHT", int64(playbackMaxTranscodeH)))
+	playbackMaxSessions = int(getenvInt64("PLAYBACK_MAX_SESSIONS", int64(playbackMaxSessions)))
+	playbackFixtureRoot = getenv("TORWATCH_PLAYBACK_FIXTURE_ROOT", playbackFixtureRoot)
+
 	logFilePath = getenv("LOG_FILE", logFilePath)
 	errorLogPath = getenv("ERROR_LOG_FILE", errorLogPath)
 	logConsole = strings.ToLower(getenv("LOG_CONSOLE", strconv.FormatBool(logConsole))) != "false"
@@ -123,6 +150,22 @@ func LogConsole() bool                   { return logConsole }
 func LogAllowRegex() string              { return logAllowRegex }
 func LogDenyRegex() string               { return logDenyRegex }
 func LogDedupWindow() time.Duration      { return logDedupWin }
+
+// Playback service configuration getters.
+func FFmpegPath() string  { return ffmpegPath }
+func FFprobePath() string { return ffprobePath }
+func PlaybackDataRoot() string {
+	if playbackDataRoot == "" {
+		return filepath.Join(dataRoot, "playback-sessions")
+	}
+	return playbackDataRoot
+}
+func PlaybackMaxTranscodes() int          { return playbackMaxTranscodes }
+func PlaybackSessionTTL() time.Duration   { return playbackSessionTTL }
+func PlaybackProbeTimeout() time.Duration { return playbackProbeTimeout }
+func PlaybackMaxTranscodeHeight() int     { return playbackMaxTranscodeH }
+func PlaybackMaxSessions() int            { return playbackMaxSessions }
+func PlaybackFixtureRoot() string         { return playbackFixtureRoot }
 
 // helpers
 func getenv(k, def string) string {

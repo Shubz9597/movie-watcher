@@ -495,7 +495,11 @@ export function detailFromBackendTitle(row: BackendTitleDetail): Detail {
   const canonical = row.type === 'anime' && providerIds.anilist
     ? 'anilist'
     : (row.mergedFrom?.[0] ?? row.id.split(':', 1)[0] ?? 'tmdb');
-  const externalID = providerIds[canonical] ?? row.id.split(':').slice(1).join(':');
+  // M3.1.1: tmdb external ids are media-qualified ("tv:209867"); strip the
+  // qualifier for the numeric display id. Non-tmdb values pass through.
+  const rawExternal = providerIds[canonical] ?? row.id.split(':').slice(1).join(':');
+  const qualified = /^(movie|tv):(\d+)$/.exec(rawExternal ?? '');
+  const externalID = qualified ? qualified[2] : rawExternal;
   const numericID = /^\d+$/.test(externalID ?? '') ? Number(externalID) : 0;
   const imdbRating = typeof row.ratings?.imdb?.rating === 'number' ? row.ratings.imdb.rating : null;
   const totalEpisodes = (row.seasons ?? []).reduce((sum, season) => sum + (season.episodeCount ?? 0), 0);

@@ -55,6 +55,7 @@ func (h CatalogHandlers) Register(mux *http.ServeMux) {
 }
 
 var clientIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+var genreNamePattern = regexp.MustCompile(`^[\pL][\pL '&-]{0,63}$`)
 
 // negotiationContext validates the optional client negotiation headers for a
 // request (FR-011): protocol outside the supported range and unadvertised
@@ -251,7 +252,7 @@ func (h CatalogHandlers) handleSections(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Additive parameters (T042.1): optional 1-based page and, for genre
-	// rails, a media-type-scoped TMDb genre id. Absent/invalid defaults keep
+	// rails, a media-type-scoped TMDb id or AniList genre name. Absent defaults keep
 	// the original single-page behavior byte-compatible.
 	page := 1
 	if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
@@ -263,20 +264,26 @@ func (h CatalogHandlers) handleSections(w http.ResponseWriter, r *http.Request) 
 		page = value
 	}
 	genreID := 0
-	if raw := strings.TrimSpace(r.URL.Query().Get("genre")); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil || value < 1 {
-			writeCatalogError(w, http.StatusBadRequest, "invalid_request", "genre must be a positive integer")
-			return
-		}
-		genreID = value
-	}
+	genre := ""
+	rawGenre := strings.TrimSpace(r.URL.Query().Get("genre"))
 	mediaType := catalog.TitleType(strings.TrimSpace(r.URL.Query().Get("type")))
-	if genreID > 0 {
+	if rawGenre != "" {
 		switch mediaType {
 		case catalog.TypeMovie, catalog.TypeSeries:
+			value, err := strconv.Atoi(rawGenre)
+			if err != nil || value < 1 {
+				writeCatalogError(w, http.StatusBadRequest, "invalid_request", "genre must be a positive integer for movie or series")
+				return
+			}
+			genreID = value
+		case catalog.TypeAnime:
+			if !genreNamePattern.MatchString(rawGenre) {
+				writeCatalogError(w, http.StatusBadRequest, "invalid_request", "genre must be a valid AniList genre name for anime")
+				return
+			}
+			genre = rawGenre
 		default:
-			writeCatalogError(w, http.StatusBadRequest, "invalid_request", "type must be movie or series when genre is set")
+			writeCatalogError(w, http.StatusBadRequest, "invalid_request", "type must be movie, series, or anime when genre is set")
 			return
 		}
 	} else if mediaType != "" {
@@ -284,7 +291,7 @@ func (h CatalogHandlers) handleSections(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result := h.Catalog.SectionQuery(r.Context(), catalog.SectionQuery{Kind: kind, Page: page, GenreID: genreID, Type: mediaType})
+	result := h.Catalog.SectionQuery(r.Context(), catalog.SectionQuery{Kind: kind, Page: page, GenreID: genreID, Genre: genre, Type: mediaType})
 	if len(result.TitleIDs) == 0 && len(result.DegradedProviders) > 0 {
 		writeCatalogError(w, http.StatusServiceUnavailable, "providers_unavailable", "all section providers failed", result.DegradedProviders)
 		return
@@ -298,7 +305,7 @@ func (h CatalogHandlers) handleSections(w http.ResponseWriter, r *http.Request) 
 		Degraded:          len(result.DegradedProviders) > 0,
 		DegradedProviders: orEmptySlice(result.DegradedProviders),
 	}
-	if page > 1 || genreID > 0 || result.TotalPages > 0 {
+	if page > 1 || rawGenre != "" || result.TotalPages > 0 {
 		response.Page = result.Page
 		response.TotalPages = result.TotalPages
 	}

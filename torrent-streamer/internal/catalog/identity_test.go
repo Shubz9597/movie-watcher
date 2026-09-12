@@ -6,11 +6,13 @@ import (
 	"testing"
 )
 
-// M3.1 canonical identity investigation (specs/002-mobile-shared-ui/
-// evidence/m3.1-identity-contracts.md): characterize the ACTUAL behavior of
-// the opaque `tmdb:<numeric>` id when the same numeric id exists in BOTH
-// TMDb namespaces (movie and tv ids are independent sequences upstream, so
-// numeric collisions are real, not hypothetical).
+// M3.1 canonical identity investigation + M3.1.1 qualified-id resolution
+// (specs/002-mobile-shared-ui/evidence/{m3.1-identity-contracts.md,
+// m3.1.1-qualified-identity.md}): characterize the ACTUAL behavior of the
+// opaque `tmdb:<numeric>` alias when the same numeric id exists in BOTH TMDb
+// namespaces (movie and tv ids are independent sequences upstream, so numeric
+// collisions are real, not hypothetical), and prove that the media-qualified
+// canonical ids `tmdb:movie:N` / `tmdb:tv:N` resolve independently.
 
 func TestIdentitySameNumericIdInBothTMDbNamespaces(t *testing.T) {
 	server := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -32,19 +34,21 @@ func TestIdentitySameNumericIdInBothTMDbNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// DOCUMENTED FINDING: the unqualified id probes the movie endpoint
-	// FIRST and returns the movie — the series with the same numeric id is
-	// UNREACHABLE through `tmdb:123`. Identity is ambiguous without a
-	// media qualifier.
+	// PRESERVED READ ALIAS (M3.1.1): the unqualified id still probes the
+	// movie endpoint FIRST and returns the movie — legacy client behavior is
+	// unchanged. The alias can never establish identity for a Library write;
+	// only the qualified forms are canonical.
 	if title.Type != TypeMovie || title.Title != "Collision Movie" {
 		t.Fatalf("unqualified tmdb:123 resolved to %+v; documented probe order must pick the movie", title)
 	}
-	if title.ID != "tmdb:123" {
-		t.Fatalf("emitted id = %q, want the same unqualified form (current behavior)", title.ID)
+	if title.ID != "tmdb:movie:123" || title.ProviderIDs["tmdb"] != "movie:123" {
+		t.Fatalf("alias detail must emit the media-qualified canonical id: %+v", title)
 	}
 }
 
 func TestIdentityEpisodesUseUnqualifiedIdNamespace(t *testing.T) {
+	// Legacy alias input: episode ids embed the requested title-id form
+	// (unqualified here, qualified in TestTMDbQualifiedEpisodeIdsEmbed...).
 	server := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -102,7 +106,36 @@ func TestIdentityAnimeClassificationKeepsTMDbNamespace(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("results = %d", len(results))
 	}
-	if results[0].Type != TypeAnime || results[0].ID != "tmdb:555" {
-		t.Fatalf("anime classification = %q id %q; must stay in the tmdb namespace", results[0].Type, results[0].ID)
+	if results[0].Type != TypeAnime || results[0].ID != "tmdb:tv:555" {
+		t.Fatalf("anime classification = %q id %q; must keep the structural tmdb tv namespace", results[0].Type, results[0].ID)
+	}
+}
+
+// M3.1.1: qualified canonical ids resolve through the service's opaque-id
+// path (ParseTitleID → ProviderIDs) and stay distinct end to end.
+func TestIdentityQualifiedServiceDetailResolvesEachMediaType(t *testing.T) {
+	server := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/3/movie/123":
+			_, _ = w.Write([]byte(`{"id":123,"title":"Collision Movie","release_date":"2020-01-01","overview":"the movie"}`))
+		case "/3/tv/123":
+			_, _ = w.Write([]byte(`{"id":123,"name":"Collision Series","first_air_date":"2021-01-01","overview":"the series","episode_run_time":[42]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	service := NewService([]Provider{NewTMDb(TMDbOptions{BaseURL: server.URL, APIKey: "test-key"})}, Options{})
+
+	movie := service.Detail(context.Background(), "tmdb:movie:123")
+	if !movie.Found || movie.Title.ID != "tmdb:movie:123" || movie.Title.Type != TypeMovie {
+		t.Fatalf("service detail tmdb:movie:123 = %+v, want the movie", movie)
+	}
+	series := service.Detail(context.Background(), "tmdb:tv:123")
+	if !series.Found || series.Title.ID != "tmdb:tv:123" || series.Title.Type != TypeSeries {
+		t.Fatalf("service detail tmdb:tv:123 = %+v, want the series (never a movie fallback)", series)
+	}
+	if series.Title.ProviderIDs["tmdb"] != "tv:123" || movie.Title.ProviderIDs["tmdb"] != "movie:123" {
+		t.Fatalf("qualified provider ids must round-trip: %+v / %+v", movie.Title.ProviderIDs, series.Title.ProviderIDs)
 	}
 }

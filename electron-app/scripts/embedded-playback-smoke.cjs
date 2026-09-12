@@ -6,6 +6,14 @@ const { pathToFileURL } = require('url');
 
 const native = require(path.join(__dirname, '..', '..', 'native', 'mpv-embed'));
 
+const REQUIRED_NATIVE_EXPORTS = [
+  'createVideoHost',
+  'resizeVideoHost',
+  'showVideoHost',
+  'destroyVideoHost',
+  'MpvHandle',
+];
+
 function nativeWindowId(window) {
   const handle = window.getNativeWindowHandle();
   if (!Buffer.isBuffer(handle) || handle.length < 4) {
@@ -48,6 +56,11 @@ async function probeChildScreenBounds(mainWindow, state) {
 }
 
 async function run() {
+  const missingNativeExports = REQUIRED_NATIVE_EXPORTS.filter((name) => typeof native[name] !== 'function');
+  if (missingNativeExports.length > 0) {
+    throw new Error(`Native MPV module is stale or incomplete (missing: ${missingNativeExports.join(', ')}). Run npm run rebuild-native.`);
+  }
+
   const mainWindow = new BrowserWindow({
     width: 960,
     height: 540,
@@ -62,18 +75,21 @@ async function run() {
 
   mainWindow.setBounds({ x: 160, y: 120, width: 800, height: 500 });
   await delay(200);
+  const menuInitiallyVisible = mainWindow.isMenuBarVisible();
   const contentWithMenu = mainWindow.getContentBounds();
   mainWindow.removeMenu();
   await delay(200);
+  const menuVisibleAfterRemoval = mainWindow.isMenuBarVisible();
   const contentWithoutMenu = mainWindow.getContentBounds();
   const menuBandRemoved = contentWithoutMenu.y < contentWithMenu.y
     && contentWithoutMenu.height > contentWithMenu.height;
+  const menuRemovalOk = !menuVisibleAfterRemoval && (!menuInitiallyVisible || menuBandRemoved);
   const windowedOrigin = await probeChildScreenBounds(mainWindow, 'windowed');
   mainWindow.maximize();
   await delay(300);
   const maximizedOrigin = await probeChildScreenBounds(mainWindow, 'maximized');
-  const framedLayoutOk = menuBandRemoved && windowedOrigin.ok && maximizedOrigin.ok;
-  console.log(`FRAMED_PLAYER_LAYOUT_SMOKE=${JSON.stringify({ ok: framedLayoutOk, menuBandRemoved, contentWithMenu, contentWithoutMenu, windowedOrigin, maximizedOrigin })}`);
+  const framedLayoutOk = menuRemovalOk && windowedOrigin.ok && maximizedOrigin.ok;
+  console.log(`FRAMED_PLAYER_LAYOUT_SMOKE=${JSON.stringify({ ok: framedLayoutOk, menuRemovalOk, menuInitiallyVisible, menuVisibleAfterRemoval, menuBandRemoved, contentWithMenu, contentWithoutMenu, windowedOrigin, maximizedOrigin })}`);
   if (!framedLayoutOk) process.exitCode = 1;
 
   if (process.platform === 'win32') {

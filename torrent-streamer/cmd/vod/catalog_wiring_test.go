@@ -96,7 +96,8 @@ func TestCatalogEndpointsEndToEnd(t *testing.T) {
 	}
 	results := search["results"].([]any)
 	first := results[0].(map[string]any)
-	if first["id"] != "tmdb:209867" || first["type"] != "anime" {
+	// M3.1.1: TMDb ids are media-qualified end to end ("tmdb:tv:209867").
+	if first["id"] != "tmdb:tv:209867" || first["type"] != "anime" {
 		t.Fatalf("joined title wrong: %v", first)
 	}
 	providerIDs := first["providerIds"].(map[string]any)

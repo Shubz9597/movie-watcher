@@ -244,6 +244,23 @@ export async function getAnimeList(page = 1, perPage = 25): Promise<AniListPage>
   return data.Page || { media: [] };
 }
 
+export async function getAnimeByGenre(genre: string, page = 1, perPage = 25): Promise<AniListPage> {
+  const normalizedGenre = genre.trim();
+  if (!normalizedGenre) return { media: [] };
+  const data = await requestAniList<{ Page?: AniListPage | null }>(
+    'genre',
+    `query AnimeByGenre($genres: [String], $page: Int!, $perPage: Int!) {
+      Page(page: $page, perPage: $perPage) {
+        pageInfo { total currentPage lastPage hasNextPage perPage }
+        media(type: ANIME, genre_in: $genres, isAdult: false, sort: [POPULARITY_DESC, SCORE_DESC]) { ${CARD_FIELDS} }
+      }
+    }`,
+    { genres: [normalizedGenre], page, perPage },
+    60 * 60 * 1000,
+  );
+  return data.Page || { media: [] };
+}
+
 export async function searchAnime(queryText: string, page = 1, perPage = 24): Promise<AniListPage> {
   const search = queryText.trim();
   if (!search) return { media: [] };
