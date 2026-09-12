@@ -27,8 +27,16 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
 
   useEffect(() => {
     const preload = () => void loadGlobalSearch();
-    const idleId = window.requestIdleCallback(preload, { timeout: 2_000 });
-    return () => window.cancelIdleCallback(idleId);
+    // Safari/WKWebView does not consistently provide requestIdleCallback.
+    // The header is first mounted after a successful server connection, so
+    // calling it unconditionally turned that transition into a caught blank-
+    // screen error on iOS. A short timer preserves the non-blocking preload.
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(preload, { timeout: 2_000 });
+      return () => window.cancelIdleCallback?.(idleId);
+    }
+    const timeoutId = window.setTimeout(preload, 250);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   const setSearchDialogOpen = (nextOpen: boolean) => {

@@ -154,6 +154,13 @@ test("desktop Library destination has visual weight beside Search", () => {
   assert.match(header, /LibraryBig className="h-5 w-5 shrink-0" strokeWidth=\{1\.9\}/, "the icon is optically larger and heavier");
 });
 
+test("shared header does not require requestIdleCallback on Safari or WKWebView", () => {
+  const header = readFileSync("src/components/AppHeader.tsx", "utf8");
+  assert.match(header, /typeof window\.requestIdleCallback === 'function'/, "the optional idle API is feature-detected");
+  assert.match(header, /window\.setTimeout\(preload, 250\)/, "a non-blocking timer fallback preloads search on WebKit");
+  assert.match(header, /window\.clearTimeout\(timeoutId\)/, "the fallback timer is cleaned up when the header unmounts");
+});
+
 test("CatalogFilters offers an inline desktop panel and a compact-screen selection sheet", () => {
   const { CatalogFilters } = catalogFilters.load();
   const html = renderToStaticMarkup(
