@@ -59,18 +59,30 @@ func (r *FixtureResolver) Resolve(_ context.Context, cat, sourceID string, fileI
 		Name: strings.TrimSuffix(name, filepath.Ext(name)) + filepath.Ext(name),
 		Size: fileSizeOf(path),
 	}
-	// Sidecar subtitle: <hex>.srt beside the media file (direct children only).
-	// The label is human-safe copy, NEVER the fixture identifier — source
+	// Sidecar subtitles: <hex>.srt / <hex>.vtt / <hex>.ass beside the media
+	// file (direct children only). Every generated fixture subtitle is
+	// discoverable here — the SRT/WebVTT paths are pure-Go, the ASS path
+	// converts via ffmpeg with documented styling loss.
+	// Labels are human-safe copy, NEVER the fixture identifier — source
 	// identifiers must not reach playlists or client-visible metadata.
-	if sidecarPath, ok := existingFile(root, sourceID+".srt"); ok {
-		resolved.Sidecars = append(resolved.Sidecars, Sidecar{
-			Format:   "srt",
-			Language: "en",
-			Label:    "Subtitle (English)",
-			Open: func() (io.ReadCloser, error) {
-				return os.Open(sidecarPath)
-			},
-		})
+	for _, sidecar := range []struct {
+		ext    string
+		format string
+	}{
+		{".srt", "srt"},
+		{".vtt", "vtt"},
+		{".ass", "ass"},
+	} {
+		if sidecarPath, ok := existingFile(root, sourceID+sidecar.ext); ok {
+			resolved.Sidecars = append(resolved.Sidecars, Sidecar{
+				Format:   sidecar.format,
+				Language: "en",
+				Label:    "Subtitle (" + strings.ToUpper(sidecar.format) + ")",
+				Open: func() (io.ReadCloser, error) {
+					return os.Open(sidecarPath)
+				},
+			})
+		}
 	}
 	return resolved, nil
 }

@@ -1,6 +1,10 @@
-﻿# Shared mobile implementation plan
+# Shared mobile implementation plan
 
 Status: implementation IN PROGRESS as of 2026-09-12. M0.1, M1.1, M1.2, M1.3.1–M1.3.8 (server foundation only), M2.1–M2.5, M3.1–M3.4, and M4.1–M4.2 are complete with evidence under `evidence/`. M0.2 is PARTIAL: automated Electron/staging behavior is proven, while the real source→stream→subtitle→server-resume operator flow remains open. M1.3 and M1.4 parent device gates, native Capacitor clients, M5/M6, and Radxa validation remain open and unclaimed. Implement remaining work using [tasks.md](tasks.md), [architecture.md](../../docs/mobile-ui/architecture.md), [change-map.md](../../docs/mobile-ui/change-map.md), and [data-model.md](data-model.md). The shared React UI remains the single presentation implementation; platform playback stays behind adapters. Alpha wireframes are accepted with later visual refinement still open.
+
+## Native mobile foundation (M1.4, 2026-09-12)
+
+The mobile product is a Capacitor 8 shell (pinned 8.5.2; appId placeholder com.torwatch.mobile) around the SAME shared React UI — vite.config.mobile.mts builds dist-mobile, native projects tracked under ios/ + android/ with build outputs ignored. The shared playback-session client (platform/playback-session-client.ts) + NativePlaybackController own the server session lifecycle for BOTH native adapters (iOS AVPlayer Swift plugin in ios/App/App/TorWatchNativePlugin.swift; Android Media3 Kotlin plugin under android/app/src/main/java/com/torwatch/mobile/); PlayerPort gained only an 'error' terminal reason. Runtime origin configuration (M1.4.6) persists ONLY the server origin; exact Capacitor web origins are the only mobile CORS additions (regression-pinned). Cleartext is refused by default on Android except documented dev origins (localhost/127.0.0.1/*.ts.net). Compiles/builds on Windows; xcodebuild and Android-SDK builds remain hardware/OS gates — never claimed.
 
 ## Playback compatibility service (M1.3.x, 2026-09-12)
 

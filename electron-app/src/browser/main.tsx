@@ -5,6 +5,7 @@
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import type { ReactElement } from 'react';
 import ReactDOM from 'react-dom/client';
 import '../globals.css';
 import HomePage from '../pages/HomePage';
@@ -28,8 +29,10 @@ const SeeAllPage = lazy(loadSeeAllPage);
 const PlayerPage = lazy(loadPlayerPage);
 const RecommendationsAllPage = lazy(loadRecommendationsPage);
 
-async function composePlatform(): Promise<{
+export async function composePlatform(): Promise<{
   platform: Platform;
+  // M1.4: the mobile shell reuses the composition's storage adapter.
+  storage: import('../platform/contracts').DeviceStorage;
   libraryProvider: import('../lib/services/library-service').LibraryProvider | null;
   // Server-backed library controller. M3.4: enabled for BOTH production
   // browser/phone mode and explicit fixture mode (the fixture path injects a
@@ -65,11 +68,12 @@ async function composePlatform(): Promise<{
     // M4.2 capture workload: ?recs=<scenario> drives the REAL recommendation
     // surfaces through the deterministic contract fixture.
     const recsScenario = params.get('recs');
+    const fixtureStorage = new FixtureStorage();
     return {
       platform: {
         kind: 'fixture',
         connection: new FixtureConnection(scenario),
-        storage: new FixtureStorage(),
+        storage: fixtureStorage,
         player: new BrowserPlayer(),
       },
       // Preview-only library data; the page renders its truthful label.
@@ -77,6 +81,7 @@ async function composePlatform(): Promise<{
         ? createStressLibraryFixture(Math.min(500, stressCount), stressArtwork ? '/fixtures/artwork/' : undefined)
         : fixtureLibraryProvider,
       libraryController: libraryScenario && libraryScenario !== 'none' ? createLibraryStateFixture(libraryScenario) : null,
+      storage: fixtureStorage,
       recsFetch: recsScenario ? createRecommendationsFixtureFetch(recsScenario) : undefined,
     };
   }
@@ -97,6 +102,9 @@ async function composePlatform(): Promise<{
       storage,
       player: new BrowserPlayer(),
     },
+    // M1.4: the mobile shell reuses the SAME composition and needs the
+    // storage adapter for its settings surface.
+    storage,
     libraryProvider: null,
     libraryController: libraryStore,
     librarySync,
@@ -228,7 +236,7 @@ function BrowserApp({
             className="min-h-8 shrink-0 rounded-full px-2 text-sm text-white/60 hover:text-white"
             aria-label="Dismiss notice"
           >
-          ✕
+            ×
           </button>
         </div>
       ) : null}
@@ -427,13 +435,48 @@ function ToggleStateCapture() {
   );
 }
 
-void composePlatform().then(({ platform, libraryProvider, libraryController, librarySync, recsFetch }) => {
+/**
+ * Shared app element factory (M1.4 repair): the mobile shell renders the SAME
+ * element through its single page-lifetime React root (alongside its settings
+ * overlay) instead of creating competing roots.
+ */
+export function sharedAppElement(composed: {
+  platform: Platform;
+  libraryProvider: import('../lib/services/library-service').LibraryProvider | null;
+  libraryController: import('../lib/library-store').LibraryController | null;
+  librarySync?: LibrarySync;
+  recsFetch?: typeof fetch;
+}): ReactElement {
   // The sync controller lives for the page lifetime; the store itself clears
   // origin-scoped state on switch through its own subscription.
-  void librarySync;
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <PlatformProvider platform={platform}>
-      <BrowserApp libraryProvider={libraryProvider} libraryController={libraryController} recsFetch={recsFetch} />
-    </PlatformProvider>,
+  void composed.librarySync;
+  return (
+    <PlatformProvider platform={composed.platform}>
+      <BrowserApp
+        libraryProvider={composed.libraryProvider}
+        libraryController={composed.libraryController}
+        recsFetch={composed.recsFetch}
+      />
+    </PlatformProvider>
   );
-});
+}
+
+/**
+ * Browser-entry mount: one root for the page lifetime (auto-start below).
+ * The mobile entry uses sharedAppElement with its own single root.
+ */
+export function mountSharedApp(composed: Parameters<typeof sharedAppElement>[0]): void {
+  ReactDOM.createRoot(document.getElementById('root')!).render(sharedAppElement(composed));
+}
+
+// Auto-start ONLY for the genuine browser entry: the mobile bundle sets the
+// flag before importing this module so exactly one composition root exists.
+if (!(window as unknown as { __TORWATCH_MOBILE_ENTRY?: boolean }).__TORWATCH_MOBILE_ENTRY) {
+  void composePlatform().then(mountSharedApp);
+}
+
+// Auto-start ONLY for the genuine browser entry: the mobile bundle sets the
+// flag before importing this module so exactly one composition root exists.
+if (!(window as unknown as { __TORWATCH_MOBILE_ENTRY?: boolean }).__TORWATCH_MOBILE_ENTRY) {
+  void composePlatform().then(mountSharedApp);
+}

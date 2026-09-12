@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal network-security configuration (feature 002 M1.4.5).
+
+  DEFAULT: cleartext is REFUSED. HTTPS everywhere.
+
+  Cleartext exceptions exist ONLY for documented DEVELOPMENT origins:
+    - 127.0.0.1 / localhost: the local staging backend (Windows desktop
+      staging) reachable over USB debugging or an emulator loopback.
+    - *.ts.net: private Tailscale tailnet node names when a user runs a
+      plain-HTTP tailnet Serve mapping (-TailnetHttp) during development.
+      Production deployments use Tailscale Serve HTTPS, which needs no
+      exception.
+
+  Release expectations: every production origin is HTTPS; if a release
+  configuration ever needs another cleartext host, that is a deliberate,
+  reviewed change to this file — never a global cleartext permission.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="true">ts.net</domain>
+    </domain-config>
+</network-security-config>

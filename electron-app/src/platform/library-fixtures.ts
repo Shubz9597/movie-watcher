@@ -285,6 +285,10 @@ export function createLibraryStateFixture(scenario: string): LibraryController {
       const current = field === 'watch-later' ? membership?.watchLater ?? false : membership?.favourite ?? false;
       return !current;
     },
+    // M1.4: fixtures own no origin subscriptions; dispose is a no-op.
+    dispose() {
+      /* deterministic fixture: nothing to release */
+    },
   };
   return controller;
 }

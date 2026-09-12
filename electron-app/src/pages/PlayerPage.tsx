@@ -41,12 +41,18 @@ export default function PlayerPage({ navigate, params }: Props) {
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
 
-  const returnToSource = useCallback((event?: { reason?: 'stopped' | 'ended' }) => {
+  const returnToSource = useCallback((event?: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => {
     if (returningRef.current) return;
     returningRef.current = true;
     // MPV has already been torn down when this is called from mpv:stopped, so
     // prevent the route-unmount cleanup from issuing a second stop request.
     didStartPlaybackRef.current = false;
+    // M1.4.3: native players may report unrecoverable errors; surface the
+    // actionable message on the transition state instead of a silent return.
+    if (event?.reason === 'error') {
+      setPlaybackError(event.message || 'Playback was interrupted by an error. Choose another source and retry.');
+      return;
+    }
 
     if (event?.reason === 'ended' && nextEpisodeRoute?.startsWith('#title?')) {
       window.location.replace(nextEpisodeRoute);
@@ -78,6 +84,10 @@ export default function PlayerPage({ navigate, params }: Props) {
 
     let cancelled = false;
     didStartPlaybackRef.current = false;
+    // M1.4 repair: a retry (Try again button) re-runs this effect — the
+    // terminal guard from the FAILED attempt must reset, or a later successful
+    // playback could never report ended/stopped normally.
+    returningRef.current = false;
 
     async function startPlayback() {
       setPlaybackError(null);

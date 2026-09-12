@@ -145,3 +145,15 @@ The backend advertises playback.compat.v1 ONLY when both FFmpeg tools verify. To
 4. powershell -ExecutionPolicy Bypass -File staging.ps1 VerifyPlayback runs the 9 deterministic checks (direct/remux/transcode plans, master playlist, segment MIME, VTT, DELETE/cleanup, secrets-absent). When the capability is absent the verifier reports a truthful SKIP — that is never recorded as a pass.
 
 Bounds: one active conversion by default (PLAYBACK_MAX_TRANSCODES), transcode height capped (PLAYBACK_MAX_TRANSCODE_HEIGHT, default 1080), session TTL (PLAYBACK_SESSION_TTL, default 2h). Session data lives under PLAYBACK_DATA_ROOT (default <TORRENT_DATA_ROOT>/playback-sessions) and only the deleted session's own directory is ever removed.
+
+## Playback fixtures (deterministic, no peers)
+
+`powershell
+powershell -ExecutionPolicy Bypass -File staging.ps1 Make-PlaybackFixtures
+`
+
+Generates tiny synthetic fixtures (direct MP4, MKV for remux, incompatible-codec MP4, SRT/WebVTT/ASS) under the ignored data\playback-fixtures\ using the CONFIGURED FFmpeg. With FFMPEG_PATH/FFPROBE_PATH + TORWATCH_PLAYBACK_FIXTURE_ROOT configured, VerifyPlayback upgrades from a truthful SKIP to 9 deterministic PASS checks.
+
+## Mobile origins
+
+Start -WithCapacitorOrigins adds the exact Capacitor web origins (capacitor://localhost, https://localhost) to the backend CORS allowlist so the native shell can talk to this staging backend. No wildcard is ever used. See docs/mobile-ui/mobile-build-run.md for the full mobile guide.

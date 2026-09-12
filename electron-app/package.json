@@ -13,11 +13,18 @@
     "build:installer": "node scripts/build-windows-installer.mjs",
     "build:renderer": "vite build",
     "build:browser": "vite build --config vite.config.browser.mts",
+    "build:mobile": "vite build --config vite.config.mobile.mts",
+    "mobile:build": "node node_modules/vite/bin/vite.js build --config vite.config.mobile.mts && node scripts/mobile-postbuild.mjs && node node_modules/@capacitor/cli/bin/capacitor sync",
+    "cap:sync": "node node_modules/@capacitor/cli/bin/capacitor sync",
+    "cap:add:ios": "node node_modules/@capacitor/cli/bin/capacitor add ios",
+    "cap:add:android": "node node_modules/@capacitor/cli/bin/capacitor add android",
+    "cap:open:ios": "node node_modules/@capacitor/cli/bin/capacitor open ios",
+    "cap:open:android": "node node_modules/@capacitor/cli/bin/capacitor open android",
     "test:skip-segments": "node --test scripts/skip-segments.test.mjs",
     "test:diagnostics": "node --test scripts/diagnostic-logger.test.mjs",
     "test:player-contracts": "node --test scripts/player-state-contracts.test.mjs",
     "test:network-routing": "node --test scripts/network-routing.test.mjs",
-    "test:characterization": "node --test --experimental-strip-types scripts/characterization/catalog-merge.test.mjs scripts/characterization/anime-matching.test.mjs scripts/characterization/api-client.test.mjs scripts/characterization/catalog-gateway.test.mjs scripts/characterization/connection-service.test.mjs scripts/characterization/shared-ui.test.mjs scripts/characterization/library-contract.test.mjs scripts/characterization/library-store.test.mjs scripts/characterization/library-toggle.test.mjs scripts/characterization/library-sync.test.mjs scripts/characterization/recommendation-ui.test.mjs scripts/characterization/library-repair.test.mjs scripts/characterization/version-check.test.mjs scripts/characterization/browser-player.test.mjs",
+    "test:characterization": "node --test --experimental-strip-types scripts/characterization/catalog-merge.test.mjs scripts/characterization/anime-matching.test.mjs scripts/characterization/api-client.test.mjs scripts/characterization/catalog-gateway.test.mjs scripts/characterization/connection-service.test.mjs scripts/characterization/shared-ui.test.mjs scripts/characterization/library-contract.test.mjs scripts/characterization/library-store.test.mjs scripts/characterization/library-toggle.test.mjs scripts/characterization/library-sync.test.mjs scripts/characterization/recommendation-ui.test.mjs scripts/characterization/library-repair.test.mjs scripts/characterization/version-check.test.mjs scripts/characterization/browser-player.test.mjs scripts/characterization/playback-session-client.test.mjs scripts/characterization/mobile-native-repair.test.mjs",
     "test": "npm run test:skip-segments && npm run test:diagnostics && npm run test:player-contracts && npm run test:network-routing && npm run test:characterization",
     "smoke:ui": "electron scripts/titlebar-smoke.cjs",
     "smoke:titlebar": "electron scripts/titlebar-smoke.cjs",
@@ -29,6 +36,9 @@
     "vite": "vite"
   },
   "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2",
     "@radix-ui/react-aspect-ratio": "^1.1.7",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.1.7",
@@ -50,6 +60,7 @@
     "tw-animate-css": "^1.3.6"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.2",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",

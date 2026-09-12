@@ -47,7 +47,7 @@ export interface DesktopChrome {
 
 // PlayerRequest carries the resolved playback context to the platform player
 // (desktop MPV today; the mobile player lands with M1.3 and must record its
-// own supported-format matrix — do not infer one from this shape).
+// own supported-format matrix -- do not infer one from this shape).
 export interface PlayerRequest {
   url: string;
   magnet: string;
@@ -71,13 +71,15 @@ export interface PlayerRequest {
 }
 
 // Player port: start/stop plus stop notifications. Implementations reject
-// with actionable, truthful messages when playback is unavailable — never
+// with actionable, truthful messages when playback is unavailable -- never
 // fall back to a different transport silently.
+// M1.4.3: the terminal event MAY carry reason 'error' with a human-safe
+// message (native players report unrecoverable playback errors); consumers
+// treat it like a stop plus an actionable error surface.
 export interface PlayerPort {
   start(request: PlayerRequest): Promise<void>;
   stop(): Promise<void>;
-  onStopped(callback: (event: { reason?: 'stopped' | 'ended' }) => void): () => void;
-}
+  onStopped(callback: (event: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => void): () => void;}
 
 export type PlatformKind = 'electron' | 'browser' | 'fixture';
 

@@ -29,13 +29,16 @@
 #   data.
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("Start", "Status", "Stop", "StopLeftovers", "RestartBackend", "Verify", "VerifyAfterRestart", "VerifySource", "VerifyPlayback", "Reset")]
+    [ValidateSet("Start", "Status", "Stop", "StopLeftovers", "RestartBackend", "Verify", "VerifyAfterRestart", "VerifySource", "VerifyPlayback", "Make-PlaybackFixtures", "Reset")]
     [string]$Command = "Status",
 
     [switch]$NoTailscale,
     [switch]$ValidationStub,
     [switch]$WithProwlarr,
     [switch]$TailnetHttp,
+    # Allowlist the exact Capacitor web origins (iOS capacitor://localhost,
+    # Android https://localhost) so the native shell can reach this backend.
+    [switch]$WithCapacitorOrigins,
     [switch]$Force
 )
 
@@ -406,7 +409,7 @@ function New-BackendEnvironment($envValues, $origins, [bool]$withStub, [bool]$wi
     $backendEnv = @{
         PG_DSN = "postgres://torwatch:$($envValues["STAGING_PG_PASSWORD"])@127.0.0.1:$($envValues["STAGING_PG_PORT"])/torwatch?sslmode=disable"
         LISTEN = "127.0.0.1:$($envValues["BACKEND_PORT"])"
-        TORWATCH_ALLOWED_CLIENT_ORIGINS = "$($origins.frontendOrigin)"
+        TORWATCH_ALLOWED_CLIENT_ORIGINS = if ($WithCapacitorOrigins) { "$($origins.frontendOrigin),capacitor://localhost,https://localhost" } else { "$($origins.frontendOrigin)" }
         # Default staging stays deterministic/degraded. -WithProwlarr reads
         # the real key from the existing gitignored config without echoing or
         # copying it into state.json.
@@ -752,6 +755,44 @@ function Invoke-StagingVerification([bool]$afterRestart) {
     if ($LASTEXITCODE -ne 0) { throw "Staging verification failed (exit $LASTEXITCODE). See the FAIL line above." }
 }
 
+function New-PlaybackFixtures {
+    $envValues = Read-StagingEnvironment
+    $ffmpeg = $envValues["FFMPEG_PATH"]
+    $ffprobe = $envValues["FFPROBE_PATH"]
+    if (-not $ffmpeg -or -not $ffprobe) {
+        Write-Stage "SKIP: FFMPEG_PATH/FFPROBE_PATH are not configured in the staging environment (.env or process env)."
+        Write-Stage "  The playback capability stays OFF and VerifyPlayback stays a truthful SKIP."
+        return
+    }
+    if (-not (Test-Path -LiteralPath $ffmpeg)) { throw "FFMPEG_PATH does not exist: the configured tool path is invalid (value not echoed)." }
+    if (-not (Test-Path -LiteralPath $ffprobe)) { throw "FFPROBE_PATH does not exist: the configured tool path is invalid (value not echoed)." }
+    $fixtureRoot = $envValues["TORWATCH_PLAYBACK_FIXTURE_ROOT"]
+    if (-not $fixtureRoot) { $fixtureRoot = Join-Path $stagingDirectory "data\playback-fixtures" }
+    New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+    $direct = Join-Path $fixtureRoot "1111111111111111111111111111111111111111.mp4"
+    $remux = Join-Path $fixtureRoot "2222222222222222222222222222222222222222.mkv"
+    $transcode = Join-Path $fixtureRoot "3333333333333333333333333333333333333333.mp4"
+    $srt = Join-Path $fixtureRoot "2222222222222222222222222222222222222222.srt"
+    $vtt = Join-Path $fixtureRoot "4444444444444444444444444444444444444444.vtt"
+    $ass = Join-Path $fixtureRoot "2222222222222222222222222222222222222222_styled.ass"
+    Write-Stage "Generating deterministic playback fixtures under the ignored staging data location..."
+    & $ffmpeg -nostdin -loglevel error -y -f lavfi -i "testsrc=duration=3:size=320x240:rate=10" -f lavfi -i "sine=frequency=440:duration=3" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $direct
+    if ($LASTEXITCODE -ne 0) { throw "direct MP4 fixture failed" }
+    & $ffmpeg -nostdin -loglevel error -y -f lavfi -i "testsrc=duration=3:size=320x240:rate=10" -f lavfi -i "sine=frequency=440:duration=3" -c:v libx264 -pix_fmt yuv420p -c:a aac $remux
+    if ($LASTEXITCODE -ne 0) { throw "MKV remux fixture failed" }
+    & $ffmpeg -nostdin -loglevel error -y -f lavfi -i "testsrc=duration=3:size=320x240:rate=10" -f lavfi -i "sine=frequency=440:duration=3" -c:v mpeg4 -c:a aac -shortest $transcode
+    if ($LASTEXITCODE -ne 0) { throw "transcode fixture failed" }
+    & $ffmpeg -nostdin -loglevel error -y -f lavfi -i "testsrc=duration=3:size=320x240:rate=10" -f lavfi -i "sine=frequency=440:duration=3" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $directVttMedia
+    if ($LASTEXITCODE -ne 0) { throw "VTT direct fixture failed" }
+    $srtText = "1" + [Environment]::NewLine + "00:00:00,500 --> 00:00:02,000" + [Environment]::NewLine + "Fixture subtitle (English)" + [Environment]::NewLine
+    Set-Content -LiteralPath $srt -Value $srtText -Encoding UTF8
+    $vttText = "WEBVTT" + [Environment]::NewLine + [Environment]::NewLine + "00:00:00.500 --> 00:00:02.000" + [Environment]::NewLine + "Fixture subtitle (WebVTT)" + [Environment]::NewLine
+    Set-Content -LiteralPath $vtt -Value $vttText -Encoding UTF8
+    $assText = "[Script Info]" + [Environment]::NewLine + "ScriptType: v4.00+" + [Environment]::NewLine + [Environment]::NewLine + "[V4+ Styles]" + [Environment]::NewLine + "Format: Name, Fontname, Fontsize, PrimaryColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding" + [Environment]::NewLine + "Style: Default,Arial,20,&H00FFFFFF,&H00000000,0,0,1,1,0,2,10,10,10,1" + [Environment]::NewLine + [Environment]::NewLine + "[Events]" + [Environment]::NewLine + "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text" + [Environment]::NewLine + "Dialogue: 0,0:00:00.50,0:00:02.00,Default,,0,0,0,,Fixture styled subtitle (ASS; styling is intentionally dropped by the VTT conversion)" + [Environment]::NewLine
+    Set-Content -LiteralPath $ass -Value $assText -Encoding UTF8
+    Write-Stage ("Fixtures ready: " + $fixtureRoot)
+    Write-Stage "Set TORWATCH_PLAYBACK_FIXTURE_ROOT there (or add it to .env) and restart staging to plan against them."
+}
 function Invoke-PlaybackVerification {
     $state = Read-State
     if (-not $state) { throw "Staging is not running. Run Start first." }
@@ -799,6 +840,7 @@ try {
             Invoke-StagingVerification $true
         }
         "VerifySource" { Invoke-SourceVerification }
+        "Make-PlaybackFixtures" { New-PlaybackFixtures }
         "VerifyPlayback" { Invoke-PlaybackVerification }
         "Reset" { Reset-StagingData }
     }

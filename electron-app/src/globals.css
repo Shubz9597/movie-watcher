@@ -574,7 +574,7 @@ body,
 :root {
   /* Shared alpha tokens (feature 002 M2.1): single semantic source for the
      shared UI. The numeric values live only here; shared components consume
-     them via var(--â€¦). design-tokens.ts holds class fragments only. */
+     them via var(--...). design-tokens.ts holds class fragments only. */
   --touch-target: 3rem; /* 48px minimum interactive control size */
   --motion-fast: 160ms; /* micro feedback */
   --motion-route: 180ms; /* route/enter transitions (160-220ms budget) */

@@ -110,6 +110,8 @@ export type LibraryController = Pick<
   | 'toggle'
   | 'retry'
   | 'lastTargetFor'
+  // M1.4: the mobile shell disposes composition-owned stores when replaced.
+  | 'dispose'
 >;
 
 export class LibraryStore {

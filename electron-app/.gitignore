@@ -7,3 +7,20 @@ mpv-sdk/*.dll
 .env
 build/
 release/
+
+# Capacitor native build outputs and copied web assets (the ios/ and android/
+# projects themselves ARE tracked source; these artifacts are not).
+dist-mobile/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/Pods/
+ios/App/Podfile.lock
+ios/DerivedData/
+ios/App/output/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/capacitor-cordova-android-plugins/
