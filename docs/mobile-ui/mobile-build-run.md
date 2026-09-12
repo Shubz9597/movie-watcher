@@ -57,6 +57,26 @@ Playback capability is server-driven: if the backend does not advertise
 `playback.compat.v1` (no FFmpeg configured server-side), the app reports it
 honestly instead of pretending to play.
 
+## Troubleshooting: "Cannot find module @rolldown/binding-…" / native binding errors
+
+The build toolchain (Vite 8 → Rolldown, esbuild, Tailwind oxide, lightningcss)
+uses per-OS/CPU native binaries declared as `optionalDependencies`. If
+`node_modules` was copied from another machine or npm skipped optionals,
+builds fail with a missing-binding error and rolldown may fall back to the
+(also missing) WASM binding.
+
+Fix on the affected machine (Apple Silicon example — all four bindings are in
+`package-lock.json` with exact versions):
+
+```bash
+npm install --no-save @rolldown/binding-darwin-arm64@1.2.5 @esbuild/darwin-arm64@0.28.2 @tailwindcss/oxide-darwin-arm64@4.1.18 lightningcss-darwin-arm64@1.30.2
+npm run build:mobile
+```
+
+Durable fix: `npm config get omit` — if it contains `optional`, run
+`npm config delete omit`, then `rm -rf node_modules && npm install`.
+Never copy `node_modules` between machines.
+
 ## Native sources
 
 - iOS plugin: `ios/App/App/TorWatchNativePlugin.swift` (AVPlayer) +

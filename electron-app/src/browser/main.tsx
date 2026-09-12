@@ -4,8 +4,8 @@
 // slice, not a separate app. It never touches window.electronAPI. Fixture
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import type { ReactElement } from 'react';
+import { Component, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import type { ErrorInfo, ReactElement, ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import '../globals.css';
 import HomePage from '../pages/HomePage';
@@ -23,6 +23,7 @@ import { BrowseRail } from '../components/shared/BrowseRail';
 import { PlatformProvider, useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { Platform, ServerCompatibility } from '../platform/contracts';
 import { BrowserConnection, BrowserStorage, resolveBrowserOrigin } from '../platform/browser';
+import { connectionFailureMessage } from '../lib/connection-diagnostics';
 
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
@@ -93,7 +94,12 @@ export async function composePlatform(): Promise<{
   // is gated on the server's library.household.v1 capability; older or
   // unreachable servers surface the explicit library-unavailable state.
   const libraryStore = new LibraryStore();
-  await libraryStore.refreshCapability();
+  // Capability discovery must not hold the first render hostage. The store
+  // already models checking/unavailable states and notifies its subscribers
+  // when this finishes.
+  void libraryStore.refreshCapability().catch((error: unknown) => {
+    console.error('[Library] Initial capability check failed:', error);
+  });
   const librarySync = attachLibrarySync(libraryStore);
   return {
     platform: {
@@ -352,12 +358,18 @@ function ConnectionGate({
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
+    const candidate = normalizedServerOrigin(origin);
+    if (!candidate) {
+      setError('Enter a complete server address, such as http://192.168.1.50:4001.');
+      return;
+    }
     setPending(true);
     setError(null);
     try {
-      await onConnect(origin);
+      await onConnect(candidate);
     } catch (err) {
-      setError(String(err));
+      console.error('[Connection] Server address could not be applied:', err);
+      setError(connectionFailureMessage(err, candidate));
     } finally {
       setPending(false);
     }
@@ -385,14 +397,18 @@ function ConnectionGate({
               value={origin}
               onChange={(event) => setOrigin(event.target.value)}
               placeholder="http://192.168.1.10:4001"
-              className="mt-2 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="mt-2 min-h-12 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2.5 text-base text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
             />
-            {error ? <p className="mt-2 text-left text-xs text-red-400">{error}</p> : null}
+            {error ? <p className="mt-3 text-left text-sm text-red-300" role="alert">{error}</p> : null}
             <button
               type="button"
               onClick={() => void submit()}
               disabled={pending || !origin.trim()}
-              className="mt-4 min-h-11 w-full rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              className="mt-4 min-h-12 w-full rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
             >
               {pending ? 'Connecting…' : 'Connect'}
             </button>
@@ -401,6 +417,64 @@ function ConnectionGate({
       </div>
     </main>
   );
+}
+
+function normalizedServerOrigin(raw: string): string | null {
+  const trimmed = raw.trim().replace(/\/+$/u, '');
+  try {
+    const parsed = new URL(trimmed);
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+        !parsed.hostname || parsed.username || parsed.password || parsed.search ||
+        parsed.hash || (parsed.pathname && parsed.pathname !== '/')) {
+      return null;
+    }
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${parsed.port ? `:${parsed.port}` : ''}`;
+  } catch {
+    return null;
+  }
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error('[App] View rendering failed:', error, info.componentStack);
+  }
+
+  render(): ReactNode {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white">
+        <div className="w-full max-w-md">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">App view failed</p>
+          <h1 className="type-section-title mt-3 text-white">TorWatch couldn’t open this screen</h1>
+          <p className="type-body mt-3 text-white/70">
+            The server connected, but the app hit an unexpected display error. Your library data is safe.
+          </p>
+          <div className="mt-7 grid gap-3">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Reload app
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('torwatch:open-settings'))}
+              className="min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Server settings
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
 }
 
 function RouteFallback() {
@@ -452,11 +526,13 @@ export function sharedAppElement(composed: {
   void composed.librarySync;
   return (
     <PlatformProvider platform={composed.platform}>
-      <BrowserApp
-        libraryProvider={composed.libraryProvider}
-        libraryController={composed.libraryController}
-        recsFetch={composed.recsFetch}
-      />
+      <AppErrorBoundary>
+        <BrowserApp
+          libraryProvider={composed.libraryProvider}
+          libraryController={composed.libraryController}
+          recsFetch={composed.recsFetch}
+        />
+      </AppErrorBoundary>
     </PlatformProvider>
   );
 }
@@ -472,11 +548,19 @@ export function mountSharedApp(composed: Parameters<typeof sharedAppElement>[0])
 // Auto-start ONLY for the genuine browser entry: the mobile bundle sets the
 // flag before importing this module so exactly one composition root exists.
 if (!(window as unknown as { __TORWATCH_MOBILE_ENTRY?: boolean }).__TORWATCH_MOBILE_ENTRY) {
-  void composePlatform().then(mountSharedApp);
-}
-
-// Auto-start ONLY for the genuine browser entry: the mobile bundle sets the
-// flag before importing this module so exactly one composition root exists.
-if (!(window as unknown as { __TORWATCH_MOBILE_ENTRY?: boolean }).__TORWATCH_MOBILE_ENTRY) {
-  void composePlatform().then(mountSharedApp);
+  void composePlatform().then(mountSharedApp).catch((error: unknown) => {
+    console.error('[App] Browser startup failed:', error);
+    const rootElement = document.getElementById('root');
+    if (rootElement) {
+      ReactDOM.createRoot(rootElement).render(
+        <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white">
+          <div className="max-w-md">
+            <h1 className="type-section-title">TorWatch could not start</h1>
+            <p className="type-body mt-3 text-white/70">Reload the app. If this continues, verify the saved server address.</p>
+            <button type="button" onClick={() => window.location.reload()} className="mt-7 min-h-12 rounded-full bg-white px-6 text-sm text-black">Reload app</button>
+          </div>
+        </main>,
+      );
+    }
+  });
 }

@@ -8,6 +8,5 @@ xcuserdata
 # Cordova plugins for Capacitor
 capacitor-cordova-ios-plugins
 
-# Generated Config files
-App/App/capacitor.config.json
-App/App/config.xml
+# Generated Config files (config.xml is a REQUIRED static template file --
+# it must stay version-controlled or fresh clones fail to build: keep tracked)

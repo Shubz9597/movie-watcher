@@ -15,6 +15,7 @@ import type {
 import { fetchServerVersion, rangesOverlap, CLIENT_SUPPORTED_PROTOCOL_RANGE } from '../lib/version-check.ts'
 import { getDeviceId } from '../lib/device-id.ts'
 import { getVodBase } from '../lib/api-client.ts'
+import { connectionFailureMessage, fetchWithTimeout } from '../lib/connection-diagnostics.ts'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function electronAPI(): any {
@@ -154,7 +155,11 @@ export function createElectronPlatform(): Platform {
 export async function probeBackendOrigin(origin: string): Promise<ServerCompatibility> {
   const doFetch = fetch.bind(globalThis);
   try {
-    const response = await doFetch(`${origin.replace(/\/+$/, '')}/v1/version`, { headers: { Accept: 'application/json' } });
+    const response = await fetchWithTimeout(
+      doFetch,
+      `${origin.replace(/\/+$/, '')}/v1/version`,
+      { headers: { Accept: 'application/json' } },
+    );
     console.debug('[Platform] version probe', origin, response.status);
     if (response.ok) {
       return compatibilityFromVersion(origin, await response.json());
@@ -162,6 +167,6 @@ export async function probeBackendOrigin(origin: string): Promise<ServerCompatib
     return { status: 'unreachable', origin, message: `The server responded with status ${response.status}.` };
   } catch (error) {
     console.warn('[Platform] version probe failed', origin, error);
-    return { status: 'unreachable', origin, message: `The server could not be reached: ${String(error)}` };
+    return { status: 'unreachable', origin, message: connectionFailureMessage(error, origin) };
   }
 }

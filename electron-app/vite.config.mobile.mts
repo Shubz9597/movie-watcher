@@ -11,13 +11,30 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Capacitor requires index.html at the webDir root, but our multi-entry build
+// emits mobile.html. Rename INSIDE the build so EVERY command that produces
+// dist-mobile (build:mobile, mobile:build, CI) is cap-sync-ready without
+// depending on a separate post-build script having run.
+const mobileIndexRenamePlugin = () => ({
+  name: 'torwatch-mobile-index-rename',
+  closeBundle() {
+    const from = path.resolve(__dirname, 'dist-mobile/mobile.html');
+    const to = path.resolve(__dirname, 'dist-mobile/index.html');
+    if (fs.existsSync(from)) {
+      if (fs.existsSync(to)) fs.unlinkSync(to);
+      fs.renameSync(from, to);
+    }
+  },
+});
+
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  plugins: [react(), mobileIndexRenamePlugin()],
   root: './src',
   build: {
     outDir: '../dist-mobile',

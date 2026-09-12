@@ -81,21 +81,70 @@ function MobileShell(props: {
 import { ServerSettings } from './ServerSettings';
 import { SettingsOverlayController } from './settings-overlay-controller';
 
+function StartupScreen(): React.ReactElement {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white" role="status">
+      <div className="max-w-sm">
+        <span className="mx-auto block h-2.5 w-2.5 animate-pulse rounded-full bg-white/70" aria-hidden="true" />
+        <h1 className="type-section-title mt-5">Starting TorWatch</h1>
+        <p className="type-body mt-3 text-white/60">Loading the app and checking your saved server…</p>
+      </div>
+    </main>
+  );
+}
+
+function StartupFailure(): React.ReactElement {
+  const resetServer = () => {
+    try {
+      window.localStorage.removeItem('mw_server_origin');
+    } finally {
+      window.location.reload();
+    }
+  };
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white" role="alert">
+      <div className="w-full max-w-md">
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">Startup failed</p>
+        <h1 className="type-section-title mt-3">TorWatch could not start</h1>
+        <p className="type-body mt-3 text-white/70">
+          The app could not finish loading. Reload it first, or reset only the saved server address and connect again.
+        </p>
+        <div className="mt-7 grid gap-3">
+          <button type="button" onClick={() => window.location.reload()} className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black">
+            Reload app
+          </button>
+          <button type="button" onClick={resetServer} className="min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white">
+            Reset server address
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+const rootElement = document.getElementById('root');
+if (!rootElement) throw new Error('The mobile root element is missing.');
+const root = ReactDOM.createRoot(rootElement);
+root.render(<StartupScreen />);
+
 async function start(): Promise<void> {
-  const [browser, native] = await Promise.all([
-    import('../browser/main'),
-    import('../platform/native-player'),
-  ]);
-  const composed = await browser.composePlatform();
-  const nativeActive = native.isNativeCapacitor();
-  void nativeActive;
-  if (nativeActive) {
-    // Production mobile playback: native AVPlayer/Media3 through the shared
-    // session client. The browser staging player object is discarded.
-    composed.platform.player = new native.NativePlayer();
+  try {
+    const [browser, native] = await Promise.all([
+      import('../browser/main'),
+      import('../platform/native-player'),
+    ]);
+    const composed = await browser.composePlatform();
+    const nativeActive = native.isNativeCapacitor();
+    if (nativeActive) {
+      // Production mobile playback: native AVPlayer/Media3 through the shared
+      // session client. The browser staging player object is discarded.
+      composed.platform.player = new native.NativePlayer();
+    }
+    root.render(<MobileShell composed={composed} browser={browser} />);
+  } catch (error) {
+    console.error('[Mobile] Startup failed:', error);
+    root.render(<StartupFailure />);
   }
-  const root = ReactDOM.createRoot(document.getElementById('root')!);
-  root.render(<MobileShell composed={composed} browser={browser} />);
 }
 
 void start();

@@ -61,8 +61,11 @@ export function ServerSettings(props: {
           setState(await probeOrigin(fetchImpl, normalized));
           return;
         case 'blocked-unreachable':
-          setState({ kind: 'unreachable', message: 'The server could not be reached.' });
-          setError('The server is unreachable — nothing was saved.');
+          setState({
+            kind: 'unreachable',
+            message: 'Could not reach this address. Confirm Windows staging is running in LAN mode and Firewall allows TCP port 4001.',
+          });
+          setError('Nothing was saved. Correct the address or server connection, then retry.');
           return;
         case 'blocked-incompatible':
           setState({ kind: 'incompatible', message: 'The server is incompatible with TorWatch.' });
@@ -75,11 +78,8 @@ export function ServerSettings(props: {
           setError(outcome.message);
       }
     } catch (saveError) {
-      setError(
-        saveError instanceof Error && saveError.message
-          ? saveError.message
-          : 'The server address could not be applied.',
-      );
+      console.error('[Settings] Server address could not be applied:', saveError);
+      setError('The server address could not be applied. Check the connection and retry.');
     } finally {
       setSaving(false);
     }
@@ -90,7 +90,7 @@ export function ServerSettings(props: {
       <section className="mx-auto w-full max-w-md">
         <h1 className="type-section-title text-white">Server settings</h1>
         <p className="mt-2 text-sm text-white/60">
-          Enter the HTTPS address of your private TorWatch server. Only this
+          Enter the HTTP or HTTPS address of your private TorWatch server. Only this
           address is stored on the device.
         </p>
 

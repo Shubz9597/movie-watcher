@@ -23,6 +23,9 @@ import {
   probeOrigin,
 } from "../../src/mobile/origin-config.ts";
 import {
+  connectionFailureMessage,
+} from "../../src/lib/connection-diagnostics.ts";
+import {
   createNativePlaybackBridge,
   devicePlaybackProfile,
 } from "../../src/platform/native-player.ts";
@@ -463,8 +466,23 @@ test("normalizeOrigin: rejects credentials, paths, fragments; normalizes host ca
 test("probeOrigin: unreachable and incompatible remain separate states", async () => {
   const offline = await probeOrigin(async () => { throw new TypeError("down"); }, ORIGIN);
   assert.equal(offline.kind, "unreachable");
+  assert.doesNotMatch(offline.message, /TypeError|down/u, "opaque WKWebView errors never leak into the UI");
+  assert.match(offline.message, /same private network|Firewall/u, "failure gives an actionable recovery path");
   const incompatible = await probeOrigin(async (url) =>
     String(url).includes("/readyz") ? jsonResponse(200, { status: "ok" }) : jsonResponse(404, {}),
     ORIGIN);
   assert.equal(incompatible.kind, "incompatible");
+});
+
+test("probeOrigin: a hung WKWebView fetch becomes a bounded, friendly timeout", async () => {
+  const result = await probeOrigin(() => new Promise(() => {}), ORIGIN, 5);
+  assert.equal(result.kind, "unreachable");
+  assert.match(result.message, /timed out/u);
+  assert.doesNotMatch(result.message, /TypeError|AbortError/u);
+});
+
+test("connection diagnostics never expose opaque platform error bodies", () => {
+  const message = connectionFailureMessage(new TypeError("Load failed"), "http://192.168.1.50:4001");
+  assert.match(message, /192\.168\.1\.50:4001/u);
+  assert.doesNotMatch(message, /TypeError|Load failed/u);
 });

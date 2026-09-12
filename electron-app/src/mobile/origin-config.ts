@@ -3,6 +3,7 @@
 // (node --test strip-types cannot load .tsx modules).
 
 import type { ConnectionConfig } from '../platform/contracts.ts';
+import { connectionFailureMessage, fetchWithTimeout } from '../lib/connection-diagnostics.ts';
 export type ProbeState =
   | { kind: 'idle' }
   | { kind: 'probing' }
@@ -29,17 +30,17 @@ export function normalizeOrigin(raw: string): string | null {
 }
 
 /** Probe /readyz then /v1/version. Deterministic; injected fetch in tests. */
-export async function probeOrigin(fetchImpl: typeof fetch, origin: string): Promise<ProbeState> {
+export async function probeOrigin(fetchImpl: typeof fetch, origin: string, timeoutMs = 5_000): Promise<ProbeState> {
   try {
-    const ready = await fetchImpl(`${origin}/readyz`, { signal: AbortSignal.timeout(5000) });
+    const ready = await fetchWithTimeout(fetchImpl, `${origin}/readyz`, {}, timeoutMs);
     if (!ready.ok) {
       return { kind: 'unreachable', message: `The server answered /readyz with HTTP ${ready.status}.` };
     }
-  } catch {
-    return { kind: 'unreachable', message: 'The server could not be reached. Check the address and your network.' };
+  } catch (error) {
+    return { kind: 'unreachable', message: connectionFailureMessage(error, origin) };
   }
   try {
-    const versionResponse = await fetchImpl(`${origin}/v1/version`, { signal: AbortSignal.timeout(5000) });
+    const versionResponse = await fetchWithTimeout(fetchImpl, `${origin}/v1/version`, {}, timeoutMs);
     if (!versionResponse.ok) {
       return { kind: 'incompatible', message: 'This server does not expose a compatible version endpoint.' };
     }
@@ -50,8 +51,8 @@ export async function probeOrigin(fetchImpl: typeof fetch, origin: string): Prom
       nativePlayback: capabilities.includes('playback.compat.v1'),
       capabilities,
     };
-  } catch {
-    return { kind: 'incompatible', message: 'This server did not return a readable version payload.' };
+  } catch (error) {
+    return { kind: 'incompatible', message: connectionFailureMessage(error, origin) };
   }
 }
 

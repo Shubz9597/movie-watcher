@@ -157,3 +157,18 @@ Generates tiny synthetic fixtures (direct MP4, MKV for remux, incompatible-codec
 ## Mobile origins
 
 Start -WithCapacitorOrigins adds the exact Capacitor web origins (capacitor://localhost, https://localhost) to the backend CORS allowlist so the native shell can talk to this staging backend. No wildcard is ever used. See docs/mobile-ui/mobile-build-run.md for the full mobile guide.
+
+## LAN mode (no Tailscale; phone on the same trusted Wi-Fi)
+
+`powershell
+powershell -ExecutionPolicy Bypass -File staging.ps1 Stop
+powershell -ExecutionPolicy Bypass -File staging.ps1 Start -ValidationStub -WithProwlarr -WithCapacitorOrigins -LanMode
+`
+
+The backend additionally listens on all interfaces and the start output prints a LAN API URL (http://<PC-LAN-IP>:4001). Enter that URL in the mobile app's Connect screen.
+
+Constraints — read before using:
+- SAME trusted private Wi-Fi only (home). NEVER on office/public networks: the API has no authentication, and Windows Firewall will prompt once — allow on PRIVATE networks.
+- The iPhone and the PC must be on the same subnet; office guest networks usually isolate clients and will not work.
+- iOS loads the LAN origin thanks to NSAllowsLocalNetworking in the app's Info.plist (public hosts still require TLS). Android's network-security config currently allows cleartext only for localhost/127.0.0.1/*.ts.net — add your LAN IP there if you need the Android build on LAN.
+- Tailscale Serve (HTTPS) remains the recommended path when available.

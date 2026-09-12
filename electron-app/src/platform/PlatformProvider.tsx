@@ -36,7 +36,13 @@ export function useConnectionStatus(): ServerCompatibility {
       if (active) setStatus(compat);
     }).catch((error: unknown) => {
       console.error('[Platform] Connection check failed:', error);
-      if (active) setStatus({ status: 'unreachable', origin: '', message: String(error) });
+      if (active) {
+        setStatus({
+          status: 'unreachable',
+          origin: '',
+          message: 'TorWatch could not check the server. Open Server Settings and verify the address.',
+        });
+      }
     });
     return () => {
       active = false;

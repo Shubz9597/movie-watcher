@@ -39,6 +39,10 @@ param(
     # Allowlist the exact Capacitor web origins (iOS capacitor://localhost,
     # Android https://localhost) so the native shell can reach this backend.
     [switch]$WithCapacitorOrigins,
+    # LAN mode: the backend additionally listens on all interfaces so a phone
+    # on the SAME trusted Wi-Fi can reach it without Tailscale. Private,
+    # trusted networks only — the API has no authentication.
+    [switch]$LanMode,
     [switch]$Force
 )
 
@@ -170,15 +174,28 @@ function New-TailscaleServeMapping([string]$tailscaleExe, [int]$servedPort, [int
     $outContent = Get-Content -LiteralPath $stdoutFile -Raw -ErrorAction SilentlyContinue
     $errContent = Get-Content -LiteralPath $stderrFile -Raw -ErrorAction SilentlyContinue
     $output = "$outContent $errContent"
-    if ($process.ExitCode -ne 0) {
-        $combined = $output.Trim()
-        if ($combined -match "Serve is not enabled") {
-            $urlMatch = [regex]::Match($combined, "https://login\.tailscale\.com/\S+")
-            throw [TailscaleServePendingException]::new(
-                $(if ($urlMatch.Success) { $urlMatch.Value.Trim() } elseif ($nodeId) { "https://login.tailscale.com/f/serve?node=$nodeId" } else { "" }),
-                "Tailscale Serve is not enabled on this tailnet.")
-        }
-        throw "tailscale serve --bg $flag failed (exit $($process.ExitCode)). $combined"
+    $combined = $output.Trim()
+    if ($combined -match "Serve is not enabled") {
+        $urlMatch = [regex]::Match($combined, "https://login\.tailscale\.com/\S+")
+        throw [TailscaleServePendingException]::new(
+            $(if ($urlMatch.Success) { $urlMatch.Value.Trim() } elseif ($nodeId) { "https://login.tailscale.com/f/serve?node=$nodeId" } else { "" }),
+            "Tailscale Serve is not enabled on this tailnet.")
+    }
+    # Repair: `tailscale serve --bg` reports SUCCESS on stderr with an EMPTY
+    # exit code on some versions (observed 1.102.4 with Serve enabled), so the
+    # exit code is not authoritative. Verify the mapping via `serve status`:
+    # the mapping exists iff the status output names the local port.
+    $statusOut = ""
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $statusOut = (& $tailscaleExe serve status 2>&1) | Out-String
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    $mappingExpected = "127.0.0.1:$localPort"
+    if ($statusOut -notlike "*$mappingExpected*") {
+        throw "tailscale serve --bg $flag did not produce a mapping (serve status does not mention $mappingExpected). Output: $combined"
     }
 }
 
@@ -404,11 +421,11 @@ function Get-OriginPlan($envValues, [bool]$useTailscale, [string]$scheme) {
     }
 }
 
-function New-BackendEnvironment($envValues, $origins, [bool]$withStub, [bool]$withProwlarr) {
+function New-BackendEnvironment($envValues, $origins, [bool]$withStub, [bool]$withProwlarr, [bool]$lanMode) {
     $prowlarr = if ($withProwlarr) { Get-ProwlarrConnection } else { $null }
     $backendEnv = @{
         PG_DSN = "postgres://torwatch:$($envValues["STAGING_PG_PASSWORD"])@127.0.0.1:$($envValues["STAGING_PG_PORT"])/torwatch?sslmode=disable"
-        LISTEN = "127.0.0.1:$($envValues["BACKEND_PORT"])"
+        LISTEN = if ($lanMode) { "0.0.0.0:$($envValues["BACKEND_PORT"])" } else { "127.0.0.1:$($envValues["BACKEND_PORT"])" }
         TORWATCH_ALLOWED_CLIENT_ORIGINS = if ($WithCapacitorOrigins) { "$($origins.frontendOrigin),capacitor://localhost,https://localhost" } else { "$($origins.frontendOrigin)" }
         # Default staging stays deterministic/degraded. -WithProwlarr reads
         # the real key from the existing gitignored config without echoing or
@@ -549,7 +566,7 @@ function Start-Staging {
             $providerMode = "DETERMINISTIC PROVIDER STUB on 127.0.0.1:4499 (validation only; stub-backed evidence)"
         }
     }
-    $backendEnv = New-BackendEnvironment $envValues $originPlan $withStub $WithProwlarr
+    $backendEnv = New-BackendEnvironment $envValues $originPlan $withStub $WithProwlarr ([bool]$LanMode)
     New-Item -ItemType Directory -Force -Path $backendEnv["TORRENT_DATA_ROOT"], $backendEnv["SUB_CACHE_DIR"] | Out-Null
 
     # 5. Start the backend and the production browser server (localhost only).
@@ -592,6 +609,7 @@ function Start-Staging {
         startedAt = (Get-Date).ToString("o")
         providerMode = $providerMode
         prowlarrEnabled = [bool]$WithProwlarr
+        lanMode = [bool]$LanMode
         origins = @{
             frontend = $originPlan.frontendOrigin
             backend = $originPlan.backendOrigin
@@ -614,6 +632,15 @@ function Start-Staging {
     Write-Host ("  Torrent search: " + $(if ($WithProwlarr) { "live Prowlarr" } else { "degraded (use -WithProwlarr to enable)" }))
     Write-Host ("  Local UI      : http://127.0.0.1:$($envValues["FRONTEND_PORT"])/browser.html")
     Write-Host ("  Local backend : http://127.0.0.1:$($envValues["BACKEND_PORT"])/readyz")
+    if ($LanMode) {
+        $lanIp = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254*" -and $_.InterfaceAlias -notmatch "Loopback|vEthernet|Tailscale" } | Select-Object -First 1).IPAddress
+        if ($lanIp) {
+            Write-Host ("  LAN API       : http://" + $lanIp + ":" + $($envValues["BACKEND_PORT"]) + "   (SAME trusted Wi-Fi only; no authentication — enter this in the mobile app)")
+            Write-Host "                  NOTE: -WithCapacitorOrigins is required for the app to talk to it."
+        } else {
+            Write-Host "  LAN API       : no LAN IPv4 address found - check the network"
+        }
+    }
     if ($originPlan.useTailscale) {
         Write-Host ("  Tailnet UI    : $($originPlan.frontendOrigin)/browser.html   (private tailnet; Funnel is never used)")
         Write-Host ("  Tailnet API   : $($originPlan.backendOrigin)/readyz")
@@ -721,7 +748,7 @@ function Restart-StagingBackend {
     $withStub = ($state.providerMode -match "STUB")
     $withLiveProwlarr = [bool]$state.prowlarrEnabled
     if ($withLiveProwlarr) { Assert-ProwlarrReady (Get-ProwlarrConnection) }
-    $backendEnv = New-BackendEnvironment $envValues @{ frontendOrigin = $state.origins.frontend } $withStub $withLiveProwlarr
+    $backendEnv = New-BackendEnvironment $envValues @{ frontendOrigin = $state.origins.frontend } $withStub $withLiveProwlarr ([bool]$state.lanMode)
     foreach ($key in $backendEnv.Keys) { Set-Item -Path "env:$key" -Value $backendEnv[$key] }
     if ($withStub) {
         if (-not (Test-ProcessAlive $state.stubPid)) {
