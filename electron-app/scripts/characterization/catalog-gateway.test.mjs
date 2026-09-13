@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  getCatalogSource,
   normalizeCatalogSource,
   resolveCatalogSource,
 } from "../../src/lib/catalog-source.ts";
@@ -30,6 +31,35 @@ const bffTitleRow = {
   imdbId: "tt28015436",
   mergedFrom: ["tmdb", "anilist", "jikan"],
 };
+
+test("browser and native mobile use the server catalog without desktop settings or local credentials", async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  try {
+    for (const electronAPI of [undefined, { openSetup: async () => ({ ok: true }) }]) {
+      let settingsRead = false;
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: {
+          electronAPI,
+          get localStorage() {
+            settingsRead = true;
+            throw new Error("device storage unavailable");
+          },
+        },
+      });
+      assert.equal(await getCatalogSource(), "bff");
+      assert.equal(settingsRead, false, "mobile never reads desktop catalog settings");
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: { electronAPI, localStorage: { getItem: () => "renderer" } },
+      });
+      assert.equal(await getCatalogSource(), "bff", "stale renderer overrides cannot activate local provider calls");
+    }
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete globalThis.window;
+  }
+});
 
 test("catalog flag normalizes and resolves with the documented priority", () => {
   assert.equal(normalizeCatalogSource("BFF"), "bff");

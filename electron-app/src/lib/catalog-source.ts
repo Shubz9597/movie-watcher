@@ -1,7 +1,8 @@
 // Runtime catalog flag (plan P5): catalogSource=renderer|bff.
 // "renderer" keeps the characterized V1 provider calls active; "bff" routes
 // catalog discovery through the backend /v2/catalog/* contract.
-// Resolution priority: localStorage override (instant rollback path), then
+// Browser/native mobile always use the server catalog; provider credentials
+// belong on the server. Electron resolution priority: localStorage override, then
 // the main-process config (CATALOG_SOURCE, seeded from
 // TORWATCH_CATALOG_SOURCE), then the build-time env, then "renderer".
 // The config module is loaded lazily so pure flag logic stays testable
@@ -42,6 +43,13 @@ function localOverride(): string | null {
 }
 
 export async function getCatalogSource(): Promise<CatalogSource> {
+  // Mobile exposes only an openSetup shim, not Electron's secure settings.
+  // Do not import desktop config or honor stale renderer overrides there:
+  // doing so asks an iPhone for credentials it should never need to hold.
+  if (typeof window !== 'undefined' && typeof window.electronAPI?.getConfig !== 'function') {
+    return 'bff';
+  }
+
   let configValue: string | null = null;
   try {
     const { getAllConfig } = await import('./config');
