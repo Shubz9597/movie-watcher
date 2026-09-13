@@ -29,6 +29,9 @@ export type NativeBridgeTrack = {
 export type NativePlaybackInput = {
   url: string; // opaque playback URL from the session (direct media or HLS master)
   title: string;
+  // Public poster artwork for the native buffering/loading surface (M1.4.7);
+  // never sensitive — the same URL the web UI renders.
+  posterUrl?: string | null;
   subtitles: NativeBridgeTrack[];
   seekTo?: number; // confirmed resume position in seconds
   // Replacement-safety tag echoed by every native event; events carrying a
@@ -47,7 +50,7 @@ export type NativePlaybackState =
   | { state: 'error'; message: string; playId?: string };
 
 export type NativePlaybackBridge = {
-  prepare?(title: string, playId: string): Promise<void>;
+  prepare?(title: string, playId: string, posterUrl?: string | null): Promise<void>;
   showError?(message: string, playId: string): Promise<void>;
   play(input: NativePlaybackInput): Promise<void>;
   seek(positionSec: number, playId: string): Promise<void>;
@@ -135,7 +138,7 @@ export class NativePlaybackController {
       this.request = request;
       this.attachBridgeListeners(generation);
       try {
-        await this.bridge.prepare(request.title || 'TorWatch', playId);
+        await this.bridge.prepare(request.title || 'TorWatch', playId, request.posterUrl ?? null);
       } catch (error) {
         if (generation === this.generation) await this.teardown(false);
         throw error;
@@ -184,6 +187,7 @@ export class NativePlaybackController {
       await this.bridge.play({
         url: this.client.resolve(session.playbackUrl),
         title: request.title || 'TorWatch',
+        posterUrl: request.posterUrl ?? null,
         subtitles: session.subtitles.map((track) => ({
           url: this.client.resolve(track.url),
           language: track.language,

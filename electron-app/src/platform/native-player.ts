@@ -24,11 +24,12 @@ import { getBackendOrigin, subscribeOrigin } from '../lib/connection-service.ts'
 
 /** Shape of the local native plugin (implemented Swift-side / Kotlin-side). */
 export interface TorWatchNativePlugin {
-  prepare?(options: { title: string; playId: string }): Promise<void>;
+  prepare?(options: { title: string; playId: string; posterUrl?: string | null }): Promise<void>;
   showError?(options: { message: string; playId: string }): Promise<void>;
   play(options: {
     url: string;
     title: string;
+    posterUrl?: string | null;
     subtitles: Array<{ url: string; language?: string; label?: string; default?: boolean }>;
     seekTo?: number;
     playId: string;
@@ -102,10 +103,10 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
 
   return {
     ...(supportsPreparation ? {
-      async prepare(title: string, playId: string) {
+      async prepare(title: string, playId: string, posterUrl?: string | null) {
         await ensureReady();
         currentPlayId = playId;
-        await plugin.prepare!({ title, playId });
+        await plugin.prepare!({ title, playId, posterUrl: posterUrl ?? undefined });
       },
       async showError(message: string, playId: string) {
         if (currentPlayId === playId) await plugin.showError!({ message, playId });
@@ -117,6 +118,7 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
       await plugin.play({
         url: input.url,
         title: input.title,
+        posterUrl: input.posterUrl ?? undefined,
         subtitles: input.subtitles,
         seekTo: input.seekTo,
         playId: input.playId,

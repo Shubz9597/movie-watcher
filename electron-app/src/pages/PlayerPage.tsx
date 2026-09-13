@@ -101,11 +101,13 @@ export default function PlayerPage({ navigate, params }: Props) {
         let playbackImdbId = paramImdbId || undefined;
         let playbackMalId = malId ? Number(malId) : undefined;
 
-        // Resolve display metadata before starting MPV. Keeping this work in
-        // the playback effect prevents metadata state updates from stopping
-        // and restarting an active playback session. BFF mode resolves the
-        // metadata through the catalog contract (T042.4).
-        if (platform.desktop && tmdbId && cat !== 'anime') {
+        // Resolve display metadata before starting playback. Keeping this
+        // work in the playback effect prevents metadata state updates from
+        // stopping and restarting an active playback session. M1.4.7: mobile
+        // resolves metadata too — the native player's buffering screen needs
+        // the poster + display title. BFF mode resolves through the catalog
+        // contract (T042.4).
+        if (tmdbId && cat !== 'anime') {
           try {
             if (await getCatalogSource() === 'bff') {
               // M3.1.1: request detail by the media-qualified canonical id
@@ -129,7 +131,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           } catch (err) {
             console.error('[PlayerPage] Failed to fetch TMDB metadata:', err);
           }
-        } else if (platform.desktop && anilistId && cat === 'anime') {
+        } else if (anilistId && cat === 'anime') {
           try {
             if (await getCatalogSource() === 'bff') {
               const row = await bffTitleDetail(`anilist:${anilistId}`);
