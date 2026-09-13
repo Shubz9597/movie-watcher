@@ -71,6 +71,24 @@ func (r *TorrentResolver) Resolve(ctx context.Context, cat, sourceID string, fil
 		Name: torrentx.SafeDownloadName(filepath.Base(chosen.Path())),
 		Size: chosen.Length(),
 	}
+
+	// M1.4 repair: pre-buffer the first data BEFORE handing the reader to
+	// ffprobe. Without this, ffprobe reads zeros/empty data from an
+	// un-downloaded torrent and fails with media_inspection_failed.
+	// The existing /stream endpoint does the same via torrentx.Prebuffer.
+	reader := chosen.NewReader()
+	reader.SetResponsive()
+	prebufferBytes := int64(2 << 20) // 2 MiB — enough for ffprobe headers
+	prebuffered := torrentx.Prebuffer(reader, prebufferBytes, 30*time.Second)
+	if prebuffered == 0 {
+		reader.Close()
+		return ResolvedSource{}, &Error{
+			Code:  ReasonMediaInspectionFail,
+			Message: "Not enough peers to start streaming. Try a different source or wait for more seeders.",
+		}
+	}
+	reader.Close() // the media source re-opens fresh readers per request
+
 	for _, sub := range torrentx.FindSubtitleFilesForVideo(t, chosenIndex) {
 		sidecar := sub
 		resolved.Sidecars = append(resolved.Sidecars, Sidecar{
