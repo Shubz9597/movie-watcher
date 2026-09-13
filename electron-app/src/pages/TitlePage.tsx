@@ -750,8 +750,8 @@ export default function TitlePage({
           </div>
         </div>
 
-        <div className="mt-8 grid gap-12 lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-16">
-          <div className="relative max-w-4xl space-y-7">
+        <div className="mt-8 grid min-w-0 grid-cols-1 gap-12 lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-16">
+          <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
               <p className="type-secondary font-medium text-white/65">{kind === 'tv' ? 'Series' : kind === 'anime' ? 'Anime' : 'Film'}</p>
@@ -868,7 +868,7 @@ export default function TitlePage({
             ) : null}
           </div>
 
-          <div ref={sourcesSectionRef} className="space-y-4 scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
+          <div ref={sourcesSectionRef} className="min-w-0 space-y-4 scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
             {isMovie ? (
               <TorrentPanel
                 title={detail.title}

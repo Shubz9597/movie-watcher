@@ -342,9 +342,38 @@ function Assert-ProwlarrReady($connection) {
         $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 `
             -Uri "$($connection.url)/api/v1/system/status" `
             -Headers @{ "X-Api-Key" = $connection.apiKey }
-        if ($response.StatusCode -eq 200) { return }
+        if ($response.StatusCode -eq 200) {
+            Repair-ProwlarrFlareSolverrProxy $connection
+            return
+        }
     } catch { }
     throw "Prowlarr is not ready on 127.0.0.1:9696. Run 'docker compose up -d flaresolverr prowlarr' from the repository root, then retry."
+}
+
+# Repair-ProwlarrFlareSolverrProxy: inside the Docker network, Prowlarr must
+# reach FlareSolverr via its container hostname (http://flaresolverr:8191/),
+# NOT http://localhost:8191/ (which points back to Prowlarr itself).
+# This check reads the host config, fixes the proxy URL if wrong, and PUTs
+# it back. The API key is used in-memory only — never echoed or persisted.
+function Repair-ProwlarrFlareSolverrProxy($connection) {
+    try {
+        $headers = @{ "X-Api-Key" = $connection.apiKey; "Content-Type" = "application/json" }
+        $config = (Invoke-RestMethod -UseBasicParsing -TimeoutSec 8 `
+            -Uri "$($connection.url)/api/v1/config/host" `
+            -Headers @{ "X-Api-Key" = $connection.apiKey })
+        $proxyUrl = $config.FlareSolverrUrl
+        if ($proxyUrl -and $proxyUrl -match "localhost") {
+            Write-Stage "Fixing FlareSolverr proxy: localhost does not resolve inside the Prowlarr container."
+            $config.FlareSolverrUrl = "http://flaresolverr:8191/"
+            $body = $config | ConvertTo-Json -Depth 5
+            Invoke-RestMethod -UseBasicParsing -TimeoutSec 8 `
+                -Uri "$($connection.url)/api/v1/config/host" `
+                -Method Put -Headers $headers -Body $body | Out-Null
+            Write-Stage "FlareSolverr proxy fixed to http://flaresolverr:8191/."
+        }
+    } catch {
+        Write-Stage "FlareSolverr proxy check skipped: $($_.Exception.Message)"
+    }
 }
 
 function Start-ProviderStub {

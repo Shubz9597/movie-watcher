@@ -29,6 +29,10 @@ func TestSearchRunsVariantsConcurrentlyWithoutGrabbing(t *testing.T) {
 			http.Error(w, "search must not grab", http.StatusInternalServerError)
 			return
 		}
+		if r.URL.Path == "/api/v1/indexer" {
+			mockIndexerList(w, []map[string]any{indexerEntry(1, "test", true, "torrent", 1)})
+			return
+		}
 		if r.URL.Path != "/api/v1/search" {
 			http.NotFound(w, r)
 			return
@@ -111,6 +115,8 @@ func TestResolveGrabsOnlySelectedSourceAndCachesMagnet(t *testing.T) {
 	)
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v1/indexer":
+			mockIndexerList(w, []map[string]any{indexerEntry(1, "test", true, "torrent", 1)})
 		case r.URL.Path == "/api/v1/search":
 			_ = json.NewEncoder(w).Encode([]prowlarrRelease{{
 				Title: "Selected release", Indexer: "test", Protocol: "torrent",

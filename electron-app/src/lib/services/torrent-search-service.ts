@@ -1,4 +1,5 @@
 import { getVodBase } from '../api-client';
+import { sourceRequestError } from '../source-error';
 
 export type TorrentSearchResult = {
   title: string;
@@ -41,7 +42,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   });
   const payload = (await response.json().catch(() => ({}))) as T & BackendError;
   if (!response.ok) {
-    throw new Error(payload.error || `Torrent backend request failed (${response.status})`);
+    throw new Error(sourceRequestError(response.status, payload.error, path.endsWith('/resolve')));
   }
   return payload;
 }

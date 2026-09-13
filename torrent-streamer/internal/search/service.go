@@ -31,6 +31,8 @@ const (
 	defaultSourceTTL = 20 * time.Minute
 	maxSearches      = 4
 	maxTorrentSize   = 10 << 20
+	searchBudget    = 20 * time.Second
+	indexerBudget   = 8 * time.Second
 )
 
 var (
@@ -77,6 +79,7 @@ type prowlarrQuery struct {
 	query   string
 	kind    Kind
 	request Request
+	indexerID int
 }
 
 // Service owns Prowlarr access, caching, concurrency, and lazy grabs.
@@ -230,18 +233,40 @@ func (s *Service) source(id string) (sourceEntry, bool) {
 }
 
 func (s *Service) searchAll(ctx context.Context, request Request) ([]prowlarrRelease, error) {
-	queries := buildQueries(request)
+	// The aggregate Prowlarr endpoint waits for its slowest indexer. Give
+	// each indexer its own request so a timeout cannot discard other results.
+	searchCtx, cancel := context.WithTimeout(ctx, searchBudget)
+	defer cancel()
+	indexers, err := s.enabledIndexers(searchCtx)
+	if err != nil {
+		return nil, err
+	}
+	variants := buildQueries(request)
+	queries := make([]prowlarrQuery, 0, len(indexers)*len(variants))
+	// Try the primary title on every indexer before spending time on aliases.
+	for _, variant := range variants {
+		for _, id := range indexers {
+			query := variant
+			query.indexerID = id
+			queries = append(queries, query)
+		}
+	}
 	var (
 		mu       sync.Mutex
 		releases []prowlarrRelease
 		errs     []error
 	)
-	group, groupCtx := errgroup.WithContext(ctx)
+	group, groupCtx := errgroup.WithContext(searchCtx)
 	group.SetLimit(maxSearches)
 	for _, query := range queries {
+		if groupCtx.Err() != nil {
+			break
+		}
 		query := query
 		group.Go(func() error {
-			found, err := s.query(groupCtx, query)
+			indexerCtx, cancel := context.WithTimeout(groupCtx, indexerBudget)
+			defer cancel()
+			found, err := s.query(indexerCtx, query)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -258,10 +283,51 @@ func (s *Service) searchAll(ctx context.Context, request Request) ([]prowlarrRel
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	if searchCtx.Err() != nil {
+		errs = append(errs, searchCtx.Err())
+	}
 	if len(releases) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("all prowlarr searches failed: %w", errors.Join(errs...))
 	}
 	return releases, nil
+}
+
+func (s *Service) enabledIndexers(ctx context.Context) ([]int, error) {
+	endpoint := s.baseURL.ResolveReference(&url.URL{Path: "/api/v1/indexer"})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create indexer list request: %w", err)
+	}
+	req.Header.Set("X-Api-Key", s.apiKey)
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list prowlarr indexers: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list prowlarr indexers: status %d", resp.StatusCode)
+	}
+	var indexers []struct {
+		ID int `json:"id"`
+		Enable bool `json:"enable"`
+		Protocol string `json:"protocol"`
+		Priority int `json:"priority"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&indexers); err != nil {
+		return nil, fmt.Errorf("decode prowlarr indexers: %w", err)
+	}
+	sort.SliceStable(indexers, func(i, j int) bool { return indexers[i].Priority < indexers[j].Priority })
+	ids := make([]int, 0, len(indexers))
+	for _, indexer := range indexers {
+		if indexer.Enable && indexer.ID > 0 && indexer.Protocol == "torrent" {
+			ids = append(ids, indexer.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("no enabled torrent indexers in prowlarr")
+	}
+	return ids, nil
 }
 
 func buildQueries(request Request) []prowlarrQuery {
@@ -309,6 +375,9 @@ func (s *Service) query(ctx context.Context, query prowlarrQuery) ([]prowlarrRel
 	params := endpoint.Query()
 	params.Set("query", query.query)
 	params.Set("limit", "100")
+	if query.indexerID > 0 {
+		params.Set("indexerIds", strconv.Itoa(query.indexerID))
+	}
 	switch query.kind {
 	case KindMovie:
 		params.Set("type", "movie")

@@ -6,6 +6,7 @@ import { Loader2, Play, RotateCcw } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
 import { getVodBase } from '../lib/api-client';
 import { resolveTorrentSource, searchMovieTorrents, searchAnimeTorrents } from '../lib/services/torrent-search-service';
+import { mapSourceError } from '../lib/source-error';
 import { getSavedResumeSource } from '../lib/services/continue-service';
 import type { ResumeSourceContext, SavedResumeSource, TorrentRow } from '../lib/types';
 import { prioritizePreviouslyUsedTorrent, torrentInfoHash } from '../lib/torrent-identity';
@@ -139,7 +140,7 @@ export default function TorrentPanel({
   const [lastFetched, setLastFetched] = useState<number | null>(null);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
   const [historySource, setHistorySource] = useState<SavedResumeSource | null>(null);
-  // WF06: selection is a distinct step — selecting a row never plays.
+  // WF06: selection is a distinct step --- selecting a row never plays.
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   // WF06a: one details disclosure open at a time; refs keep per-row toggles
@@ -228,7 +229,7 @@ export default function TorrentPanel({
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load torrents';
       console.error('[TorrentPanel] Error:', e);
-      setError(message);
+      setError(mapSourceError(message).message);
       setTorrents([]);
     } finally {
       refreshInFlight.current = false;
@@ -336,9 +337,9 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside className="max-h-[60vh] overflow-y-auto rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl app-scrollbar">
-      <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
-        <div>
+    <aside className="min-w-0 max-w-full max-h-[60vh] overflow-y-auto rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl app-scrollbar [overflow-wrap:anywhere]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
+        <div className="min-w-0">
           <p className="type-secondary font-medium text-white/65">Playback</p>
           <h3 className="type-panel-title mt-1 text-white">Available sources</h3>
           {meta ? <p className="type-caption text-numeric mt-1 text-white/65">Updated {meta}</p> : null}
@@ -358,12 +359,12 @@ export default function TorrentPanel({
       {loading && torrents === null && (
         <div className="flex items-center justify-center gap-2 px-5 py-14 text-sm text-white/60" role="status" aria-live="polite">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Finding sources…
+          Finding sources---
         </div>
       )}
 
       {error && (
-        <div className="m-4 rounded-lg border border-red-400/20 bg-red-950/20 p-4 text-sm text-red-100" role="alert">
+        <div className="m-4 rounded-lg border border-red-400/20 bg-red-950/20 p-4 text-sm text-red-100 [overflow-wrap:anywhere]" role="alert">
           <p>{error}</p>
           {platform.desktop ? (
             <button
@@ -383,7 +384,7 @@ export default function TorrentPanel({
         </p>
       )}
 
-      {!loading && torrents && displayedTorrents.length === 0 && (
+      {!loading && !error && torrents && displayedTorrents.length === 0 && (
         <div className="type-body m-4 rounded-lg border border-dashed border-white/15 p-8 text-center text-white/70">
           No sources found for this title.
         </div>
@@ -412,7 +413,7 @@ export default function TorrentPanel({
                       <button type="button" aria-label={`Play source ${t.title}`} onClick={() => { setSelectedKey(torrentActionKey); void playInMpv(t); }} disabled={Boolean(busyActionId)} className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-50 sm:hidden ${FOCUS_RING_CLASS}`}>
                         {busyActionId === playActionId ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
                       </button>
-                      {/* WF06: tapping a row selects it — playback is a
+                      {/* WF06: tapping a row selects it --- playback is a
                           separate, explicit action (footer button on compact,
                           split button on desktop). The release name is never
                           truncated. */}
@@ -442,10 +443,10 @@ export default function TorrentPanel({
                             <div className="type-caption text-numeric flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
                               <span>{t.size ? formatBytes(t.size) : 'Unknown size'}</span>
                               <span className={typeof t.seeders === 'number' ? 'text-emerald-300/70' : 'text-white/40'}>
-                                {typeof t.seeders === 'number' ? `↑ ${t.seeders}` : '↑ Unknown seeders'}
+                                {typeof t.seeders === 'number' ? `--- ${t.seeders}` : '--- Unknown seeders'}
                               </span>
                               {typeof t.leechers === 'number' && (
-                                <span className="text-[#ffc285]/70">↓ {t.leechers}</span>
+                                <span className="text-[#ffc285]/70">--- {t.leechers}</span>
                               )}
                               {t.indexer && t.indexer !== '-' && <span>{t.indexer}</span>}
                               {t.publishDate && <span>{formatDate(t.publishDate)}</span>}
@@ -478,13 +479,13 @@ export default function TorrentPanel({
                                 className="min-h-11 rounded-full bg-white px-5 text-black hover:bg-white/85"
                               >
                                 <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
-                                {busyActionId === playActionId ? 'Opening…' : 'Play'}
+                                {busyActionId === playActionId ? 'Opening---' : 'Play'}
                               </Button>
                             )}
                           </div>
                         </div>
 
-                    {/* WF06a: source-details disclosure — technical/source
+                    {/* WF06a: source-details disclosure --- technical/source
                         metadata with explicit unknowns; "Use this torrent"
                         confirms the selection and returns to the list without
                         starting playback. */}
@@ -561,7 +562,7 @@ export default function TorrentPanel({
                               Use this torrent
                             </button>
                             <p className="type-caption mt-2 text-white/50">
-                              Confirming selects this source and returns to the list — it does not start playback.
+                              Confirming selects this source and returns to the list --- it does not start playback.
                             </p>
                           </div>
                         </dl>
@@ -573,7 +574,7 @@ export default function TorrentPanel({
             })}
           </ul>
 
-          {/* WF06: fixed Play footer — the explicit playback action for the
+          {/* WF06: fixed Play footer --- the explicit playback action for the
               selected source. Disabled without a selection; never auto-plays. */}
           <div className="sticky bottom-0 border-t border-white/[0.1] bg-[#0c0c0c]/95 px-5 py-3 backdrop-blur-xl sm:hidden">
             <Button
@@ -586,7 +587,7 @@ export default function TorrentPanel({
                 className="min-h-11 w-full rounded-full bg-white px-4 text-black hover:bg-white/85"
               >
                 <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
-                {busyActionId ? 'Opening…' : selectedKey ? 'Play selected source' : 'Select a source to play'}
+                {busyActionId ? 'Opening---' : selectedKey ? 'Play selected source' : 'Select a source to play'}
               </Button>
           </div>
         </>

@@ -769,7 +769,7 @@ export default function EpisodePanel({
   const episodeArtwork = (episode: EpisodeSummary) => episode.stillUrl || null;
 
   return (
-    <aside className="overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl">
+    <aside className="min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl [overflow-wrap:anywhere]">
       {artworkHydrating ? (
         <span className="sr-only" role="status" aria-live="polite">Loading episode artwork.</span>
       ) : null}
@@ -930,7 +930,7 @@ export default function EpisodePanel({
             </div>
           ) : null}
 
-          {!torrentLoading && torrentRows && displayedTorrentRows.length === 0 ? (
+          {!torrentLoading && !torrentError && torrentRows && displayedTorrentRows.length === 0 ? (
             <div className="type-body px-5 py-8 text-center text-white/70">No sources found for this episode.</div>
           ) : null}
 
