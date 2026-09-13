@@ -423,7 +423,10 @@ body,
 }
 
 .carousel-shell {
-  --carousel-columns: 1;
+  /* M1.4 UI pass (Netflix-style rails): compact widths show ~2.5 posters
+     with a partial peek — small, readable, horizontal scroll. Titles remain
+     legible via the PosterCard compact type treatment. */
+  --carousel-columns: 2.5;
   --carousel-gap: 0.875rem;
   --carousel-control-width: 1rem;
   --carousel-control-offset: 1.25rem;
@@ -508,7 +511,7 @@ body,
 
 @media (min-width: 640px) {
   .carousel-shell {
-    --carousel-columns: 3;
+    --carousel-columns: 3.5;
     --carousel-gap: 1rem;
   }
 }

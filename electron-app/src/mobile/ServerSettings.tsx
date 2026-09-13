@@ -4,6 +4,7 @@
 import * as React from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { ConnectionConfig } from '../platform/contracts.ts';
+import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import {
   applyServerOrigin,
   normalizeOrigin,
@@ -87,18 +88,27 @@ export function ServerSettings(props: {
   };
 
   return (
-    <main className="min-h-screen bg-[#0a0a0a] px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(24px,env(safe-area-inset-top))] text-white">
-      <section className="mx-auto w-full max-w-md">
-        <button type="button" onClick={props.onDone} aria-label="Go back" className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
-          <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+    <main className="min-h-screen bg-[#0a0a0a] text-white">
+      {/* Nav-style header: chevron beside the title, safe-area aware. */}
+      <header className="sticky top-0 z-10 flex items-center gap-1 border-b border-white/[0.08] bg-[#0a0a0a]/95 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur">
+        <button
+          type="button"
+          onClick={props.onDone}
+          aria-label="Back"
+          className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white/85 transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
+        >
+          <ChevronLeft className="h-6 w-6" strokeWidth={1.7} aria-hidden="true" />
         </button>
-        <h1 className="type-section-title text-white">Server settings</h1>
-        <p className="mt-2 text-sm text-white/60">
-          Enter the HTTP or HTTPS address of your private TorWatch server. Only this
-          address is stored on the device.
+        <h1 className="text-lg font-semibold tracking-tight text-white">Server settings</h1>
+      </header>
+
+      <section className="mx-auto w-full max-w-md px-5 pb-[max(32px,env(safe-area-inset-bottom))] pt-6">
+        <p className="text-sm leading-6 text-white/60">
+          Enter the HTTP or HTTPS address of your private TorWatch server.
+          Only this address is stored on the device.
         </p>
 
-        <label className="mt-6 block text-left text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="mobile-origin">
+        <label className="mt-7 block text-left text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="mobile-origin">
           Server address
         </label>
         <input
@@ -110,49 +120,46 @@ export function ServerSettings(props: {
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder="https://your-node.your-tailnet.ts.net"
-          className="mt-2 w-full min-h-12 rounded-lg border border-white/15 bg-black/30 px-3.5 text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          // text-base (16px): iOS auto-zooms the viewport when focusing any
+          // input below 16px — 16px is the mobile-correct size, not a style
+          // preference.
+          className="mt-2 w-full min-h-12 rounded-lg border border-white/15 bg-black/30 px-3.5 text-base text-white placeholder:text-base placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
         />
 
-        <div className="mt-3 min-h-6 text-left text-sm" role="status">
-          {state.kind === 'probing' ? <span className="text-white/60">Checking the server...</span> : null}
-          {state.kind === 'unreachable' ? <span className="text-red-400">{state.message}</span> : null}
-          {state.kind === 'incompatible' ? <span className="text-[#ffc285]">{state.message}</span> : null}
-          {state.kind === 'reachable' ? (
-            <span className={state.nativePlayback ? 'text-emerald-300' : 'text-[#ffc285]'}>
-              Reachable ·{' '}
-              {state.nativePlayback
-                ? 'native playback ready'
-                : 'this server has no native playback (FFmpeg not configured server-side) — browsing and Library work'}
-            </span>
-          ) : null}
-          {savedOrigin ? <span className="text-emerald-300">Saved. Using {savedOrigin}</span> : null}
-          {error ? <span className="text-red-400">{error}</span> : null}
-        </div>
+        {(state.kind !== 'idle' || savedOrigin || error) ? (
+          <div className="mt-4 space-y-2 rounded-lg border border-white/[0.08] bg-white/[0.03] p-3.5 text-left text-sm" role="status">
+            {state.kind === 'probing' ? <p className="text-white/60">Checking the server…</p> : null}
+            {state.kind === 'unreachable' ? <p className="text-red-400">{state.message}</p> : null}
+            {state.kind === 'incompatible' ? <p className="text-[#ffc285]">{state.message}</p> : null}
+            {state.kind === 'reachable' ? (
+              <p className={state.nativePlayback ? 'text-emerald-300' : 'text-[#ffc285]'}>
+                Reachable ·{' '}
+                {state.nativePlayback
+                  ? 'native playback ready'
+                  : 'no native playback on this server (FFmpeg not configured server-side) — browsing and Library work'}
+              </p>
+            ) : null}
+            {savedOrigin ? <p className="text-emerald-300">Saved — using {savedOrigin}</p> : null}
+            {error ? <p className="text-red-400">{error}</p> : null}
+          </div>
+        ) : null}
 
-        <div className="mt-6 flex flex-col gap-3">
-          <button
-            type="button"
-            onClick={() => void probe()}
-            disabled={!normalized || state.kind === 'probing'}
-            className="min-h-12 w-full rounded-full border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:opacity-50"
-          >
-            Test connection
-          </button>
+        <div className="mt-8 flex flex-col gap-3">
           <button
             type="button"
             onClick={() => void save()}
             disabled={!normalized || !changed || saving}
-            className="min-h-12 w-full rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 disabled:opacity-50"
+            className="flex min-h-12 w-full items-center justify-center rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {saving ? 'Saving...' : 'Save and use this server'}
+            {saving ? 'Saving…' : 'Save'}
           </button>
           <button
             type="button"
-            onClick={props.onDone}
-            aria-label="Go back"
-            className="inline-flex min-h-12 w-full items-center justify-center rounded-full px-5 text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+            onClick={() => void probe()}
+            disabled={!normalized || state.kind === 'probing'}
+            className="flex min-h-12 w-full items-center justify-center rounded-full border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:opacity-40"
           >
-            <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+            {state.kind === 'probing' ? 'Testing…' : 'Test connection'}
           </button>
         </div>
       </section>

@@ -1,4 +1,4 @@
-﻿// SettingsOverlayController (M1.4 repair): the testable state machine behind
+// SettingsOverlayController (M1.4 repair): the testable state machine behind
 // the mobile settings overlay. The shell listens for the
 // `torwatch:open-settings` custom event on ANY EventTarget (window in the
 // app; a plain EventTarget in deterministic node tests). A same-route history

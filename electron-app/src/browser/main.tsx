@@ -1,6 +1,6 @@
 // Browser composition root (feature 002 M2.2). This entry renders the SAME
 // shared pages/components as Electron through the shared AppShell with
-// injected platform ports — it is the browser-safe checkpoint of the shared
+// injected platform ports ” it is the browser-safe checkpoint of the shared
 // slice, not a separate app. It never touches window.electronAPI. Fixture
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
@@ -28,6 +28,7 @@ import { connectionFailureMessage } from '../lib/connection-diagnostics';
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
 const PlayerPage = lazy(loadPlayerPage);
+const SearchPage = lazy(() => import('../pages/SearchPage'));
 const RecommendationsAllPage = lazy(loadRecommendationsPage);
 
 export async function composePlatform(): Promise<{
@@ -90,7 +91,7 @@ export async function composePlatform(): Promise<{
   const origin = resolveBrowserOrigin(window.location.search) || storage.getPreference('mw_server_origin') || '';
   const { BrowserPlayer } = await import('../platform/browser');
   // M3.4: the phone/browser entry now uses the SAME server-backed library
-  // store as desktop — no duplicate screen tree, no local fork. Availability
+  // store as desktop ” no duplicate screen tree, no local fork. Availability
   // is gated on the server's library.household.v1 capability; older or
   // unreachable servers surface the explicit library-unavailable state.
   const libraryStore = new LibraryStore();
@@ -149,7 +150,7 @@ function useScrollRestoration(routeKey: string) {
   useEffect(() => {
     const saved = positions.current.get(routeKey) ?? 0;
     // Programmatic scrolls (restore + clamps on short pages) are tracked so
-    // they are never mistaken for user scrolling — the earlier grace-window
+    // they are never mistaken for user scrolling ” the earlier grace-window
     // approach swallowed fast user scrolls and the re-apply then fought them.
     let programmaticAt = -Infinity;
     let userScrolled = false;
@@ -306,6 +307,7 @@ function BrowserApp({
         {route.path === 'player' && (
           <PlayerPage navigate={navigate} params={Object.fromEntries(route.params)} />
         )}
+        {route.path === 'search' && <SearchPage navigate={navigate} />}
         {/* Dev-only (fixture entry): the REAL recommendations surfaces driven
             by the deterministic fixture fetch (?recs=<scenario>), so the
             M4.2 states are capturable without a backend. */}
@@ -320,7 +322,7 @@ function BrowserApp({
             <SharedRecommendationsAllPage navigate={navigate} deps={{ fetchImpl: recsFetch }} />
           </div>
         ) : null}
-        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations'].includes(route.path) && (
+        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations', 'search'].includes(route.path) && (
           <section className="mx-auto flex min-h-[70vh] max-w-xl flex-col items-center justify-center px-6 text-center">
             <p className="text-sm text-white/60">This page is not available.</p>
             <h1 className="type-section-title mt-3 text-white">Return to your library</h1>
@@ -445,7 +447,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: bool
       <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white">
         <div className="w-full max-w-md">
           <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">App view failed</p>
-          <h1 className="type-section-title mt-3 text-white">TorWatch couldn’t open this screen</h1>
+          <h1 className="type-section-title mt-3 text-white">TorWatch couldn™t open this screen</h1>
           <p className="type-body mt-3 text-white/70">
             The server connected, but the app hit an unexpected display error. Your library data is safe.
           </p>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
+import { LibraryToggle } from '../components/shared/LibraryToggle';
 import type { MovieCard } from '../lib/types';
 import { getMovies, getTvShows, getTrendingAnime } from '../lib/services/catalog-gateway';
 import { getContinueList } from '../lib/services/continue-service';
@@ -43,10 +44,13 @@ const catalogRequests = {
 type FeaturedItem = MovieCard & { kind: 'movie' | 'tv' | 'anime' };
 
 function buildFeaturedQueue(movies: MovieCard[], series: MovieCard[], anime: MovieCard[]): FeaturedItem[] {
+  // M1.4 UI pass: a deeper, dynamic queue (was 6+6+6 capped at 8) so the
+  // auto-advancing hero keeps serving fresh highlights for minutes, not one
+  // screen's worth of content.
   const candidates: FeaturedItem[] = [
-    ...movies.slice(0, 6).map((item) => ({ ...item, kind: 'movie' as const })),
-    ...series.slice(0, 6).map((item) => ({ ...item, kind: 'tv' as const })),
-    ...anime.slice(0, 6).map((item) => ({ ...item, kind: 'anime' as const })),
+    ...movies.slice(0, 12).map((item) => ({ ...item, kind: 'movie' as const })),
+    ...series.slice(0, 12).map((item) => ({ ...item, kind: 'tv' as const })),
+    ...anime.slice(0, 12).map((item) => ({ ...item, kind: 'anime' as const })),
   ].filter((item) => Boolean(item.title && item.backdropUrl));
 
   for (let index = candidates.length - 1; index > 0; index -= 1) {
@@ -54,7 +58,7 @@ function buildFeaturedQueue(movies: MovieCard[], series: MovieCard[], anime: Mov
     [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
   }
 
-  return candidates.slice(0, 8);
+  return candidates.slice(0, 14);
 }
 
 function preloadBackdrop(url?: string | null): Promise<void> {
@@ -564,9 +568,18 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               </div>
             ) : (
               <>
-                <h1 className="type-feature-title text-white">
-                  {featuredItem?.title || 'Find your next great watch.'}
-                </h1>
+                {/* M1.4 UI pass: the title itself navigates to the detail page
+                    (the old "View title" button is gone — the hero's primary
+                    action is now saving to Watch Later). */}
+                <button
+                  type="button"
+                  onClick={() => openItem(featuredItem.kind, featuredItem)}
+                  className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                >
+                  <h1 className="type-feature-title text-white transition hover:text-white/85">
+                    {featuredItem?.title || 'Find your next great watch.'}
+                  </h1>
+                </button>
                 <div className="type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
                   {featuredItem?.year ? <span>{featuredItem.year}</span> : null}
                   {featuredItem?.year && typeof featuredItem?.tmdbRatingPct === 'number' ? <span>·</span> : null}
@@ -582,16 +595,26 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               </>
             )}
 
-            <div className="mt-8 flex flex-wrap gap-3">
+            <div className="mt-8 flex flex-wrap items-center gap-3">
               {featuredItem ? (
-                <button
-                  type="button"
-                  onClick={() => openItem(featuredItem.kind, featuredItem)}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-                >
-                  <Play className="h-4 w-4 fill-current" />
-                  View title
-                </button>
+                (() => {
+                  // M1.4 UI pass: the hero's primary action is saving to the
+                  // household Watch Later list (shared LibraryToggle — same
+                  // pending/confirmed/error semantics as everywhere else).
+                  // Anime hero items are skipped: their AniList ids are not
+                  // household-library keys (tmdb-qualified ids only).
+                  const heroKind = featuredItem.kind;
+                  if (heroKind === 'anime') return null;
+                  const canonicalId = heroKind === 'tv'
+                    ? `tmdb:tv:${featuredItem.id}`
+                    : `tmdb:movie:${featuredItem.id}`;
+                  return (
+                    <div className="flex items-center gap-2 rounded-full border border-white/20 bg-black/30 p-1.5 pr-4">
+                      <LibraryToggle canonicalId={canonicalId} field="watch-later" />
+                      <span className="text-sm text-white/85">Watch Later</span>
+                    </div>
+                  );
+                })()
               ) : null}
               <button
                 type="button"

@@ -4,11 +4,11 @@
 // scoped grids.
 //
 // Data sources, in order of preference:
-//   1. `library` — the server-backed LibraryStore (Electron desktop, M3.3),
+//   1. `library` ” the server-backed LibraryStore (Electron desktop, M3.3),
 //      gated on the server's library.household.v1 capability. A server
 //      without the capability shows the explicit unavailable state; there is
 //      NO localStorage/device-local/provider fallback (FR10).
-//   2. `provider` — the explicit preview-only fixture provider (development
+//   2. `provider` ” the explicit preview-only fixture provider (development
 //      browser entry), always labelled on screen.
 // With neither, the page shows the truthful unavailable state.
 import { useEffect, useState } from 'react';
@@ -35,7 +35,7 @@ const COLLECTION_TABS = [
 
 const SORT_OPTIONS: Array<{ id: LibrarySort; label: string }> = [
   { id: 'recent', label: 'Recently added' },
-  { id: 'title', label: 'Title A–Z' },
+  { id: 'title', label: 'Title A“Z' },
 ];
 
 const SHELF_META: Record<LibraryMediaKind, { label: string; icon: React.ReactNode }> = {
@@ -48,7 +48,7 @@ const UNAVAILABLE_COPY = 'The library is not available on this server. Update th
 
 type Navigate = (path: string, params?: Record<string, string>) => void;
 
-// Canonical-id → route mapping moved to lib/canonical-route.ts (M4.2) so the
+// Canonical-id \u2014 route mapping moved to lib/canonical-route.ts (M4.2) so the
 // recommendation row and the Library share one implementation.
 export { routeIdFromCanonical, titleRouteParams } from '../lib/canonical-route';
 
@@ -104,18 +104,17 @@ export function LibraryPage({ navigate, provider, collection, sort = 'recent' }:
 
 function SortButton({ current, onSelect }: { current: LibrarySort; onSelect: (sort: LibrarySort) => void }) {
   const [open, setOpen] = useState(false);
-  const currentLabel = SORT_OPTIONS.find((option) => option.id === current)?.label ?? 'Recently added';
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label={`Sort library, currently ${currentLabel}`}
+        aria-label="Sort library"
         aria-haspopup="dialog"
         className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full px-2 text-white/70 transition hover:text-white ${FOCUS_RING_CLASS}`}
       >
         <ListFilter className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
-        <span className="text-sm">{currentLabel}</span>
+        <span className="text-sm">Sort by</span>
       </button>
       <SelectionSurface open={open} title="Sort library" onClose={() => setOpen(false)}>
         <div className="space-y-1" role="radiogroup" aria-label="Sort order">
@@ -134,7 +133,7 @@ function SortButton({ current, onSelect }: { current: LibrarySort; onSelect: (so
               }`}
             >
               {option.label}
-              {option.id === current ? <span aria-hidden="true">✓</span> : null}
+              {option.id === current ? <span aria-hidden="true">\u2713</span> : null}
             </button>
           ))}
         </div>
@@ -148,7 +147,7 @@ function UnavailableState({ onRetry }: { onRetry?: () => void }) {
     <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-6 text-center" role="status">
       <p className="type-body text-white/75">{UNAVAILABLE_COPY}</p>
       <p className="type-secondary mt-2 text-white/50">
-        Your collection is kept on the TorWatch server — nothing is stored on this device.
+        Your collection is kept on the TorWatch server ” nothing is stored on this device.
       </p>
       {onRetry ? (
         <button
@@ -218,7 +217,7 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
     <div className="mt-4 space-y-8">
       <p className="text-xs text-white/45" role="note">
         {overview.stale
-          ? 'Offline — showing the last data this server sent you. It refreshes automatically on reconnect.'
+          ? 'Offline ” showing the last data this server sent you. It refreshes automatically on reconnect.'
           : 'Synced with your TorWatch server'}
       </p>
       {overview.shelves.map((shelf) => (
@@ -251,7 +250,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
         <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
           {meta.icon}
           {meta.label}
-          {/* Full-scope count from the server — independent of preview length. */}
+          {/* Full-scope count from the server ” independent of preview length. */}
           <span className="text-numeric text-sm font-normal text-white/50">{count}</span>
         </h2>
         <button
@@ -312,7 +311,7 @@ function LibraryCardButton({ row, navigate, label }: {
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-          <span className="text-3xl opacity-30" aria-hidden="true">ðŸŽ¬</span>
+          <span className="text-3xl opacity-30" aria-hidden="true"><Film className="h-7 w-7" /></span>
         </div>
       )}
       {!row.metadataAvailable ? (
@@ -409,7 +408,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-                      <span className="text-3xl opacity-30" aria-hidden="true">ðŸŽ¬</span>
+                      <span className="text-3xl opacity-30" aria-hidden="true"><Film className="h-7 w-7" /></span>
                     </div>
                   )}
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 pb-1.5 pt-6 text-left">
@@ -448,7 +447,7 @@ type LibraryCategoryPageProps = {
 
 export function LibraryCategoryPage({ navigate, provider, collection, kind, sort = 'recent' }: LibraryCategoryPageProps) {
   const library = useLibrary();
-  const title = `${collection === 'watch-later' ? 'Watch Later' : 'Favourites'} — ${SHELF_META[kind].label}`;
+  const title = `${collection === 'watch-later' ? 'Watch Later' : 'Favourites'} ” ${SHELF_META[kind].label}`;
   const setSort = (next: LibrarySort) => {
     navigate('library-category', { collection, kind, sort: next });
   };
@@ -461,7 +460,7 @@ export function LibraryCategoryPage({ navigate, provider, collection, kind, sort
           onClick={() => navigate('library', { collection, sort })}
           className={`inline-flex min-h-11 items-center rounded-full text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
         >
-          ← Library
+          \u2039 Library
         </button>
         <SortButton current={sort} onSelect={setSort} />
       </div>
@@ -516,7 +515,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
     <>
       <p className="mt-2 text-xs text-white/45" role="note">
         {page.stale
-          ? `Offline — showing the last synced data · ${page.total} ${page.total === 1 ? 'title' : 'titles'}`
+          ? `Offline ” showing the last synced data · ${page.total} ${page.total === 1 ? 'title' : 'titles'}`
           : `Synced with your TorWatch server · ${page.total} ${page.total === 1 ? 'title' : 'titles'}`}
       </p>
       <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
@@ -550,7 +549,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
             aria-label={`Load more titles (${page.items.length} of ${page.total} shown)`}
             className={`min-h-11 rounded-full border border-white/15 px-6 text-sm text-white/85 transition hover:border-white/35 disabled:opacity-50 ${FOCUS_RING_CLASS}`}
           >
-            {page.loadingMore ? 'Loading…' : 'Load more'}
+            {page.loadingMore ? 'Loading\u2026' : 'Load more'}
           </button>
         </div>
       ) : null}

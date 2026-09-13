@@ -62,15 +62,19 @@ function MobileShell(props: {
 
   return (
     <>
-      {browser.sharedAppElement(composed)}
+      {/* Settings is a full SCREEN, not an overlay: the app is hidden while
+          settings is open so the shell's back chevrons never bleed through
+          (the repair-pass double-back defect). display:none keeps the app
+          mounted — no state loss, no remount on close. */}
+      <div className={settingsOpen ? 'hidden' : 'contents'}>
+        {browser.sharedAppElement(composed)}
+      </div>
       {settingsOpen ? (
-        <div role="dialog" aria-modal="true" aria-label="Server settings" className="fixed inset-0 z-[100] overflow-auto bg-[#0a0a0a]">
-          <ServerSettings
-            connection={composed.platform.connection}
-            storage={composed.storage}
-            onDone={() => overlay.close()}
-          />
-        </div>
+        <ServerSettings
+          connection={composed.platform.connection}
+          storage={composed.storage}
+          onDone={() => overlay.close()}
+        />
       ) : null}
     </>
   );

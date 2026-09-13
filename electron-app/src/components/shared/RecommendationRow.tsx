@@ -131,8 +131,9 @@ function SectionHeader({ fallback, degraded, navigate }: { fallback: boolean; de
   return (
     <div className="shelf-heading mb-3">
       <div className="min-w-0">
-      <h2 className="flex items-start gap-2 text-lg font-semibold text-white">
-        <Sparkles className="mt-1 h-4 w-4 shrink-0" aria-hidden="true" />
+      {/* M1.4 UI pass: the decorative icon is gone — cleaner Netflix-style
+          section headers. */}
+      <h2 className="text-lg font-semibold text-white">
         <span>
         {fallback ? 'Popular picks' : 'Recommended for your household'}
         </span>

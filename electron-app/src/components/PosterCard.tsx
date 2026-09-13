@@ -101,8 +101,11 @@ export default function PosterCard({
         </span>
       </div>
 
-      <div className="mt-3 min-w-0">
-        <h3 className="truncate text-base font-medium leading-6 text-white/90 transition group-hover:text-white">
+      <div className="mt-2.5 min-w-0">
+        {/* Compact rails (M1.4): text-sm + tight leading keeps names readable
+            at Netflix-style poster widths; leading-snug allows 2 lines with a
+            graceful ellipsis instead of clipping long names to one. */}
+        <h3 className="line-clamp-2 text-sm font-medium leading-snug text-white/90 transition group-hover:text-white">
           {movie.title}
         </h3>
         <div className="type-caption text-numeric mt-1 flex items-center gap-2 text-white/70">
