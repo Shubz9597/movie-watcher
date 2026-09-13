@@ -2,7 +2,7 @@
 // This wraps the original but handles API calls through services
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
-import { ArrowLeft, ChevronRight, Clock3, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Clock3, Loader2, Play } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { getTvSeason } from '../lib/services/catalog-gateway';
@@ -188,6 +188,7 @@ export default function EpisodePanel({
   const [episodes, setEpisodes] = useState<EpisodeSummary[]>(initialEpisodes);
   const [seasonLoading, setSeasonLoading] = useState(false);
   const [seasonError, setSeasonError] = useState<string | null>(null);
+  const [manualEpisode, setManualEpisode] = useState('1');
   const [seasonArtworkHydrating, setSeasonArtworkHydrating] = useState(false);
   const [availabilityNow, setAvailabilityNow] = useState(() => Date.now());
 
@@ -251,6 +252,8 @@ export default function EpisodePanel({
 
     let nextSeasonEpisodes = seasonCache.current.get(nextSeason.seasonNumber);
     if (!nextSeasonEpisodes) {
+      // Starting mobile playback must not wait on optional next-season metadata.
+      if (!platform.desktop) return null;
       try {
         const seasonData = await getTvSeason(tmdbId, nextSeason.seasonNumber);
         const loadedEpisodes: EpisodeSummary[] = Array.isArray(seasonData.episodes)
@@ -560,7 +563,7 @@ export default function EpisodePanel({
     try {
       const magnet = await resolveTorrentSource(t);
       let fileIndex: number | undefined = t.fileIndex;
-      if (fileIndex == null && activeEpisode && t.seasonPack) {
+      if (platform.desktop && fileIndex == null && activeEpisode && t.seasonPack) {
         // Resolve file index for season packs
         const resolved = await resolveTorrentFile({
           magnetUri: magnet,
@@ -591,6 +594,9 @@ export default function EpisodePanel({
         title,
         sourceName: t.title,
       };
+      if (!platform.desktop && fileIndex == null && activeEpisode && t.seasonPack) {
+        params.resolveEpisodeFile = '1';
+      }
       if (activeEpisode) {
         params.season = String(activeEpisode.seasonNumber || selectedSeason);
         params.episode = String(activeEpisode.episodeNumber);
@@ -625,9 +631,9 @@ export default function EpisodePanel({
         params.seriesId = `tmdb:tv:${tmdbId}`;
       }
 
-      if (platform.kind === 'electron') {
-        if (!platform.desktop) {
-          setTorrentError('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
+      if (platform.player) {
+        if (platform.kind === 'electron' && !platform.desktop) {
+          setTorrentError('The playback bridge is unavailable. Restart TorWatch and try again.');
           return;
         }
         if (fileIndex != null) params.fileIndex = String(fileIndex);
@@ -646,9 +652,7 @@ export default function EpisodePanel({
         }
         router.push('player', params);
       } else {
-        // Truthful non-Electron fallback (M2.3): real mobile playback lands
-        // with the M1.3 player milestone — no M3U is silently downloaded.
-        setTorrentError('Playback arrives with the mobile player milestone — this preview did not start or save anything.');
+        setTorrentError('Playback is unavailable on this device. Reconnect to the server and try again.');
         return;
       }
     } catch (err) {
@@ -772,11 +776,13 @@ export default function EpisodePanel({
       {!activeEpisode ? (
         <>
           <div className="border-b border-white/[0.08] px-5 py-4">
-            <p className="type-secondary font-medium text-white/65">Episodes</p>
-            <h3 className="type-panel-title mt-1 truncate text-white">{title}</h3>
-            <p className="type-secondary measure-compact mt-2 text-white/70">Batch sources carry forward; single-episode sources are chosen again.</p>
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="type-panel-title text-white">Episodes</h3>
+              <span className="text-sm text-white/60">{episodes.length} episodes</span>
+            </div>
+            <p className="mt-2 text-sm text-white/65">Choose an episode to see its sources.</p>
             <Select value={String(selectedSeason)} onValueChange={onSeasonChange}>
-              <SelectTrigger className="mt-4 rounded-full border-white/15 bg-transparent text-white/70">
+              <SelectTrigger className="mt-4 min-h-12 w-full rounded-lg border-white/15 bg-transparent text-white/85">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -813,7 +819,7 @@ export default function EpisodePanel({
                   className="content-auto-row group flex w-full items-center gap-3 border-b border-white/[0.08] px-4 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
                   onClick={() => void fetchTorrentsForEpisode(episode)}
                 >
-                  <div className="relative aspect-video w-[104px] shrink-0 overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.04]">
+                  <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] sm:w-32">
                     <EpisodeArtworkMedia
                       key={artwork || `missing-${episode.id}`}
                       src={artwork}
@@ -828,7 +834,7 @@ export default function EpisodePanel({
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
-                      <div className="truncate text-sm font-medium text-white/85">{episode.name}</div>
+                      <div className="line-clamp-2 text-sm font-medium leading-5 text-white/90">{episode.name}</div>
                       {isUpcoming ? (
                         <span className="type-caption shrink-0 rounded-full border border-white/12 bg-white/[0.05] px-2 py-0.5 text-white/70">
                           Coming soon
@@ -852,7 +858,20 @@ export default function EpisodePanel({
               );
             })}
             {!seasonLoading && episodes.length === 0 ? (
-              <div className="type-body px-5 py-10 text-center text-white/70">No episodes are available for this season.</div>
+              <div className="space-y-4 px-5 py-6 text-sm text-white/70">
+                <p>Episode details are unavailable. Enter an episode number to find its sources.</p>
+                <form className="flex items-end gap-3" onSubmit={(event) => {
+                  event.preventDefault();
+                  const number = Number(manualEpisode);
+                  if (!Number.isInteger(number) || number < 1 || number > 10000) return;
+                  void fetchTorrentsForEpisode({ id: number, episodeNumber: number, absoluteNumber: kind === 'anime' ? number : undefined, seasonNumber: selectedSeason, name: `Episode ${number}`, continuationAvailable: false });
+                }}>
+                  <label className="min-w-0 flex-1">Episode number
+                    <input aria-label="Episode number" type="number" inputMode="numeric" min="1" max="10000" required value={manualEpisode} onChange={(event) => setManualEpisode(event.target.value)} className="mt-2 min-h-12 w-full rounded-lg border border-white/20 bg-black px-3 text-base text-white" />
+                  </label>
+                  <button type="submit" className="min-h-12 rounded-lg bg-white px-4 text-black">Find sources</button>
+                </form>
+              </div>
             ) : null}
           </div>
         </>
@@ -935,7 +954,10 @@ export default function EpisodePanel({
                 return (
                   <div key={torrentRowKey} className={`content-auto-row border-t border-white/[0.08] px-5 py-4 ${torrent.previouslyUsed ? 'bg-[#ff7a17]/[0.09]' : ''}`}>
                     <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
+                      <button type="button" aria-label={`Play source ${torrent.title}`} onClick={() => void playTorrent(torrent)} disabled={Boolean(playBusyId || externalBusyId)} className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-50 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+                        {playBusyId === torrentRowKey ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
+                      </button>
+                      <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <div className="line-clamp-2 text-sm leading-5 text-white/80" title={torrent.title}>{torrent.title}</div>
                           {torrent.previouslyUsed ? (
@@ -954,7 +976,7 @@ export default function EpisodePanel({
                         </div>
                       </div>
                       <PlaybackSplitButton
-                        className="shrink-0"
+                        className="hidden shrink-0 sm:inline-flex"
                         onPlay={() => void playTorrent(torrent)}
                         onOpenExternal={() => void downloadTorrentM3U(torrent)}
                         disabled={Boolean(playBusyId || externalBusyId)}

@@ -408,7 +408,10 @@ export default function TorrentPanel({
                   }`}
                 >
                   <div className="px-5 py-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3 sm:items-center sm:justify-between">
+                      <button type="button" aria-label={`Play source ${t.title}`} onClick={() => { setSelectedKey(torrentActionKey); void playInMpv(t); }} disabled={Boolean(busyActionId)} className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-50 sm:hidden ${FOCUS_RING_CLASS}`}>
+                        {busyActionId === playActionId ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
+                      </button>
                       {/* WF06: tapping a row selects it — playback is a
                           separate, explicit action (footer button on compact,
                           split button on desktop). The release name is never

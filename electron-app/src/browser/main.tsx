@@ -237,6 +237,11 @@ function BrowserApp({
   return (
     <LibraryContextProvider store={libraryController}>
     <RouterProvider navigate={navigate} goBack={goBack}>
+    {route.path === 'player' ? (
+      <Suspense fallback={<div className="fixed inset-0 z-[200] bg-black" role="status" aria-label="Opening player" />}>
+        <PlayerPage navigate={navigate} params={Object.fromEntries(route.params)} />
+      </Suspense>
+    ) : (
     <AppShell
       routePath={route.path}
       navigate={navigate}
@@ -318,9 +323,6 @@ function BrowserApp({
             kind={route.params.get('kind') || 'movie'}
           />
         )}
-        {route.path === 'player' && (
-          <PlayerPage navigate={navigate} params={Object.fromEntries(route.params)} />
-        )}
         {route.path === 'search' && <SearchPage navigate={navigate} />}
         {/* Dev-only (fixture entry): the REAL recommendations surfaces driven
             by the deterministic fixture fetch (?recs=<scenario>), so the
@@ -351,6 +353,7 @@ function BrowserApp({
         )}
       </Suspense>
     </AppShell>
+    )}
     </RouterProvider>
     </LibraryContextProvider>
   );

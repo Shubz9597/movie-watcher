@@ -260,9 +260,16 @@ export default function TitlePage({
       const row = await bffTitleDetail(catalogId);
       publishDetail(detailFromBackendTitle(row));
       const seasonNumber = Number.isInteger(requestedSeason) && requestedSeason > 0 ? requestedSeason : 1;
-      let episodes: BffEpisodeRow[] = await bffEpisodeRows(catalogId, seasonNumber);
+      let episodes: BffEpisodeRow[] = [];
+      try {
+        episodes = await bffEpisodeRows(catalogId, seasonNumber);
+      } catch (error) {
+        // Episode artwork/titles may be unavailable while the catalog still
+        // knows the episode count. Keep those numbered episodes usable.
+        console.warn('[TitlePage] Episode metadata unavailable; using the catalog count.', error);
+      }
       if (episodes.length === 0) {
-        const knownCount = row.seasons?.[0]?.episodeCount ?? 0;
+        const knownCount = row.seasons?.find((season) => season.number === seasonNumber)?.episodeCount ?? 0;
         episodes = Array.from({ length: Math.min(1000, Math.max(
           knownCount,
           Number.isInteger(requestedEpisode) && requestedEpisode > 0 ? requestedEpisode : 0,
@@ -669,7 +676,7 @@ export default function TitlePage({
             two-column layout unchanged (WF09). */}
         <div className="flex items-center justify-between gap-2 lg:hidden">
           <PageBackButton />
-          <div className="flex items-center gap-1">
+          <div aria-label="Title actions" className="ml-auto flex items-center gap-1 rounded-2xl border border-white/10 bg-black/25 p-1">
             {canDirectResume ? (
               <button
                 type="button"

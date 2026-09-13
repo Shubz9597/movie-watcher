@@ -3,6 +3,8 @@ import { getCatalogSource } from '../lib/catalog-source';
 import { bffTitleDetail } from '../lib/services/catalog-bff';
 import { getDeviceId } from '../lib/device-id';
 import { usePlatform } from '../platform/PlatformProvider';
+import { ChevronLeft } from 'lucide-react';
+import { resolveTorrentFile } from '../lib/services/resolve-service';
 
 // Legacy provider metadata loads lazily: bff mode never imports them (T042.4).
 async function legacyMetadataProviders() {
@@ -25,6 +27,7 @@ export default function PlayerPage({ navigate, params }: Props) {
     anilistId,
     malId,
     fileIndex,
+    resolveEpisodeFile,
     seriesId,
     season = '0',
     episode = '0',
@@ -43,7 +46,6 @@ export default function PlayerPage({ navigate, params }: Props) {
 
   const returnToSource = useCallback((event?: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => {
     if (returningRef.current) return;
-    returningRef.current = true;
     // MPV has already been torn down when this is called from mpv:stopped, so
     // prevent the route-unmount cleanup from issuing a second stop request.
     didStartPlaybackRef.current = false;
@@ -53,6 +55,7 @@ export default function PlayerPage({ navigate, params }: Props) {
       setPlaybackError(event.message || 'Playback was interrupted by an error. Choose another source and retry.');
       return;
     }
+    returningRef.current = true;
 
     if (event?.reason === 'ended' && nextEpisodeRoute?.startsWith('#title?')) {
       window.location.replace(nextEpisodeRoute);
@@ -102,7 +105,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         // the playback effect prevents metadata state updates from stopping
         // and restarting an active playback session. BFF mode resolves the
         // metadata through the catalog contract (T042.4).
-        if (tmdbId && cat !== 'anime') {
+        if (platform.desktop && tmdbId && cat !== 'anime') {
           try {
             if (await getCatalogSource() === 'bff') {
               // M3.1.1: request detail by the media-qualified canonical id
@@ -126,7 +129,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           } catch (err) {
             console.error('[PlayerPage] Failed to fetch TMDB metadata:', err);
           }
-        } else if (anilistId && cat === 'anime') {
+        } else if (platform.desktop && anilistId && cat === 'anime') {
           try {
             if (await getCatalogSource() === 'bff') {
               const row = await bffTitleDetail(`anilist:${anilistId}`);
@@ -163,12 +166,21 @@ export default function PlayerPage({ navigate, params }: Props) {
         if (!platform.player) {
           throw new Error('Playback is unavailable on this device. Reconnect to the TorWatch server and try again.');
         }
+        let resolvedFileIndex = fileIndex != null ? Number(fileIndex) : undefined;
+        if (resolveEpisodeFile === '1' && resolvedFileIndex == null) {
+          const resolved = await resolveTorrentFile({
+            magnetUri: magnet, cat, season: Number(season), episode: Number(episode),
+            absolute: absoluteEpisode ? Number(absoluteEpisode) : Number(episode),
+          });
+          resolvedFileIndex = resolved.fileIndex;
+          if (cancelled) return;
+        }
         await platform.player.start({
           url: magnet,
           magnet,
           title: playbackTitle,
           cat,
-          fileIndex: fileIndex != null ? Number(fileIndex) : undefined,
+          fileIndex: resolvedFileIndex,
           tmdbId: tmdbId ? Number(tmdbId) : undefined,
           imdbId: playbackImdbId,
           anilistId: anilistId ? Number(anilistId) : undefined,
@@ -189,7 +201,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         didStartPlaybackRef.current = true;
       } catch (err) {
         console.error('[PlayerPage] Playback initialization failed:', err);
-        setPlaybackError(err instanceof Error ? err.message : 'Playback could not be started.');
+        if (!cancelled) setPlaybackError(err instanceof Error ? err.message : 'Playback could not be started.');
       }
     }
 
@@ -199,15 +211,20 @@ export default function PlayerPage({ navigate, params }: Props) {
       cancelled = true;
       // In dev (React strict mode / HMR), effects can mount/unmount rapidly.
       // Only stop MPV if this page actually started playback.
-      if (!didStartPlaybackRef.current) return;
+      if (!didStartPlaybackRef.current && platform.desktop) return;
       platform.player?.stop().catch((err) => {
         console.error('[PlayerPage] Error stopping MPV on unmount:', err);
       });
     };
-  }, [magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
+  }, [magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, resolveEpisodeFile, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
 
   return (
-    <div className="player-transition fixed inset-x-0 bottom-0 top-10 z-40 bg-[#0a0a0a]">
+    <div className={`player-transition fixed inset-x-0 bottom-0 bg-black ${platform.desktop ? 'top-10 z-40' : 'top-0 z-[60]'}`}>
+      {!platform.desktop ? (
+        <button type="button" aria-label="Close player" onClick={() => returnToSource()} className="absolute left-5 top-[calc(var(--app-safe-top)+0.5rem)] z-10 inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+          <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+        </button>
+      ) : null}
       {/* The platform player renders above this transition state: embedded MPV
           on desktop, native HTML5 video in the mobile browser. */}
       <div className="absolute inset-0 flex items-center justify-center px-6">

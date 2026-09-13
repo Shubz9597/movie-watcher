@@ -169,11 +169,11 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
   };
 
   return (
-    <div className="mx-auto max-w-[1600px] px-5 pb-10 pt-4 md:px-8">
+    <div className="search-page mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col px-5 pt-4 md:px-8">
       <PageBack label="Home" onBack={() => navigate('home')} />
 
       {/* Search field: always visible, 16px (iOS no-zoom), clearable. */}
-      <div className="mt-3 flex min-h-13 items-center gap-3 rounded-2xl border border-white/15 bg-white/[0.05] px-4 py-3 focus-within:border-white/40">
+      <div className="mt-3 flex min-h-13 shrink-0 items-center gap-3 rounded-2xl border border-white/15 bg-white/[0.05] px-4 py-3 focus-within:border-white/40">
         <Search className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />
         <input
           ref={inputRef}
@@ -196,7 +196,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
         ) : null}
       </div>
 
-      {/* Idle: recent searches + recommendations (Netflix-style landing). */}
+      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain pb-8" aria-label="Search results" role="region">
       {!active ? (
         <div className="mt-8 space-y-10">
           {recent.length ? (
@@ -267,7 +267,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
           </ul>
         </div>
       )}
+      </div>
     </div>
   );
 }
-

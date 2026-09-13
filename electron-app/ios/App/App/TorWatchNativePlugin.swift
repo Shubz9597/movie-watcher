@@ -35,14 +35,46 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "TorWatchNativePlugin"
     public let jsName = "TorWatchNative"
     public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "prepare", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showError", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise),
     ]
 
     private var playerViewController: TorWatchPlayerViewController?
+    private var loadingViewController: TorWatchLoadingViewController?
 
     // MARK: - Bridge API
+
+    @objc func prepare(_ call: CAPPluginCall) {
+        guard let playId = call.getString("playId"), !playId.isEmpty else {
+            call.reject("The playback identifier is missing.")
+            return
+        }
+        let title = call.getString("title") ?? "TorWatch"
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { call.reject("Player unavailable."); return }
+            let controller = TorWatchLoadingViewController(title: title, playId: playId) { [weak self] in
+                self?.notifyListeners("playbackState", data: ["state": "stopped", "playId": playId])
+            }
+            self.loadingViewController = controller
+            self.currentPresentationViewController().present(controller, animated: false) {
+                call.resolve()
+            }
+        }
+    }
+
+    @objc func showError(_ call: CAPPluginCall) {
+        let playId = call.getString("playId") ?? ""
+        let message = call.getString("message") ?? "Could not prepare this source."
+        DispatchQueue.main.async { [weak self] in
+            if let controller = self?.loadingViewController, controller.playId == playId {
+                controller.showError(message)
+            }
+            call.resolve()
+        }
+    }
 
     @objc func play(_ call: CAPPluginCall) {
         guard let urlString = call.getString("url"), let url = URL(string: urlString) else {
@@ -75,11 +107,18 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             )
             self.playerViewController = controller
-            let presenting = self.currentPresentationViewController()
-            presenting.present(controller, animated: true) {
-                controller.startPlayback()
+            let presentPlayer = {
+                self.currentPresentationViewController().present(controller, animated: false) {
+                    controller.startPlayback()
+                    call.resolve()
+                }
             }
-            call.resolve()
+            if let loading = self.loadingViewController, loading.playId == playId {
+                self.loadingViewController = nil
+                loading.dismiss(animated: false, completion: presentPlayer)
+            } else {
+                presentPlayer()
+            }
         }
     }
 
@@ -104,12 +143,18 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin {
         }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            if let loading = self.loadingViewController, loading.playId == playId {
+                self.loadingViewController = nil
+                loading.dismiss(animated: false) { call.resolve() }
+                return
+            }
             if let controller = self.playerViewController, controller.hasPlayId(playId) {
                 // teardownPlayer runs in the dismissal completion; the explicit
                 // call here covers the JS-initiated close where the delegate
                 // callback may not fire first.
-                controller.dismissAndTeardown()
                 self.playerViewController = nil
+                controller.dismissAndTeardown { call.resolve() }
+                return
             }
             call.resolve()
         }
@@ -128,6 +173,76 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin {
     private func teardownPlayer() {
         playerViewController?.dismissAndTeardown()
         playerViewController = nil
+    }
+}
+
+// A native full-screen stage appears before server inspection starts. It
+// receives only a display title and a generation tag, never a source URL.
+class TorWatchLoadingViewController: UIViewController {
+    let playId: String
+    private let playbackTitle: String
+    private let onClose: () -> Void
+    private let spinner = UIActivityIndicatorView(style: .large)
+    private let statusLabel = UILabel()
+    private let closeButton = UIButton(type: .system)
+
+    init(title: String, playId: String, onClose: @escaping () -> Void) {
+        self.playId = playId
+        self.playbackTitle = title
+        self.onClose = onClose
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        let heading = UILabel()
+        heading.text = playbackTitle
+        heading.textColor = .white
+        heading.font = .preferredFont(forTextStyle: .title2)
+        heading.adjustsFontForContentSizeCategory = true
+        heading.numberOfLines = 3
+        heading.textAlignment = .center
+        statusLabel.text = "Preparing your source…"
+        statusLabel.textColor = .lightGray
+        statusLabel.font = .preferredFont(forTextStyle: .body)
+        statusLabel.adjustsFontForContentSizeCategory = true
+        statusLabel.numberOfLines = 0
+        statusLabel.textAlignment = .center
+        spinner.color = .white
+        spinner.startAnimating()
+        closeButton.setTitle("Close player", for: .normal)
+        closeButton.tintColor = .white
+        closeButton.addTarget(self, action: #selector(closePlayer), for: .touchUpInside)
+        closeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        let stack = UIStackView(arrangedSubviews: [heading, spinner, statusLabel, closeButton])
+        stack.axis = .vertical
+        stack.spacing = 24
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
+            stack.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 480),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 28),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -28),
+        ])
+    }
+
+    func showError(_ message: String) {
+        loadViewIfNeeded()
+        spinner.stopAnimating()
+        spinner.isHidden = true
+        statusLabel.text = message
+        closeButton.setTitle("Choose another source", for: .normal)
+    }
+
+    @objc private func closePlayer() {
+        closeButton.isEnabled = false
+        onClose()
     }
 }
 
@@ -264,15 +379,17 @@ class TorWatchPlayerViewController: AVPlayerViewController {
         return playId == candidate
     }
 
-    func dismissAndTeardown() {
+    func dismissAndTeardown(completion: (() -> Void)? = nil) {
         if presentingViewController != nil {
             dismiss(animated: true) { [weak self] in
                 self?.fullTeardown()
                 self?.onDismissed()
+                completion?()
             }
         } else {
             fullTeardown()
             onDismissed()
+            completion?()
         }
     }
 

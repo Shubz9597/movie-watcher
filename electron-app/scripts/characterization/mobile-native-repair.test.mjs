@@ -181,6 +181,71 @@ const REQUEST = {
   subjectId: "phone-1", seriesId: "tmdb:movie:42", season: 0, episode: 0,
 };
 
+test("preparation: native loading opens before planning and Close releases a late session", async () => {
+  const server = stubServer();
+  const fb = fakeBridge();
+  const order = [];
+  let completePlan;
+  const create = server.client.create.bind(server.client);
+  fb.bridge.prepare = async () => { order.push('prepare'); };
+  server.client.create = async (request) => {
+    order.push('plan');
+    await new Promise(resolve => { completePlan = resolve; });
+    return create(request);
+  };
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  const stopped = [];
+  controller.onStopped(event => stopped.push(event));
+  const starting = controller.start(REQUEST);
+  const rejected = assert.rejects(starting, /replaced|cancelled/i);
+  await waitFor(() => completePlan, 'planning starts');
+  assert.deepEqual(order, ['prepare', 'plan']);
+  fb.emitState({ state: 'stopped' });
+  await waitFor(() => stopped.length === 1, 'loading can be closed');
+  completePlan();
+  await rejected;
+  assert.equal(fb.calls.play.length, 0);
+  assert.equal(fb.calls.dismissed.length, 1);
+  assert.equal(server.deletes.length, 1);
+  assert.equal(server.heartbeats.length, 0);
+  await controller.dispose();
+});
+
+test("preparation: inspection errors stay in the native stage and can be closed", async () => {
+  const server = stubServer({ session: {
+    sessionId: 'b'.repeat(64), mode: 'unsupported', reasonCode: 'media_inspection_failed',
+    message: 'Cannot inspect this source.', playbackUrl: '', subtitles: [], expiresAt: 'x', profile: 'ios-avplayer',
+  } });
+  const fb = fakeBridge();
+  const errors = [];
+  fb.bridge.prepare = async () => {};
+  fb.bridge.showError = async (message) => errors.push(message);
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  await assert.rejects(controller.start(REQUEST), e => e.kind === 'planning');
+  assert.deepEqual(errors, ['Cannot inspect this source.']);
+  assert.equal(fb.calls.dismissed.length, 0, 'error remains visible in native stage');
+  await controller.stop();
+  assert.equal(fb.calls.dismissed.length, 1);
+  assert.equal(server.deletes.length, 1, 'unsupported session deleted only once');
+  await controller.dispose();
+});
+
+test("preparation: a new source never inherits progress from the preceding video", async () => {
+  const server = stubServer();
+  const fb = fakeBridge();
+  fb.bridge.prepare = async () => {};
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  await controller.start(REQUEST);
+  fb.emitTime({ currentTime: 120, duration: 3600 });
+  server.client.create = async () => { throw new PlaybackClientError('network', 'Server unavailable.'); };
+  fb.bridge.showError = async () => {};
+  await assert.rejects(controller.start({ ...REQUEST, seriesId: 'tmdb:movie:99' }));
+  await controller.stop();
+  assert.ok(server.heartbeats.length > 0);
+  assert.ok(server.heartbeats.every(row => row.seriesId === REQUEST.seriesId));
+  await controller.dispose();
+});
+
 test("lifecycle: unsupported plan DELETES the newly created session", async () => {
   const server = stubServer({ session: {
     sessionId: "b".repeat(64), mode: "unsupported", reasonCode: "media_inspection_failed", message: "cannot inspect",

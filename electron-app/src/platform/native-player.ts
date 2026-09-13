@@ -24,6 +24,8 @@ import { getBackendOrigin, subscribeOrigin } from '../lib/connection-service.ts'
 
 /** Shape of the local native plugin (implemented Swift-side / Kotlin-side). */
 export interface TorWatchNativePlugin {
+  prepare?(options: { title: string; playId: string }): Promise<void>;
+  showError?(options: { message: string; playId: string }): Promise<void>;
   play(options: {
     url: string;
     title: string;
@@ -56,7 +58,7 @@ export function devicePlaybackProfile(): string {
   return platform === 'android' ? 'android-media3' : 'ios-avplayer';
 }
 
-export function createNativePlaybackBridge(plugin: TorWatchNativePlugin): NativePlaybackBridge {
+export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, supportsPreparation = false): NativePlaybackBridge {
   const timeListeners = new Set<(u: { currentTime: number; duration: number }) => void>();
   const stateListeners = new Set<(u: NativePlaybackState) => void>();
   // Replacement safety: the CURRENT playId. Events carrying a different id
@@ -99,6 +101,16 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin): Native
   };
 
   return {
+    ...(supportsPreparation ? {
+      async prepare(title: string, playId: string) {
+        await ensureReady();
+        currentPlayId = playId;
+        await plugin.prepare!({ title, playId });
+      },
+      async showError(message: string, playId: string) {
+        if (currentPlayId === playId) await plugin.showError!({ message, playId });
+      },
+    } : {}),
     async play(input) {
       await ensureReady();
       currentPlayId = input.playId;
@@ -142,7 +154,7 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin): Native
 }
 
 function bridge(): NativePlaybackBridge {
-  return createNativePlaybackBridge(registerPlugin<TorWatchNativePlugin>('TorWatchNative'));
+  return createNativePlaybackBridge(registerPlugin<TorWatchNativePlugin>('TorWatchNative'), devicePlaybackProfile() === 'ios-avplayer');
 }
 
 export class NativePlayer implements PlayerPort {

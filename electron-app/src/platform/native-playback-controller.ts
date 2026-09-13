@@ -47,6 +47,8 @@ export type NativePlaybackState =
   | { state: 'error'; message: string; playId?: string };
 
 export type NativePlaybackBridge = {
+  prepare?(title: string, playId: string): Promise<void>;
+  showError?(message: string, playId: string): Promise<void>;
   play(input: NativePlaybackInput): Promise<void>;
   seek(positionSec: number, playId: string): Promise<void>;
   onTime(callback: (update: NativeTimeUpdate) => void): () => void;
@@ -124,12 +126,38 @@ export class NativePlaybackController {
     // playback, not dismissing the old one -- no terminal event fires here.
     await this.teardown(/* notify */ false);
     const generation = ++this.generation;
+    const playId = String(generation);
+    this.lastPositionSec = 0;
+    this.lastDurationSec = 0;
+    if (this.bridge.prepare) {
+      this.currentPlayId = playId;
+      this.request = request;
+      this.attachBridgeListeners(generation);
+      try {
+        await this.bridge.prepare(request.title || 'TorWatch', playId);
+      } catch (error) {
+        if (generation === this.generation) await this.teardown(false);
+        throw error;
+      }
+      if (generation !== this.generation) {
+        await this.bridge.dismiss(playId);
+        throw new PlaybackClientError('network', 'Playback was cancelled.');
+      }
+    }
 
-    const session = await this.client.create({
-      cat: request.cat || 'movie',
-      sourceId: infoHashFromSource(request),
-      fileIndex: request.fileIndex ?? 0,
-    });
+    let session: PlaybackSession;
+    try {
+      session = await this.client.create({
+        cat: request.cat || 'movie',
+        sourceId: infoHashFromSource(request),
+        fileIndex: request.fileIndex ?? 0,
+      });
+    } catch (error) {
+      if (generation === this.generation && this.bridge.prepare) {
+        await this.bridge.showError?.(error instanceof PlaybackClientError ? error.message : 'Could not prepare this source. Choose another source and try again.', playId);
+      }
+      throw error;
+    }
     if (generation !== this.generation) {
       // Superseded while planning: release immediately.
       await this.client.delete(session.sessionId);
@@ -139,6 +167,7 @@ export class NativePlaybackController {
       // M1.4 repair: an unsupported plan is a NEW server session that must
       // be released immediately — it is never playable.
       await this.client.delete(session.sessionId);
+      if (this.bridge.prepare) await this.bridge.showError?.(session.message, playId);
       throw new PlaybackClientError('planning', session.message, session.reasonCode);
     }
 
@@ -146,7 +175,6 @@ export class NativePlaybackController {
     this.request = request;
     this.lastPositionSec = 0;
     this.lastDurationSec = 0;
-    const playId = String(generation);
     this.currentPlayId = playId;
 
     // Media attaches IMMEDIATELY; resume is confirmed concurrently and seeks
@@ -221,7 +249,7 @@ export class NativePlaybackController {
 
   /** Shared teardown. notify=false when superseding via start(). */
   private async teardown(notify: boolean): Promise<void> {
-    const hadSession = this.session !== null;
+    const hadSession = this.session !== null || this.currentPlayId !== '';
     const generation = ++this.generation;
     this.flushingGeneration = generation;
     this.stopTimersAndListeners();
@@ -239,9 +267,9 @@ export class NativePlaybackController {
     this.flushingGeneration = -1;
     // Only dismiss when something was actually handed to the native player;
     // a bare supersede-start with no prior session must not touch the bridge.
-    if (hadSession && session) {
-      this.bridge.dismiss(playId).catch(() => {});
-      await this.client.delete(session.sessionId);
+    if (hadSession) {
+      await this.bridge.dismiss(playId).catch(() => {});
+      if (session) await this.client.delete(session.sessionId);
       if (notify) this.fireTerminal(generation, { reason: 'stopped' });
     }
   }

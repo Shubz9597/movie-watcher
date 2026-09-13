@@ -110,6 +110,22 @@
   padding-right: var(--app-safe-right);
 }
 
+.search-frame {
+  position: fixed;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.search-frame > header,
+.search-frame > div:first-child,
+.search-frame > nav { flex-shrink: 0; }
+.search-frame > main { flex: 1; min-height: 0; overflow: hidden; padding-bottom: 0; }
+.search-frame > main > .torwatch-route-enter { height: 100%; animation: none; }
+.search-frame > nav { position: static; }
+.search-page > button { flex-shrink: 0; }
+
 /* The heading may wrap; the action always keeps its own readable column. */
 .shelf-heading {
   display: grid;

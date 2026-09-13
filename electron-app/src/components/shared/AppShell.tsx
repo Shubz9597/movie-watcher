@@ -10,6 +10,7 @@ import AppHeader from '../AppHeader';
 import { ConnectionChip } from './ConnectionChip';
 import torWatchLogo from '../../assets/torwatch-symbol.png';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
+import { useSearchViewport } from '../../lib/use-search-viewport';
 
 type AppShellProps = {
   routePath: string;
@@ -26,10 +27,12 @@ const DESTINATIONS = [
 
 export function AppShell({ routePath, navigate, onOpenSettings, onBack, children }: AppShellProps) {
   void onBack; // pages own back affordances now; kept for interface stability
+  const search = routePath === 'search';
+  const frame = useSearchViewport(search);
 
 
   return (
-    <div className="torwatch-app-shell min-h-screen bg-[#0a0a0a] text-white">
+    <div className={`torwatch-app-shell bg-[#0a0a0a] text-white ${search ? 'search-frame' : 'min-h-screen'}`} style={search ? { height: frame.height, top: frame.top } : undefined}>
       {/* Desktop: the existing shared header (Electron parity). The browser
           has no window chrome, so the header's titlebar offset is reset. */}
       <div className="sticky top-0 z-40 hidden bg-[#0a0a0a] pt-[var(--app-safe-top)] [&_header]:!top-0 lg:block">
