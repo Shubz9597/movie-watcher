@@ -9,7 +9,8 @@
 // without the recommendations capability renders nothing at all. Qualified
 // opaque canonical ids drive navigation.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronRight, ListFilter, RotateCw, Sparkles } from 'lucide-react';
+import { Check, ChevronRight, ListFilter, RotateCw, Sparkles } from 'lucide-react';
+import { PageBackButton } from './PageBackButton';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import { titleRouteParams } from '../../lib/canonical-route';
 import { SelectionSurface } from '../primitives';
@@ -128,16 +129,20 @@ function RecommendationCard({ item, navigate, index }: {
 
 function SectionHeader({ fallback, degraded, navigate }: { fallback: boolean; degraded: boolean; navigate: Navigate }) {
   return (
-    <div className="mb-3 flex items-center justify-between">
-      <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-        <Sparkles className="h-4 w-4" aria-hidden="true" />
+    <div className="shelf-heading mb-3">
+      <div className="min-w-0">
+      <h2 className="flex items-start gap-2 text-lg font-semibold text-white">
+        <Sparkles className="mt-1 h-4 w-4 shrink-0" aria-hidden="true" />
+        <span>
         {fallback ? 'Popular picks' : 'Recommended for your household'}
-        {degraded ? <span className="text-xs font-normal text-white/50" role="note">(degraded — the server is serving its last computed list)</span> : null}
+        </span>
       </h2>
+      {degraded ? <p className="mt-2 text-xs text-white/65" role="note">(degraded — the server is serving its last computed list)</p> : null}
+      </div>
       <button
         type="button"
         onClick={() => navigate('recommendations')}
-        className={`inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
+        className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
         aria-label="See all recommendations"
       >
         See all
@@ -237,14 +242,7 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
 
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
-      <button
-        type="button"
-        onClick={() => navigate('home')}
-        className={`inline-flex min-h-11 items-center rounded-full text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
-      >
-        <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
-        Home
-      </button>
+      <PageBackButton />
       <h1 className="type-section-title mt-2 text-white">
         {state.data?.fallback ? 'Popular picks' : 'Recommended for your household'}
       </h1>

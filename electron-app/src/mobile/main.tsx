@@ -2,9 +2,8 @@
 //
 // EXACTLY ONE React root for the page lifetime: the shared app renders once;
 // the settings surface is an OVERLAY state inside the shell, opened via the
-// `torwatch:open-settings` custom event. Settings never touches the shared
-// hash router, so the two never compete, and closing settings does not
-// remount or recompose anything.
+// `torwatch:open-settings` custom event. Settings adds a same-route history
+// entry so native swipe-back dismisses the overlay without losing the page.
 //
 // Composition-owned resources (LibraryStore origin subscription, LibrarySync
 // interval, NativePlayer origin subscription) are disposed by the shell's
@@ -40,7 +39,7 @@ function MobileShell(props: {
   const { composed, browser } = props;
   // M1.4 repair: the settings overlay state machine lives in a deterministic,
   // unit-tested controller bound to the window event target.
-  const [overlay] = useState(() => new SettingsOverlayController(window));
+  const [overlay] = useState(() => new SettingsOverlayController(window, window.history));
   const [settingsOpen, setSettingsOpen] = useState(() => overlay.isOpen());
 
   useEffect(() => {
@@ -65,7 +64,7 @@ function MobileShell(props: {
     <>
       {browser.sharedAppElement(composed)}
       {settingsOpen ? (
-        <div className="fixed inset-0 z-[100] overflow-auto bg-[#0a0a0a]">
+        <div role="dialog" aria-modal="true" aria-label="Server settings" className="fixed inset-0 z-[100] overflow-auto bg-[#0a0a0a]">
           <ServerSettings
             connection={composed.platform.connection}
             storage={composed.storage}

@@ -4,11 +4,12 @@
 // widths render the existing AppHeader so the Electron layout is unchanged.
 // The shell owns only presentation and navigation intent — data stays in
 // pages, platform behavior in adapters.
-import { lazy, Suspense, useState } from 'react';
-import { Home, Library, Search, Settings2 } from 'lucide-react';
+import { lazy, Suspense } from 'react';
+import { ChevronLeft, Home, Library, Search, Settings2 } from 'lucide-react';
 import AppHeader from '../AppHeader';
 import torWatchLogo from '../../assets/torwatch-symbol.png';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
+import { useHistoryDialog } from '../../lib/use-history-dialog';
 
 const GlobalSearch = lazy(() => import('../GlobalSearch'));
 
@@ -16,6 +17,7 @@ type AppShellProps = {
   routePath: string;
   navigate: (path: string, params?: Record<string, string>) => void;
   onOpenSettings: () => void;
+  onBack: () => void;
   children: React.ReactNode;
 };
 
@@ -24,21 +26,28 @@ const DESTINATIONS = [
   { path: 'library', label: 'Library', icon: Library },
 ] as const;
 
-export function AppShell({ routePath, navigate, onOpenSettings, children }: AppShellProps) {
-  const [searchOpen, setSearchOpen] = useState(false);
+export function AppShell({ routePath, navigate, onOpenSettings, onBack, children }: AppShellProps) {
+  const { open: searchOpen, changeOpen: setSearchOpen } = useHistoryDialog('search');
+  const showBack = routePath !== 'home';
 
   const openSearch = () => setSearchOpen(true);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
+    <div className="torwatch-app-shell min-h-screen bg-[#0a0a0a] text-white">
       {/* Desktop: the existing shared header (Electron parity). The browser
           has no window chrome, so the header's titlebar offset is reset. */}
-      <div className="hidden [&_header]:!top-0 md:block">
+      <div className="sticky top-0 z-40 hidden bg-[#0a0a0a] pt-[var(--app-safe-top)] [&_header]:!top-0 lg:block">
         <AppHeader navigate={navigate} />
       </div>
 
       {/* Compact: slim top bar with explicit icon actions. */}
-      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-white/[0.08] bg-[#0a0a0a]/95 px-4 py-2 backdrop-blur-xl md:hidden">
+      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-white/[0.08] bg-[#0a0a0a] px-4 pb-2 pt-[calc(var(--app-safe-top)+0.5rem)] lg:hidden">
+        <div className="flex items-center">
+        {showBack ? (
+          <button type="button" onClick={onBack} aria-label="Go back" className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white/85 ${FOCUS_RING_CLASS}`}>
+            <ChevronLeft className="h-6 w-6" strokeWidth={1.7} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => navigate('home')}
@@ -47,6 +56,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, children }: AppS
         >
           <img src={torWatchLogo} alt="" className="h-8 w-12 object-contain invert" />
         </button>
+        </div>
         <div className="flex items-center">
           <button
             type="button"
@@ -67,7 +77,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, children }: AppS
         </div>
       </header>
 
-      <main className="pb-24 md:pb-16">
+      <main className="pb-[calc(6rem+var(--app-safe-bottom))] lg:pb-16">
         {/* Route-enter motion (M2.4): opacity/transform only, token-driven;
             reduced motion collapses the duration in CSS. Keyed by route so
             each navigation re-runs the enter animation. */}
@@ -79,9 +89,14 @@ export function AppShell({ routePath, navigate, onOpenSettings, children }: AppS
       {/* Compact bottom destinations: icons with small labels. */}
       <nav
         aria-label="Main destinations"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0a0a]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0a0a] pb-[var(--app-safe-bottom)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
       >
         <div className="flex items-stretch justify-around">
+          {showBack ? (
+            <button type="button" onClick={onBack} aria-label="Go back" className={`flex min-h-12 flex-1 items-center justify-center text-white/85 ${FOCUS_RING_CLASS}`}>
+              <ChevronLeft className="h-6 w-6" strokeWidth={1.7} aria-hidden="true" />
+            </button>
+          ) : null}
           {DESTINATIONS.map((destination) => {
             const Icon = destination.icon;
             const current = routePath === destination.path;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Clapperboard, Film, History, LoaderCircle, MonitorPlay, RefreshCw, Tv } from 'lucide-react';
+import { ChevronLeft, Clapperboard, Film, History, LoaderCircle, MonitorPlay, RefreshCw, Tv } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { Card } from '../lib/adapters/media';
@@ -246,7 +246,6 @@ export default function GlobalSearch({
   const closeAndNavigate = (kind: SearchKind, item: Basic) => {
     remember(kind, item);
     void loadTitlePage();
-    onOpenChange(false);
     reset();
     const params: Record<string, string> = { kind, id: String(item.id) };
     if (kind === 'anime' && item.malId) params.malId = String(item.malId);
@@ -255,13 +254,14 @@ export default function GlobalSearch({
       params.mediaKind = item.sourceKind === 'movie' ? 'movie' : 'tv';
     }
     navigate('title', params);
+    onOpenChange(false);
   };
 
   const closeAndBrowse = (title: string, api: string, kind: SearchKind) => {
     void loadSeeAllPage();
-    onOpenChange(false);
     reset();
     navigate('see-all', { title, api, kind });
+    onOpenChange(false);
   };
 
   const clearRecent = () => {
@@ -284,7 +284,7 @@ export default function GlobalSearch({
     >
       <DialogContent
         showCloseButton={false}
-        className="top-[8vh] max-h-[84vh] w-[calc(100%-2rem)] max-w-4xl translate-y-0 gap-0 overflow-hidden rounded-xl border-white/15 bg-[#0c0c0c] p-0 shadow-none sm:max-w-4xl"
+        className="top-[max(8dvh,calc(var(--app-safe-top)+0.5rem))] max-h-[calc(92dvh-var(--app-safe-top)-var(--app-safe-bottom))] w-[calc(100%-2rem)] max-w-4xl translate-y-0 gap-0 overflow-hidden rounded-xl border-white/15 bg-[#0c0c0c] p-0 shadow-none sm:max-w-4xl"
       >
         <DialogTitle className="sr-only">Search the TorWatch library</DialogTitle>
         <DialogDescription className="sr-only">
@@ -292,7 +292,10 @@ export default function GlobalSearch({
         </DialogDescription>
 
         <Command shouldFilter={false} className="rounded-none bg-transparent text-white [&_[cmdk-group-heading]]:font-label [&_[cmdk-group-heading]]:px-5 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:pt-5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-white/60">
-          <div className="border-b border-white/[0.08] px-2 py-2">
+          <div className="flex items-center border-b border-white/[0.08] px-2 py-2 [&>[data-slot=command-input-wrapper]]:min-w-0 [&>[data-slot=command-input-wrapper]]:flex-1">
+            <button type="button" aria-label="Go back" onClick={() => onOpenChange(false)} className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+              <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+            </button>
             <CommandInput
               autoFocus
               aria-label="Search movies, series, and anime"

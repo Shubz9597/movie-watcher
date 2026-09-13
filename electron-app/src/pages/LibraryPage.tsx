@@ -247,7 +247,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
   const meta = SHELF_META[kind];
   return (
     <section aria-label={`${meta.label} shelf`}>
-      <div className="mb-3 flex items-center justify-between">
+      <div className="shelf-heading mb-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
           {meta.icon}
           {meta.label}
@@ -257,7 +257,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
         <button
           type="button"
           onClick={() => navigate('library-category', { collection, kind, sort })}
-          className={`inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
+          className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
           aria-label={`View all ${meta.label} (${count})`}
         >
           View all
@@ -367,7 +367,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
       <p className="text-xs text-white/45" role="note">{overview.sourceLabel}</p>
       {overview.shelves.map((shelf) => (
         <section key={shelf.kind} aria-label={`${SHELF_META[shelf.kind].label} shelf`}>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="shelf-heading mb-3">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
               {SHELF_META[shelf.kind].icon}
               {SHELF_META[shelf.kind].label}
@@ -376,7 +376,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
             <button
               type="button"
               onClick={() => navigate('library-category', { collection, kind: shelf.kind })}
-              className={`inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
+              className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
               aria-label={`View all ${SHELF_META[shelf.kind].label} (${shelf.count})`}
             >
               View all

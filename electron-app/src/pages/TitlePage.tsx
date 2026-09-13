@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Bookmark, ExternalLink, Heart, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { Bookmark, ExternalLink, Heart, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
 import TorrentPanel from '../components/TorrentPanel';
@@ -577,9 +578,7 @@ export default function TitlePage({
       <div className="flex min-h-[70vh] flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="type-body text-white/70">Could not load this title.</p>
         {loadError ? <p className="measure-compact type-body text-white/65">{loadError}</p> : null}
-        <button type="button" onClick={() => navigate('home')} className="text-sm text-[#ff9a4a] hover:text-white">
-          Back to browse
-        </button>
+        <PageBackButton />
       </div>
     );
   }
@@ -669,14 +668,7 @@ export default function TitlePage({
         {/* Compact action toolbar (lg:hidden): desktop keeps the familiar
             two-column layout unchanged (WF09). */}
         <div className="flex items-center justify-between gap-2 lg:hidden">
-          <button
-            type="button"
-            onClick={() => navigate('home')}
-            aria-label="Back"
-            className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/80 backdrop-blur transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          >
-            <ArrowLeft className="h-5 w-5" aria-hidden="true" />
-          </button>
+          <PageBackButton />
           <div className="flex items-center gap-1">
             {canDirectResume ? (
               <button
@@ -727,13 +719,7 @@ export default function TitlePage({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white">
-          <button
-            onClick={() => navigate('home')}
-            className="hidden lg:inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-4 py-2 text-white/75 backdrop-blur transition hover:border-white/30 hover:text-white"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to browse
-          </button>
+          <div className="hidden lg:block"><PageBackButton /></div>
           <div className="type-caption text-numeric flex flex-wrap items-center gap-2 font-medium text-white/70">
             <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">
               {kind === 'tv' ? 'Series' : kind === 'anime' ? (isAnimeMovie ? 'Anime Movie' : 'Anime Series') : 'Movie'}

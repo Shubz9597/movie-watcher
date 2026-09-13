@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { PageBackButton } from '../components/shared/PageBackButton';
 import PosterCard from '../components/PosterCard';
 import type { MovieCard } from '../lib/types';
 import { getTitlesByGenre, getMovies, getTvShows, getAnimeByGenre, getAnimeList, getTrendingAnime } from '../lib/services/catalog-gateway';
@@ -139,14 +139,7 @@ export default function SeeAllPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CatalogFilters kind={kind} api={api} navigate={navigate} />
-          <button
-            type="button"
-            onClick={() => navigate('home')}
-            className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 transition hover:border-white/35 hover:text-white"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back home
-          </button>
+          <PageBackButton />
         </div>
       </div>
 

@@ -93,11 +93,17 @@ export default function CarouselRow({
 
   return (
     <section className="border-t border-white/[0.08] py-8 md:py-10">
-      <div className="mb-5">
+      <div className="shelf-heading mb-5">
         <div className="min-w-0">
           <h2 className="type-section-title text-white">{title}</h2>
           {subtitle ? <p className="measure-compact type-body mt-2 text-white/70">{subtitle}</p> : null}
         </div>
+        {seeAllHref && navigate ? (
+          <button type="button" onClick={handleSeeAll} aria-label={`See all ${title}`} className="shelf-see-all rounded-lg text-sm text-white/75 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+            See all
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
 
       {loading ? (

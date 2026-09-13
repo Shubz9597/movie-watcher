@@ -207,7 +207,7 @@ export default function PlayerPage({ navigate, params }: Props) {
   }, [magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-10 z-40 bg-[#0a0a0a]">
+    <div className="player-transition fixed inset-x-0 bottom-0 top-10 z-40 bg-[#0a0a0a]">
       {/* The platform player renders above this transition state: embedded MPV
           on desktop, native HTML5 video in the mobile browser. */}
       <div className="absolute inset-0 flex items-center justify-center px-6">

@@ -4,7 +4,7 @@
 // slice, not a separate app. It never touches window.electronAPI. Fixture
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
-import { Component, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { ErrorInfo, ReactElement, ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import '../globals.css';
@@ -19,7 +19,7 @@ import { getDeviceId } from '../lib/device-id';
 import { loadPlayerPage, loadRecommendationsPage, loadSeeAllPage, loadTitlePage } from '../lib/route-loaders';
 import { RouterProvider } from '../lib/router-adapter';
 import { AppShell } from '../components/shared/AppShell';
-import { BrowseRail } from '../components/shared/BrowseRail';
+import { goBackHash, initializeHashNavigation, navigateHash } from '../lib/hash-navigation';
 import { PlatformProvider, useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { Platform, ServerCompatibility } from '../platform/contracts';
 import { BrowserConnection, BrowserStorage, resolveBrowserOrigin } from '../platform/browser';
@@ -120,15 +120,18 @@ export async function composePlatform(): Promise<{
 function useHashRouter() {
   const [route, setRoute] = useState(() => parseHash(window.location.hash));
   useEffect(() => {
+    initializeHashNavigation(window);
     const onHashChange = () => setRoute(parseHash(window.location.hash));
     window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    window.addEventListener('popstate', onHashChange);
+    return () => {
+      window.removeEventListener('hashchange', onHashChange);
+      window.removeEventListener('popstate', onHashChange);
+    };
   }, []);
-  const navigate = (path: string, params: Record<string, string> = {}) => {
-    const query = new URLSearchParams(params).toString();
-    window.location.hash = query ? `${path}?${query}` : path;
-  };
-  return { route, navigate };
+  const navigate = useCallback((path: string, params: Record<string, string> = {}) => navigateHash(window, path, params), []);
+  const goBack = useCallback(() => goBackHash(window), []);
+  return { route, navigate, goBack };
 }
 
 function parseHash(hash: string): { path: string; params: URLSearchParams } {
@@ -183,11 +186,11 @@ function BrowserApp({
   libraryController: import('../lib/library-store').LibraryController | null;
   recsFetch?: typeof fetch;
 }) {
-  const { route, navigate } = useHashRouter();
+  const { route, navigate, goBack } = useHashRouter();
   const compat = useConnectionStatus();
   const { connection } = usePlatform();
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
-  useScrollRestoration(`${route.path}?${route.params.get('collection') ?? ''}${route.params.get('tab') ?? ''}`);
+  useScrollRestoration(`${route.path}?${route.params.toString()}`);
 
   if (compat.status !== 'ready') {
     return (
@@ -227,11 +230,12 @@ function BrowserApp({
 
   return (
     <LibraryContextProvider store={libraryController}>
-    <RouterProvider navigate={navigate}>
+    <RouterProvider navigate={navigate} goBack={goBack}>
     <AppShell
       routePath={route.path}
       navigate={navigate}
-      onOpenSettings={() => setResumeNotice('Server settings arrive with the mobile settings milestone. The server origin can be changed with the ?server= address parameter.')}
+      onBack={goBack}
+      onOpenSettings={() => window.dispatchEvent(new CustomEvent('torwatch:open-settings'))}
     >
       {resumeNotice ? (
         <div className="sticky top-0 z-30 mx-5 mt-3 flex items-start justify-between gap-3 rounded-xl border border-white/15 bg-[#151515] px-4 py-3 md:mx-8" role="status">
@@ -250,7 +254,6 @@ function BrowserApp({
       <Suspense fallback={<RouteFallback />}>
         {route.path === 'home' && (
           <>
-            <BrowseRailSlot navigate={navigate} />
             <HomePage
               navigate={navigate}
               continueVariant="carousel"
@@ -334,15 +337,6 @@ function BrowserApp({
     </AppShell>
     </RouterProvider>
     </LibraryContextProvider>
-  );
-}
-
-// Browse rail sits above Home content (WF02: open icon rail of categories).
-function BrowseRailSlot({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
-  return (
-    <div className="mx-auto max-w-[1600px] px-5 pt-4 md:hidden">
-      <BrowseRail navigate={navigate} />
-    </div>
   );
 }
 

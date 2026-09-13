@@ -2,6 +2,7 @@
 // UI shell only — the deterministic logic lives in origin-config.ts.
 
 import * as React from 'react';
+import { ChevronLeft } from 'lucide-react';
 import type { ConnectionConfig } from '../platform/contracts.ts';
 import {
   applyServerOrigin,
@@ -88,6 +89,9 @@ export function ServerSettings(props: {
   return (
     <main className="min-h-screen bg-[#0a0a0a] px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(24px,env(safe-area-inset-top))] text-white">
       <section className="mx-auto w-full max-w-md">
+        <button type="button" onClick={props.onDone} aria-label="Go back" className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+          <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+        </button>
         <h1 className="type-section-title text-white">Server settings</h1>
         <p className="mt-2 text-sm text-white/60">
           Enter the HTTP or HTTPS address of your private TorWatch server. Only this
@@ -145,9 +149,10 @@ export function ServerSettings(props: {
           <button
             type="button"
             onClick={props.onDone}
-            className="min-h-12 w-full rounded-full px-5 text-sm text-white/60 underline decoration-white/25 underline-offset-4"
+            aria-label="Go back"
+            className="inline-flex min-h-12 w-full items-center justify-center rounded-full px-5 text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
           >
-            Back
+            <ChevronLeft className="h-6 w-6" aria-hidden="true" />
           </button>
         </div>
       </section>

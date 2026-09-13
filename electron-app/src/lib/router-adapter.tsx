@@ -3,16 +3,18 @@ import { createContext, useContext, ReactNode } from 'react';
 
 type NavigateFunction = (path: string, params?: Record<string, string>) => void;
 
-const RouterContext = createContext<{ navigate: NavigateFunction } | null>(null);
+const RouterContext = createContext<{ navigate: NavigateFunction; goBack?: () => void } | null>(null);
 
 export function RouterProvider({
   children,
   navigate,
+  goBack,
 }: {
   children: ReactNode;
   navigate: NavigateFunction;
+  goBack?: () => void;
 }) {
-  return <RouterContext.Provider value={{ navigate }}>{children}</RouterContext.Provider>;
+  return <RouterContext.Provider value={{ navigate, goBack }}>{children}</RouterContext.Provider>;
 }
 
 // Hook that mimics Next.js useRouter
@@ -21,6 +23,7 @@ export function useRouter() {
   if (!ctx) {
     // Fallback for components that don't have router context
     return {
+      back: () => window.history.back(),
       push: (path: string) => {
         window.location.hash = path.startsWith('#') ? path.slice(1) : path.startsWith('/') ? path.slice(1) : path;
       },
@@ -31,6 +34,7 @@ export function useRouter() {
     };
   }
   return {
+    back: () => ctx.goBack ? ctx.goBack() : ctx.navigate('home'),
     push: (path: string, params?: Record<string, string>) => {
       // If params are provided as second argument, use them directly
       if (params) {

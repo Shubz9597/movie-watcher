@@ -10,6 +10,9 @@ import Capacitor
 class MainViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
+        // Let WebKit own the interactive edge-swipe transition. Hash routes
+        // and the visible Back controls share its navigation history.
+        webView?.allowsBackForwardNavigationGestures = true
         bridge?.registerPluginInstance(TorWatchNativePlugin())
         super.capacitorDidLoad()
     }
