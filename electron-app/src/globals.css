@@ -544,6 +544,70 @@ body,
   }
 }
 
+/* ── Launch screen (M1.4 UI pass): breathing logo + staggered reveal ─────
+   1. data-stage="breathing": the logo pulses (scale + soft glow) while the
+      server probe runs.
+   2. data-stage="form": the logo glides up and settles; content below
+      stagger-fades in (heading → description → field).
+   prefers-reduced-motion collapses everything to final states instantly. */
+.tw-launch-logo {
+  transition:
+    transform 600ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 400ms ease;
+}
+
+.tw-launch-logo[data-stage='breathing'] {
+  animation: tw-launch-breathe 2.6s ease-in-out infinite;
+  transform: translateY(18vh);
+}
+
+.tw-launch-logo[data-stage='form'] {
+  transform: translateY(0);
+}
+
+@keyframes tw-launch-breathe {
+  0%, 100% {
+    transform: translateY(18vh) scale(1);
+    filter: drop-shadow(0 0 0 rgba(255, 122, 23, 0));
+  }
+  50% {
+    transform: translateY(18vh) scale(1.06);
+    filter: drop-shadow(0 0 22px rgba(255, 122, 23, 0.35));
+  }
+}
+
+.tw-launch-fade {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 500ms ease 200ms,
+    transform 500ms cubic-bezier(0.22, 1, 0.36, 1) 200ms;
+}
+
+.tw-launch-fade.tw-launch-delay-1 { transition-delay: 320ms; }
+.tw-launch-fade.tw-launch-delay-2 { transition-delay: 460ms; }
+.tw-launch-fade.tw-launch-delay-3 { transition-delay: 600ms; }
+
+/* Once settled (form stage) the fades land: the logo carries
+   .tw-launch-settled and the fades are its siblings inside .tw-launch-screen. */
+.tw-launch-screen[data-stage='form'] .tw-launch-fade {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw-launch-logo,
+  .tw-launch-logo[data-stage='breathing'] {
+    animation: none;
+    transform: none;
+  }
+  .tw-launch-fade {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
 /* Video player shimmer animation */
 @keyframes shimmer {
   0% {

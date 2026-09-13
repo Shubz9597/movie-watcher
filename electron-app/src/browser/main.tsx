@@ -1,6 +1,6 @@
 // Browser composition root (feature 002 M2.2). This entry renders the SAME
 // shared pages/components as Electron through the shared AppShell with
-// injected platform ports ” it is the browser-safe checkpoint of the shared
+// injected platform ports - it is the browser-safe checkpoint of the shared
 // slice, not a separate app. It never touches window.electronAPI. Fixture
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
@@ -20,10 +20,10 @@ import { loadPlayerPage, loadRecommendationsPage, loadSeeAllPage, loadTitlePage 
 import { RouterProvider } from '../lib/router-adapter';
 import { AppShell } from '../components/shared/AppShell';
 import { goBackHash, initializeHashNavigation, navigateHash } from '../lib/hash-navigation';
-import { PlatformProvider, useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
-import type { Platform, ServerCompatibility } from '../platform/contracts';
+import { PlatformProvider, useConnectionGate, usePlatform } from '../platform/PlatformProvider';
+import { LaunchScreen } from '../components/shared/LaunchScreen';
+import type { Platform } from '../platform/contracts';
 import { BrowserConnection, BrowserStorage, resolveBrowserOrigin } from '../platform/browser';
-import { connectionFailureMessage } from '../lib/connection-diagnostics';
 
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
@@ -91,7 +91,7 @@ export async function composePlatform(): Promise<{
   const origin = resolveBrowserOrigin(window.location.search) || storage.getPreference('mw_server_origin') || '';
   const { BrowserPlayer } = await import('../platform/browser');
   // M3.4: the phone/browser entry now uses the SAME server-backed library
-  // store as desktop ” no duplicate screen tree, no local fork. Availability
+  // store as desktop - no duplicate screen tree, no local fork. Availability
   // is gated on the server's library.household.v1 capability; older or
   // unreachable servers surface the explicit library-unavailable state.
   const libraryStore = new LibraryStore();
@@ -150,7 +150,7 @@ function useScrollRestoration(routeKey: string) {
   useEffect(() => {
     const saved = positions.current.get(routeKey) ?? 0;
     // Programmatic scrolls (restore + clamps on short pages) are tracked so
-    // they are never mistaken for user scrolling ” the earlier grace-window
+    // they are never mistaken for user scrolling - the earlier grace-window
     // approach swallowed fast user scrolls and the re-apply then fought them.
     let programmaticAt = -Infinity;
     let userScrolled = false;
@@ -188,15 +188,20 @@ function BrowserApp({
   recsFetch?: typeof fetch;
 }) {
   const { route, navigate, goBack } = useHashRouter();
-  const compat = useConnectionStatus();
+  const { showGate, reconnecting, compat } = useConnectionGate();
   const { connection } = usePlatform();
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   useScrollRestoration(`${route.path}?${route.params.toString()}`);
 
-  if (compat.status !== 'ready') {
+  // M1.4 repair (flash fix): the full-screen LaunchScreen renders ONLY during
+  // the first-connect phase for the current origin. Once connected, later
+  // re-checks never unmount the app - an unreachable server surfaces as a
+  // slim reconnecting banner while capability-gated surfaces show their own
+  // truthful offline states.
+  if (showGate) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
-        <ConnectionGate compat={compat} onConnect={(origin) => connection.saveOrigin(origin)} />
+        <LaunchScreen compat={compat} onConnect={(origin) => connection.saveOrigin(origin)} />
       </div>
     );
   }
@@ -214,7 +219,7 @@ function BrowserApp({
     const kind = item.kind || (item.seriesId.startsWith('tmdb:movie:') ? 'movie' : item.seriesId.startsWith('tmdb:tv:') ? 'tv' : 'anime');
     const id = kind === 'anime' ? item.anilistId : item.tmdbId;
     if (!id) {
-      setResumeNotice(`TorWatch could not identify “${item.title || item.seriesId}”. Open it from Library and choose the source again.`);
+      setResumeNotice(`TorWatch could not identify -${item.title || item.seriesId}-. Open it from Library and choose the source again.`);
       return;
     }
     const params: Record<string, string> = {
@@ -238,6 +243,15 @@ function BrowserApp({
       onBack={goBack}
       onOpenSettings={() => window.dispatchEvent(new CustomEvent('torwatch:open-settings'))}
     >
+      {/* M1.4 repair (flash fix): once connected, a lost server surfaces as a
+          slim non-blocking banner - the app NEVER unmounts back to the launch
+          screen on background re-checks. */}
+      {reconnecting ? (
+        <div className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-[#ffc285]/10 px-4 py-2 text-sm text-[#ffc285]" role="status">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#ffc285]" aria-hidden="true" />
+          Reconnecting to the TorWatch server-
+        </div>
+      ) : null}
       {resumeNotice ? (
         <div className="sticky top-0 z-30 mx-5 mt-3 flex items-start justify-between gap-3 rounded-xl border border-white/15 bg-[#151515] px-4 py-3 md:mx-8" role="status">
           <p className="text-sm text-white/85">{resumeNotice}</p>
@@ -247,7 +261,7 @@ function BrowserApp({
             className="min-h-8 shrink-0 rounded-full px-2 text-sm text-white/60 hover:text-white"
             aria-label="Dismiss notice"
           >
-            ×
+            ----------
           </button>
         </div>
       ) : null}
@@ -342,94 +356,6 @@ function BrowserApp({
   );
 }
 
-function ConnectionGate({
-  compat,
-  onConnect,
-}: {
-  compat: ServerCompatibility;
-  onConnect: (origin: string) => Promise<string>;
-}) {
-  const [origin, setOrigin] = useState(compat.origin);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    const candidate = normalizedServerOrigin(origin);
-    if (!candidate) {
-      setError('Enter a complete server address, such as http://192.168.1.50:4001.');
-      return;
-    }
-    setPending(true);
-    setError(null);
-    try {
-      await onConnect(candidate);
-    } catch (err) {
-      console.error('[Connection] Server address could not be applied:', err);
-      setError(connectionFailureMessage(err, candidate));
-    } finally {
-      setPending(false);
-    }
-  };
-
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
-      <div className="w-full max-w-md">
-        {compat.status === 'checking' ? (
-          <p className="type-body text-white/70" role="status">
-            <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-white/70" />
-            Connecting to the TorWatch server…
-          </p>
-        ) : (
-          <>
-            <h1 className="type-section-title text-white">
-              {compat.status === 'incompatible' ? 'This server is not compatible' : 'The TorWatch server is unreachable'}
-            </h1>
-            <p className="measure-compact type-body mt-3 text-white/70">{compat.message}</p>
-            <label className="mt-6 block text-left text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="server-origin">
-              Server address
-            </label>
-            <input
-              id="server-origin"
-              value={origin}
-              onChange={(event) => setOrigin(event.target.value)}
-              placeholder="http://192.168.1.10:4001"
-              inputMode="url"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              className="mt-2 min-h-12 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2.5 text-base text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-            />
-            {error ? <p className="mt-3 text-left text-sm text-red-300" role="alert">{error}</p> : null}
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={pending || !origin.trim()}
-              className="mt-4 min-h-12 w-full rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-            >
-              {pending ? 'Connecting…' : 'Connect'}
-            </button>
-          </>
-        )}
-      </div>
-    </main>
-  );
-}
-
-function normalizedServerOrigin(raw: string): string | null {
-  const trimmed = raw.trim().replace(/\/+$/u, '');
-  try {
-    const parsed = new URL(trimmed);
-    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
-        !parsed.hostname || parsed.username || parsed.password || parsed.search ||
-        parsed.hash || (parsed.pathname && parsed.pathname !== '/')) {
-      return null;
-    }
-    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${parsed.port ? `:${parsed.port}` : ''}`;
-  } catch {
-    return null;
-  }
-}
-
 class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
@@ -447,7 +373,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: bool
       <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white">
         <div className="w-full max-w-md">
           <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">App view failed</p>
-          <h1 className="type-section-title mt-3 text-white">TorWatch couldn™t open this screen</h1>
+          <h1 className="type-section-title mt-3 text-white">TorWatch couldn-t open this screen</h1>
           <p className="type-body mt-3 text-white/70">
             The server connected, but the app hit an unexpected display error. Your library data is safe.
           </p>
@@ -492,7 +418,7 @@ function ToggleStateCapture() {
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       <h1 className="type-section-title text-white">Dune: Part Two</h1>
-<p className="mt-1 text-sm text-white/55">2024 · Movie</p>
+<p className="mt-1 text-sm text-white/55">2024 - Movie</p>
       <div className="mt-6 flex items-center gap-2" aria-label="Title actions">
         <LibraryToggle canonicalId={canonicalId} field="watch-later" />
         <LibraryToggle canonicalId={canonicalId} field="favourites" />

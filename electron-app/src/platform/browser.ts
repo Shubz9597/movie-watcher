@@ -292,7 +292,14 @@ export class BrowserConnection implements ConnectionConfig {
   }
 
   async check(): Promise<ServerCompatibility> {
-    await this.applyOrigin(this.current.origin);
+    // M1.4 repair (flash fix): a health re-check must NOT re-apply the
+    // origin. applyOrigin bumps the connection-service generation (which
+    // cancels in-flight requests and fires origin-switch listeners — killing
+    // native playback) and emits 'checking', which unmounted the app to the
+    // launch screen on every re-check. A check only PROBES and emits.
+    const probed = await probeBackendOrigin(this.current.origin);
+    this.current = probed;
+    this.emit();
     return this.current;
   }
 
