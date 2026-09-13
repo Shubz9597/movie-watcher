@@ -3,7 +3,6 @@
 // tapping it opens a small panel with the full origin, the reachability
 // state, and a shortcut into Server Settings.
 import * as React from 'react';
-import { ChevronDown } from 'lucide-react';
 import { useConnectionStatus } from '../../platform/PlatformProvider';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
 
@@ -45,12 +44,15 @@ export function ConnectionChip({ onOpenSettings }: { onOpenSettings: () => void 
         type="button"
         onClick={() => setPanelOpen((open) => !open)}
         aria-expanded={panelOpen}
-        aria-label={`Connection: ${STATUS_LABEL[status]} ${host}. Open details`}
-        className={`flex min-h-9 max-w-[9.5rem] items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] py-1 pl-2.5 pr-2 transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
+        aria-label={`Connection: ${STATUS_LABEL[status]} ${host}. Tap for details`}
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
       >
-        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT_COLOR[status]} ${status === 'checking' ? 'animate-pulse' : ''}`} />
-        <span className="truncate text-xs text-white/75">{host}</span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-white/50" aria-hidden="true" />
+        {/* Dot-only (M1.4 UI pass): green = connected, red = not connected.
+            Server details are in the tap-through panel. */}
+        <span
+          aria-hidden="true"
+          className={`h-2.5 w-2.5 rounded-full ${DOT_COLOR[status]} ${status === 'checking' ? 'animate-pulse' : ''}`}
+        />
       </button>
 
       {panelOpen ? (
