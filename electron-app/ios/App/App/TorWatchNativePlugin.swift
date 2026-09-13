@@ -215,7 +215,6 @@ final class TorWatchBufferingView: UIView {
     private let spinner = UIActivityIndicatorView(style: .large)
     private let titleLabel = UILabel()
     private let statusLabel = UILabel()
-    private var breathingAnimator: UIViewPropertyAnimator?
 
     init(title: String, posterUrl: URL?) {
         super.init(frame: .zero)
@@ -323,16 +322,15 @@ final class TorWatchBufferingView: UIView {
     }
 
     /// The shared app's loading language: the poster gently "breathes" while
-    /// the source prepares.
+    /// the source prepares. Runs until the view is torn down with the overlay.
     private func startBreathing() {
-        breathingAnimator?.stopAnimation(true)
-        let animator = UIViewPropertyAnimator(duration: 1.6, curve: .easeInOut) {
+        UIView.animate(
+            withDuration: 1.6,
+            delay: 0,
+            options: [.repeat, .autoreverse, .allowUserInteraction]
+        ) {
             self.posterImageView.transform = CGAffineTransform(scaleX: 1.035, y: 1.035)
         }
-        animator.isRepeating = true
-        animator.isReversed = true
-        animator.startAnimation()
-        breathingAnimator = animator
     }
 
     func setStatus(_ text: String) {
@@ -735,15 +733,14 @@ class TorWatchPlayerViewController: AVPlayerViewController {
         timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             DispatchQueue.main.async {
                 guard let self = self, !self.terminalSent else { return }
-                switch player.timeControlStatus {
-                case .playing:
+                // Fully-qualified comparisons: buffering truth without any
+                // case-name ambiguity. .paused intentionally keeps the overlay
+                // hidden (a user pause is not a buffering state).
+                let status = player.timeControlStatus
+                if status == AVPlayer.TimeControlStatus.playing {
                     self.setBufferingVisible(false)
-                case .waitingToPlayAtEligibleRate:
+                } else if status == AVPlayer.TimeControlStatus.waitingToPlayAtEligibleRate {
                     self.setBufferingVisible(true)
-                case .paused:
-                    break
-                @unknown default:
-                    break
                 }
             }
         }
