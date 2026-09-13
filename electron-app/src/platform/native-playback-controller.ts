@@ -129,6 +129,7 @@ export class NativePlaybackController {
     const playId = String(generation);
     this.lastPositionSec = 0;
     this.lastDurationSec = 0;
+
     if (this.bridge.prepare) {
       this.currentPlayId = playId;
       this.request = request;
