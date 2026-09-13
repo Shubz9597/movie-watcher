@@ -267,6 +267,13 @@ export class BrowserConnection implements ConnectionConfig {
 
   constructor(private readonly storage: DeviceStorage, initialOrigin: string) {
     this.current = { status: 'checking', origin: initialOrigin };
+    // M1.4 repair: initialize the connection service's backend origin ONCE at
+    // construction. Without this, getBackendOrigin() (used by ALL API calls)
+    // returns the default — and my check() fix (which no longer calls
+    // applyOrigin) meant setBackendOrigin was never reached.
+    if (initialOrigin) {
+      setBackendOrigin(initialOrigin);
+    }
   }
 
   async loadOrigin(): Promise<string> {
