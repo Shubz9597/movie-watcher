@@ -23,9 +23,9 @@ import Capacitor
  * Playback UX (M1.4 device pass):
  *  - The player and the pre-flight loading screen are LANDSCAPE-locked; the
  *    web app underneath stays portrait (device default).
- *  - A poster-backed buffering overlay covers the player until AVPlayer
- *    reports .playing, and re-appears during stalls (.waitingToPlayAt-
- *    EligibleRate) — a truthful "loader in the video" for peer-driven sources.
+ *  - A poster-backed buffering overlay covers the player until the item is
+ *    likely to keep up (frames flowing), and re-appears when the buffer runs
+ *    empty — a truthful "loader in the video" for peer-driven sources.
  *
  * Subtitles (M1.4.7): sidecar/extracted WebVTT tracks (the only kind the
  * /v2/playback/sessions contract offers) are rendered by a NATIVE overlay —
@@ -638,7 +638,8 @@ class TorWatchPlayerViewController: AVPlayerViewController {
     private var timeObserver: Any?
     private var subtitleTimeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
-    private var timeControlObserver: NSKeyValueObservation?
+    private var likelyToKeepUpObserver: NSKeyValueObservation?
+    private var bufferEmptyObserver: NSKeyValueObservation?
     private var interruptionObserver: NSObjectProtocol?
     private var endedObserver: NSObjectProtocol?
     private var terminalSent = false
@@ -730,16 +731,22 @@ class TorWatchPlayerViewController: AVPlayerViewController {
         // actually render (.playing) and returns during stalls (.waiting…).
         // .paused intentionally keeps the overlay hidden (a user pause is not
         // a buffering state).
-        timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+        // Buffering truth: the poster overlay covers the player until the
+        // item reports it is likely to keep up, and returns when the buffer
+        // runs empty (a stall). A user pause is not a buffering state: pause
+        // triggers neither signal, so the overlay stays hidden.
+        likelyToKeepUpObserver = playerItem.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 guard let self = self, !self.terminalSent else { return }
-                // Fully-qualified comparisons: buffering truth without any
-                // case-name ambiguity. .paused intentionally keeps the overlay
-                // hidden (a user pause is not a buffering state).
-                let status = player.timeControlStatus
-                if status == AVPlayer.TimeControlStatus.playing {
+                if item.isPlaybackLikelyToKeepUp {
                     self.setBufferingVisible(false)
-                } else if status == AVPlayer.TimeControlStatus.waitingToPlayAtEligibleRate {
+                }
+            }
+        }
+        bufferEmptyObserver = playerItem.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
+            DispatchQueue.main.async {
+                guard let self = self, !self.terminalSent else { return }
+                if item.isPlaybackBufferEmpty {
                     self.setBufferingVisible(true)
                 }
             }
@@ -872,8 +879,10 @@ class TorWatchPlayerViewController: AVPlayerViewController {
         subtitleTimeObserver = nil
         statusObserver?.invalidate()
         statusObserver = nil
-        timeControlObserver?.invalidate()
-        timeControlObserver = nil
+        likelyToKeepUpObserver?.invalidate()
+        likelyToKeepUpObserver = nil
+        bufferEmptyObserver?.invalidate()
+        bufferEmptyObserver = nil
         if let interruptionObserver = interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)
         }
