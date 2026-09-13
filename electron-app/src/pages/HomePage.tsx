@@ -596,16 +596,26 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
             )}
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
+              {/* M1.4 UI pass: hero has TWO buttons — Watch (navigates to the
+                  title page) and Add to Watch Later (shared LibraryToggle).
+                  Watch shows for ALL items; Watch Later shows when a
+                  canonical ID can be constructed (movie/tv always; anime
+                  only when TMDB-backed). */}
+              {featuredItem ? (
+                <button
+                  type="button"
+                  onClick={() => openItem(featuredItem.kind, featuredItem)}
+                  className="inline-flex min-h-12 items-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                >
+                  <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+                  Watch
+                </button>
+              ) : null}
               {featuredItem ? (
                 (() => {
-                  // M1.4 UI pass: the hero's primary action is saving to the
-                  // household Watch Later list (shared LibraryToggle — same
-                  // pending/confirmed/error semantics as everywhere else).
-                  // Anime hero items are skipped: their AniList ids are not
-                  // household-library keys (tmdb-qualified ids only).
                   const heroKind = featuredItem.kind;
-                  if (heroKind === 'anime') return null;
-                  const canonicalId = heroKind === 'tv'
+                  if (heroKind === 'anime' && featuredItem.sourceProvider !== 'tmdb') return null;
+                  const canonicalId = heroKind === 'anime' || heroKind === 'tv'
                     ? `tmdb:tv:${featuredItem.id}`
                     : `tmdb:movie:${featuredItem.id}`;
                   return (

@@ -336,7 +336,7 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside className="overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl">
+    <aside className="max-h-[60vh] overflow-y-auto rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl app-scrollbar">
       <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
         <div>
           <p className="type-secondary font-medium text-white/65">Playback</p>
