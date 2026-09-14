@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -188,18 +187,13 @@ func TestParityBackendOrderingIsContractDeterministic(t *testing.T) {
 			t.Fatalf("ordering differs between runs: %v vs %v", ids(first), ids(second))
 		}
 	}
-	// Contract rule: provider priority groups (tmdb first), lexicographic
-	// external id within a group. The renderer's relevance order within a
-	// provider is intentionally superseded (evidence/p4-parity-variance.md V3).
-	if !strings.HasPrefix(first[0].ID, "tmdb:") {
-		t.Fatalf("highest-priority provider must come first: %v", ids(first))
-	}
+	// Identity merging is deterministic; presentation follows query relevance.
+	query := normalizeSearchText(fixture.Query)
 	for i := 1; i < len(first); i++ {
-		if strings.HasPrefix(first[i-1].ID, "tmdb:") != strings.HasPrefix(first[i].ID, "tmdb:") {
-			continue
-		}
-		if first[i-1].ID > first[i].ID {
-			t.Fatalf("within-provider ordering must be lexicographic: %v", ids(first))
+		previous := max(searchMatchScore(first[i-1].Title, query), searchMatchScore(first[i-1].OriginalTitle, query))
+		current := max(searchMatchScore(first[i].Title, query), searchMatchScore(first[i].OriginalTitle, query))
+		if current > previous {
+			t.Fatalf("results must follow relevance: %v", ids(first))
 		}
 	}
 }

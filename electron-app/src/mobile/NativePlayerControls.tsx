@@ -80,10 +80,11 @@ function formatDelay(seconds: number): string {
 }
 
 export default function NativePlayerControls(props: Props) {
-  const { player, title, year, posterUrl, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, onClose } = props;
+  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, onClose } = props;
 
   const [hasVideo, setHasVideo] = useState(false);
-  const [buffering, setBuffering] = useState({ active: true, progress: 0 });
+  const [buffering, setBuffering] = useState<{ active: boolean; progress?: number }>({ active: true });
+  const [showRebuffering, setShowRebuffering] = useState(false);
   const [time, setTime] = useState({ currentTime: 0, duration: 0 });
   const [playing, setPlaying] = useState(true);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -134,10 +135,11 @@ export default function NativePlayerControls(props: Props) {
     });
     const detachState = player.subscribeState((state) => {
       setPlaying(state === 'playing');
-      if (state === 'playing') setHasVideo(true);
+      setHasVideo(true);
+      setBuffering({ active: false });
     });
     const detachBuffering = player.subscribeBuffering((update) => {
-      setBuffering({ active: update.active, progress: Math.round(update.progress ?? 0) });
+      setBuffering(update);
       if (!update.active) setHasVideo(true);
     });
     const detachTracks = player.subscribeTracks((update) => {
@@ -164,6 +166,17 @@ export default function NativePlayerControls(props: Props) {
       detachTracks();
     };
   }, [player]);
+
+  // Brief cache refills should not flash a loading screen over a movie.
+  // Completion cancels the pending indicator immediately; no minimum stall.
+  useEffect(() => {
+    if (!hasVideo || !buffering.active || !playing) {
+      setShowRebuffering(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowRebuffering(true), 450);
+    return () => window.clearTimeout(timer);
+  }, [hasVideo, buffering.active, playing]);
 
   // --- Skip segments (where timestamps exist) ---
   useEffect(() => {
@@ -235,9 +248,19 @@ export default function NativePlayerControls(props: Props) {
     setControlsVisible(true);
     if (controlsHideTimer.current !== null) window.clearTimeout(controlsHideTimer.current);
     controlsHideTimer.current = window.setTimeout(() => {
-      if (activeSheet === 'none') setControlsVisible(false);
+      if (activeSheet === 'none' && playing) setControlsVisible(false);
     }, 4000);
-  }, [activeSheet]);
+  }, [activeSheet, playing]);
+  useEffect(() => {
+    if (controlsHideTimer.current !== null) window.clearTimeout(controlsHideTimer.current);
+    if (!playing) setControlsVisible(true);
+    if (hasVideo && playing && controlsVisible && activeSheet === 'none') {
+      controlsHideTimer.current = window.setTimeout(() => setControlsVisible(false), 3000);
+    }
+    return () => {
+      if (controlsHideTimer.current !== null) window.clearTimeout(controlsHideTimer.current);
+    };
+  }, [hasVideo, playing, controlsVisible, activeSheet]);
   useEffect(() => () => {
     if (controlsHideTimer.current !== null) window.clearTimeout(controlsHideTimer.current);
     subtitleOperation.current++;
@@ -399,24 +422,16 @@ export default function NativePlayerControls(props: Props) {
     }
   };
 
-  if (!hasVideo) {
-    return (
-      <>
-      <BufferingLoader title={title} logoUrl={logoUrl} posterUrl={posterUrl} progress={buffering.active ? buffering.progress : undefined} />
-      <button type="button" onClick={onClose} className="fixed left-[max(1rem,env(safe-area-inset-left))] top-[max(1rem,env(safe-area-inset-top))] z-[70] min-h-11 rounded-full border border-white/30 bg-black/70 px-5 text-white">
-        Close player
-      </button>
-      </>
-    );
-  }
-
   return (
     <div className="fixed inset-0 z-[60] select-none bg-transparent" onPointerUp={handleSurfaceTap}>
-      {buffering.active ? <BufferingLoader title={title} logoUrl={logoUrl} posterUrl={posterUrl} progress={buffering.progress} /> : null}
+      <BufferingLoader title={title} logoUrl={logoUrl} visible={!hasVideo} progress={buffering.progress} />
+      <div className={`native-rebuffer${showRebuffering ? ' native-rebuffer--visible' : ''}`} role={showRebuffering ? 'status' : undefined} aria-label="Buffering" aria-hidden={!showRebuffering}>
+        <LoaderCircle aria-hidden="true" />
+      </div>
       {/* Top bar — safe-area aware so the close button never sits under the
           Dynamic Island / notch in either orientation. */}
       <div
-        className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] transition-opacity duration-200 ${controlsVisible || activeSheet !== 'none' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         <button
@@ -427,7 +442,7 @@ export default function NativePlayerControls(props: Props) {
         >
           <ChevronLeft className="h-6 w-6" aria-hidden="true" />
         </button>
-        <div className="pointer-events-none max-w-[55%] truncate rounded-full bg-black/50 px-4 py-2 text-sm text-white/85 backdrop-blur">{title}</div>
+        {hasVideo ? <div className="pointer-events-none max-w-[55%] truncate rounded-full bg-black/50 px-4 py-2 text-sm text-white/85 backdrop-blur">{title}</div> : null}
         <div className="w-11" aria-hidden="true" />
       </div>
 
@@ -449,7 +464,7 @@ export default function NativePlayerControls(props: Props) {
 
       {/* Bottom control bar */}
       <div
-        className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-10 transition-opacity duration-200 ${controlsVisible || activeSheet !== 'none' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-10 transition-opacity duration-200 ${hasVideo && (controlsVisible || activeSheet !== 'none') ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         {/* Seek bar — dragging scrubs locally; ONE seek commits on release
@@ -673,47 +688,29 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-/** Stremio-style buffering overlay (device pass): the title logo (or the
- *  title typeset when no logo exists) appears TWICE — a dim base copy and a
- *  bright copy that fills left-to-right via clip-path with REAL buffering
- *  progress. When progress is unknown the pair simply pulses every 2s — no
- *  fake percentages, no sliding text. */
-function BufferingLoader({ title, logoUrl, posterUrl, progress }: {
+/** Startup only. Keep mounted for a quiet fade into the native video surface. */
+function BufferingLoader({ title, logoUrl, visible, progress }: {
   title: string;
   logoUrl: string | null;
-  posterUrl: string | null;
+  visible: boolean;
   progress?: number;
 }) {
-  const known = typeof progress === 'number' && Number.isFinite(progress);
-  const reveal = known ? Math.max(0, Math.min(100, progress)) : 0;
-  const artwork = logoUrl ? (
-    <img src={logoUrl} alt="" decoding="async" className="max-h-24 w-auto max-w-[70vw] object-contain" />
-  ) : (
-    <span className="type-page-title px-4 text-center leading-tight">{title}</span>
-  );
+  const [loadedLogo, setLoadedLogo] = useState<string | null>(null);
+  const [failedLogo, setFailedLogo] = useState<string | null>(null);
+  const imageReady = !!logoUrl && loadedLogo === logoUrl && failedLogo !== logoUrl;
+  const known = typeof progress === 'number' && Number.isFinite(progress) && progress > 0;
+  const reveal = known ? Math.max(0, Math.min(100, progress)) : 100;
   return (
-    <div role="status" aria-label={`Buffering ${title}`} className="absolute inset-0 z-10 overflow-hidden bg-black/70">
-      {posterUrl ? (
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 bg-cover bg-center opacity-15"
-          style={{ backgroundImage: `url(${posterUrl})`, filter: 'blur(30px) saturate(0.6)', transform: 'scale(1.1)' }}
-        />
-      ) : null}
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-8">
-        {/* Two stacked copies: dim base + bright reveal clipped to progress. */}
-        <div className="relative flex max-w-full items-center justify-center">
-          <div className="torwatch-logo-dim flex items-center justify-center" aria-hidden="true">{artwork}</div>
-          <div
-            className={`absolute inset-0 flex items-center justify-center ${known ? '' : 'torwatch-logo-breathe'}`}
-            style={known ? { clipPath: `inset(0 ${100 - reveal}% 0 0)` } : undefined}
-          >
-            {artwork}
-          </div>
-        </div>
-        <p className="font-label text-xs uppercase tracking-[0.18em] text-white/55">
-          {known ? `Buffering ${Math.round(reveal)}%` : 'Buffering'}
-        </p>
+    <div role={visible ? 'status' : undefined} aria-label={`Loading ${title}`} aria-hidden={!visible} className={`native-loader${visible ? ' native-loader--visible' : ''}`}>
+      <div className="native-loader-artwork" data-known-progress={known}>
+        {logoUrl && failedLogo !== logoUrl ? <>
+          <img className="native-loader-logo native-loader-logo--base" src={logoUrl} alt="" aria-hidden="true"
+            style={{ opacity: imageReady ? undefined : 0 }}
+            onLoad={() => setLoadedLogo(logoUrl)} onError={() => setFailedLogo(logoUrl)} />
+          {imageReady ? <img className="native-loader-logo native-loader-logo--fill" src={logoUrl} alt="" aria-hidden="true"
+            style={{ clipPath: `inset(0 ${100 - reveal}% 0 0)` }} /> : null}
+        </> : null}
+        {!imageReady ? <span className="native-loader-title">{title}</span> : null}
       </div>
     </div>
   );

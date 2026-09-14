@@ -13,6 +13,7 @@ import { catalogGateway } from '../lib/services/catalog-gateway';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { loadTitlePage } from '../lib/route-loaders';
+import { rankSearchResults, uniqueRecentSearches } from '../lib/search-order';
 
 type Basic = {
   id: number;
@@ -43,7 +44,9 @@ function loadRecent(): RecentEntry[] {
     const raw = window.localStorage.getItem(RECENT_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as RecentEntry[];
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT) : [];
+    return Array.isArray(parsed) ? uniqueRecentSearches(parsed.filter(entry =>
+      entry && ['movie', 'tv', 'anime'].includes(entry.kind) && Number.isFinite(entry.searchedAt)
+      && entry.item && Number.isFinite(entry.item.id) && typeof entry.item.title === 'string'), MAX_RECENT) : [];
   } catch {
     return [];
   }
@@ -51,7 +54,7 @@ function loadRecent(): RecentEntry[] {
 
 function saveRecent(entries: RecentEntry[]): void {
   try {
-    window.localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+    window.localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(uniqueRecentSearches(entries, MAX_RECENT)));
   } catch {
     // storage full/blocked ” recent searches are a nicety, never fatal
   }
@@ -135,7 +138,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
       const failed = [tmdbResult, animeResult].filter((r) => r.status === 'rejected').length;
       if (failed === 2) setError('Search is unavailable right now. Check the connection and retry.');
       else if (failed === 1) setError('Some sources could not be reached ” showing what is available.');
-      setResults(merged);
+      setResults(rankSearchResults(merged, debounced));
       setLoading(false);
     })().catch(() => {
       if (!cancelled) {
@@ -154,7 +157,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
     // the legacy dialog shape: kind + item + timestamp).
     if (query.trim()) {
       const entry: RecentEntry = { kind, item, searchedAt: Date.now() };
-      const next = [entry, ...recent.filter((r) => r.item.id !== item.id || r.kind !== kind)].slice(0, MAX_RECENT);
+      const next = uniqueRecentSearches([entry, ...recent], MAX_RECENT);
       setRecent(next);
       saveRecent(next);
     }
@@ -178,6 +181,9 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
         <input
           ref={inputRef}
           type="search"
+          enterKeyHint="search"
+          autoComplete="off"
+          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Movies, series, anime…"
@@ -244,7 +250,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
               <span className="text-white/55">No results for “{debounced}”. Try a different spelling.</span>
             ) : null}
           </div>
-          <ul className="mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
+          <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
             {results.map((item) => {
               const kind: SearchKind =
                 item.sourceProvider === 'anilist' ? 'anime' : item.sourceKind === 'tv' ? 'tv' : 'movie';

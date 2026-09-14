@@ -337,7 +337,7 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside className="flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl [overflow-wrap:anywhere]">
+    <aside data-source-panel className={`flex min-w-0 max-w-full flex-col bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] ${platform.desktop ? 'overflow-hidden rounded-xl border border-white/[0.12] lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)] border-y border-white/[0.12]'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
           <p className="type-secondary font-medium text-white/65">Playback</p>
@@ -359,7 +359,7 @@ export default function TorrentPanel({
       {/* Mobile: the list is PART OF THE PAGE (no nested scroll — the page
           scrolls through it). Desktop keeps the bounded, internally-scrolling
           card. */}
-      <div className="min-h-0 flex-1 lg:overflow-y-auto lg:overscroll-contain app-scrollbar">
+      <div className={`min-h-0 flex-1 app-scrollbar ${platform.desktop ? 'lg:overflow-y-auto lg:overscroll-contain' : ''}`}>
 
       {loading && torrents === null && (
         <div className="flex items-center justify-center gap-2 px-5 py-14 text-sm text-white/60" role="status" aria-live="polite">

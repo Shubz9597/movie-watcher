@@ -4,6 +4,7 @@ import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
 import TorrentPanel from '../components/TorrentPanel';
+import { usePlatform } from '../platform/PlatformProvider';
 import { findAnimeIMDbId, getMovie as getTmdbMovie, getTv as getTmdbTv } from '../lib/services/tmdb-service';
 import { getTvSeason, getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
 import { bffEpisodes, bffTitleDetail } from '../lib/services/catalog-bff';
@@ -47,6 +48,7 @@ export default function TitlePage({
   id: string;
   params?: Record<string, string>;
 }) {
+  const platform = usePlatform();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [seasons, setSeasons] = useState<any[]>([]);
   const [initialSeason, setInitialSeason] = useState(1);
@@ -679,7 +681,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       <div className="mx-auto max-w-[1600px] space-y-6">
         {/* Compact action toolbar (lg:hidden): desktop keeps the familiar
             two-column layout unchanged (WF09). */}
-        <div className="flex items-center justify-between gap-2 lg:hidden">
+        <div className={`flex items-center justify-between gap-2 ${platform.desktop ? 'lg:hidden' : ''}`}>
           <PageBackButton />
           <div aria-label="Title actions" className="ml-auto flex items-center gap-1 rounded-2xl border border-white/10 bg-black/25 p-1">
             {canDirectResume ? (
@@ -731,7 +733,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white">
-          <div className="hidden lg:block"><PageBackButton /></div>
+          <div className={platform.desktop ? 'hidden lg:block' : 'hidden'}><PageBackButton /></div>
           <div className="type-caption text-numeric flex flex-wrap items-center gap-2 font-medium text-white/70">
             <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">
               {kind === 'tv' ? 'Series' : kind === 'anime' ? (isAnimeMovie ? 'Anime Movie' : 'Anime Series') : 'Movie'}
@@ -755,7 +757,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           </div>
         </div>
 
-        <div className="mt-8 grid min-w-0 grid-cols-1 gap-12 lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-16">
+        <div className={`mt-8 grid min-w-0 grid-cols-1 gap-12 ${platform.desktop ? 'lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-16' : ''}`}>
           <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
@@ -873,7 +875,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             ) : null}
           </div>
 
-          <div ref={sourcesSectionRef} className="min-w-0 space-y-4 scroll-mt-20 lg:sticky lg:top-24 lg:self-start">
+          <div ref={sourcesSectionRef} className={`min-w-0 space-y-4 scroll-mt-[calc(var(--app-safe-top)+5rem)] ${platform.desktop ? 'lg:sticky lg:top-24 lg:self-start' : ''}`}>
             {isMovie ? (
               <TorrentPanel
                 title={detail.title}

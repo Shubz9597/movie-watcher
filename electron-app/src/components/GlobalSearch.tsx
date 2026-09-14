@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { uniqueRecentSearches } from '../lib/search-order';
 import { ChevronLeft, Clapperboard, Film, History, LoaderCircle, MonitorPlay, RefreshCw, Tv } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
@@ -234,10 +235,10 @@ export default function GlobalSearch({
 
   const remember = (kind: SearchKind, item: Basic) => {
     setRecentSearches((current) => {
-      const next = [
+      const next = uniqueRecentSearches([
         { kind, item, searchedAt: Date.now() },
         ...current.filter((entry) => recentKey(entry.kind, entry.item) !== recentKey(kind, item)),
-      ].slice(0, MAX_RECENT_SEARCHES);
+      ], MAX_RECENT_SEARCHES);
       saveRecentSearches(next);
       return next;
     });
@@ -667,7 +668,7 @@ function loadRecentSearches(): RecentSearch[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isRecentSearch).slice(0, MAX_RECENT_SEARCHES);
+    return uniqueRecentSearches(parsed.filter(isRecentSearch), MAX_RECENT_SEARCHES);
   } catch {
     return [];
   }

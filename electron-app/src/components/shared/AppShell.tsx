@@ -32,7 +32,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, children
 
 
   return (
-    <div className={`torwatch-app-shell bg-[#0a0a0a] text-white ${search ? 'search-frame' : 'min-h-screen'}`} style={search ? { height: frame.height, top: frame.top } : undefined}>
+    <div className={`torwatch-app-shell bg-[#0a0a0a] text-white ${search ? `search-frame${frame.keyboardOpen ? ' search-keyboard-open' : ''}` : 'min-h-screen'}`} style={search ? { height: frame.height, top: frame.top } : undefined}>
       {/* Desktop: the existing shared header (Electron parity). The browser
           has no window chrome, so the header's titlebar offset is reset. */}
       <div className="sticky top-0 z-40 hidden bg-[#0a0a0a] pt-[var(--app-safe-top)] [&_header]:!top-0 lg:block">
@@ -87,7 +87,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, children
           back button is removed (M1.4 UI pass). */}
       <nav
         aria-label="Main destinations"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0a0a] pb-[var(--app-safe-bottom)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
       >
         <div className="flex items-stretch justify-around">
           {DESTINATIONS.map((destination) => {

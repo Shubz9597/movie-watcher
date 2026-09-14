@@ -233,6 +233,7 @@ test('subtitle download failures propagate and late completion cannot select a r
 function fakeBridge() {
   const timeListeners = new Set();
   const stateListeners = new Set();
+  const bufferingListeners = new Set();
   const calls = { play: [], seeks: [], dismissed: [], disposed: 0 };
   return {
     calls,
@@ -240,11 +241,13 @@ function fakeBridge() {
     stateListeners,
     emitTime: (u) => timeListeners.forEach((f) => f(u)),
     emitState: (u) => stateListeners.forEach((f) => f(u)),
+    emitBuffering: (u) => bufferingListeners.forEach((f) => f(u)),
     bridge: {
       play: async (input) => { calls.play.push(input); },
       seek: async (pos) => { calls.seeks.push(pos); },
       onTime: (cb) => { timeListeners.add(cb); return () => timeListeners.delete(cb); },
       onState: (cb) => { stateListeners.add(cb); return () => stateListeners.delete(cb); },
+      onBuffering: (cb) => { bufferingListeners.add(cb); return () => bufferingListeners.delete(cb); },
       dismiss: async (playId) => { calls.dismissed.push(playId); },
       dispose: async () => { calls.disposed++; },
     },
@@ -282,6 +285,108 @@ const REQUEST = {
   url: "magnet:?xt=urn:btih:" + HEX, title: "Movie", cat: "movie",
   subjectId: "phone-1", seriesId: "tmdb:movie:42", season: 0, episode: 0,
 };
+
+test('late controls receive playing, time and completed buffering without toggling pause', async () => {
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fb.bridge });
+  try {
+    await controller.start(REQUEST);
+    fb.emitBuffering({ active: true });
+    fb.emitTime({ currentTime: 3600, duration: 10000 });
+    // A playing event alone must settle the loader, even if VLC never
+    // follows it with a distinct buffering completion callback.
+    fb.emitState({ state: 'playing' });
+    const states = [], buffers = [], times = [];
+    controller.subscribeState(value => states.push(value));
+    controller.subscribeBuffering(value => buffers.push(value));
+    controller.subscribeTime(value => times.push(value));
+    assert.deepEqual(states, ['playing']);
+    assert.equal(buffers.at(-1).active, false);
+    assert.equal(times.at(-1).currentTime, 3600);
+  } finally { await controller.dispose(); }
+});
+
+test('resume buffering clears from sustained clock movement, not seek jumps or stationary ticks', async () => {
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fb.bridge });
+  let buffer;
+  controller.subscribeBuffering(value => { buffer = value; });
+  try {
+    await controller.start(REQUEST);
+    fb.emitState({ state: 'playing' });
+    fb.emitBuffering({ active: true });
+    for (const currentTime of [0, 3600, 3600, 3600]) {
+      fb.emitTime({ currentTime, duration: 10000 });
+      assert.equal(buffer.active, true);
+    }
+    fb.emitTime({ currentTime: 3600.5, duration: 10000 });
+    assert.equal(buffer.active, true);
+    // Repeated buffering callbacks must not erase evidence of advancing video.
+    fb.emitBuffering({ active: true });
+    fb.emitTime({ currentTime: 3601, duration: 10000 });
+    assert.equal(buffer.active, false);
+    // Recovery does not suppress a subsequent real stall.
+    fb.emitBuffering({ active: true });
+    for (let i = 0; i < 5; i++) fb.emitTime({ currentTime: 3601, duration: 10000 });
+    assert.equal(buffer.active, true);
+  } finally { await controller.dispose(); }
+});
+
+test('paused seeking cannot masquerade as resumed playback; native completion remains authoritative', async () => {
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fb.bridge });
+  let buffer;
+  controller.subscribeBuffering(value => { buffer = value; });
+  try {
+    await controller.start(REQUEST);
+    fb.emitState({ state: 'paused' });
+    fb.emitBuffering({ active: true, progress: 25 });
+    for (const currentTime of [100, 100.5, 101, 101.5]) fb.emitTime({ currentTime, duration: 1000 });
+    assert.equal(buffer.active, true);
+    fb.emitBuffering({ active: false, progress: 100 });
+    assert.equal(buffer.active, false);
+  } finally { await controller.dispose(); }
+});
+
+test('buffering progress stays unknown on iOS and invalid progress never reaches the loader', async () => {
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fb.bridge });
+  let buffer;
+  controller.subscribeBuffering(value => { buffer = value; });
+  try {
+    await controller.start(REQUEST);
+    for (const progress of [undefined, NaN, Infinity]) {
+      fb.emitBuffering({ active: true, progress });
+      assert.equal(buffer.progress, undefined);
+      assert.equal(buffer.active, true);
+    }
+    fb.emitBuffering({ active: true, progress: 43.5 });
+    assert.equal(buffer.progress, 43.5);
+  } finally { await controller.dispose(); }
+});
+
+test('replacement resets cached playback state and rejects stale buffering and clock events', async () => {
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fb.bridge });
+  let buffer;
+  controller.subscribeBuffering(value => { buffer = value; });
+  try {
+    await controller.start(REQUEST);
+    const oldId = fb.calls.play.at(-1).playId;
+    fb.emitState({ state: 'playing', playId: oldId });
+    fb.emitTime({ currentTime: 50, duration: 100, playId: oldId });
+    await controller.start(REQUEST);
+    const times = [], states = [];
+    controller.subscribeTime(value => times.push(value));
+    controller.subscribeState(value => states.push(value));
+    fb.emitBuffering({ active: false, playId: oldId });
+    fb.emitState({ state: 'playing', playId: oldId });
+    for (const currentTime of [50, 50.5, 51]) fb.emitTime({ currentTime, duration: 100, playId: oldId });
+    assert.equal(buffer.active, true);
+    assert.deepEqual(times, []);
+    assert.deepEqual(states, []);
+  } finally { await controller.dispose(); }
+});
 
 test("preparation: native loading opens before planning and Close releases a late session", async () => {
   const server = stubServer();

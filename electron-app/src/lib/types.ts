@@ -1,6 +1,7 @@
 // Types for Electron app - standalone, no Next.js needed
 
 export type MovieCard = {
+  catalogId?: string;
   id: number;
   title: string;
   posterPath?: string | null;

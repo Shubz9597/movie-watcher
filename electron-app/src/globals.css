@@ -110,6 +110,20 @@
   padding-right: var(--app-safe-right);
 }
 
+/* Keep the selected episode and its first sources together on short phone
+   screens. The page remains the sole vertical scroller in either orientation. */
+@media (max-height: 500px) {
+  [data-source-layout='page'] .source-episode-header {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding-block: 0.5rem;
+  }
+  [data-source-layout='page'] .source-episode-summary { margin-top: 0; min-width: 0; }
+  [data-source-layout='page'] .source-episode-artwork,
+  [data-source-layout='page'] .source-episode-date { display: none; }
+}
+
 .search-frame {
   position: fixed;
   left: 0;
@@ -125,6 +139,28 @@
 .search-frame > main > .torwatch-route-enter { height: 100%; animation: none; }
 .search-frame > nav { position: static; }
 .search-page > button { flex-shrink: 0; }
+
+.search-keyboard-open > header,
+.search-keyboard-open > div:first-child,
+.search-keyboard-open > nav,
+.search-keyboard-open .search-page > button { display: none; }
+.search-keyboard-open .search-page { padding-top: calc(var(--app-safe-top) + 0.5rem); }
+.search-keyboard-open .search-page > div:nth-child(2) { margin-top: 0; }
+.search-keyboard-open [aria-label='Search results'] > div { margin-top: 1rem; }
+.search-keyboard-open .search-result-grid { grid-template-columns: minmax(0, 1fr); margin-top: 0.5rem; row-gap: 0.5rem; }
+.search-keyboard-open .search-result-grid > li > button {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  min-height: 60px;
+}
+.search-keyboard-open .search-result-grid > li > button > div:first-child { width: 40px; height: 60px; }
+.search-keyboard-open .search-result-grid > li > button > div:first-child > .type-body { visibility: hidden; }
+.search-keyboard-open .search-result-grid > li > button > div:last-child { margin-top: 0; }
+@media (min-width: 640px) {
+  .search-keyboard-open .search-result-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* The heading may wrap; the action always keeps its own readable column. */
 .shelf-heading {
@@ -729,26 +765,105 @@ body,
   }
 }
 
-/* Stremio-style buffering logo: the base copy sits dim and static; the bright
-   copy gently fades and grows every 2s while buffering progress is unknown. */
-.torwatch-logo-dim {
-  opacity: 0.28;
+/* Startup artwork recedes once playback begins. Later cache refills use a
+   small indicator, leaving the native video and its controls unobstructed. */
+.native-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: max(2rem, env(safe-area-inset-top)) max(2rem, env(safe-area-inset-right)) max(2rem, env(safe-area-inset-bottom)) max(2rem, env(safe-area-inset-left));
+  background: #08090b;
+  color: #f4f4f5;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 220ms ease-out, visibility 0s 220ms;
 }
 
-@keyframes torwatch-logo-breathe {
-  0%,
-  100% {
-    opacity: 0.45;
-    transform: scale(0.985);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.01);
-  }
+.native-loader--visible {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
-.torwatch-logo-breathe {
-  animation: torwatch-logo-breathe 2s ease-in-out infinite;
+.native-loader-artwork {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(72vw, 460px);
+  min-height: clamp(72px, 22vh, 144px);
+  animation: native-loader-breathe 2400ms ease-in-out infinite;
+}
+
+.native-loader:not(.native-loader--visible) .native-loader-artwork {
+  animation-play-state: paused;
+}
+
+.native-loader-logo {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.native-loader-logo--base { opacity: 0.38; }
+.native-loader-logo--fill { transition: clip-path 240ms ease-out; }
+
+.native-loader-title {
+  font-family: var(--font-ui);
+  font-size: clamp(1.5rem, 4.8vw, 2.75rem);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.025em;
+  text-align: center;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+@keyframes native-loader-breathe {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+.native-rebuffer {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease-out, visibility 0s 160ms;
+}
+
+.native-rebuffer--visible {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.native-rebuffer svg {
+  box-sizing: content-box;
+  width: 26px;
+  height: 26px;
+  padding: 12px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 65%);
+  color: #fff;
+  stroke-width: 1.75;
+  animation: native-buffer-spin 900ms linear infinite;
+  animation-play-state: paused;
+}
+
+.native-rebuffer--visible svg { animation-play-state: running; }
+@keyframes native-buffer-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .native-loader, .native-loader-logo--fill, .native-rebuffer { transition: none; }
+  .native-loader-artwork, .native-rebuffer svg { animation: none; }
 }
 
 

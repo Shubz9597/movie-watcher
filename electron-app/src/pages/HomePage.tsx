@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
-import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
 import type { MovieCard } from '../lib/types';
 import { getMovies, getTvShows, getTrendingAnime } from '../lib/services/catalog-gateway';
@@ -615,16 +615,12 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
             )}
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              {/* M1.4 UI pass: hero has TWO buttons — Watch (navigates to the
-                  title page) and Add to Watch Later (shared LibraryToggle).
-                  Watch shows for ALL items; Watch Later shows when a
-                  canonical ID can be constructed (movie/tv always; anime
-                  only when TMDB-backed). */}
+              {/* Every highlight has the same two actions and opaque colors. */}
               {featuredItem ? (
                 <button
                   type="button"
                   onClick={() => openItem(featuredItem.kind, featuredItem)}
-                  className="inline-flex min-h-12 items-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                  className="inline-flex min-h-12 items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-black transition hover:bg-[#e5e5e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
                 >
                   <Play className="h-4 w-4 fill-current" aria-hidden="true" />
                   Watch
@@ -633,33 +629,14 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               {featuredItem ? (
                 (() => {
                   const heroKind = featuredItem.kind;
-                  if (heroKind === 'anime' && featuredItem.sourceProvider !== 'tmdb') return null;
-                  const canonicalId = heroKind === 'anime' || heroKind === 'tv'
-                    ? `tmdb:tv:${featuredItem.id}`
-                    : `tmdb:movie:${featuredItem.id}`;
+                  const canonicalId = featuredItem.catalogId ?? (heroKind === 'anime' && featuredItem.sourceProvider !== 'tmdb'
+                    ? `anilist:${featuredItem.id}`
+                    : `tmdb:${featuredItem.sourceKind === 'movie' || heroKind === 'movie' ? 'movie' : 'tv'}:${featuredItem.id}`);
                   return (
-                    <div className="flex items-center gap-2 rounded-full border border-white/20 bg-black/30 p-1.5 pr-4">
-                      <LibraryToggle canonicalId={canonicalId} field="watch-later" />
-                      <span className="text-sm text-white/85">Watch Later</span>
-                    </div>
+                    <LibraryToggle key={canonicalId} canonicalId={canonicalId} field="watch-later" variant="label" />
                   );
                 })()
               ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  const kind = featuredItem?.kind || 'movie';
-                  navigate('see-all', {
-                    title: kind === 'tv' ? 'Trending series' : kind === 'anime' ? 'Trending anime' : 'Trending movies',
-                    api: kind === 'tv' ? 'tmdb:trending:tv' : kind === 'anime' ? 'anilist:trending:anime' : 'tmdb:trending:movie',
-                    kind,
-                  });
-                }}
-                className="group inline-flex min-h-11 items-center gap-2 rounded-full border border-white/25 bg-black/10 px-5 py-2.5 text-sm text-white transition hover:border-white/50 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
-              >
-                Browse {featuredItem?.kind === 'tv' ? 'series' : featuredItem?.kind === 'anime' ? 'anime' : 'movies'}
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-              </button>
             </div>
           </div>
         </div>
@@ -673,7 +650,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               <button
                 type="button"
                 onClick={() => setFeaturedUserPaused((paused) => !paused)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/20 text-white/70 backdrop-blur transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-[#202020] text-white/75 transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label={featuredUserPaused ? 'Resume featured title rotation' : 'Pause featured title rotation'}
                 aria-pressed={featuredUserPaused}
               >
@@ -682,7 +659,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               <button
                 type="button"
                 onClick={() => void moveFeatured(-1)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/20 text-white/70 backdrop-blur transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-[#202020] text-white/75 transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label="Previous featured title"
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -690,7 +667,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               <button
                 type="button"
                 onClick={() => void moveFeatured(1)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/20 text-white/70 backdrop-blur transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-[#202020] text-white/75 transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label="Next featured title"
               >
                 <ChevronRight className="h-4 w-4" />

@@ -141,6 +141,11 @@ export class NativePlaybackController {
   private bufferingListeners = new Set<(update: NativeBufferingUpdate) => void>();
   private timeListeners = new Set<(update: NativeTimeUpdate) => void>();
   private stateListeners = new Set<(state: 'playing' | 'paused') => void>();
+  private currentBuffering: NativeBufferingUpdate = { active: true };
+  private currentState: 'playing' | 'paused' | null = null;
+  private currentTime: NativeTimeUpdate | null = null;
+  private bufferingClock: number | null = null;
+  private advancingTicks = 0;
 
   constructor(deps: NativeControllerDeps) {
     this.client = deps.client;
@@ -175,7 +180,22 @@ export class NativePlaybackController {
   /** Native buffering state (loader-in-the-video truth). */
   subscribeBuffering(listener: (update: NativeBufferingUpdate) => void): () => void {
     this.bufferingListeners.add(listener);
+    listener(this.currentBuffering);
     return () => this.bufferingListeners.delete(listener);
+  }
+
+  private publishBuffering(update: NativeBufferingUpdate): void {
+    const progress = Number.isFinite(update.progress)
+      ? Math.max(0, Math.min(100, update.progress!)) : undefined;
+    const active = update.active && progress !== 100;
+    if (active !== this.currentBuffering.active) {
+      this.bufferingClock = null;
+      this.advancingTicks = 0;
+    }
+    this.currentBuffering = { active, progress, playId: this.currentPlayId };
+    for (const listener of Array.from(this.bufferingListeners)) {
+      try { listener(this.currentBuffering); } catch { /* isolate UI listeners */ }
+    }
   }
 
   // --- Interactive player controls (VLC layer). Every method is a no-op
@@ -203,12 +223,14 @@ export class NativePlaybackController {
   /** Live clock for the web control surface. */
   subscribeTime(listener: (update: NativeTimeUpdate) => void): () => void {
     this.timeListeners.add(listener);
+    if (this.currentTime) listener(this.currentTime);
     return () => this.timeListeners.delete(listener);
   }
 
   /** Native playing/paused state for the web control surface. */
   subscribeState(listener: (state: 'playing' | 'paused') => void): () => void {
     this.stateListeners.add(listener);
+    if (this.currentState) listener(this.currentState);
     return () => this.stateListeners.delete(listener);
   }
 
@@ -276,6 +298,12 @@ export class NativePlaybackController {
     const playId = String(generation);
     this.lastPositionSec = 0;
     this.lastDurationSec = 0;
+
+    this.currentState = null;
+    this.currentTime = null;
+    this.bufferingClock = null;
+    this.advancingTicks = 0;
+    this.publishBuffering({ active: true });
 
     if (this.bridge.prepare) {
       this.currentPlayId = playId;
@@ -450,6 +478,10 @@ export class NativePlaybackController {
     // periodic heartbeats alone do not cover a user who pauses and walks
     // away with the device).
     if (update.state === 'paused' || update.state === 'playing') {
+      this.currentState = update.state;
+      // Playing is also a completion signal; a separate buffering=false
+      // callback is not guaranteed after a seek on every VLC platform.
+      this.publishBuffering({ active: false });
       for (const listener of Array.from(this.stateListeners)) {
         try {
           listener(update.state);
@@ -512,6 +544,19 @@ export class NativePlaybackController {
       if (!this.eventBelongsToCurrentPlay(update.playId)) return;
       this.lastPositionSec = update.currentTime;
       this.lastDurationSec = update.duration;
+      this.currentTime = update;
+      // MobileVLCKit may report buffering without a subsequent playing
+      // transition. Recover from actual clock movement, never from a timer
+      // or a single resume/seek jump. Android's repeated stationary ticks
+      // and a paused player's seek cannot dismiss a real stall.
+      if (this.currentBuffering.active && this.currentState !== 'paused') {
+        const delta = this.bufferingClock == null ? 0 : update.currentTime - this.bufferingClock;
+        this.bufferingClock = Number.isFinite(update.currentTime) ? update.currentTime : null;
+        this.advancingTicks = delta > 0 && delta <= 2 ? this.advancingTicks + 1 : 0;
+        if (this.advancingTicks >= 2) {
+          this.handleBridgeState({ state: 'playing', playId: update.playId }, generation);
+        }
+      }
       for (const listener of Array.from(this.timeListeners)) {
         try {
           listener(update);
@@ -539,13 +584,7 @@ export class NativePlaybackController {
     this.detachBuffering = this.bridge.onBuffering?.((update) => {
       if (generation !== this.generation) return;
       if (!this.eventBelongsToCurrentPlay(update.playId)) return;
-      for (const listener of Array.from(this.bufferingListeners)) {
-        try {
-          listener(update);
-        } catch {
-          // listener errors must not re-enter the lifecycle
-        }
-      }
+      this.publishBuffering(update);
     }) ?? null;
   }
 
@@ -580,6 +619,11 @@ export class NativePlaybackController {
     this.detachTracks = null;
     this.detachBuffering = null;
     this.currentTracks = { audio: [], subtitles: [] };
+    this.currentState = null;
+    this.currentTime = null;
+    this.currentBuffering = { active: true };
+    this.bufferingClock = null;
+    this.advancingTicks = 0;
   }
 
   /** One bounded progress write. Stale sessions never write. */

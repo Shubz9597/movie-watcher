@@ -177,11 +177,16 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		groups = append(groups, filterByType(titles, query.Type))
 	}
 	sort.Strings(degraded)
-	return SearchResult{Titles: MergeTitles(groups), DegradedProviders: degraded, CachedAt: cachedAt}
+	titles := MergeTitles(groups)
+	rankSearchTitles(titles, query.Query, groups)
+	if len(titles) > query.Limit {
+		titles = titles[:query.Limit]
+	}
+	return SearchResult{Titles: titles, DegradedProviders: degraded, CachedAt: cachedAt}
 }
 
 func searchCacheKey(query SearchQuery) string {
-	return query.Query + "\x00" + string(query.Type)
+	return query.Query + "\x00" + string(query.Type) + "\x00" + strconv.Itoa(query.Limit)
 }
 
 func filterByType(titles []Title, want TitleType) []Title {

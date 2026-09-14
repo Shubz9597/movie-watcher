@@ -138,6 +138,11 @@ without `type`, numeric anime genres, named movie/series genres, out-of-range va
    external-ID order — never by map iteration order.
 3. Same query parameters ⇒ byte-identical `id`/ordering results (cache aside). Parity
    suite (P4) enforces this against the P0 renderer fixtures.
+4. Search presentation is ranked after identity merging: exact normalized title
+   or original-title matches, title prefixes, complete query-token matches, then
+   substrings. Equal matches retain provider priority and upstream result order.
+   Apply the requested result limit after ranking. ID sorting resolves merge
+   conflicts; it does not determine search relevance.
 
 ## Client requirements
 

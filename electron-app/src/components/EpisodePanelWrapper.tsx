@@ -1,6 +1,6 @@
 // Electron-compatible EpisodePanel that uses services directly
 // This wraps the original but handles API calls through services
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
 import { ArrowLeft, ChevronRight, Clock3, Loader2, Play } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
@@ -201,6 +201,10 @@ export default function EpisodePanel({
   const [historySource, setHistorySource] = useState<SavedResumeSource | null>(null);
   const didOpenInitialEpisode = useRef(false);
   const torrentRequestId = useRef(0);
+  const panelRef = useRef<HTMLElement>(null);
+  const sourceHeadingRef = useRef<HTMLHeadingElement>(null);
+  const episodeButtons = useRef(new Map<number, HTMLButtonElement>());
+  const returnToEpisode = useRef<number | null>(null);
   const seasonRequestId = useRef(0);
   const playInFlight = useRef(false);
   const seriesPackKey = seasonPackSeriesKey(kind, tmdbId, anilistId, title);
@@ -209,6 +213,22 @@ export default function EpisodePanel({
     torrentInfoHash(t.infoHash) || torrentInfoHash(t.magnetUri) || t.sourceId || t.torrentUrl || t.downloadUrl || t.title;
   const normalizedSeasons = seasons.length ? seasons : [{ seasonNumber: initialSeason, name: `Season ${initialSeason}` }];
   const artworkHydrating = initialArtworkHydrating || seasonArtworkHydrating;
+
+  // Mobile has one page scroller. Replacing a long episode list with a
+  // shorter source list must land at its heading, not at a clamped old offset.
+  // Going back restores the chosen episode and keyboard/screen-reader focus.
+  useLayoutEffect(() => {
+    if (platform.desktop) return;
+    if (activeEpisode) {
+      panelRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+      sourceHeadingRef.current?.focus({ preventScroll: true });
+    } else if (returnToEpisode.current != null) {
+      const button = episodeButtons.current.get(returnToEpisode.current);
+      button?.scrollIntoView({ block: 'center', behavior: 'instant' });
+      button?.focus({ preventScroll: true });
+      returnToEpisode.current = null;
+    }
+  }, [activeEpisode, platform.desktop]);
   const firstUpcomingIndex = episodes.findIndex((episode) => {
     const releaseTime = episodeReleaseTime(episode);
     return releaseTime !== null && releaseTime > availabilityNow;
@@ -761,6 +781,7 @@ export default function EpisodePanel({
     : undefined;
   const closeSourceChooser = () => {
     torrentRequestId.current += 1;
+    returnToEpisode.current = activeEpisode?.episodeNumber ?? null;
     setActiveEpisode(null);
     setTorrentRows(null);
     setTorrentError(null);
@@ -769,7 +790,7 @@ export default function EpisodePanel({
   const episodeArtwork = (episode: EpisodeSummary) => episode.stillUrl || null;
 
   return (
-    <aside className="min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl [overflow-wrap:anywhere]">
+    <aside ref={panelRef} data-source-panel data-source-layout={platform.desktop ? 'desktop' : 'page'} className={`min-w-0 max-w-full bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] ${platform.desktop ? 'overflow-hidden rounded-xl border border-white/[0.12] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)] border-y border-white/[0.12]'}`}>
       {artworkHydrating ? (
         <span className="sr-only" role="status" aria-live="polite">Loading episode artwork.</span>
       ) : null}
@@ -807,7 +828,7 @@ export default function EpisodePanel({
               page scrolls through it (scrolling episodes hides the header
               info naturally). Desktop keeps the bounded, internally-scrolling
               card. */}
-          <div className="sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain app-scrollbar">
+          <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
             {episodes.map((episode) => {
               const artwork = episodeArtwork(episode);
               const isUpcoming = isEpisodeUpcoming(episode);
@@ -816,6 +837,10 @@ export default function EpisodePanel({
                 <button
                   type="button"
                   key={episode.id}
+                  ref={(element) => {
+                    if (element) episodeButtons.current.set(episode.episodeNumber, element);
+                    else episodeButtons.current.delete(episode.episodeNumber);
+                  }}
                   disabled={isUpcoming}
                   aria-label={isUpcoming
                     ? `${episode.name}, coming soon${releaseLabel ? ` on ${releaseLabel}` : ''}`
@@ -881,17 +906,18 @@ export default function EpisodePanel({
         </>
       ) : (
         <>
-          <div className="border-b border-white/[0.08] px-5 py-4">
+          <div className="source-episode-header border-b border-white/[0.08] px-5 py-4">
             <button
               type="button"
               onClick={closeSourceChooser}
+              data-back-to-episodes
               className="type-secondary inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 font-medium text-white/70 transition hover:bg-white/[0.05] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               Back to episodes
             </button>
-            <div className="mt-4 flex items-center gap-3">
-              <div className="relative aspect-video w-[112px] shrink-0 overflow-hidden rounded-md border border-white/[0.1] bg-white/[0.04]">
+            <div className="source-episode-summary mt-4 flex items-center gap-3">
+              <div className="source-episode-artwork relative aspect-video w-[112px] shrink-0 overflow-hidden rounded-md border border-white/[0.1] bg-white/[0.04]">
                 <EpisodeArtworkMedia
                   key={episodeArtwork(activeEpisode) || `missing-active-${activeEpisode.id}`}
                   src={episodeArtwork(activeEpisode)}
@@ -903,10 +929,10 @@ export default function EpisodePanel({
                 </span>
               </div>
               <div className="min-w-0">
-                <p className="type-secondary font-medium text-white/65">Choose a source</p>
-                <h3 className="mt-1 truncate text-base text-white/85">{activeEpisode.name}</h3>
+                <h3 ref={sourceHeadingRef} data-source-heading tabIndex={-1} className="line-clamp-2 text-base text-white/85 outline-none">{activeEpisode.name}</h3>
+                <p className="type-secondary mt-1 text-white/65">Season {activeEpisode.seasonNumber ?? selectedSeason} · Episode {activeEpisode.episodeNumber}</p>
                 {activeEpisode.availableAt || activeEpisode.airDate ? (
-                  <p className="type-secondary text-numeric mt-1 text-white/65">{formatAirDate(activeEpisode.availableAt || activeEpisode.airDate)}</p>
+                  <p className="source-episode-date type-secondary text-numeric mt-1 text-white/65">{formatAirDate(activeEpisode.availableAt || activeEpisode.airDate)}</p>
                 ) : null}
               </div>
             </div>
@@ -939,7 +965,7 @@ export default function EpisodePanel({
           ) : null}
 
           {torrentRows && displayedTorrentRows.length > 0 ? (
-          <div className="sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain app-scrollbar">
+          <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
               <div className="flex items-center justify-between gap-3 px-5 py-3">
                 <p className="type-secondary font-medium text-white/65">Available sources</p>
                 {nextEpisode ? (
