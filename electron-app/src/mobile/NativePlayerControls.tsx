@@ -455,10 +455,6 @@ export default function NativePlayerControls(props: Props) {
     }
   };
 
-  const submitImport = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-  };
-
   /** Connect an OpenSubtitles API key (server-side credential, like desktop). */
   const connectOpenSubtitles = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -569,6 +565,16 @@ export default function NativePlayerControls(props: Props) {
             <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
               <HeartPulse className="h-6 w-6" aria-hidden="true" />
             </IconButton>
+            <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
+              <Captions className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+            <IconButton label="Audio tracks" onClick={() => setActiveSheet(activeSheet === 'audio' ? 'none' : 'audio')} active={activeSheet === 'audio'}>
+              <AudioLines className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+            <IconButton label="Timing sync" onClick={() => setActiveSheet(activeSheet === 'sync' ? 'none' : 'sync')} active={activeSheet === 'sync'}>
+              <Timer className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+            {/* Scale sits LAST — the convention in mainstream players. */}
             <IconButton
               label={scaleMode === 'fit' ? 'Switch to Fill (crop to display)' : 'Switch to Fit (show whole picture)'}
               onClick={() => {
@@ -579,15 +585,6 @@ export default function NativePlayerControls(props: Props) {
             >
               {scaleMode === 'fit' ? <Scan className="h-6 w-6" aria-hidden="true" /> : <Proportions className="h-6 w-6" aria-hidden="true" />}
             </IconButton>
-            <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
-              <Captions className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Audio tracks" onClick={() => setActiveSheet(activeSheet === 'audio' ? 'none' : 'audio')} active={activeSheet === 'audio'}>
-              <AudioLines className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Timing sync" onClick={() => setActiveSheet(activeSheet === 'sync' ? 'none' : 'sync')} active={activeSheet === 'sync'}>
-              <Timer className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
           </div>
         </div>
       </div>
@@ -596,8 +593,9 @@ export default function NativePlayerControls(props: Props) {
           the video visible on the left and respects safe areas. */}
       {activeSheet === 'subtitles' ? (
         <Sheet title="Subtitles" onClose={() => setActiveSheet('none')}>
-          {subtitleError ? <p role="alert" className="mb-3 text-sm text-red-200">{subtitleError}</p> : null}
-          <fieldset disabled={!!loadingSubtitleUrl || importing} className="flex flex-wrap gap-2 disabled:opacity-60">
+          {subtitleError ? <p role="alert" className="mb-3 text-xs leading-5 text-red-200">{subtitleError}</p> : null}
+          {/* Compact track chips */}
+          <fieldset disabled={!!loadingSubtitleUrl || importing} className="flex flex-wrap gap-1.5 disabled:opacity-60">
             {/* Off only makes sense when something is actually active. */}
             {activeSubtitleUrl !== null || selectedEmbeddedSub !== null ? (
               <ChipButton active={false} onClick={disableSubtitles}>Off</ChipButton>
@@ -608,17 +606,18 @@ export default function NativePlayerControls(props: Props) {
               </ChipButton>
             ))}
           </fieldset>
-          <div className="mt-4 border-t border-white/10 pt-3">
-            <label className="flex items-center justify-between gap-3 text-sm text-white/80">
-              Subtitle language
-              <select aria-label="Subtitle language" value={language} onChange={(event) => { setLanguage(event.target.value); setCatalog([]); setCatalogStatus('loading'); }} className="min-h-11 rounded-lg border border-white/20 bg-black px-3 text-base text-white">
+          <div className="mt-3.5 border-t border-white/[0.08] pt-3">
+            <p className="font-label text-[10px] uppercase tracking-wide text-white/45">Online subtitles</p>
+            <label className="mt-2 flex items-center justify-between gap-2 text-xs text-white/75">
+              Language
+              <select aria-label="Subtitle language" value={language} onChange={(event) => { setLanguage(event.target.value); setCatalog([]); setCatalogStatus('loading'); }} className="min-h-9 rounded-lg border border-white/15 bg-black px-2 text-sm text-white">
                 {Object.entries({ en: 'English', hi: 'Hindi', ja: 'Japanese', es: 'Spanish', fr: 'French', de: 'German', ar: 'Arabic', pt: 'Portuguese', ta: 'Tamil', te: 'Telugu' }).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
               </select>
             </label>
             {!providerConfigured ? (
-              <form onSubmit={(event) => void connectOpenSubtitles(event)} className="mt-3 rounded-lg border border-white/10 bg-white/[0.04] p-3">
-                <label htmlFor="mobileOpenSubtitlesKey" className="text-sm text-white/80">OpenSubtitles API key</label>
-                <div className="mt-2 flex gap-2">
+              <form onSubmit={(event) => void connectOpenSubtitles(event)} className="mt-2.5 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+                <label htmlFor="mobileOpenSubtitlesKey" className="text-xs text-white/75">OpenSubtitles API key</label>
+                <div className="mt-1.5 flex gap-1.5">
                   <input
                     id="mobileOpenSubtitlesKey"
                     type="password"
@@ -627,26 +626,26 @@ export default function NativePlayerControls(props: Props) {
                     disabled={savingApiKey}
                     placeholder="Paste API key"
                     onChange={(event) => setApiKeyInput(event.target.value)}
-                    className="min-h-11 min-w-0 flex-1 rounded-lg border border-white/20 bg-black px-3 text-base text-white"
+                    className="min-h-9 min-w-0 flex-1 rounded-lg border border-white/15 bg-black px-2.5 text-sm text-white"
                   />
-                  <button type="submit" disabled={savingApiKey} className="min-h-11 rounded-lg bg-white px-4 text-sm text-black transition hover:bg-white/85">
+                  <button type="submit" disabled={savingApiKey} className="min-h-9 rounded-lg bg-white px-3 text-xs text-black transition hover:bg-white/85">
                     {savingApiKey ? 'Connecting…' : 'Connect'}
                   </button>
                 </div>
                 <button
                   type="button"
                   onClick={() => window.open('https://www.opensubtitles.com/en/api-keys', '_blank', 'noopener')}
-                  className="mt-2 text-xs text-white/60 underline"
+                  className="mt-1.5 text-[11px] text-white/55 underline"
                 >
                   Get an API key
                 </button>
               </form>
             ) : null}
-            {catalogStatus === 'loading' ? <p className="mt-2 flex items-center gap-2 text-sm text-white/60" role="status"><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> Finding subtitles…</p> : null}
+            {catalogStatus === 'loading' ? <p className="mt-2 flex items-center gap-2 text-xs text-white/60" role="status"><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Finding subtitles…</p> : null}
             {catalogStatus !== 'loading' && catalog.length === 0 ? (
-              <p className="mt-2 text-sm text-white/60">{catalogMessage || 'No subtitle files were found for this language.'}</p>
+              <p className="mt-2 text-xs leading-5 text-white/55">{catalogMessage || 'No subtitle files were found for this language.'}</p>
             ) : null}
-            {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="mt-2 min-h-11 text-sm text-white underline">Search again</button> : null}
+            {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="mt-1.5 min-h-8 text-xs text-white/70 underline transition hover:text-white">Search again</button> : null}
             <div className="mt-2 space-y-1">
               {catalog.map((track) => (
                 <button
@@ -654,25 +653,25 @@ export default function NativePlayerControls(props: Props) {
                   type="button"
                   onClick={() => void chooseCatalogSubtitle(track)}
                   disabled={!!loadingSubtitleUrl || importing}
-                  className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${activeSubtitleUrl === track.url ? 'border-[#ff7a17]/60 bg-[#ff7a17]/10 text-white' : 'border-white/10 bg-white/[0.04] text-white/80 hover:border-white/25 hover:text-white'}`}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${activeSubtitleUrl === track.url ? 'border-[#ff7a17]/60 bg-[#ff7a17]/10 text-white' : 'border-white/10 bg-white/[0.03] text-white/75 hover:border-white/25 hover:text-white'}`}
                 >
                   <span className="min-w-0 flex-1 truncate">{loadingSubtitleUrl === track.url ? 'Loading…' : track.fileName || track.label}</span>
-                  <span className="shrink-0 text-xs text-white/50">
+                  <span className="shrink-0 text-[10px] text-white/45">
                     {track.source === 'torrent' ? 'Torrent' : 'OpenSubtitles'}
-                    {track.movieHashMatched ? ' · hash match' : ''}
+                    {track.movieHashMatched ? ' · hash' : ''}
                   </span>
                 </button>
               ))}
             </div>
           </div>
-          <form onSubmit={submitImport} className="mt-4 border-t border-white/10 pt-3">
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white">
-              <Upload className="h-4 w-4" aria-hidden="true" />
+          <div className="mt-3.5 border-t border-white/[0.08] pt-3">
+            <label className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border border-white/20 px-3 text-xs text-white/85 transition hover:border-white/40 hover:text-white">
+              <Upload className="h-3.5 w-3.5" aria-hidden="true" />
               {importing ? 'Importing…' : 'Import subtitle file'}
               <input type="file" accept=".srt,.vtt,.ass,.ssa" className="sr-only" onChange={(event) => void importLocalSubtitle(event)} disabled={importing || !!loadingSubtitleUrl} />
             </label>
-            <p className="mt-2 text-xs text-white/45">SRT, VTT, ASS or SSA up to 4 MiB.</p>
-          </form>
+            <p className="mt-1.5 text-[11px] text-white/40">SRT, VTT, ASS or SSA up to 4 MiB.</p>
+          </div>
         </Sheet>
       ) : null}
 
@@ -708,7 +707,11 @@ export default function NativePlayerControls(props: Props) {
         </Sheet>
       ) : null}
 
-      {activeSheet === 'stats' ? <TorrentHealthSheet health={health} speed={healthSpeed} /> : null}
+      {activeSheet === 'stats' ? (
+        <Sheet title="Torrent health" onClose={() => setActiveSheet('none')}>
+          <TorrentHealthSheet health={health} speed={healthSpeed} />
+        </Sheet>
+      ) : null}
     </div>
   );
 }
@@ -808,7 +811,7 @@ function ChipButton({ active, onClick, children }: { active: boolean; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-10 max-w-full truncate rounded-full border px-4 text-sm transition ${active ? 'border-[#ff7a17]/60 bg-[#ff7a17]/15 text-[#ffc285]' : 'border-white/15 bg-white/[0.04] text-white/80 hover:border-white/35 hover:text-white'}`}
+      className={`min-h-9 max-w-full truncate rounded-full border px-3 text-xs transition ${active ? 'border-[#ff7a17]/60 bg-[#ff7a17]/15 text-[#ffc285]' : 'border-white/15 bg-white/[0.03] text-white/75 hover:border-white/35 hover:text-white'}`}
     >
       {children}
     </button>
