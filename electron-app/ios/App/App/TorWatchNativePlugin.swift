@@ -98,6 +98,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             let player = VLCMediaPlayer(options: [
                 "--audio-time-stretch",
                 "--network-caching=4000", // LAN stream of a possibly-incomplete torrent
+                // TEMPORARY diagnosis: libvlc's own failure reason prints to the
+                // Xcode console. Remove once playback is verified on device.
+                "--verbose=2",
             ])
             player.delegate = self
 
