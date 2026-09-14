@@ -1,7 +1,7 @@
 // Install the pinned official binary without editing Capacitor's generated SPM package.
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { access, mkdir, rename, rm } from 'node:fs/promises';
+import { access, mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { execFileSync } from 'node:child_process';
@@ -32,11 +32,35 @@ try {
     if (hash.digest('hex') !== checksum) throw new Error('MobileVLCKit checksum mismatch.');
     await mkdir(staging, { recursive: true });
     execFileSync('tar', ['-xf', archive, '-C', staging], { stdio: 'inherit' });
-    await access(path.join(staging, 'MobileVLCKit.xcframework', 'Info.plist'));
-    await rename(path.join(staging, 'MobileVLCKit.xcframework'), framework);
+    // The tarball's layout has changed across releases (3.7.3 nests the
+    // framework under a "MobileVLCKit-binary/" top folder): find the
+    // xcframework wherever it sits inside the extracted tree.
+    const extracted = await findXcframework(staging);
+    if (!extracted) throw new Error('MobileVLCKit.xcframework not found in the downloaded archive.');
+    await rename(extracted, framework);
     console.log('[ios-vlc] Installed verified MobileVLCKit 3.7.3.');
   } finally {
     await rm(archive, { force: true });
     await rm(staging, { recursive: true, force: true });
   }
+}
+
+/** Depth-first search for the xcframework directory (bounded to staging). */
+async function findXcframework(directory, depth = 0) {
+  if (depth > 4) return null;
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  if (entries.some((entry) => entry.isDirectory() && entry.name === 'MobileVLCKit.xcframework')) {
+    return path.join(directory, 'MobileVLCKit.xcframework');
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const found = await findXcframework(path.join(directory, entry.name), depth + 1);
+    if (found) return found;
+  }
+  return null;
 }
