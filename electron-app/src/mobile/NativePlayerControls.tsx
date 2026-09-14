@@ -6,7 +6,7 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, HeartPulse } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 
 export type NativeTrackInfo = { id: number; label?: string; language?: string };
@@ -19,6 +19,7 @@ export type NativePlayerControlsSurface = {
   setAudioDelay(seconds: number): void;
   selectAudioTrack(trackId: number): void;
   selectSubtitleTrack(trackId: number | null): void;
+  setVideoScale(mode: 'fit' | 'fill'): void;
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null>;
   subscribeTime(listener: (update: { currentTime: number; duration: number }) => void): () => void;
   subscribeState(listener: (state: 'playing' | 'paused') => void): () => void;
@@ -32,6 +33,21 @@ export type NativePlayerControlsSurface = {
 };
 
 type SkipSegment = { type: string; start: number; end: number; provider: string };
+
+// Torrent telemetry (desktop TorrentHealthMenu parity): served by the same
+// GET /buffer/info endpoint the desktop player polls.
+type TorrentHealthStats = {
+  activePeers?: number;
+  connectedSeeders?: number;
+  totalPeers?: number;
+  pendingPeers?: number;
+  downloadedBytes?: number;
+  completedBytes?: number;
+  contiguousAhead?: number;
+  targetBytes?: number;
+  fileLength?: number;
+  pollingError?: boolean;
+};
 
 type CatalogSubtitleTrack = {
   source: string; // 'torrent' | 'opensub'
@@ -88,7 +104,7 @@ export default function NativePlayerControls(props: Props) {
   const [time, setTime] = useState({ currentTime: 0, duration: 0 });
   const [playing, setPlaying] = useState(true);
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [activeSheet, setActiveSheet] = useState<'none' | 'subtitles' | 'audio' | 'sync'>('none');
+  const [activeSheet, setActiveSheet] = useState<'none' | 'subtitles' | 'audio' | 'sync' | 'stats'>('none');
 
   const [embeddedAudio, setEmbeddedAudio] = useState<NativeTrackInfo[]>([]);
   const [embeddedSubs, setEmbeddedSubs] = useState<NativeTrackInfo[]>([]);
@@ -106,9 +122,13 @@ export default function NativePlayerControls(props: Props) {
   const [subtitleError, setSubtitleError] = useState('');
   const [language, setLanguage] = useState('en');
   const [scrubTo, setScrubTo] = useState<number | null>(null);
+  const [scaleMode, setScaleMode] = useState<'fit' | 'fill'>('fit');
   const [providerConfigured, setProviderConfigured] = useState(true);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [savingApiKey, setSavingApiKey] = useState(false);
+  const [health, setHealth] = useState<TorrentHealthStats | null>(null);
+  const healthSpeedRef = useRef<{ bytes: number; at: number } | null>(null);
+  const [healthSpeed, setHealthSpeed] = useState(0);
   const subtitleOperation = useRef(0);
   const controlsHideTimer = useRef<number | null>(null);
   // Double-tap seek zones: left third rewinds, right third advances.
@@ -212,6 +232,51 @@ export default function NativePlayerControls(props: Props) {
   const activeSkipSegment = useMemo(() => {
     return skipSegments.find((segment) => time.currentTime >= segment.start && time.currentTime <= segment.end && segment.type === 'intro') ?? null;
   }, [skipSegments, time.currentTime]);
+
+  // --- Torrent telemetry (desktop TorrentHealthMenu parity) ---
+  // Polls GET /buffer/info on the same 4s cadence as the desktop player,
+  // ONLY while the stats sheet is open (bounded surface, no background load).
+  // Download speed is derived from downloadedBytes deltas between polls.
+  useEffect(() => {
+    if (activeSheet !== 'stats') return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      const params = new URLSearchParams({ magnet, cat });
+      if (fileIndex != null) params.set('fileIndex', String(fileIndex));
+      try {
+        const res = await fetch(`${getVodBase()}/buffer/info?${params.toString()}`, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(4000),
+        });
+        if (cancelled) return;
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data = (await res.json()) as TorrentHealthStats;
+        setHealth({ ...data, pollingError: false });
+        const now = Date.now();
+        const previous = healthSpeedRef.current;
+        const bytes = Math.max(0, Number(data.downloadedBytes) || 0);
+        if (previous && now > previous.at) {
+          const rate = Math.max(0, (bytes - previous.bytes) / ((now - previous.at) / 1000));
+          setHealthSpeed(rate);
+        }
+        healthSpeedRef.current = { bytes, at: now };
+      } catch {
+        if (cancelled) return;
+        setHealth((current) => ({ ...(current ?? {}), pollingError: true }));
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 4000);
+    };
+
+    healthSpeedRef.current = null;
+    setHealthSpeed(0);
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [activeSheet, magnet, cat, fileIndex]);
 
   // --- Subtitle catalog (server /subtitles/list) ---
   useEffect(() => {
@@ -501,6 +566,19 @@ export default function NativePlayerControls(props: Props) {
             {playing ? <Pause className="h-7 w-7" aria-hidden="true" /> : <Play className="h-7 w-7" aria-hidden="true" />}
           </IconButton>
           <div className="flex items-center gap-1">
+            <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
+              <HeartPulse className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              label={scaleMode === 'fit' ? 'Switch to Fill (crop to display)' : 'Switch to Fit (show whole picture)'}
+              onClick={() => {
+                const next = scaleMode === 'fit' ? 'fill' : 'fit';
+                setScaleMode(next);
+                player.setVideoScale(next);
+              }}
+            >
+              {scaleMode === 'fit' ? <Scan className="h-6 w-6" aria-hidden="true" /> : <Proportions className="h-6 w-6" aria-hidden="true" />}
+            </IconButton>
             <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
               <Captions className="h-6 w-6" aria-hidden="true" />
             </IconButton>
@@ -629,6 +707,79 @@ export default function NativePlayerControls(props: Props) {
           <p className="mt-3 text-xs text-white/45">Negative shows audio/subtitles earlier; positive later. Applies instantly, no restart.</p>
         </Sheet>
       ) : null}
+
+      {activeSheet === 'stats' ? <TorrentHealthSheet health={health} speed={healthSpeed} /> : null}
+    </div>
+  );
+}
+
+/** Torrent telemetry (desktop TorrentHealthMenu parity): peers, seeders,
+ *  speed, buffer-ahead and the downloaded-file progress bar. */
+function formatSpeed(bytesPerSecond: number): string {
+  const value = Math.max(0, Number(bytesPerSecond) || 0);
+  if (value <= 0) return '0 KB/s';
+  const units = ['KB/s', 'MB/s', 'GB/s'];
+  let amount = value / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && amount >= 1024; index += 1) {
+    amount /= 1024;
+    unit = units[index];
+  }
+  return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${unit}`;
+}
+
+function TorrentHealthSheet({ health, speed }: { health: TorrentHealthStats | null; speed: number }) {
+  const pollingError = health?.pollingError === true;
+  const activePeers = Math.max(0, Number(health?.activePeers) || 0);
+  const seeders = Math.max(0, Number(health?.connectedSeeders) || 0);
+  const totalPeers = Math.max(activePeers, Number(health?.totalPeers) || 0);
+  const pendingPeers = Math.max(0, Number(health?.pendingPeers) || 0);
+  const targetBytes = Math.max(0, Number(health?.targetBytes) || 0);
+  const contiguousAhead = Math.max(0, Number(health?.contiguousAhead) || 0);
+  const fileLength = Math.max(0, Number(health?.fileLength) || 0);
+  const completedBytes = Math.max(0, Number(health?.completedBytes) || 0);
+  const bufferPct = targetBytes > 0 ? Math.min(100, Math.round((contiguousAhead / targetBytes) * 100)) : 0;
+  const downloadedPct = fileLength > 0 ? Math.min(100, Math.round((completedBytes / fileLength) * 100)) : 0;
+  const tone = pollingError ? 'text-[#ffc285]' : activePeers > 0 ? 'text-emerald-400' : 'text-white/55';
+  const stateLabel = pollingError ? 'Updating' : activePeers > 0 ? 'Live' : 'Connecting';
+  const advice = pollingError
+    ? 'Waiting for the next torrent update…'
+    : activePeers > 0
+      ? speed > 0 ? 'Downloading while you watch.' : 'Connected with playback data buffered.'
+      : 'Connecting to the torrent network…';
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-white/70">{advice}</p>
+        <span className={`font-label shrink-0 rounded-full border border-white/15 px-2.5 py-1 text-xs ${tone}`}>{stateLabel}</span>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <Metric label="Connected peers" value={activePeers ? String(activePeers) : '—'} detail={totalPeers ? `${totalPeers} known, ${pendingPeers} pending` : 'Searching'} />
+        <Metric label="Connected seeders" value={seeders ? String(seeders) : '—'} detail="Sending complete pieces" />
+        <Metric label="Download speed" value={formatSpeed(speed)} detail="Current rate" />
+        <Metric label="Buffer ahead" value={`${bufferPct}%`} detail="Building buffer" />
+      </div>
+      <div className="mt-5">
+        <div className="flex items-center justify-between text-xs text-white/55">
+          <span>File available · live</span>
+          <output className="font-label text-numeric text-white/80">{downloadedPct}%</output>
+        </div>
+        <div className="mt-2 h-1.5 w-full rounded-full bg-white/15">
+          <div className="h-full rounded-full bg-[#ff7a17] transition-[width] duration-500" style={{ width: `${downloadedPct}%` }} />
+        </div>
+      </div>
+      <p className="mt-4 text-xs text-white/40">Sampled from the TorWatch server every 4 seconds while this panel is open.</p>
+    </div>
+  );
+}
+
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
+      <p className="font-label text-[10px] uppercase tracking-wide text-white/45">{label}</p>
+      <p className="font-label text-numeric mt-1 text-lg text-white">{value}</p>
+      <p className="mt-0.5 truncate text-xs text-white/45">{detail}</p>
     </div>
   );
 }

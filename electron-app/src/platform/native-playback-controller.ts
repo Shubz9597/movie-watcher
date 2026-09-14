@@ -82,6 +82,13 @@ export type NativePlaybackBridge = {
   // Independent A/V timing offsets in SECONDS (positive = later).
   setSubtitleDelay?(seconds: number, playId: string): Promise<void>;
   setAudioDelay?(seconds: number, playId: string): Promise<void>;
+  // Fit preserves the whole picture (letterbox); Fill uses the whole display
+  // with intentional center-crop. Never stretch.
+  setVideoScale?(mode: 'fit' | 'fill', playId: string): Promise<void>;
+  // Orientation handoff: locks landscape the moment the user enters playback
+  // (before metadata/session prepare) and restores app orientation on close.
+  // OS-denied requests resolve harmlessly; playback continues unrotated.
+  setPlaybackOrientation?(landscape: boolean): Promise<void>;
   // Runtime subtitle loading: attach a sidecar/external track WITHOUT a
   // playback restart (VLC playback slave). Returns the native track id when
   // the player exposes it.
@@ -260,6 +267,16 @@ export class NativePlaybackController {
   setAudioDelay(seconds: number): void {
     if (this.currentPlayId === '') return;
     this.bridge.setAudioDelay?.(seconds, this.currentPlayId).catch(() => {});
+  }
+
+  setVideoScale(mode: 'fit' | 'fill'): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.setVideoScale?.(mode, this.currentPlayId).catch(() => {});
+  }
+
+  /** Landscape lock for the playback surface (page-level, not play-scoped). */
+  setPlaybackOrientation(landscape: boolean): void {
+    this.bridge.setPlaybackOrientation?.(landscape).catch(() => {});
   }
 
   /**

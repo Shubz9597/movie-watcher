@@ -44,6 +44,8 @@ export interface TorWatchNativePlugin {
   selectSubtitleTrack?(options: { trackId: number | null; playId: string }): Promise<void>;
   setSubtitleDelay?(options: { seconds: number; playId: string }): Promise<void>;
   setAudioDelay?(options: { seconds: number; playId: string }): Promise<void>;
+  setVideoScale?(options: { mode: 'fit' | 'fill'; playId: string }): Promise<void>;
+  setPlaybackOrientation?(options: { landscape: boolean }): Promise<void>;
   loadSubtitle?(options: { url: string; label?: string; language?: string; playId: string }): Promise<{ trackId?: number | null }>;
   dismiss(options: { playId: string }): Promise<void>;
   addListener(eventName: 'timeUpdate', callback: (event: { currentTime: number; duration: number; playId: string }) => void): Promise<PluginListenerHandle>;
@@ -187,6 +189,13 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
       if (currentPlayId !== playId) return;
       await plugin.setAudioDelay?.({ seconds, playId });
     },
+    async setVideoScale(mode: 'fit' | 'fill', playId: string) {
+      if (currentPlayId !== playId) return;
+      await plugin.setVideoScale?.({ mode, playId });
+    },
+    async setPlaybackOrientation(landscape: boolean) {
+      await plugin.setPlaybackOrientation?.({ landscape });
+    },
     async loadSubtitle(input: { url: string; label?: string; language?: string; playId: string }) {
       if (currentPlayId !== input.playId) throw new Error('Playback is no longer active.');
       if (!plugin.loadSubtitle) throw new Error('This player cannot load subtitles.');
@@ -306,6 +315,14 @@ export class NativePlayer implements PlayerPort {
 
   setAudioDelay(seconds: number): void {
     this.controller.setAudioDelay(seconds);
+  }
+
+  setVideoScale(mode: 'fit' | 'fill'): void {
+    this.controller.setVideoScale(mode);
+  }
+
+  setPlaybackOrientation(landscape: boolean): void {
+    this.controller.setPlaybackOrientation(landscape);
   }
 
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null> {

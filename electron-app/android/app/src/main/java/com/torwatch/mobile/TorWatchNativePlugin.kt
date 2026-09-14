@@ -327,6 +327,41 @@ class TorWatchNativePlugin : Plugin() {
     }
 
     @PluginMethod
+    fun setVideoScale(call: PluginCall) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { setVideoScale(call) }; return }
+        val mode = call.getString("mode") ?: "fit"
+        if (mode != "fit" && mode != "fill") {
+            call.reject("Unknown video scale mode.")
+            return
+        }
+        val player = mediaPlayer
+        if (player != null) {
+            // Fit letterboxes the complete picture; Fill center-crops the
+            // source to the drawable's aspect. Neither stretches.
+            player.setVideoScale(
+                if (mode == "fill") MediaPlayer.ScaleType.SURFACE_FILL
+                else MediaPlayer.ScaleType.SURFACE_BEST_FIT,
+            )
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setPlaybackOrientation(call: PluginCall) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { setPlaybackOrientation(call) }; return }
+        val landscape = call.getBoolean("landscape") ?: true
+        val activity = bridge?.activity ?: run { call.resolve(); return }
+        // Locks landscape the moment playback is entered (before media
+        // preparation); UNSPECIFIED hands control back to the OS on close.
+        activity.requestedOrientation = if (landscape) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
     fun loadSubtitle(call: PluginCall) {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { loadSubtitle(call) }; return }
         val url = call.getString("url")

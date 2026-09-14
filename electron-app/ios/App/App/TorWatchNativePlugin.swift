@@ -47,6 +47,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         CAPPluginMethod(name: "selectSubtitleTrack", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSubtitleDelay", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setAudioDelay", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setVideoScale", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setPlaybackOrientation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "loadSubtitle", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise),
     ]
@@ -55,11 +57,16 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var surfaceView: UIView?
     private var playId = ""
     private var terminalSent = false
+    // Video scale preference: "fit" letterboxes the full picture inside the
+    // drawable; "fill" center-crops the source to the drawable's aspect so the
+    // video covers the display (never stretched).
+    private var videoScaleMode: String = "fit"
     // Initial sidecar subtitles attach as soon as the media opens (VLC slaves
     // need a live demuxer; they never force a restart).
     private var pendingSubtitleURLs: [URL] = []
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
+    private var rotationObserver: NSObjectProtocol?
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
 
@@ -123,6 +130,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
             TorWatchPlaybackState.videoAttached = true
             self.requestOrientation(true)
+            self.applyVideoScale(player)
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try? AVAudioSession.sharedInstance().setActive(true)
             UIApplication.shared.isIdleTimerDisabled = true
@@ -130,6 +138,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 if self?.mediaPlayer?.isPlaying == true { self?.mediaPlayer?.pause() }
+            }
+            // Fill mode crops to the DRAWABLE's aspect ratio: recompute when
+            // the device rotates or the window resizes (tablet multitasking).
+            self.rotationObserver = NotificationCenter.default.addObserver(
+                forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self = self, let player = self.mediaPlayer else { return }
+                self.applyVideoScale(player)
             }
             self.mediaPlayer = player
             self.pendingSeek = seekTo
@@ -229,6 +245,54 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         if seconds.isFinite { player.currentAudioPlaybackDelay = Int(max(-30, min(30, seconds)) * 1_000_000.0) }
+        call.resolve()
+    }
+
+    /// Fit letterboxes the complete picture inside the drawable; Fill
+    /// center-crops the source to the drawable's aspect ratio so the video
+    /// covers the display. Neither mode ever stretches the picture.
+    @objc func setVideoScale(_ call: CAPPluginCall) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.setVideoScale(call) }; return }
+        let mode = call.getString("mode") ?? "fit"
+        guard mode == "fit" || mode == "fill" else {
+            call.reject("Unknown video scale mode.")
+            return
+        }
+        videoScaleMode = mode
+        if let player = mediaPlayer { applyVideoScale(player) }
+        call.resolve()
+    }
+
+    private func applyVideoScale(_ player: VLCMediaPlayer) {
+        if videoScaleMode == "fill" {
+            if let size = surfaceView?.bounds.size, size.width > 1, size.height > 1 {
+                player.videoCropGeometry = aspectRatioString(size)
+            }
+        } else {
+            player.videoCropGeometry = nil // libvlc default: aspect-fit letterbox
+        }
+    }
+
+    /// "W:H" with the canonical reduced form libvlc expects ("16:9").
+    private func aspectRatioString(_ size: CGSize) -> String {
+        let width = Int(round(size.width * 100))
+        let height = Int(round(size.height * 100))
+        var a = width, b = height
+        while b != 0 { (a, b) = (b, a % b) }
+        let gcd = max(a, 1)
+        return "\(width / gcd):\(height / gcd)"
+    }
+
+    /// Orientation handoff from the web layer: locks landscape the moment the
+    /// user enters playback (before metadata/session preparation) so the
+    /// loading surface is already landscape; restores on close/failure.
+    /// A denied request (iPad multitasking constraints, scene absent) resolves
+    /// harmlessly — playback continues unrotated.
+    @objc func setPlaybackOrientation(_ call: CAPPluginCall) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.setPlaybackOrientation(call) }; return }
+        let landscape = call.getBool("landscape") ?? true
+        TorWatchPlaybackState.videoAttached = landscape
+        requestOrientation(landscape)
         call.resolve()
     }
 
@@ -422,6 +486,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
         backgroundObserver = nil
+        if let observer = rotationObserver { NotificationCenter.default.removeObserver(observer) }
+        rotationObserver = nil
         UIApplication.shared.isIdleTimerDisabled = false
         if let player = mediaPlayer {
             player.delegate = nil

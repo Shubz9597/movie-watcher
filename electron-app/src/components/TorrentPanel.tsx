@@ -337,7 +337,7 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside data-source-panel className={`flex min-w-0 max-w-full flex-col bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] ${platform.desktop ? 'overflow-hidden rounded-xl border border-white/[0.12] lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)] border-y border-white/[0.12]'}`}>
+    <aside data-source-panel className={`flex min-w-0 max-w-full flex-col bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
           <p className="type-secondary font-medium text-white/65">Playback</p>

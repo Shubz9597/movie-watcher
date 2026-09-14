@@ -84,6 +84,21 @@ export default function PlayerPage({ navigate, params }: Props) {
     };
   }, [returnToSource]);
 
+  // Landscape from the FIRST frame of playback entry (device pass): the
+  // native orientation lock fires BEFORE metadata/torrent preparation, so the
+  // logo loader is already landscape and the user never rotates manually.
+  // Restore on unmount (close/back) and on startup failure; re-lock on retry.
+  // OS-denied requests resolve harmlessly — playback continues unrotated.
+  const nativeSurface = !platform.desktop && !!platform.player && 'subscribeTime' in platform.player;
+  useEffect(() => {
+    if (!nativeSurface) return;
+    const setLandscape = (landscape: boolean) => {
+      (platform.player as unknown as { setPlaybackOrientation?: (landscape: boolean) => void }).setPlaybackOrientation?.(landscape);
+    };
+    setLandscape(!playbackError);
+    return () => setLandscape(false);
+  }, [nativeSurface, platform.player, playbackError, retryToken]);
+
   useEffect(() => {
     if (!magnet) {
       console.error('[PlayerPage] No magnet provided');
@@ -241,8 +256,8 @@ export default function PlayerPage({ navigate, params }: Props) {
   // M1.4.7: on native mobile the VLC surface sits BEHIND the WebView; this
   // page must stay transparent so the video shows through (LoadingScreen is
   // rendered by the controls until frames flow). Errors keep an opaque
-  // backdrop for readability.
-  const nativeSurface = !platform.desktop && !!platform.player && 'subscribeTime' in platform.player;
+  // backdrop for readability. (nativeSurface itself is computed above with
+  // the orientation lock.)
   const opaque = !!playbackError || !nativeSurface;
 
   useEffect(() => {
