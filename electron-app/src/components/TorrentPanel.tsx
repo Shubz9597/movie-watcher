@@ -337,7 +337,7 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside className="flex min-w-0 max-w-full max-h-[min(78dvh,760px)] flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] lg:max-h-none lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl [overflow-wrap:anywhere]">
+    <aside className="flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
           <p className="type-secondary font-medium text-white/65">Playback</p>
@@ -356,7 +356,10 @@ export default function TorrentPanel({
         </Button>
       </div>
 
-      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {/* Mobile: the list is PART OF THE PAGE (no nested scroll — the page
+          scrolls through it). Desktop keeps the bounded, internally-scrolling
+          card. */}
+      <div className="min-h-0 flex-1 lg:overflow-y-auto lg:overscroll-contain app-scrollbar">
 
       {loading && torrents === null && (
         <div className="flex items-center justify-center gap-2 px-5 py-14 text-sm text-white/60" role="status" aria-live="polite">
@@ -552,28 +555,6 @@ export default function TorrentPanel({
                               <dt className="text-xs uppercase tracking-wide text-white/45">Magnet link</dt>
                               <dd className="text-white/85">{t.magnetUri || torrentInfoHash(t.infoHash) || torrentInfoHash(t.magnetUri) ? 'Available' : 'Unknown'}</dd>
                             </div>
-                          </div>
-                          <div className="pt-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedKey(torrentActionKey);
-                                setSelectionNotice(null);
-                                setDetailsOpenKey(null);
-                                // Return focus to the list: the row's details
-                                // toggle stays in place, preserving position.
-                                requestAnimationFrame(() => {
-                                  detailsButtonRefs.current.get(torrentActionKey)?.focus();
-                                });
-                              }}
-                              className={`inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/20 px-4 text-sm text-white/90 transition hover:border-white/40 hover:text-white ${FOCUS_RING_CLASS}`}
-                              aria-label={`Use this torrent: ${t.title}`}
-                            >
-                              Use this torrent
-                            </button>
-                            <p className="type-caption mt-2 text-white/50">
-                              Confirming selects this source and returns to the list --- it does not start playback.
-                            </p>
                           </div>
                         </dl>
                       ) : null}

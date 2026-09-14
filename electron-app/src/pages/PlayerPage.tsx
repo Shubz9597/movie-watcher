@@ -47,8 +47,8 @@ export default function PlayerPage({ navigate, params }: Props) {
   // M1.4.7: resolved display metadata drives the native player's loading
   // screen and control surface (poster, title, year, ids).
   const [playbackMeta, setPlaybackMeta] = useState<{
-    title: string; year?: number; posterUrl: string | null; imdbId?: string; malId?: number; fileIndex?: number;
-  }>({ title: paramTitle || 'Playing', posterUrl: null, fileIndex: fileIndex != null ? Number(fileIndex) : undefined });
+    title: string; year?: number; posterUrl: string | null; logoUrl: string | null; imdbId?: string; malId?: number; fileIndex?: number;
+  }>({ title: paramTitle || 'Playing', posterUrl: null, logoUrl: null, fileIndex: fileIndex != null ? Number(fileIndex) : undefined });
 
   const returnToSource = useCallback((event?: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => {
     if (returningRef.current) return;
@@ -104,6 +104,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         let playbackTitle = paramTitle || 'Playing';
         let playbackYear: number | undefined;
         let playbackPosterUrl: string | null = null;
+        let playbackLogoUrl: string | null = null;
         let playbackImdbId = paramImdbId || undefined;
         let playbackMalId = malId ? Number(malId) : undefined;
 
@@ -120,6 +121,7 @@ export default function PlayerPage({ navigate, params }: Props) {
               // derived from the route's explicit `cat` namespace.
               const row = await bffTitleDetail(`tmdb:${cat === 'movie' ? 'movie' : 'tv'}:${tmdbId}`);
               playbackPosterUrl = row.artwork?.poster ?? null;
+              playbackLogoUrl = row.artwork?.logo ?? null;
               playbackImdbId = row.imdbId || playbackImdbId;
               playbackYear = row.year;
               playbackTitle = row.title || playbackTitle;
@@ -187,6 +189,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           title: playbackTitle,
           year: playbackYear,
           posterUrl: playbackPosterUrl,
+          logoUrl: playbackLogoUrl,
           imdbId: playbackImdbId,
           malId: playbackMalId,
           fileIndex: resolvedFileIndex,
@@ -203,6 +206,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           malId: playbackMalId,
           year: playbackYear,
           posterUrl: playbackPosterUrl,
+          logoUrl: playbackLogoUrl,
           subjectId: seriesId ? getDeviceId() : undefined,
           seriesId: seriesId || undefined,
           season: Number(season),
@@ -342,6 +346,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           title={playbackMeta.title}
           year={playbackMeta.year}
           posterUrl={playbackMeta.posterUrl}
+          logoUrl={playbackMeta.logoUrl}
           magnet={magnet}
           cat={cat}
           fileIndex={playbackMeta.fileIndex}

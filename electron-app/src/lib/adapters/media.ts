@@ -27,6 +27,9 @@ export type Detail = {
   overview?: string;
   posterUrl?: string | null;
   backdropUrl?: string | null;
+  // Transparent title logo (TMDb images) — the player's buffering overlay
+  // reveals it left-to-right with real buffering progress (Stremio-style).
+  logoUrl?: string | null;
   genres?: string[];
   runtime?: number | null;
   cast?: { name: string; character?: string }[];
@@ -510,6 +513,7 @@ export function detailFromBackendTitle(row: BackendTitleDetail): Detail {
     overview: row.overview,
     posterUrl: row.artwork?.poster ?? null,
     backdropUrl: row.artwork?.background ?? null,
+    logoUrl: row.artwork?.logo ?? null,
     genres: Array.isArray(row.genres) ? row.genres.filter((genre): genre is string => Boolean(genre)) : [],
     runtime: typeof row.runtime === 'number' && row.runtime > 0 ? row.runtime : null,
     cast: [],

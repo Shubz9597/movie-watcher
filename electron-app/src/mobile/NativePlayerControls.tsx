@@ -8,8 +8,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
-import { useConnectionStatus } from '../platform/PlatformProvider';
-import LoadingScreen from '../components/player/LoadingScreen';
 
 export type NativeTrackInfo = { id: number; label?: string; language?: string };
 
@@ -53,6 +51,7 @@ type Props = {
   title: string;
   year?: number;
   posterUrl: string | null;
+  logoUrl: string | null;
   magnet: string;
   cat: string;
   fileIndex: number | undefined;
@@ -81,7 +80,7 @@ function formatDelay(seconds: number): string {
 }
 
 export default function NativePlayerControls(props: Props) {
-  const { player, title, year, posterUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, onClose } = props;
+  const { player, title, year, posterUrl, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, onClose } = props;
 
   const [hasVideo, setHasVideo] = useState(false);
   const [buffering, setBuffering] = useState({ active: true, progress: 0 });
@@ -403,13 +402,7 @@ export default function NativePlayerControls(props: Props) {
   if (!hasVideo) {
     return (
       <>
-      <LoadingScreen
-        title={title}
-        year={year}
-        posterUrl={posterUrl}
-        bufferPercentage={buffering.active ? Math.max(buffering.progress, 4) : 96}
-        status={buffering.active ? 'buffering' : 'connecting'}
-      />
+      <BufferingLoader title={title} logoUrl={logoUrl} posterUrl={posterUrl} progress={buffering.active ? buffering.progress : undefined} />
       <button type="button" onClick={onClose} className="fixed left-[max(1rem,env(safe-area-inset-left))] top-[max(1rem,env(safe-area-inset-top))] z-[70] min-h-11 rounded-full border border-white/30 bg-black/70 px-5 text-white">
         Close player
       </button>
@@ -419,7 +412,7 @@ export default function NativePlayerControls(props: Props) {
 
   return (
     <div className="fixed inset-0 z-[60] select-none bg-transparent" onPointerUp={handleSurfaceTap}>
-      {buffering.active ? <BufferingLoader title={title} posterUrl={posterUrl} progress={buffering.progress} /> : null}
+      {buffering.active ? <BufferingLoader title={title} logoUrl={logoUrl} posterUrl={posterUrl} progress={buffering.progress} /> : null}
       {/* Top bar — safe-area aware so the close button never sits under the
           Dynamic Island / notch in either orientation. */}
       <div
@@ -512,7 +505,10 @@ export default function NativePlayerControls(props: Props) {
         <Sheet title="Subtitles" onClose={() => setActiveSheet('none')}>
           {subtitleError ? <p role="alert" className="mb-3 text-sm text-red-200">{subtitleError}</p> : null}
           <fieldset disabled={!!loadingSubtitleUrl || importing} className="flex flex-wrap gap-2 disabled:opacity-60">
-            <ChipButton active={activeSubtitleUrl === null && selectedEmbeddedSub === null} onClick={disableSubtitles}>Off</ChipButton>
+            {/* Off only makes sense when something is actually active. */}
+            {activeSubtitleUrl !== null || selectedEmbeddedSub !== null ? (
+              <ChipButton active={false} onClick={disableSubtitles}>Off</ChipButton>
+            ) : null}
             {embeddedSubs.map((track) => (
               <ChipButton key={track.id} active={selectedEmbeddedSub === track.id} onClick={() => chooseEmbeddedSubtitle(track)}>
                 {track.label || `Track ${track.id}`}
@@ -654,25 +650,8 @@ function ChipButton({ active, onClick, children }: { active: boolean; onClick: (
 }
 
 /** Right-side settings panel (~42% width): the video stays visible on the
- *  left; the connection status and its details live at the top, like the
- *  desktop player's menu column. */
+ *  left; no connection chrome — this surface is about tracks and timing. */
 function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  const compat = useConnectionStatus();
-  const statusDot: Record<string, string> = {
-    checking: 'bg-white/40',
-    ready: 'bg-emerald-400',
-    unreachable: 'bg-red-400',
-    incompatible: 'bg-[#ffc285]',
-  };
-  const statusLabel: Record<string, string> = {
-    checking: 'Checking server…',
-    ready: 'Connected',
-    unreachable: 'Not connected',
-    incompatible: 'Server incompatible',
-  };
-  let host = compat.origin || 'not set';
-  try { host = compat.origin ? new URL(compat.origin).host : 'not set'; } catch { /* keep raw */ }
-
   return (
     <div
       className="absolute inset-y-0 right-0 z-30 flex w-[42vw] min-w-[300px] max-w-[480px] flex-col rounded-l-2xl border-l border-white/10 bg-[#0a0a0a]/95 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-xl"
@@ -689,45 +668,51 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
           Done
         </button>
       </div>
-      {/* Connection status + details (matches the desktop menu column). */}
-      <div className="mx-5 mt-3 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-        <span
-          aria-hidden="true"
-          className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDot[compat.status] ?? 'bg-white/40'} ${compat.status === 'checking' ? 'animate-pulse' : ''}`}
-        />
-        <div className="min-w-0">
-          <p className="truncate text-sm text-white/85">{statusLabel[compat.status] ?? compat.status}</p>
-          <p className="truncate text-xs text-white/45">{host}</p>
-        </div>
-      </div>
       <div className="app-scrollbar mt-3 flex-1 overflow-y-auto px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">{children}</div>
     </div>
   );
 }
 
-/** Stremio-inspired buffering state: the movie title breathes under a moving
- *  light sheen (no bare text loader). */
-function BufferingLoader({ title, posterUrl, progress }: { title: string; posterUrl: string | null; progress: number }) {
+/** Stremio-style buffering overlay (device pass): the title logo (or the
+ *  title typeset when no logo exists) appears TWICE — a dim base copy and a
+ *  bright copy that fills left-to-right via clip-path with REAL buffering
+ *  progress. When progress is unknown the pair simply pulses every 2s — no
+ *  fake percentages, no sliding text. */
+function BufferingLoader({ title, logoUrl, posterUrl, progress }: {
+  title: string;
+  logoUrl: string | null;
+  posterUrl: string | null;
+  progress?: number;
+}) {
+  const known = typeof progress === 'number' && Number.isFinite(progress);
+  const reveal = known ? Math.max(0, Math.min(100, progress)) : 0;
+  const artwork = logoUrl ? (
+    <img src={logoUrl} alt="" decoding="async" className="max-h-24 w-auto max-w-[70vw] object-contain" />
+  ) : (
+    <span className="type-page-title px-4 text-center leading-tight">{title}</span>
+  );
   return (
-    <div role="status" aria-label={`Buffering ${title}`} className="absolute inset-0 z-10 overflow-hidden bg-black/60">
+    <div role="status" aria-label={`Buffering ${title}`} className="absolute inset-0 z-10 overflow-hidden bg-black/70">
       {posterUrl ? (
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-cover bg-center opacity-20"
-          style={{ backgroundImage: `url(${posterUrl})`, filter: 'blur(28px) saturate(0.7)', transform: 'scale(1.1)' }}
+          className="absolute inset-0 bg-cover bg-center opacity-15"
+          style={{ backgroundImage: `url(${posterUrl})`, filter: 'blur(30px) saturate(0.6)', transform: 'scale(1.1)' }}
         />
       ) : null}
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-5">
-        <div className="relative overflow-hidden px-6">
-          <h2 className="type-page-title bg-gradient-to-r from-white/30 via-white to-white/30 bg-[length:220%_100%] bg-clip-text text-center text-transparent animate-shimmer">
-            {title}
-          </h2>
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-8">
+        {/* Two stacked copies: dim base + bright reveal clipped to progress. */}
+        <div className="relative flex max-w-full items-center justify-center">
+          <div className="torwatch-logo-dim flex items-center justify-center" aria-hidden="true">{artwork}</div>
+          <div
+            className={`absolute inset-0 flex items-center justify-center ${known ? '' : 'torwatch-logo-breathe'}`}
+            style={known ? { clipPath: `inset(0 ${100 - reveal}% 0 0)` } : undefined}
+          >
+            {artwork}
+          </div>
         </div>
-        <div className="relative h-8 w-8">
-          <LoaderCircle className="h-8 w-8 animate-spin text-white/85" aria-hidden="true" />
-        </div>
-        <p className="font-label text-numeric text-xs text-white/55">
-          {progress > 0 && progress < 100 ? `Buffering ${Math.round(progress)}%` : 'Buffering…'}
+        <p className="font-label text-xs uppercase tracking-[0.18em] text-white/55">
+          {known ? `Buffering ${Math.round(reveal)}%` : 'Buffering'}
         </p>
       </div>
     </div>

@@ -32,6 +32,8 @@ export type NativePlaybackInput = {
   // Public poster artwork for the native buffering/loading surface (M1.4.7);
   // never sensitive — the same URL the web UI renders.
   posterUrl?: string | null;
+  // Transparent title logo for the Stremio-style buffering reveal.
+  logoUrl?: string | null;
   subtitles: NativeBridgeTrack[];
   seekTo?: number; // confirmed resume position in seconds
   // Replacement-safety tag echoed by every native event; events carrying a
@@ -333,6 +335,7 @@ export class NativePlaybackController {
         url: this.client.resolve(session.playbackUrl),
         title: request.title || 'TorWatch',
         posterUrl: request.posterUrl ?? null,
+        logoUrl: request.logoUrl ?? null,
         subtitles: session.subtitles.map((track) => ({
           url: this.client.resolve(track.url),
           language: track.language,

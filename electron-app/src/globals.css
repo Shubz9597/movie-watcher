@@ -729,6 +729,29 @@ body,
   }
 }
 
+/* Stremio-style buffering logo: the base copy sits dim and static; the bright
+   copy gently fades and grows every 2s while buffering progress is unknown. */
+.torwatch-logo-dim {
+  opacity: 0.28;
+}
+
+@keyframes torwatch-logo-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.985);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.01);
+  }
+}
+
+.torwatch-logo-breathe {
+  animation: torwatch-logo-breathe 2s ease-in-out infinite;
+}
+
+
 @keyframes torwatch-backdrop-in {
   from {
     opacity: 0;

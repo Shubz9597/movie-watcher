@@ -60,6 +60,8 @@ export interface PlayerRequest {
   malId?: number;
   year?: number;
   posterUrl?: string | null;
+  // Title logo (TMDb images) for the native player's buffering overlay.
+  logoUrl?: string | null;
   subjectId?: string;
   seriesId?: string;
   season?: number;

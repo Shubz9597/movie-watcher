@@ -803,10 +803,11 @@ export default function EpisodePanel({
           ) : null}
           {seasonError ? <div className="px-5 py-4 text-sm text-red-100" role="alert">{seasonError}</div> : null}
 
-          {/* Mobile: the list is the block — most of the viewport height with
-              contained scrolling, so the page no longer scroll-jacks while
-              browsing episodes. Desktop keeps the bounded card. */}
-          <div className="app-scrollbar max-h-[64dvh] min-h-[36dvh] overflow-y-auto overscroll-contain sm:max-h-[580px]">
+          {/* Mobile: the list is PART OF THE PAGE — it flows in full and the
+              page scrolls through it (scrolling episodes hides the header
+              info naturally). Desktop keeps the bounded, internally-scrolling
+              card. */}
+          <div className="sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain app-scrollbar">
             {episodes.map((episode) => {
               const artwork = episodeArtwork(episode);
               const isUpcoming = isEpisodeUpcoming(episode);
@@ -938,7 +939,7 @@ export default function EpisodePanel({
           ) : null}
 
           {torrentRows && displayedTorrentRows.length > 0 ? (
-          <div className="app-scrollbar max-h-[64dvh] min-h-[36dvh] overflow-y-auto overscroll-contain sm:max-h-[580px]">
+          <div className="sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain app-scrollbar">
               <div className="flex items-center justify-between gap-3 px-5 py-3">
                 <p className="type-secondary font-medium text-white/65">Available sources</p>
                 {nextEpisode ? (

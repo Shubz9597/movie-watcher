@@ -183,6 +183,15 @@ type tmdbDetailResponse struct {
 		AirDate      string `json:"air_date"`
 		PosterPath   string `json:"poster_path"`
 	} `json:"seasons"`
+	// Images (append_to_response=images): title logos power the mobile
+	// player's buffering overlay (Stremio-style reveal). English or
+	// language-less logos are preferred; any logo beats none.
+	Images struct {
+		Logos []struct {
+			FilePath string `json:"file_path"`
+			Iso639_1 string `json:"iso_639_1"`
+		} `json:"logos"`
+	} `json:"images"`
 }
 
 // Detail resolves a tmdb:<id> title. Qualified external ids ("movie:N" /
@@ -200,8 +209,11 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 		return Title{}, ErrNotFound
 	}
 	var payload tmdbDetailResponse
+	// Images ride along with every detail fetch (logo artwork for the player
+	// buffering overlay); one extra upstream field, no second request.
+	detailParams := map[string]string{"append_to_response": "images", "include_image_language": "en,null"}
 	if mediaType == "" {
-		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, nil), &payload)
+		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, detailParams), &payload)
 		if movieErr == nil {
 			return p.detailToTitle("movie", externalID, payload), nil
 		}
@@ -209,7 +221,7 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 			return Title{}, movieErr
 		}
 		payload = tmdbDetailResponse{}
-		tvErr := fetchJSON(ctx, p.http, p.endpoint("/3/tv/"+externalID, nil), &payload)
+		tvErr := fetchJSON(ctx, p.http, p.endpoint("/3/tv/"+externalID, detailParams), &payload)
 		if tvErr == nil {
 			return p.detailToTitle("tv", externalID, payload), nil
 		}
@@ -219,7 +231,7 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 	if mediaType == "tv" {
 		path = "/3/tv/"
 	}
-	if err := fetchJSON(ctx, p.http, p.endpoint(path+externalID, nil), &payload); err != nil {
+	if err := fetchJSON(ctx, p.http, p.endpoint(path+externalID, detailParams), &payload); err != nil {
 		return Title{}, err
 	}
 	return p.detailToTitle(mediaType, externalID, payload), nil
@@ -230,6 +242,24 @@ func (p *TMDb) detailToTitle(mediaType, externalID string, payload tmdbDetailRes
 		payload.Title, payload.Name, payload.OriginalTitle, payload.OriginalName,
 		payload.ReleaseDate, payload.FirstAirDate, payload.Overview,
 		payload.PosterPath, payload.BackdropPath, payload.OriginalLanguage, nil)
+	// Title logo for the player's buffering overlay: prefer an English or
+	// language-less logo, then any logo at all.
+	var fallbackLogo string
+	for _, logo := range payload.Images.Logos {
+		if logo.FilePath == "" {
+			continue
+		}
+		if logo.Iso639_1 == "en" || logo.Iso639_1 == "" {
+			fallbackLogo = logo.FilePath
+			break
+		}
+		if fallbackLogo == "" {
+			fallbackLogo = logo.FilePath
+		}
+	}
+	if fallbackLogo != "" {
+		title.Artwork["logo"] = "https://image.tmdb.org/t/p/w500" + fallbackLogo
+	}
 	if payload.Runtime > 0 {
 		title.Runtime = payload.Runtime
 	} else if len(payload.EpisodeRunTime) > 0 {

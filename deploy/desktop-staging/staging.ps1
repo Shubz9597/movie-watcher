@@ -66,8 +66,8 @@ function Read-StagingEnvironment {
     # gitignored .env file. Never echo secret values.
     foreach ($name in @(
         "STAGING_PG_PASSWORD", "STAGING_PG_PORT", "BACKEND_PORT", "FRONTEND_PORT",
-        "TMDB_API_KEY", "TAILNET_FRONTEND_SERVE_PORT", "TAILNET_BACKEND_SERVE_PORT",
-        "TAILNET_ORIGIN"
+        "TMDB_API_KEY", "OPENSUB_API_KEY", "FFMPEG_PATH", "FFPROBE_PATH",
+        "TAILNET_FRONTEND_SERVE_PORT", "TAILNET_BACKEND_SERVE_PORT", "TAILNET_ORIGIN"
     )) {
         $processValue = [Environment]::GetEnvironmentVariable($name)
         if ($processValue) { $values[$name] = $processValue }
@@ -469,9 +469,12 @@ function New-BackendEnvironment($envValues, $origins, [bool]$withStub, [bool]$wi
     }
     # Playback service tools + validation fixture root flow through from the
     # operator environment/.env when provided; unset keeps the capability off.
-    foreach ($playbackKey in @("FFMPEG_PATH", "FFPROBE_PATH", "TORWATCH_PLAYBACK_FIXTURE_ROOT", "PLAYBACK_DATA_ROOT", "PLAYBACK_MAX_TRANSCODES", "PLAYBACK_SESSION_TTL", "PLAYBACK_PROBE_TIMEOUT", "PLAYBACK_MAX_TRANSCODE_HEIGHT")) {
+    foreach ($playbackKey in @("FFMPEG_PATH", "FFPROBE_PATH", "TORWATCH_PLAYBACK_FIXTURE_ROOT", "PLAYBACK_DATA_ROOT", "PLAYBACK_MAX_TRANSCODES", "PLAYBACK_SESSION_TTL", "PLAYBACK_PROBE_TIMEOUT", "PLAYBACK_MAX_TRANSCODE_HEIGHT", "PLAYBACK_TRANSCODE_MODE")) {
         if ($envValues[$playbackKey]) { $backendEnv[$playbackKey] = $envValues[$playbackKey] }
     }
+    # OpenSubtitles credential (server-side only): without it /subtitles/external
+    # reports "OpenSubtitles API key not configured" on every search.
+    if ($envValues["OPENSUB_API_KEY"]) { $backendEnv["OPENSUB_API_KEY"] = $envValues["OPENSUB_API_KEY"] }
     if ($envValues["TMDB_API_KEY"]) {
         $backendEnv["TMDB_API_KEY"] = $envValues["TMDB_API_KEY"]
     } elseif ($withStub) {

@@ -32,6 +32,7 @@ export interface TorWatchNativePlugin {
     url: string;
     title: string;
     posterUrl?: string | null;
+    logoUrl?: string | null;
     subtitles: Array<{ url: string; language?: string; label?: string; default?: boolean }>;
     seekTo?: number;
     playId: string;
@@ -152,6 +153,7 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
         url: input.url,
         title: input.title,
         posterUrl: input.posterUrl ?? undefined,
+        logoUrl: input.logoUrl ?? undefined,
         subtitles: input.subtitles,
         seekTo: input.seekTo,
         playId: input.playId,
