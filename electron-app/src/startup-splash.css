@@ -1,0 +1,16 @@
+/* Loaded by the HTML before JavaScript: no empty or white startup frame. */
+html, body { margin: 0; background: #0a0a0a; }
+.tw-startup-splash {
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  background: #0a0a0a;
+}
+.tw-startup-splash img {
+  display: block;
+  width: 128px;
+  height: 80px;
+  object-fit: contain;
+  opacity: 0.9;
+  filter: invert(1);
+}

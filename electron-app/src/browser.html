@@ -16,10 +16,15 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' __TORWATCH_BACKEND_ORIGIN__ http://fixture.local; media-src 'self' __TORWATCH_BACKEND_ORIGIN__ blob:; font-src 'self' data:"
     />
+    <link rel="stylesheet" href="./startup-splash.css" />
     <title>TorWatch</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="tw-startup-splash" role="status" aria-label="Starting TorWatch">
+        <img src="./assets/torwatch-symbol.png" width="128" height="80" alt="" aria-hidden="true" />
+      </main>
+    </div>
     <script type="module" src="./browser/main.tsx"></script>
   </body>
 </html>

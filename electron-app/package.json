@@ -8,10 +8,11 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "dev:mobile": "node scripts/mobile-preview.mjs",
-    "build": "npm run build:backend && vite build && npm run build:installer",
+    "build": "npm run build:backend && npm run build:renderer && npm run build:installer",
     "build:backend": "node scripts/build-backend.mjs",
-    "build:installer": "node scripts/build-windows-installer.mjs",
-    "build:renderer": "vite build",
+    "build:installer": "npm run generate:icons && node scripts/build-windows-installer.mjs",
+    "generate:icons": "node scripts/generate-brand-assets.mjs",
+    "build:renderer": "npm run generate:icons && vite build",
     "build:browser": "vite build --config vite.config.browser.mts",
     "build:mobile": "vite build --config vite.config.mobile.mts",
     "mobile:build": "node node_modules/vite/bin/vite.js build --config vite.config.mobile.mts && node scripts/mobile-postbuild.mjs && node scripts/setup-ios-vlc.mjs && node node_modules/@capacitor/cli/bin/capacitor sync",
@@ -29,6 +30,7 @@
     "test:mobile-navigation": "node --test --experimental-strip-types scripts/characterization/mobile-navigation.test.mjs",
     "test:search": "node --test --experimental-strip-types scripts/characterization/search-order.test.mjs",
     "smoke:mobile-navigation": "node scripts/mobile-navigation-smoke.mjs",
+    "smoke:launch": "node scripts/launch-screen-smoke.mjs",
     "test": "npm run test:skip-segments && npm run test:diagnostics && npm run test:player-contracts && npm run test:network-routing && npm run test:characterization && npm run test:mobile-navigation && npm run test:search",
     "smoke:ui": "electron scripts/titlebar-smoke.cjs",
     "smoke:titlebar": "electron scripts/titlebar-smoke.cjs",
@@ -74,6 +76,7 @@
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
+    "pngjs": "^7.0.0",
     "postcss": "^8.4.49",
     "puppeteer": "^25.10.0",
     "rcedit": "^5.0.2",
@@ -135,6 +138,7 @@
     },
     "linux": {
       "target": "AppImage",
+      "icon": "build/torwatch-icon.png",
       "category": "AudioVideo"
     },
     "nsis": {

@@ -7,10 +7,15 @@
          (M1.4.6) and enforced server-side by the exact CORS allowlist. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0a" />
+    <link rel="stylesheet" href="./startup-splash.css" />
     <title>TorWatch</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="tw-startup-splash" role="status" aria-label="Starting TorWatch">
+        <img src="./assets/torwatch-symbol.png" width="128" height="80" alt="" aria-hidden="true" />
+      </main>
+    </div>
     <script type="module" src="/mobile/main.tsx"></script>
   </body>
 </html>

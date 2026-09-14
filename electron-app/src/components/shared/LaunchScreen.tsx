@@ -1,12 +1,4 @@
-// LaunchScreen (M1.4 UI pass): the first-launch experience.
-//
-// Sequence (all token-driven CSS, prefers-reduced-motion collapses to
-// instant states):
-//   1. Logo breathes (slow scale+glow pulse) while the connection probe
-//      runs.
-//   2. On probe completion the logo glides up; the heading, description,
-//      input and actions stagger-fade in below it.
-//   3. Error states render as polished inline panels with actionable copy.
+// Keep one logo in place from the centered splash through the form reveal.
 import * as React from 'react';
 import type { ServerCompatibility } from '../../platform/contracts';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
@@ -44,31 +36,43 @@ function normalizedServerOrigin(raw: string): string | null {
 }
 
 export function LaunchScreen({ compat, onConnect }: LaunchScreenProps) {
-  // The logo stays in "breathing" state until the probe settles; it then
-  // parks (smaller, higher) and the form staggers in.
   const probing = compat.status === 'checking';
-  const stage = probing ? 'breathing' : 'form';
+  const [introReady, setIntroReady] = React.useState(false);
+  const [revealed, setRevealed] = React.useState(false);
+
+  React.useEffect(() => {
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const finish = () => setIntroReady(true);
+    const timer = window.setTimeout(finish, motion.matches ? 0 : 240);
+    const onMotionChange = () => { if (motion.matches) finish(); };
+    motion.addEventListener('change', onMotionChange);
+    return () => {
+      window.clearTimeout(timer);
+      motion.removeEventListener('change', onMotionChange);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    // Latch the reveal: retries must preserve the field, error, and focus.
+    if (introReady && !probing) setRevealed(true);
+  }, [introReady, probing]);
 
   return (
     <main
-      data-stage={stage}
-      className="tw-launch-screen flex min-h-screen flex-col items-center px-6 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(20vh,env(safe-area-inset-top)+3rem)] text-center"
+      data-stage={revealed ? 'form' : 'splash'}
+      className="tw-launch-screen flex flex-col items-center px-6 text-center"
     >
-      {/* 1. Breathing logo. */}
       <img
         src={torWatchLogo}
         alt=""
         aria-hidden="true"
-        className={`tw-launch-logo h-20 w-32 object-contain opacity-90 invert ${stage === 'form' ? 'tw-launch-settled' : ''}`}
+        width={128}
+        height={80}
+        className="tw-launch-logo h-20 w-32 shrink-0 object-contain opacity-90 invert"
       />
 
-      {probing ? (
-        // Probe running: nothing else yet --- the logo breathes alone.
-        <p className="tw-launch-fade tw-launch-delay-1 mt-10 text-sm text-white/55" role="status">
-          Finding your TorWatch server---
-        </p>
-      ) : (
-        // 2. Stagger-fade: heading --- description --- field.
+      {!revealed ? <p className="sr-only" role="status">Finding your TorWatch server…</p> : null}
+      {revealed ? (
         <div className="w-full max-w-md">
           <h1
             className="tw-launch-fade tw-launch-delay-1 mt-10 text-2xl font-semibold tracking-tight text-white"
@@ -85,7 +89,7 @@ export function LaunchScreen({ compat, onConnect }: LaunchScreenProps) {
             <LaunchOriginField compat={compat} onConnect={onConnect} />
           </div>
         </div>
-      )}
+      ) : null}
     </main>
   );
 }
@@ -96,6 +100,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
   const [error, setError] = React.useState<string | null>(null);
 
   const submit = async (): Promise<void> => {
+    if (pending) return;
     const candidate = normalizedServerOrigin(origin);
     if (!candidate) {
       setError('Enter a complete server address, such as http://192.168.1.50:4001.');
@@ -157,7 +162,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
         {pending ? (
           <span className="inline-flex items-center gap-2">
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-black/70" aria-hidden="true" />
-            Connecting---
+            Connecting…
           </span>
         ) : (
           'Connect'

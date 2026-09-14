@@ -16,6 +16,7 @@
 import '../globals.css';
 import ReactDOM from 'react-dom/client';
 import React, { useEffect, useState } from 'react';
+import { StartupSplash } from '../components/shared/StartupSplash';
 
 // Prevent the browser entry's auto-start BEFORE it is imported: exactly one
 // composition root exists per document.
@@ -84,18 +85,6 @@ function MobileShell(props: {
 import { ServerSettings } from './ServerSettings';
 import { SettingsOverlayController } from './settings-overlay-controller';
 
-function StartupScreen(): React.ReactElement {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white" role="status">
-      <div className="max-w-sm">
-        <span className="mx-auto block h-2.5 w-2.5 animate-pulse rounded-full bg-white/70" aria-hidden="true" />
-        <h1 className="type-section-title mt-5">Starting TorWatch</h1>
-        <p className="type-body mt-3 text-white/60">Loading the app and checking your saved server…</p>
-      </div>
-    </main>
-  );
-}
-
 function StartupFailure(): React.ReactElement {
   const resetServer = () => {
     try {
@@ -128,7 +117,7 @@ function StartupFailure(): React.ReactElement {
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error('The mobile root element is missing.');
 const root = ReactDOM.createRoot(rootElement);
-root.render(<StartupScreen />);
+root.render(<StartupSplash />);
 
 async function start(): Promise<void> {
   try {

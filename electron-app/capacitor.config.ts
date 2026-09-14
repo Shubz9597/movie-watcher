@@ -14,6 +14,7 @@ const config: CapacitorConfig = {
   appId: 'com.torwatch.mobile',
   appName: 'TorWatch',
   webDir: 'dist-mobile',
+  backgroundColor: '#0a0a0a',
   // No baked server URL: the backend origin is user-configured at runtime
   // (M1.4.6 settings flow) and persisted on-device.
   server: {
