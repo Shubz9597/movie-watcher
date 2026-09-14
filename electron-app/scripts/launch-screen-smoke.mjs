@@ -54,7 +54,9 @@ try {
           const rect = logo.getBoundingClientRect();
           window.launchFrames.push({ y: rect.y + rect.height / 2, stage: logo.parentElement.dataset.stage });
         }
-        if (window.launchFrames.length < 100) requestAnimationFrame(frame);
+        // High-refresh displays can spend 100 frames entirely inside the
+        // intentional center hold, so keep enough samples for the movement.
+        if (window.launchFrames.length < 300) requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
     });
@@ -62,6 +64,8 @@ try {
     if (!reduce) {
       await page.waitForSelector('[data-stage="splash"]');
       await page.screenshot({ path: path.join(out, `${name}-splash.png`) });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      assert.equal(await page.$eval('.tw-launch-screen', el => el.dataset.stage), 'splash', `${name}: centered logo remains visible before moving`);
     }
     await page.waitForSelector('#server-origin');
     await page.waitForFunction(() => {

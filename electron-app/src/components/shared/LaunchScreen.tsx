@@ -9,6 +9,11 @@ type LaunchScreenProps = {
   onConnect: (origin: string) => Promise<string>;
 };
 
+// The native launch screen can cover the first WebView paints. Holding the
+// matching web logo after two painted frames makes the handoff visible before
+// the connect screen begins its shared-element movement.
+const CENTER_HOLD_MS = 700;
+
 function connectionFailureMessage(err: unknown, candidate: string): string {
   const message = err instanceof Error ? err.message : '';
   if (/unreachable|network|fetch/i.test(message)) {
@@ -43,10 +48,23 @@ export function LaunchScreen({ compat, onConnect }: LaunchScreenProps) {
   React.useEffect(() => {
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const finish = () => setIntroReady(true);
-    const timer = window.setTimeout(finish, motion.matches ? 0 : 240);
+    let firstFrame = 0;
+    let secondFrame = 0;
+    let timer = 0;
+    if (motion.matches) {
+      finish();
+    } else {
+      firstFrame = window.requestAnimationFrame(() => {
+        secondFrame = window.requestAnimationFrame(() => {
+          timer = window.setTimeout(finish, CENTER_HOLD_MS);
+        });
+      });
+    }
     const onMotionChange = () => { if (motion.matches) finish(); };
     motion.addEventListener('change', onMotionChange);
     return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
       window.clearTimeout(timer);
       motion.removeEventListener('change', onMotionChange);
     };
@@ -73,7 +91,7 @@ export function LaunchScreen({ compat, onConnect }: LaunchScreenProps) {
 
       {!revealed ? <p className="sr-only" role="status">Finding your TorWatch server…</p> : null}
       {revealed ? (
-        <div className="w-full max-w-md">
+        <div className="tw-launch-content w-full max-w-md">
           <h1
             className="tw-launch-fade tw-launch-delay-1 mt-10 text-2xl font-semibold tracking-tight text-white"
             role="heading"
