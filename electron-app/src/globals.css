@@ -621,7 +621,15 @@ body,
 }
 
 .tw-launch-screen[data-stage='splash'] .tw-launch-logo {
-  transform: translateY(calc(50svh - var(--launch-top) - 40px));
+  transform: translateY(calc(50svh - var(--launch-top) - 48px));
+  /* Blink while the connection probe runs: the logo "tries to connect"
+     at center stage, then carries the movement up into the form. */
+  animation: tw-launch-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes tw-launch-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .tw-launch-fade {
@@ -641,6 +649,7 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   .tw-launch-logo { transition: none; }
+  .tw-launch-screen[data-stage='splash'] .tw-launch-logo { animation: none; opacity: 0.9; }
   .tw-launch-fade { animation: none; }
 }
 

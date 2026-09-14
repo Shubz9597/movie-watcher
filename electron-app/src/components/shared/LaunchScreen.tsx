@@ -2,7 +2,7 @@
 import * as React from 'react';
 import type { ServerCompatibility } from '../../platform/contracts';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
-import torWatchLogo from '../../assets/torwatch-symbol.png';
+import torWatchLogo from '../../assets/torwatch-app-icon.png';
 
 type LaunchScreenProps = {
   compat: ServerCompatibility;
@@ -84,9 +84,9 @@ export function LaunchScreen({ compat, onConnect }: LaunchScreenProps) {
         src={torWatchLogo}
         alt=""
         aria-hidden="true"
-        width={128}
-        height={80}
-        className="tw-launch-logo h-20 w-32 shrink-0 object-contain opacity-90 invert"
+        width={96}
+        height={96}
+        className="tw-launch-logo h-24 w-24 shrink-0 object-contain"
       />
 
       {!revealed ? <p className="sr-only" role="status">Finding your TorWatch server…</p> : null}

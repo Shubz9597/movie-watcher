@@ -8,9 +8,8 @@ html, body { margin: 0; background: #0a0a0a; }
 }
 .tw-startup-splash img {
   display: block;
-  width: 128px;
-  height: 80px;
+  width: 96px;
+  height: 96px;
   object-fit: contain;
   opacity: 0.9;
-  filter: invert(1);
 }
