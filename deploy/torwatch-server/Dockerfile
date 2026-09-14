@@ -11,7 +11,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -o /out/torwatch-vod ./cmd/vod
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates curl
+RUN apk add --no-cache ca-certificates curl ffmpeg
+ENV FFPROBE_PATH=/usr/bin/ffprobe FFMPEG_PATH=/usr/bin/ffmpeg
 COPY --from=build /out/torwatch-vod /usr/local/bin/torwatch-vod
 EXPOSE 4001
 ENTRYPOINT ["/usr/local/bin/torwatch-vod"]

@@ -56,12 +56,28 @@ func TestPlanMKVWithCompatibleCodecsIsRemuxCopy(t *testing.T) {
 func TestPlanIncompatibleCodecTranscodesBounded(t *testing.T) {
 	info := mkvMpeg4Video()
 	info.Height = 2160
-	decision := Plan(PlanInput{Info: info, Profile: iosProfile(), FFmpegReady: true, MaxTranscodeHeight: 1080})
+	decision := Plan(PlanInput{Info: info, Profile: iosProfile(), FFmpegReady: true, MaxTranscodeHeight: 1080, TranscodeAllowed: true})
 	if decision.Mode != ModeTranscode || decision.CopyVideo {
 		t.Fatalf("want transcode with re-encoded video, got %s copyVideo=%v", decision.Mode, decision.CopyVideo)
 	}
 	if decision.MaxHeightPx != 1080 {
 		t.Fatalf("transcode height bound = %d, want 1080", decision.MaxHeightPx)
+	}
+}
+
+// 3c. deployment policy: transcodes disabled (Radxa) refuse honestly.
+func TestPlanTranscodeDisabledRefusesWithReason(t *testing.T) {
+	info := mkvMpeg4Video()
+	decision := Plan(PlanInput{Info: info, Profile: iosProfile(), FFmpegReady: true, TranscodeAllowed: false})
+	if decision.Mode != ModeUnsupported || decision.ReasonCode != ReasonTranscodeDisabled {
+		t.Fatalf("want unsupported/transcode_disabled, got %s/%s", decision.Mode, decision.ReasonCode)
+	}
+	// Direct and remux (stream copy) stay available under the policy.
+	if d := Plan(PlanInput{Info: mp4H264AAC(), Profile: iosProfile(), TranscodeAllowed: false}); d.Mode != ModeDirect {
+		t.Fatalf("direct must stay allowed, got %s", d.Mode)
+	}
+	if d := Plan(PlanInput{Info: mkvH264AAC(), Profile: iosProfile(), FFmpegReady: true, TranscodeAllowed: false}); d.Mode != ModeRemux {
+		t.Fatalf("remux must stay allowed, got %s", d.Mode)
 	}
 }
 
@@ -111,7 +127,7 @@ func TestProfilesDifferPerPlatform(t *testing.T) {
 	if d := Plan(PlanInput{Info: webm, Profile: androidProfile()}); d.Mode != ModeDirect {
 		t.Fatalf("android webm/vp9/opus: got %s (%s)", d.Mode, d.ReasonCode)
 	}
-	if d := Plan(PlanInput{Info: webm, Profile: iosProfile(), FFmpegReady: true}); d.Mode != ModeRemux && d.Mode != ModeTranscode {
+	if d := Plan(PlanInput{Info: webm, Profile: iosProfile(), FFmpegReady: true, TranscodeAllowed: true}); d.Mode != ModeRemux && d.Mode != ModeTranscode {
 		t.Fatalf("ios webm/vp9/opus: got %s", d.Mode)
 	}
 
@@ -143,16 +159,40 @@ func TestPlanProfileResolutionAndBitrateLimitsTranscode(t *testing.T) {
 	profile.MaxBitrateBps = 2_000_000
 
 	highResolution := mp4H264AAC()
-	d := Plan(PlanInput{Info: highResolution, Profile: profile, FFmpegReady: true, MaxTranscodeHeight: 1080})
+	d := Plan(PlanInput{Info: highResolution, Profile: profile, FFmpegReady: true, MaxTranscodeHeight: 1080, TranscodeAllowed: true})
 	if d.Mode != ModeTranscode || d.ReasonCode != ReasonResolutionExceeds || d.MaxHeightPx != 720 {
 		t.Fatalf("resolution limit: got %s/%s height=%d", d.Mode, d.ReasonCode, d.MaxHeightPx)
 	}
 
 	highBitrate := mp4H264AAC()
 	highBitrate.Width, highBitrate.Height = 640, 360
-	d = Plan(PlanInput{Info: highBitrate, Profile: profile, FFmpegReady: true, MaxTranscodeHeight: 1080})
+	d = Plan(PlanInput{Info: highBitrate, Profile: profile, FFmpegReady: true, MaxTranscodeHeight: 1080, TranscodeAllowed: true})
 	if d.Mode != ModeTranscode || d.ReasonCode != ReasonBitrateExceeds || d.MaxHeightPx != 360 {
 		t.Fatalf("bitrate limit: got %s/%s height=%d", d.Mode, d.ReasonCode, d.MaxHeightPx)
+	}
+}
+
+// VLC profiles direct-play the original file across the formats AVPlayer and
+// Media3 would convert: MKV containers, HEVC/AVI/DTS sources stay intact and
+// embedded tracks are preserved (selection happens in the player).
+func TestVLCProfilesPreferOriginalFileDirect(t *testing.T) {
+	vlc := DefaultProfiles()["ios-vlc"]
+	mkvHevcDTS := &MediaInfo{
+		Container: "matroska", DurationSec: 600, Width: 3840, Height: 2160,
+		Video:      VideoInfo{Codec: "hevc", BitDepth: 10},
+		Audio:      AudioInfo{Codec: "dts", Channels: 6},
+		BitrateBps: 40_000_000,
+		HDR:        "hdr10",
+	}
+	if d := Plan(PlanInput{Info: mkvHevcDTS, Profile: vlc}); d.Mode != ModeDirect {
+		t.Fatalf("vlc must direct-play mkv/hevc/dts/hdr, got %s/%s", d.Mode, d.ReasonCode)
+	}
+	aviMpeg4 := mp4H264AAC()
+	aviMpeg4.Container = "avi"
+	aviMpeg4.Video.Codec = "mpeg4"
+	aviMpeg4.Audio.Codec = "ac3"
+	if d := Plan(PlanInput{Info: aviMpeg4, Profile: DefaultProfiles()["android-vlc"]}); d.Mode != ModeDirect {
+		t.Fatalf("vlc must direct-play avi/mpeg4/ac3, got %s/%s", d.Mode, d.ReasonCode)
 	}
 }
 

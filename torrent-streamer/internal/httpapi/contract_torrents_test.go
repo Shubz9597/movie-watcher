@@ -25,6 +25,17 @@ func (f fakeIMDb) Rating(context.Context, string) (imdb.Rating, error) {
 func newProwlarrStub(t *testing.T, releases string) *search.Service {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The service scopes every search to the enabled torrent indexers
+		// (GET /api/v1/indexer) before querying /api/v1/search.
+		if strings.HasPrefix(r.URL.Path, "/api/v1/indexer") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[
+				{"id":1,"enable":true,"protocol":"torrent","priority":10},
+				{"id":2,"enable":false,"protocol":"torrent","priority":20},
+				{"id":3,"enable":true,"protocol":"usenet","priority":30}
+			]`))
+			return
+		}
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/search") {
 			http.NotFound(w, r)
 			return
@@ -97,6 +108,12 @@ func TestTorrentSearchRouteCapturedShape(t *testing.T) {
 func TestTorrentSearchRouteCapturesSourceIdOpaque(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Indexer scoping: the service lists enabled torrent indexers first.
+		if strings.HasPrefix(r.URL.Path, "/api/v1/indexer") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":1,"enable":true,"protocol":"torrent","priority":10}]`))
+			return
+		}
 		releases := fmt.Sprintf(
 			`[{"title":"Movie 2026","indexer":"IdxC","protocol":"torrent","size":2000,"seeders":7,"downloadUrl":"http://%s/download/1"}]`,
 			r.Host)

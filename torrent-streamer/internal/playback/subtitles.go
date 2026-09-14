@@ -35,6 +35,29 @@ func (m *Manager) collectSubtitles(ctx context.Context, sess *session, resolved 
 	ffmpegPath := m.tools.FFmpegPath
 
 	for _, sidecar := range resolved.Sidecars {
+		// VLC reads original sidecars directly, including ASS styling. Never
+		// start FFmpeg just to normalize subtitles on a direct-play session.
+		format := strings.ToLower(sidecar.Format)
+		profile := DefaultProfiles()[sess.view.Profile]
+		if !sess.hls && strings.HasSuffix(profile.Name, "-vlc") && containsFold(profile.SubtitleFormats, format) {
+			data, ok := readBounded(sidecar.Open)
+			if !ok || len(data) == 0 {
+				continue
+			}
+			id := fmt.Sprintf("t%d", trackID)
+			trackID++
+			name := id + "." + format
+			if err := os.WriteFile(filepath.Join(sess.dir, name), data, 0o644); err != nil {
+				continue
+			}
+			offers = append(offers, SubtitleOffer{
+				ID: id, Language: sidecar.Language,
+				Label:  nonEmpty(sidecar.Label, sidecar.Language, "Subtitle"),
+				URL:    "/v2/playback/sessions/" + sess.id + "/subtitles/" + name,
+				Origin: "embedded-sidecar",
+			})
+			continue
+		}
 		vtt, ok := sidecarToVTT(ctx, sess.runner, ffmpegPath, srcURL, sidecar)
 		if !ok {
 			continue // truthfully absent, never claimed

@@ -54,6 +54,9 @@ var (
 	// peers). Empty in production — the local-file source is then disabled.
 	playbackFixtureRoot = ""
 
+	// PLAYBACK_TRANSCODE_MODE: "auto" (default) | "off" (Radxa policy).
+	playbackTranscodeMode = "auto"
+
 	// logging
 	logFilePath   = "debug.log"
 	errorLogPath  = "errors.log"
@@ -114,6 +117,11 @@ func Load() {
 	playbackMaxTranscodeH = int(getenvInt64("PLAYBACK_MAX_TRANSCODE_HEIGHT", int64(playbackMaxTranscodeH)))
 	playbackMaxSessions = int(getenvInt64("PLAYBACK_MAX_SESSIONS", int64(playbackMaxSessions)))
 	playbackFixtureRoot = getenv("TORWATCH_PLAYBACK_FIXTURE_ROOT", playbackFixtureRoot)
+	// PLAYBACK_TRANSCODE_MODE controls the automatic video transcoding
+	// deployment policy: "auto" (default) plans transcodes when the device
+	// cannot direct-play; "off" refuses them (Radxa/homeserver CPU policy).
+	// ffprobe inspection and the stream-copy remux fallback stay active.
+	playbackTranscodeMode = getenv("PLAYBACK_TRANSCODE_MODE", "auto")
 
 	logFilePath = getenv("LOG_FILE", logFilePath)
 	errorLogPath = getenv("ERROR_LOG_FILE", errorLogPath)
@@ -166,6 +174,9 @@ func PlaybackProbeTimeout() time.Duration { return playbackProbeTimeout }
 func PlaybackMaxTranscodeHeight() int     { return playbackMaxTranscodeH }
 func PlaybackMaxSessions() int            { return playbackMaxSessions }
 func PlaybackFixtureRoot() string         { return playbackFixtureRoot }
+func PlaybackTranscodeAllowed() bool {
+	return strings.ToLower(strings.TrimSpace(playbackTranscodeMode)) != "off"
+}
 
 // helpers
 func getenv(k, def string) string {

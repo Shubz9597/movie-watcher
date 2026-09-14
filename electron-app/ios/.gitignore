@@ -3,6 +3,9 @@ App/Pods
 App/output
 App/App/public
 DerivedData
+App/VLCDependency/MobileVLCKit.xcframework/
+App/VLCDependency/MobileVLCKit.tar.xz
+App/VLCDependency/.extract/
 xcuserdata
 
 # Cordova plugins for Capacitor

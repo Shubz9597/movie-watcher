@@ -5,6 +5,7 @@ import { getDeviceId } from '../lib/device-id';
 import { usePlatform } from '../platform/PlatformProvider';
 import { ChevronLeft } from 'lucide-react';
 import { resolveTorrentFile } from '../lib/services/resolve-service';
+import NativePlayerControls from '../mobile/NativePlayerControls';
 
 // Legacy provider metadata loads lazily: bff mode never imports them (T042.4).
 async function legacyMetadataProviders() {
@@ -43,6 +44,11 @@ export default function PlayerPage({ navigate, params }: Props) {
   const returningRef = useRef(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+  // M1.4.7: resolved display metadata drives the native player's loading
+  // screen and control surface (poster, title, year, ids).
+  const [playbackMeta, setPlaybackMeta] = useState<{
+    title: string; year?: number; posterUrl: string | null; imdbId?: string; malId?: number; fileIndex?: number;
+  }>({ title: paramTitle || 'Playing', posterUrl: null, fileIndex: fileIndex != null ? Number(fileIndex) : undefined });
 
   const returnToSource = useCallback((event?: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => {
     if (returningRef.current) return;
@@ -177,6 +183,14 @@ export default function PlayerPage({ navigate, params }: Props) {
           resolvedFileIndex = resolved.fileIndex;
           if (cancelled) return;
         }
+        setPlaybackMeta({
+          title: playbackTitle,
+          year: playbackYear,
+          posterUrl: playbackPosterUrl,
+          imdbId: playbackImdbId,
+          malId: playbackMalId,
+          fileIndex: resolvedFileIndex,
+        });
         await platform.player.start({
           url: magnet,
           magnet,
@@ -220,53 +234,126 @@ export default function PlayerPage({ navigate, params }: Props) {
     };
   }, [magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, resolveEpisodeFile, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
 
+  // M1.4.7: on native mobile the VLC surface sits BEHIND the WebView; this
+  // page must stay transparent so the video shows through (LoadingScreen is
+  // rendered by the controls until frames flow). Errors keep an opaque
+  // backdrop for readability.
+  const nativeSurface = !platform.desktop && !!platform.player && 'subscribeTime' in platform.player;
+  const opaque = !!playbackError || !nativeSurface;
+
+  useEffect(() => {
+    if (!nativeSurface) return;
+    document.documentElement.classList.add('native-playback');
+    return () => document.documentElement.classList.remove('native-playback');
+  }, [nativeSurface]);
+
+  const closePlayer = () => {
+    // onStopped navigates after native teardown. Also cancel a pending start.
+    if (nativeSurface) {
+      void platform.player?.stop().finally(() => returnToSource());
+    } else {
+      returnToSource();
+    }
+  };
+
   return (
-    <div className={`player-transition fixed inset-x-0 bottom-0 bg-black ${platform.desktop ? 'top-10 z-40' : 'top-0 z-[60]'}`}>
-      {!platform.desktop ? (
-        <button type="button" aria-label="Close player" onClick={() => returnToSource()} className="absolute left-5 top-[calc(var(--app-safe-top)+0.5rem)] z-10 inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
-          <ChevronLeft className="h-6 w-6" aria-hidden="true" />
-        </button>
-      ) : null}
-      {/* The platform player renders above this transition state: embedded MPV
-          on desktop, native HTML5 video in the mobile browser. */}
-      <div className="absolute inset-0 flex items-center justify-center px-6">
-        <div className="w-full max-w-lg text-center">
-          <p className="font-label text-white/65">{playbackError ? 'Playback interrupted' : 'Preparing playback'}</p>
-          <h1 className="type-page-title mt-5 line-clamp-2 break-words text-white">
-            {paramTitle || 'Starting player'}
-          </h1>
-          {playbackError ? (
-            <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
-              <p>{playbackError}</p>
-              <div className="mt-5 flex flex-wrap justify-center gap-3">
-                {magnet ? (
+    <div className={`player-transition fixed inset-x-0 bottom-0 ${opaque ? 'bg-black' : 'bg-transparent'} ${platform.desktop ? 'top-10 z-40' : 'top-0 z-[60]'}`}>
+      {!nativeSurface ? (
+        <div>
+          {!platform.desktop ? (
+            <button type="button" aria-label="Close player" onClick={() => returnToSource()} className="absolute left-5 top-[calc(var(--app-safe-top)+0.5rem)] z-10 inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+              <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+            </button>
+          ) : null}
+          {/* The platform player renders above this transition state: embedded MPV
+              on desktop, native HTML5 video in the mobile browser. */}
+          <div className="absolute inset-0 flex items-center justify-center px-6">
+            <div className="w-full max-w-lg text-center">
+              <p className="font-label text-white/65">{playbackError ? 'Playback interrupted' : 'Preparing playback'}</p>
+              <h1 className="type-page-title mt-5 line-clamp-2 break-words text-white">
+                {paramTitle || 'Starting player'}
+              </h1>
+              {playbackError ? (
+                <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
+                  <p>{playbackError}</p>
+                  <div className="mt-5 flex flex-wrap justify-center gap-3">
+                    {magnet ? (
+                      <button
+                        type="button"
+                        onClick={() => setRetryToken((token) => token + 1)}
+                        className="min-h-11 rounded-full bg-white px-5 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      >
+                        Try again
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => returnToSource()}
+                      className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      Choose another source
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="mx-auto mt-7 h-px w-36 overflow-hidden bg-white/10">
+                    <div className="animate-shimmer h-full w-1/2 bg-[#ff7a17]" />
+                  </div>
+                  <p className="type-body mt-4 text-white/70" role="status">Connecting to the video stream…</p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : playbackError ? (
+        <div>
+          <div className="absolute inset-0 flex items-center justify-center px-6">
+            <div className="w-full max-w-lg text-center">
+              <p className="font-label text-white/65">Playback interrupted</p>
+              <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
+                <p>{playbackError}</p>
+                <div className="mt-5 flex flex-wrap justify-center gap-3">
+                  {magnet ? (
+                    <button
+                      type="button"
+                      onClick={() => setRetryToken((token) => token + 1)}
+                      className="min-h-11 rounded-full bg-white px-5 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                    >
+                      Try again
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    onClick={() => setRetryToken((token) => token + 1)}
-                    className="min-h-11 rounded-full bg-white px-5 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                    onClick={() => returnToSource()}
+                    className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                   >
-                    Try again
+                    Choose another source
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => returnToSource()}
-                  className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                >
-                  Choose another source
-                </button>
+                </div>
               </div>
             </div>
-          ) : (
-            <>
-              <div className="mx-auto mt-7 h-px w-36 overflow-hidden bg-white/10">
-                <div className="animate-shimmer h-full w-1/2 bg-[#ff7a17]" />
-              </div>
-              <p className="type-body mt-4 text-white/70" role="status">Connecting to the video stream…</p>
-            </>
-          )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <NativePlayerControls
+          key={`${magnet}:${fileIndex ?? ''}:${retryToken}`}
+          player={platform.player as unknown as Parameters<typeof NativePlayerControls>[0]['player']}
+          title={playbackMeta.title}
+          year={playbackMeta.year}
+          posterUrl={playbackMeta.posterUrl}
+          magnet={magnet}
+          cat={cat}
+          fileIndex={playbackMeta.fileIndex}
+          tmdbId={tmdbId ? Number(tmdbId) : undefined}
+          imdbId={playbackMeta.imdbId}
+          malId={playbackMeta.malId}
+          season={Number(season)}
+          episode={Number(episode)}
+          absoluteEpisode={absoluteEpisode ? Number(absoluteEpisode) : undefined}
+          onClose={closePlayer}
+        />
+      )}
     </div>
   );
 }

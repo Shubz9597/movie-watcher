@@ -15,11 +15,27 @@ type PlanInput struct {
 	// MaxTranscodeHeight bounds every transcode plan (server-side policy,
 	// never a device claim). 0 = default 1080.
 	MaxTranscodeHeight int
+	// TranscodeAllowed reflects the server deployment policy: when false,
+	// automatic video transcoding (the CPU-heavy decision) is refused with
+	// an honest reason instead of silently starting. Direct and remux
+	// (stream copy) decisions are unaffected.
+	TranscodeAllowed bool
 }
 
-// Plan decides direct / remux / transcode / unsupported.
-//
-// Decision table (versioned with the API contract):
+// Plan decides direct / remux / transcode / unsupported, then applies the
+// deployment policy: automatic video transcoding can be disabled entirely
+// (Radxa/homeserver configuration) while keeping ffprobe inspection and the
+// optional FFmpeg remux fallback intact.
+func Plan(in PlanInput) Decision {
+	decision := plan(in)
+	if decision.Mode == ModeTranscode && !in.TranscodeAllowed {
+		return unsupported(ReasonTranscodeDisabled,
+			"Automatic video transcoding is disabled on this server. Direct-playable sources still work; choose a source the device can play directly.")
+	}
+	return decision
+}
+
+// plan is the core decision table (versioned with the API contract):
 //
 //	inspection failure / no video        -> unsupported (media_inspection_failed | malformed_source)
 //	container in profile AND codecs ok
@@ -29,7 +45,7 @@ type PlanInput struct {
 //	codec incompatible                   -> transcode (requires FFmpeg)
 //	HDR and profile denies HDR           -> transcode (tonemap bounded) or unsupported
 //	FFmpeg required but missing          -> unsupported (ffmpeg_missing)
-func Plan(in PlanInput) Decision {
+func plan(in PlanInput) Decision {
 	if in.Info == nil {
 		return unsupported(ReasonMediaInspectionFail, "The media could not be inspected.")
 	}

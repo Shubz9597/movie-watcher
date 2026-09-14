@@ -195,7 +195,14 @@ func (h PlaybackHandlers) handleSubtitle(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	relative := strings.TrimPrefix(r.URL.Path, "/v2/playback/sessions/"+id+"/subtitles/")
-	playback.ServeSessionFile(w, r, h.PlaybackRoot, id, relative, playback.MIMESubtitle)
+	contentType := playback.MIMESubtitle
+	switch strings.ToLower(filepath.Ext(relative)) {
+	case ".ass", ".ssa":
+		contentType = "text/x-ssa; charset=utf-8"
+	case ".srt":
+		contentType = "application/x-subrip; charset=utf-8"
+	}
+	playback.ServeSessionFile(w, r, h.PlaybackRoot, id, relative, contentType)
 }
 
 func mediaContentType(name string) string {

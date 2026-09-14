@@ -69,6 +69,7 @@ const (
 	ReasonSubtitleUnsupported   = "subtitle_unsupported"
 	ReasonCapacityExhausted     = "transcode_capacity_exhausted"
 	ReasonSessionLimit          = "session_limit_exceeded"
+	ReasonTranscodeDisabled     = "transcode_disabled"
 )
 
 // Decision is the outcome of planning for one inspected source.
@@ -83,10 +84,12 @@ type Decision struct {
 	MaxHeightPx int
 }
 
-// DefaultProfiles returns the two initial shared profiles. The initial safe
-// shared output across both is H.264/AAC HLS + WebVTT; the differences below
-// reflect well-documented platform baselines and may be refined later WITHOUT
-// changing the session lifecycle.
+// DefaultProfiles returns the shared profiles. The safe shared baseline
+// (ios-avplayer / android-media3) is H.264/AAC HLS + WebVTT. The -vlc
+// profiles describe players (MobileVLCKit / LibVLC) that demux nearly every
+// consumer container themselves: the planner therefore prefers the ORIGINAL
+// file directly (embedded audio/subtitle tracks stay intact and selectable
+// in the player), and remux/transcode become rare fallbacks.
 func DefaultProfiles() map[string]CapabilityProfile {
 	ios := CapabilityProfile{
 		Name:            "ios-avplayer",
@@ -110,9 +113,42 @@ func DefaultProfiles() map[string]CapabilityProfile {
 		HDR:             false, // conservative baseline; HDR10 via Media3 is a later optimization
 		SubtitleFormats: []string{"vtt"},
 	}
+	// VLC profiles: original-file direct streaming. Wide demux support means
+	// MKV/AVI/HEVC/DTS sources play without server conversion; embedded
+	// tracks are preserved exactly as authored.
+	vlcContainers := []string{"mp4", "mkv", "webm", "avi", "mpegts", "mov", "m4v", "flv"}
+	vlcVideoCodecs := []string{"h264", "hevc", "vp9", "av1", "mpeg4", "mpeg2video", "vc1", "mpeg1video"}
+	vlcAudioCodecs := []string{
+		"aac", "ac3", "eac3", "dts", "dtshd", "truehd", "mp3", "flac",
+		"opus", "vorbis", "alac", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_audio",
+	}
+	iosVLC := CapabilityProfile{
+		Name:            "ios-vlc",
+		Containers:      vlcContainers,
+		VideoCodecs:     vlcVideoCodecs,
+		AudioCodecs:     vlcAudioCodecs,
+		MaxHeightPx:     4320,
+		MaxBitrateBps:   0,
+		HLSfMP4:         true,
+		HDR:             true,
+		SubtitleFormats: []string{"vtt", "srt", "ass", "ssa"},
+	}
+	androidVLC := CapabilityProfile{
+		Name:            "android-vlc",
+		Containers:      vlcContainers,
+		VideoCodecs:     vlcVideoCodecs,
+		AudioCodecs:     vlcAudioCodecs,
+		MaxHeightPx:     4320,
+		MaxBitrateBps:   0,
+		HLSfMP4:         true,
+		HDR:             true,
+		SubtitleFormats: []string{"vtt", "srt", "ass", "ssa"},
+	}
 	return map[string]CapabilityProfile{
-		ios.Name:     ios,
-		android.Name: android,
+		ios.Name:        ios,
+		android.Name:    android,
+		iosVLC.Name:     iosVLC,
+		androidVLC.Name: androidVLC,
 	}
 }
 

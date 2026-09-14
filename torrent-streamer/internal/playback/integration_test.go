@@ -139,7 +139,7 @@ func TestIntegrationProbePlanRemuxTranscodeSubtitles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mpeg4 probe: %v", err)
 	}
-	td := Plan(PlanInput{Info: transcodeInfo, Profile: DefaultProfiles()["ios-avplayer"], FFmpegReady: true, MaxTranscodeHeight: 1080})
+	td := Plan(PlanInput{Info: transcodeInfo, Profile: DefaultProfiles()["ios-avplayer"], FFmpegReady: true, MaxTranscodeHeight: 1080, TranscodeAllowed: true})
 	if td.Mode != ModeTranscode {
 		t.Fatalf("mpeg4 plan = %s/%s", td.Mode, td.ReasonCode)
 	}

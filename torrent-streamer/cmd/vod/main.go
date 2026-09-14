@@ -29,6 +29,7 @@ import (
 	"torrent-streamer/internal/recommendations"
 	"torrent-streamer/internal/scoring"
 	"torrent-streamer/internal/search"
+	"torrent-streamer/internal/skipsegments"
 	"torrent-streamer/internal/torrentx"
 	"torrent-streamer/internal/watch"
 	"torrent-streamer/migrations"
@@ -109,7 +110,8 @@ func main() {
 	// http mux & routes (endpoints are IDENTICAL to your original service)
 	mux := http.NewServeMux()
 	httpapi.RegisterRoutes(mux)         // /add, /files, /prefetch, /stream, /stats, /buffer/*
-	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external
+	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external, /subtitles/import
+	mux.HandleFunc("/skip-segments", skipsegments.Handler)
 	httpapi.TorrentSearchHandlers{Service: torrentSearch}.Register(mux)
 	httpapi.IMDbRatingHandlers{Ratings: imdbStore}.Register(mux)
 
@@ -180,6 +182,7 @@ func main() {
 					ProbeTimeout:        config.PlaybackProbeTimeout(),
 					MaxTranscodeHeight:  config.PlaybackMaxTranscodeHeight(),
 					MaxSessions:         config.PlaybackMaxSessions(),
+					TranscodeDisabled:   !config.PlaybackTranscodeAllowed(),
 				},
 				tools,
 				&playback.FFprobeProber{Tools: tools, Timeout: config.PlaybackProbeTimeout()},
@@ -191,8 +194,9 @@ func main() {
 			defer manager.Stop()
 			playbackManager = manager
 			capabilities = append(capabilities, "playback.compat.v1")
-			log.Printf("[boot] playback.compat.v1 ready (transcodes<=%d, ttl=%s, root=%s)",
-				config.PlaybackMaxTranscodes(), config.PlaybackSessionTTL(), config.PlaybackDataRoot())
+			log.Printf("[boot] playback.compat.v1 ready (transcodes<=%d ttl=%s root=%s transcodeMode=%s)",
+				config.PlaybackMaxTranscodes(), config.PlaybackSessionTTL(), config.PlaybackDataRoot(),
+				map[bool]string{true: "auto", false: "off"}[config.PlaybackTranscodeAllowed()])
 		}
 	}
 	build := buildinfo.New(buildinfo.Options{

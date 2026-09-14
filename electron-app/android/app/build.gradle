@@ -1,6 +1,12 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions { jvmTarget = '21' }
     namespace = "com.torwatch.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
@@ -33,10 +39,9 @@ repositories {
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    // Media3 (M1.4.5): ExoPlayer + HLS + UI, pinned to one stable line.
-    implementation "androidx.media3:media3-exoplayer:1.8.0"
-    implementation "androidx.media3:media3-exoplayer-hls:1.8.0"
-    implementation "androidx.media3:media3-ui:1.8.0"
+    // LibVLC (M1.4.7): direct original-file playback with embedded track
+    // selection and runtime subtitle slaves. Pinned to the stable 3.x line.
+    implementation "org.videolan.android:libvlc-all:3.6.2"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')

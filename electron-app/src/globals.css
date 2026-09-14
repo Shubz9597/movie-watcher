@@ -226,6 +226,15 @@
   overflow-x: clip;
 }
 
+/* The native VLC surface is below WebKit/Android WebView. Every ancestor
+   must be transparent, including the document canvas and app shell. */
+html.native-playback,
+html.native-playback body,
+html.native-playback #root,
+html.native-playback .app-surface {
+  background: transparent;
+}
+
 @layer utilities {
   .window-chrome {
     position: sticky;

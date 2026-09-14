@@ -111,7 +111,7 @@ export default function App() {
 
   if (catalogState.status !== 'ready') {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <div className="app-surface min-h-screen bg-[#0a0a0a] text-white">
         <WindowChrome />
         {catalogState.status === 'checking' ? <CatalogChecking /> : <TmdbConnectionGate state={catalogState} />}
       </div>
@@ -125,7 +125,7 @@ export default function App() {
     <PlatformProvider platform={electronPlatform}>
       <LibraryContextProvider store={libraryStore}>
       <RouterProvider navigate={navigate}>
-      <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <div className="app-surface min-h-screen bg-[#0a0a0a] text-white">
         <WindowChrome />
         {!isPlayerPage ? (
           <>

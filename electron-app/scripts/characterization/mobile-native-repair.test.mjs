@@ -112,21 +112,123 @@ test("resolve: client.resolve uses the hardened resolution", () => {
 
 // ---- 3. Platform-explicit profile selection -----------------------------
 
-test("profile: ios-avplayer on ios, android-media3 on android, explicit detection", () => {
+test("profile: ios-vlc on ios, android-vlc on android, explicit detection", () => {
   const originalWindow = globalThis.window;
   try {
     globalThis.window = { Capacitor: { getPlatform: () => "ios" } };
-    assert.equal(devicePlaybackProfile(), "ios-avplayer");
+    assert.equal(devicePlaybackProfile(), "ios-vlc");
     globalThis.window = { Capacitor: { getPlatform: () => "android" } };
-    assert.equal(devicePlaybackProfile(), "android-media3");
+    assert.equal(devicePlaybackProfile(), "android-vlc");
     globalThis.window = { Capacitor: { getPlatform: () => "web" } };
-    assert.equal(devicePlaybackProfile(), "ios-avplayer", "non-native falls back to the shared baseline");
+    assert.equal(devicePlaybackProfile(), "ios-vlc", "non-native falls back to the shared baseline");
   } finally {
     globalThis.window = originalWindow;
   }
 });
 
 // ---- 6. Playback-session lifecycle failure/race paths -------------------
+
+test("interactive layer: seekBy/toggle/tracks/delays/loadSubtitle are playId-guarded passthroughs", async () => {
+  const recorded = [];
+  const timeListeners = new Set();
+  const trackListeners = new Set();
+  const stateListeners = new Set();
+  const bridge = {
+    play: async (input) => { recorded.push(["play", input.playId]); },
+    seek: async (positionSec, playId) => { recorded.push(["seek", positionSec, playId]); },
+    seekBy: async (deltaSeconds, playId) => { recorded.push(["seekBy", deltaSeconds, playId]); },
+    togglePlayback: async (playId) => { recorded.push(["toggle", playId]); },
+    selectAudioTrack: async (trackId, playId) => { recorded.push(["audio", trackId, playId]); },
+    selectSubtitleTrack: async (trackId, playId) => { recorded.push(["sub", trackId, playId]); },
+    setSubtitleDelay: async (seconds, playId) => { recorded.push(["subDelay", seconds, playId]); },
+    setAudioDelay: async (seconds, playId) => { recorded.push(["audioDelay", seconds, playId]); },
+    loadSubtitle: async (input) => { recorded.push(["loadSub", input.url, input.playId]); return 7; },
+    onTime: (cb) => { timeListeners.add(cb); return () => timeListeners.delete(cb); },
+    onState: (cb) => { stateListeners.add(cb); return () => stateListeners.delete(cb); },
+    onTracks: (cb) => { trackListeners.add(cb); return () => trackListeners.delete(cb); },
+    dismiss: async () => {},
+    dispose: async () => {},
+  };
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge });
+
+  // Before any playback: every interactive call is a silent no-op.
+  controller.seekBy(-10);
+  controller.togglePlayback();
+  controller.selectAudioTrack(1);
+  controller.selectSubtitleTrack(null);
+  controller.setSubtitleDelay(0.5);
+  controller.setAudioDelay(-0.2);
+  await assert.rejects(controller.loadSubtitle({ url: ORIGIN + "/sub.vtt" }), /Start playback/);
+  assert.deepEqual(recorded, []);
+
+  const session = await controller.start({
+    url: ORIGIN + "/m", magnet: `magnet:?xt=urn:btih:${"a".repeat(40)}`, title: "Movie",
+    cat: "movie", season: 0, episode: 0,
+  });
+  assert.ok(session.sessionId);
+
+  controller.seekTo(90);
+  controller.seekBy(-10);
+  controller.togglePlayback();
+  controller.selectAudioTrack(2);
+  controller.selectSubtitleTrack(3);
+  controller.selectSubtitleTrack(null);
+  controller.setSubtitleDelay(1.5);
+  controller.setAudioDelay(-0.3);
+  const trackId = await controller.loadSubtitle({ url: ORIGIN + "/sub.vtt", label: "English" });
+  assert.equal(trackId, 7, "native track id is returned when reported");
+
+  // Tracks subscription reports current inventory AND streams updates.
+  let received = [];
+  const detach = controller.subscribeTracks((update) => received.push(update));
+  trackListeners.forEach((cb) => cb({ audio: [{ id: 2, label: "AC3 5.1" }], subtitles: [{ id: 3, label: "English" }] }));
+  assert.equal(received[received.length - 1].audio[0].label, "AC3 5.1");
+  detach();
+
+  try {
+    await controller.stop();
+  } finally {
+    // After teardown: interactive calls are no-ops again.
+    const count = recorded.length;
+    controller.seekBy(10);
+    assert.equal(recorded.length, count, "no interactive calls after teardown");
+  }
+});
+
+test('native start observes events emitted before play resolves', async () => {
+  const fake = fakeBridge();
+  fake.bridge.play = async (input) => {
+    fake.emitState({ state: 'playing', playId: input.playId });
+    fake.emitTime({ currentTime: 12, duration: 100, playId: input.playId });
+  };
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fake.bridge });
+  const states = [];
+  const times = [];
+  controller.subscribeState((state) => states.push(state));
+  controller.subscribeTime((time) => times.push(time));
+  try {
+    await controller.start({ magnet: `magnet:?xt=urn:btih:${HEX}`, cat: 'movie' });
+    assert.deepEqual(states, ['playing']);
+    assert.equal(times[0].currentTime, 12);
+  } finally { await controller.dispose(); }
+});
+
+test('subtitle download failures propagate and late completion cannot select a replacement', async () => {
+  const fake = fakeBridge();
+  fake.bridge.loadSubtitle = async () => { throw new Error('download failed'); };
+  const controller = new NativePlaybackController({ client: stubServer().client, bridge: fake.bridge });
+  try {
+    await controller.start({ magnet: `magnet:?xt=urn:btih:${HEX}`, cat: 'movie' });
+    await assert.rejects(controller.loadSubtitle({ url: ORIGIN + '/sub.vtt' }), /download failed/);
+    let finish;
+    fake.bridge.loadSubtitle = () => new Promise((resolve) => { finish = resolve; });
+    const pending = controller.loadSubtitle({ url: ORIGIN + '/sub.vtt' });
+    const rejected = assert.rejects(pending, /Playback changed/);
+    await controller.stop();
+    finish(7);
+    await rejected;
+  } finally { await controller.dispose(); }
+});
 
 function fakeBridge() {
   const timeListeners = new Set();
@@ -357,7 +459,7 @@ test("native bridge: listener registration gates play and dispose removes handle
   await starting;
   assert.equal(played, true);
   await nativeBridge.dispose();
-  assert.deepEqual(removed.sort(), ["playbackState", "timeUpdate"]);
+  assert.deepEqual(removed.sort(), ["buffering", "playbackState", "timeUpdate", "tracksUpdate"]);
   await assert.rejects(
     nativeBridge.play({ url: ORIGIN + "/media", title: "Movie", subtitles: [], playId: "p2" }),
     /disposed/,

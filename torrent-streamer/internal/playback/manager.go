@@ -46,6 +46,10 @@ type Config struct {
 	ProbeTimeout        time.Duration // default 20s
 	MaxTranscodeHeight  int           // default 1080
 	MaxSessions         int           // default 8; bounded memory/disk surface
+	// TranscodeDisabled reflects the deployment policy (Radxa): refuse
+	// automatic video transcoding instead of starting it. Direct and remux
+	// (stream copy) decisions are unaffected. Default false (allowed).
+	TranscodeDisabled bool
 }
 
 func (c *Config) withDefaults() {
@@ -202,7 +206,13 @@ func (m *Manager) Create(ctx context.Context, cat, sourceID string, fileIndex in
 	// verification happens once at wiring time (capability advertisement)
 	// and per-process at runner start. This keeps session creation cheap.
 	ffmpegReady := m.tools.FFmpegPath != ""
-	decision := Plan(PlanInput{Info: info, Profile: profile, FFmpegReady: ffmpegReady, MaxTranscodeHeight: m.cfg.MaxTranscodeHeight})
+	decision := Plan(PlanInput{
+		Info:               info,
+		Profile:            profile,
+		FFmpegReady:        ffmpegReady,
+		MaxTranscodeHeight: m.cfg.MaxTranscodeHeight,
+		TranscodeAllowed:   !m.cfg.TranscodeDisabled,
+	})
 
 	if decision.Mode == ModeTranscode || decision.Mode == ModeRemux {
 		select {

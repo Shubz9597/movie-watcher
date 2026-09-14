@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +62,8 @@ func RegisterSubtitleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/subtitles/list", handleSubtitleList)
 	mux.HandleFunc("/subtitles/torrent", handleSubtitleTorrent)
 	mux.HandleFunc("/subtitles/external", handleSubtitleExternal)
+	// M1.4.7: local subtitle import (mobile + desktop share the surface).
+	mux.HandleFunc("/subtitles/import", handleSubtitleImport)
 }
 
 func handleSubtitleConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +105,20 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	cat := parseCat(q)
-	langs := []string{"en"}
+	langs := splitCSV(q.Get("langs"))
+	if len(langs) == 0 {
+		langs = []string{"en"}
+	}
+	if len(langs) > 5 {
+		http.Error(w, "choose at most five subtitle languages", http.StatusBadRequest)
+		return
+	}
+	for _, lang := range langs {
+		if !subtitleLanguagePattern.MatchString(lang) {
+			http.Error(w, "invalid subtitle language", http.StatusBadRequest)
+			return
+		}
+	}
 	providerKey := openSubtitlesAPIKey()
 
 	resp := SubtitleListResponse{
@@ -307,8 +326,155 @@ func handleSubtitleTorrent(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(output))
 }
 
+// subtitleImportRoot resolves (and lazily creates) the directory imported
+// subtitle files are stored in. It prefers the configured subtitle cache
+// directory and falls back to the OS temp dir in dev setups without one.
+func subtitleImportRoot() (string, error) {
+	base := os.Getenv("SUB_CACHE_DIR")
+	if base == "" {
+		base = filepath.Join(os.TempDir(), "torwatch-subcache")
+	}
+	dir := filepath.Join(base, "imported")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// Imported-subtitle retention bounds: files live at most importRetention and
+// the whole import cache stays under importCacheMaxBytes (oldest evicted
+// first). The sweep runs inline on every import — the directory is bounded
+// and tiny, so this is cheaper than a background janitor.
+const (
+	importRetention     = 7 * 24 * time.Hour
+	importCacheMaxBytes = 64 << 20
+)
+
+// sweepSubtitleImports enforces the retention bounds. Best-effort: a sweep
+// failure never fails an import.
+func sweepSubtitleImports(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	type imported struct {
+		name    string
+		size    int64
+		modTime time.Time
+	}
+	var files []imported
+	var total int64
+	cutoff := time.Now().Add(-importRetention)
+	for _, entry := range entries {
+		if entry.IsDir() || !subtitleImportPattern.MatchString(entry.Name()) {
+			continue
+		}
+		info, statErr := entry.Info()
+		if statErr != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			continue
+		}
+		files = append(files, imported{name: entry.Name(), size: info.Size(), modTime: info.ModTime()})
+		total += info.Size()
+	}
+	// Enforce the total cap, oldest first.
+	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
+	for _, f := range files {
+		if total <= importCacheMaxBytes {
+			break
+		}
+		if os.Remove(filepath.Join(dir, f.name)) == nil {
+			total -= f.size
+		}
+	}
+}
+
+// handleSubtitleImport accepts ONE text subtitle file (multipart form field
+// "file", <= 4 MiB, srt/vtt/ass/ssa) from the local household and stores it
+// server-side. The response carries an opaque serving URL usable exactly
+// like an OpenSubtitles/torrent track URL — players (VLC included) load it at
+// runtime without a playback restart. No authentication by design: the LAN
+// household is the trust boundary (same as /subtitles/list).
+func handleSubtitleImport(w http.ResponseWriter, r *http.Request) {
+	middleware.EnableCORS(w)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// ParseMultipartForm's argument only limits RAM; bound the entire body
+	// as well so oversized uploads cannot spill arbitrarily to disk.
+	r.Body = http.MaxBytesReader(w, r.Body, (4<<20)+(64<<10))
+	if err := r.ParseMultipartForm(4 << 20); err != nil {
+		http.Error(w, "invalid upload (max 4 MiB)", http.StatusBadRequest)
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "missing file field", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(header.Filename), "."))
+	switch ext {
+	case "srt", "vtt", "ass", "ssa":
+	default:
+		http.Error(w, "unsupported subtitle format: "+ext, http.StatusBadRequest)
+		return
+	}
+	if header.Size > 4<<20 {
+		http.Error(w, "subtitle file exceeds 4 MiB", http.StatusBadRequest)
+		return
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+	if err != nil || len(data) == 0 || len(data) > 4<<20 {
+		http.Error(w, "could not read subtitle", http.StatusBadRequest)
+		return
+	}
+
+	dir, err := subtitleImportRoot()
+	if err != nil {
+		http.Error(w, "could not store subtitle", http.StatusInternalServerError)
+		return
+	}
+	id, err := randomTokenID()
+	if err != nil {
+		http.Error(w, "could not store subtitle", http.StatusInternalServerError)
+		return
+	}
+	name := id + "." + ext
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+		http.Error(w, "could not store subtitle", http.StatusInternalServerError)
+		return
+	}
+	sweepSubtitleImports(dir)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"ok":       "true",
+		"id":       name,
+		"fileName": header.Filename,
+		"url":      "/subtitles/external?source=import&id=" + url.QueryEscape(name),
+		"format":   ext,
+	})
+}
+
+// subtitleImportPattern constrains import ids to the exact server-generated
+// shape (32 hex chars + known extension): no traversal, no user-controlled
+// paths.
+var subtitleImportPattern = regexp.MustCompile(`^([a-f0-9]{32})\.(srt|vtt|ass|ssa)$`)
+var subtitleLanguagePattern = regexp.MustCompile(`^[a-z]{2,3}(?:-[a-z]{2})?$`)
+
 // handleSubtitleExternal fetches and serves an external subtitle as VTT
 // GET /subtitles/external?source=opensub&id=12345&lang=en
+// GET /subtitles/external?source=import&id=<server-generated id>
 func handleSubtitleExternal(w http.ResponseWriter, r *http.Request) {
 	middleware.EnableCORS(w)
 	q := r.URL.Query()
@@ -335,6 +501,36 @@ func handleSubtitleExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		vtt, err = subtitles.DownloadOpenSubSubtitle(ctx, id, apiKey)
+	case "import":
+		match := subtitleImportPattern.FindStringSubmatch(id)
+		if match == nil {
+			http.Error(w, "invalid subtitle id", http.StatusBadRequest)
+			return
+		}
+		dir, err := subtitleImportRoot()
+		if err != nil {
+			http.Error(w, "subtitle store unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		data, readErr := os.ReadFile(filepath.Join(dir, match[0]))
+		if readErr != nil {
+			http.Error(w, "subtitle expired or not found", http.StatusNotFound)
+			return
+		}
+		vtt = string(data)
+		switch match[2] {
+		case "srt":
+			vtt = subtitles.SRTtoVTT(vtt)
+		case "vtt":
+			// already VTT
+		case "ass", "ssa":
+			// ASS/SSA served as-is: VLC renders the original styling.
+			w.Header().Set("Content-Type", "text/x-ssa; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			_, _ = w.Write([]byte(vtt))
+			return
+		}
 	default:
 		http.Error(w, "unsupported subtitle source: "+source, http.StatusBadRequest)
 		return
@@ -439,6 +635,16 @@ func openSubtitlesAPIKey() string {
 		return apiKey
 	}
 	return firstNonEmpty(os.Getenv("OPENSUB_API_KEY"), os.Getenv("OS_KEY"))
+}
+
+// randomTokenID returns a 32-char hex identifier for imported subtitle
+// files (also the serving id; never a filesystem path).
+func randomTokenID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func setOpenSubtitlesAPIKey(apiKey string) {

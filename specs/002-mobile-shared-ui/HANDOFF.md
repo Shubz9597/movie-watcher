@@ -57,6 +57,16 @@ Every piece fails. The `\\?\` long-path prefix on the torrent data directory (`d
 
 ## 6. Recently completed
 
+- **M1.4.7 VLC migration review pass (2026-09-14, session 2)**:
+  - **Android native compile PASS**: full `assembleDebug` APK with libvlc-all 3.6.2 packaged, built against a real SDK 36 install; every LibVLC API verified via `javap` on the actual AAR (delays are MICROSECONDS; `addSlave(int,String,boolean)` boolean; `interfaces.IMedia$Slave(int,int,String)`; JSArray is org.json-based with its own generic `toList()`).
+  - **iOS header-verified**: the pinned MobileVLCKit 3.7.3 archive was downloaded and its SHA256 matched the setup script; delegate methods (`mediaPlayerTimeChanged:`/`mediaPlayerStateChanged:` — notification-style) and `videoSubTitlesNames`/`videoSubTitlesIndexes` (with the "s") confirmed against real headers; misspelled properties fixed; VLCSupport shim retained via a call in MainViewController; actual `xcodebuild` PENDING (needs Mac).
+  - **Authoritative control state**: `tracksUpdate` now carries `selectedAudioTrackId`/`selectedSubtitleTrackId` through bridge → controller (optimistic echo + authoritative overwrite, late subscribers get current state) → UI chips; `buffering` events carry the native progress estimate into the loading screen.
+  - **UI**: seek bar scrubs locally and commits ONE seek on release (no per-tick seek storm); subtitle sheets keep language selector, retry/error states, upload size checks, timing reset buttons.
+  - **Resource bounds**: imported-subtitle retention (7-day expiry + 64 MiB cap, oldest evicted, `TestSubtitleImportRetention`); media-source audit confirmed fresh-reader-per-request + deferred close releases abandoned range readers; sidecar reads stay 4 MiB-bounded; VLC direct sessions spawn no FFmpeg.
+  - **Fixed pre-existing test breakage**: Prowlarr search stubs in `contract_torrents_test.go` never served `/api/v1/indexer` (the committed service scopes searches by it) — stubs updated, full httpapi suite green.
+
+- **M1.4.7 VLC playback layer (2026-09-14, CODE COMPLETE — native builds UNVERIFIED)**: MobileVLCKit (iOS) / LibVLC 3.6.2 (Android) render BEHIND the Capacitor WebView; the whole control surface is shared React (`src/mobile/NativePlayerControls.tsx`): poster loading screen, tap controls, seek bar, ±10s, play/pause, subtitle sheet (embedded + torrent + OpenSubtitles + local import via POST /subtitles/import), audio sheet, independent audio/subtitle timing (±0.1s steps), skip-intro chip (server GET /skip-segments — Go port of the desktop TheIntroDB/AniSkip logic). Embedded track selection + runtime subtitle slaves = no playback restart. Server: new `ios-vlc`/`android-vlc` profiles direct-play the ORIGINAL file (embedded tracks preserved); `PLAYBACK_TRANSCODE_MODE=off` (Radxa) refuses auto-transcode (`transcode_disabled`) while keeping ffprobe + remux fallback. Device gates: see `docs/mobile-ui/vlc-playback-verification.md` (iOS XCFramework step, seek-on-incomplete-torrent, subtitle switch, server CPU/RAM sampling).
+
 - M1.4 native-mobile foundation: Capacitor shell, session client, native AVPlayer (Swift) + Media3 (Kotlin) plugins, LAN mode, origin settings, connection chip, search page, flash fix
 - M1.3.x playback service: ffprobe inspection, per-indexer Prowlarr search, HLS/fMP4, session lifecycle, pre-buffer fix (2MB before ffprobe)
 - Launch screen: breathing logo + staggered reveal
@@ -108,11 +118,10 @@ TORWATCH_PLAYBACK_FIXTURE_ROOT=  # NOT SET
 
 ## 10. Exact next steps (priority order)
 
-1. **Fix torrent storage** (§4): try `TORRENT_DATA_ROOT=C:\tw-data` in `.env` → Stop → Start → test playback with a well-seeded title
-2. **Add TMDB_API_KEY** to `.env` → real catalog data → real Prowlarr searches
-3. **Restart Prowlarr container** after FlareSolverr proxy fix takes effect
-4. **Test on phone**: search real title → select well-seeded source → Watch → video plays
-5. **Then Radxa**: same Docker containers, same env vars, Tailscale Serve HTTPS
+1. **iOS: `npm run setup:ios-vlc` on the Mac → `cap:open:ios` → xcodebuild** — the only unverified native compile gate; then the device lifecycle matrix in `docs/mobile-ui/vlc-playback-verification.md` (startup/buffering/resume/pause/background/close-during-startup/retry/replacement/rotation)
+2. **Android: install APK on device** (`electron-app/android/app/build/outputs/apk/debug/`) and run the same matrix + subtitle end-to-end (OpenSubtitles → download → attach live; local import; rapid switching; close during download)
+3. **Verify Radxa env**: `docker exec <container> env | grep PLAYBACK` shows `PLAYBACK_TRANSCODE_MODE=off`; measure server CPU/RAM during direct playback (script in the verification doc); confirm no ffmpeg process spawns
+4. **Then Radxa deploy**: same Docker containers, Tailscale Serve HTTPS
 
 ## 11. Commands
 

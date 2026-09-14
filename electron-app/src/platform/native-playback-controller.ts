@@ -49,13 +49,45 @@ export type NativePlaybackState =
   | { state: 'stopped'; playId?: string }
   | { state: 'error'; message: string; playId?: string };
 
+// Embedded stream tracks discovered by the native player after the media is
+// parsed (VLC demuxes the ORIGINAL file, so tracks arrive asynchronously).
+// ids are opaque native track identifiers; -1 never appears in the arrays.
+// The selected* ids are the AUTHORITATIVE player state (-1 = none selected
+// for subtitles); the UI mirrors them instead of guessing.
+export type NativeTrackInfo = { id: number; label?: string; language?: string };
+export type NativeTracksUpdate = {
+  audio: NativeTrackInfo[];
+  subtitles: NativeTrackInfo[];
+  selectedAudioTrackId?: number | null;
+  selectedSubtitleTrackId?: number | null; // -1 = none
+  playId?: string;
+};
+// Buffering truth from the native demuxer (true while frames cannot flow).
+// progress is the native demuxer's 0-100 estimate when reported (Android).
+export type NativeBufferingUpdate = { active: boolean; progress?: number; playId?: string };
+
 export type NativePlaybackBridge = {
   prepare?(title: string, playId: string, posterUrl?: string | null): Promise<void>;
   showError?(message: string, playId: string): Promise<void>;
   play(input: NativePlaybackInput): Promise<void>;
   seek(positionSec: number, playId: string): Promise<void>;
+  // M1.4.7 VLC layer: interactive controls beyond the modal-player baseline.
+  seekBy?(deltaSeconds: number, playId: string): Promise<void>;
+  togglePlayback?(playId: string): Promise<void>;
+  selectAudioTrack?(trackId: number, playId: string): Promise<void>;
+  // null/-1 disables subtitles.
+  selectSubtitleTrack?(trackId: number | null, playId: string): Promise<void>;
+  // Independent A/V timing offsets in SECONDS (positive = later).
+  setSubtitleDelay?(seconds: number, playId: string): Promise<void>;
+  setAudioDelay?(seconds: number, playId: string): Promise<void>;
+  // Runtime subtitle loading: attach a sidecar/external track WITHOUT a
+  // playback restart (VLC playback slave). Returns the native track id when
+  // the player exposes it.
+  loadSubtitle?(input: { url: string; label?: string; language?: string; playId: string }): Promise<number | null>;
   onTime(callback: (update: NativeTimeUpdate) => void): () => void;
   onState(callback: (update: NativePlaybackState) => void): () => void;
+  onTracks?(callback: (update: NativeTracksUpdate) => void): () => void;
+  onBuffering?(callback: (update: NativeBufferingUpdate) => void): () => void;
   dismiss(playId: string): Promise<void>;
   dispose?(): Promise<void>;
 };
@@ -88,6 +120,8 @@ export class NativePlaybackController {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private detachTime: (() => void) | null = null;
   private detachState: (() => void) | null = null;
+  private detachTracks: (() => void) | null = null;
+  private detachBuffering: (() => void) | null = null;
   private terminalFiredGeneration = -1;
   // During teardown the generation is already invalidated, but the FINAL
   // bounded progress write for the dying session must still be allowed.
@@ -98,6 +132,13 @@ export class NativePlaybackController {
 
   private request: PlayerRequest | null = null;
   private listeners = new Set<(event: NativeTerminalEvent) => void>();
+  // Last reported embedded-track inventory (bounded UI state, not a cache of
+  // truth: the native player remains authoritative).
+  private currentTracks: NativeTracksUpdate = { audio: [], subtitles: [] };
+  private trackListeners = new Set<(update: NativeTracksUpdate) => void>();
+  private bufferingListeners = new Set<(update: NativeBufferingUpdate) => void>();
+  private timeListeners = new Set<(update: NativeTimeUpdate) => void>();
+  private stateListeners = new Set<(state: 'playing' | 'paused') => void>();
 
   constructor(deps: NativeControllerDeps) {
     this.client = deps.client;
@@ -109,6 +150,107 @@ export class NativePlaybackController {
   onStopped(callback: (event: NativeTerminalEvent) => void): () => void {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
+  }
+
+  /** Embedded audio/subtitle tracks from the native player (current + live). */
+  subscribeTracks(listener: (update: NativeTracksUpdate) => void): () => void {
+    this.trackListeners.add(listener);
+    listener(this.currentTracks);
+    return () => this.trackListeners.delete(listener);
+  }
+
+  /** Fan out the authoritative track snapshot (late subscribers get state). */
+  private publishTracks(): void {
+    for (const listener of Array.from(this.trackListeners)) {
+      try {
+        listener(this.currentTracks);
+      } catch {
+        // listener errors must not re-enter the lifecycle
+      }
+    }
+  }
+
+  /** Native buffering state (loader-in-the-video truth). */
+  subscribeBuffering(listener: (update: NativeBufferingUpdate) => void): () => void {
+    this.bufferingListeners.add(listener);
+    return () => this.bufferingListeners.delete(listener);
+  }
+
+  // --- Interactive player controls (VLC layer). Every method is a no-op
+  // unless the CURRENT play owns playback; stale UI can never touch a
+  // replaced session.
+
+  /** Relative seek (±10s skip support). */
+  seekBy(deltaSeconds: number): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.seekBy?.(deltaSeconds, this.currentPlayId).catch(() => {});
+  }
+
+  /** Absolute seek (web seek bar). */
+  seekTo(positionSec: number): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.seek(positionSec, this.currentPlayId).catch(() => {});
+  }
+
+  /** Play/pause toggle (native VLC, no restart). */
+  togglePlayback(): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.togglePlayback?.(this.currentPlayId).catch(() => {});
+  }
+
+  /** Live clock for the web control surface. */
+  subscribeTime(listener: (update: NativeTimeUpdate) => void): () => void {
+    this.timeListeners.add(listener);
+    return () => this.timeListeners.delete(listener);
+  }
+
+  /** Native playing/paused state for the web control surface. */
+  subscribeState(listener: (state: 'playing' | 'paused') => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  selectAudioTrack(trackId: number): void {
+    if (this.currentPlayId === '') return;
+    // Optimistic echo: the next tracksUpdate carries the authoritative value;
+    // reflecting the intent immediately keeps the sheet honest on slow hops.
+    this.currentTracks = { ...this.currentTracks, selectedAudioTrackId: trackId };
+    this.publishTracks();
+    this.bridge.selectAudioTrack?.(trackId, this.currentPlayId).catch(() => {});
+  }
+
+  selectSubtitleTrack(trackId: number | null): void {
+    if (this.currentPlayId === '') return;
+    const nativeId = trackId ?? -1;
+    this.currentTracks = { ...this.currentTracks, selectedSubtitleTrackId: nativeId };
+    this.publishTracks();
+    this.bridge.selectSubtitleTrack?.(nativeId, this.currentPlayId).catch(() => {});
+  }
+
+  /** Independent audio/subtitle timing offsets in seconds (positive = later). */
+  setSubtitleDelay(seconds: number): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.setSubtitleDelay?.(seconds, this.currentPlayId).catch(() => {});
+  }
+
+  setAudioDelay(seconds: number): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.setAudioDelay?.(seconds, this.currentPlayId).catch(() => {});
+  }
+
+  /**
+   * Runtime subtitle load (OpenSubtitles / torrent sidecar / local import).
+   * No playback restart: the native player attaches the track live. Returns
+   * the native track id when the player reports it, else null.
+   */
+  async loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null> {
+    const playId = this.currentPlayId;
+    if (!playId || !this.bridge.loadSubtitle) {
+      throw new Error('Start playback before loading a subtitle.');
+    }
+    const result = await this.bridge.loadSubtitle({ ...input, playId });
+    if (playId !== this.currentPlayId) throw new Error('Playback changed before the subtitle finished loading.');
+    return result;
   }
 
   /**
@@ -181,6 +323,9 @@ export class NativePlaybackController {
     this.lastDurationSec = 0;
     this.currentPlayId = playId;
 
+    // Native playback can emit playing/error before play() resolves.
+    this.attachBridgeListeners(generation);
+
     // Media attaches IMMEDIATELY; resume is confirmed concurrently and seeks
     // afterwards so a slow lookup never delays playback start.
     try {
@@ -222,7 +367,6 @@ export class NativePlaybackController {
       return session;
     }
 
-    this.attachBridgeListeners(generation);
     this.startHeartbeat(generation);
     void this.confirmResumeAndSeek(generation);
     return session;
@@ -243,6 +387,10 @@ export class NativePlaybackController {
     this.disposed = true;
     await this.teardown(/* notify */ false);
     this.listeners.clear();
+    this.trackListeners.clear();
+    this.bufferingListeners.clear();
+    this.timeListeners.clear();
+    this.stateListeners.clear();
     await this.bridge.dispose?.();
   }
 
@@ -298,6 +446,15 @@ export class NativePlaybackController {
     // bounded progress write (the repair-pass contract: pause persists —
     // periodic heartbeats alone do not cover a user who pauses and walks
     // away with the device).
+    if (update.state === 'paused' || update.state === 'playing') {
+      for (const listener of Array.from(this.stateListeners)) {
+        try {
+          listener(update.state);
+        } catch {
+          // listener errors must not re-enter the lifecycle
+        }
+      }
+    }
     if (update.state === 'paused') {
       void this.flushProgress(generation, this.request).catch(() => {});
     }
@@ -345,17 +502,48 @@ export class NativePlaybackController {
   private attachBridgeListeners(generation: number): void {
     this.detachTime?.();
     this.detachState?.();
+    this.detachTracks?.();
+    this.detachBuffering?.();
     this.detachTime = this.bridge.onTime((update) => {
       if (generation !== this.generation) return;
       if (!this.eventBelongsToCurrentPlay(update.playId)) return;
       this.lastPositionSec = update.currentTime;
       this.lastDurationSec = update.duration;
+      for (const listener of Array.from(this.timeListeners)) {
+        try {
+          listener(update);
+        } catch {
+          // listener errors must not re-enter the lifecycle
+        }
+      }
     });
     this.detachState = this.bridge.onState((update) => {
       if (generation !== this.generation) return;
       if (!this.eventBelongsToCurrentPlay(update.playId)) return;
       this.handleBridgeState(update, generation);
     });
+    this.detachTracks = this.bridge.onTracks?.((update) => {
+      if (generation !== this.generation) return;
+      if (!this.eventBelongsToCurrentPlay(update.playId)) return;
+      this.currentTracks = {
+        audio: update.audio,
+        subtitles: update.subtitles,
+        selectedAudioTrackId: update.selectedAudioTrackId ?? null,
+        selectedSubtitleTrackId: update.selectedSubtitleTrackId ?? null,
+      };
+      this.publishTracks();
+    }) ?? null;
+    this.detachBuffering = this.bridge.onBuffering?.((update) => {
+      if (generation !== this.generation) return;
+      if (!this.eventBelongsToCurrentPlay(update.playId)) return;
+      for (const listener of Array.from(this.bufferingListeners)) {
+        try {
+          listener(update);
+        } catch {
+          // listener errors must not re-enter the lifecycle
+        }
+      }
+    }) ?? null;
   }
 
   private startHeartbeat(generation: number): void {
@@ -382,8 +570,13 @@ export class NativePlaybackController {
     this.stopHeartbeat();
     this.detachTime?.();
     this.detachState?.();
+    this.detachTracks?.();
+    this.detachBuffering?.();
     this.detachTime = null;
     this.detachState = null;
+    this.detachTracks = null;
+    this.detachBuffering = null;
+    this.currentTracks = { audio: [], subtitles: [] };
   }
 
   /** One bounded progress write. Stale sessions never write. */
