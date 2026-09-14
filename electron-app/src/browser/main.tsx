@@ -130,7 +130,7 @@ function useHashRouter() {
       window.removeEventListener('popstate', onHashChange);
     };
   }, []);
-  const navigate = useCallback((path: string, params: Record<string, string> = {}) => navigateHash(window, path, params), []);
+  const navigate = useCallback((path: string, params: Record<string, string> = {}, options?: { replace?: boolean }) => navigateHash(window, path, params, options?.replace ?? false), []);
   const goBack = useCallback(() => goBackHash(window), []);
   return { route, navigate, goBack };
 }

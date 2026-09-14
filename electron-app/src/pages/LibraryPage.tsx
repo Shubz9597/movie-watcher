@@ -19,6 +19,7 @@ import { useLibrary, useLibraryState } from '../lib/library-react';
 import type { LibraryController } from '../lib/library-store.ts';
 import { overviewKey, pageKey } from '../lib/library-store.ts';
 import { titleRouteParams } from '../lib/canonical-route';
+import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type {
   LibraryCollection,
   LibraryItemRow,
@@ -35,7 +36,7 @@ const COLLECTION_TABS = [
 
 const SORT_OPTIONS: Array<{ id: LibrarySort; label: string }> = [
   { id: 'recent', label: 'Recently added' },
-  { id: 'title', label: 'Title A“Z' },
+  { id: 'title', label: 'Title A–Z' },
 ];
 
 const SHELF_META: Record<LibraryMediaKind, { label: string; icon: React.ReactNode }> = {
@@ -46,7 +47,7 @@ const SHELF_META: Record<LibraryMediaKind, { label: string; icon: React.ReactNod
 
 const UNAVAILABLE_COPY = 'The library is not available on this server. Update the TorWatch server to sync your collection.';
 
-type Navigate = (path: string, params?: Record<string, string>) => void;
+type Navigate = (path: string, params?: Record<string, string>, options?: { replace?: boolean }) => void;
 
 // Canonical-id \u2014 route mapping moved to lib/canonical-route.ts (M4.2) so the
 // recommendation row and the Library share one implementation.
@@ -66,15 +67,23 @@ type LibraryPageProps = {
 
 export function LibraryPage({ navigate, provider, collection, sort = 'recent' }: LibraryPageProps) {
   const library = useLibrary();
+  // Tab + sort switches REPLACE the history entry (device pass): the native
+  // back gesture then leaves the page directly instead of replaying every tab
+  // the user toggled (which flashed the previous collection and re-probed the
+  // store — the "ghost loader").
   const setCollection = (next: LibraryCollection) => {
-    navigate('library', { collection: next, sort });
+    navigate('library', { collection: next, sort }, { replace: true });
   };
   const setSort = (next: LibrarySort) => {
-    navigate('library', { collection, sort: next });
+    navigate('library', { collection, sort: next }, { replace: true });
   };
+
+  // Application-wide pull-to-refresh: refetch the collection overview.
+  const { indicator: pullIndicator } = usePullToRefresh(() => library?.loadOverview(collection, sort));
 
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
+      {pullIndicator}
       <div className="flex items-center justify-between gap-3">
         <h1 className="type-section-title text-white">Library</h1>
         <SortButton current={sort} onSelect={setSort} />
@@ -133,7 +142,7 @@ function SortButton({ current, onSelect }: { current: LibrarySort; onSelect: (so
               }`}
             >
               {option.label}
-              {option.id === current ? <span aria-hidden="true">\u2713</span> : null}
+              {option.id === current ? <span aria-hidden="true" className="font-label text-[#ffc285]">{'\u2713'}</span> : null}
             </button>
           ))}
         </div>
@@ -147,7 +156,7 @@ function UnavailableState({ onRetry }: { onRetry?: () => void }) {
     <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-6 text-center" role="status">
       <p className="type-body text-white/75">{UNAVAILABLE_COPY}</p>
       <p className="type-secondary mt-2 text-white/50">
-        Your collection is kept on the TorWatch server ” nothing is stored on this device.
+        Your collection is kept on the TorWatch server — nothing is stored on this device.
       </p>
       {onRetry ? (
         <button
@@ -215,11 +224,11 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
 
   return (
     <div className="mt-4 space-y-8">
-      <p className="text-xs text-white/45" role="note">
-        {overview.stale
-          ? 'Offline ” showing the last data this server sent you. It refreshes automatically on reconnect.'
-          : 'Synced with your TorWatch server'}
-      </p>
+      {overview.stale ? (
+        <p className="text-xs text-white/45" role="note">
+          Offline — showing the last data this server sent you. It refreshes automatically on reconnect.
+        </p>
+      ) : null}
       {overview.shelves.map((shelf) => (
         <ServerShelfRow
           key={shelf.kind}
@@ -447,20 +456,24 @@ type LibraryCategoryPageProps = {
 
 export function LibraryCategoryPage({ navigate, provider, collection, kind, sort = 'recent' }: LibraryCategoryPageProps) {
   const library = useLibrary();
-  const title = `${collection === 'watch-later' ? 'Watch Later' : 'Favourites'} ” ${SHELF_META[kind].label}`;
+  const title = `${collection === 'watch-later' ? 'Watch Later' : 'Favourites'} — ${SHELF_META[kind].label}`;
   const setSort = (next: LibrarySort) => {
-    navigate('library-category', { collection, kind, sort: next });
+    navigate('library-category', { collection, kind, sort: next }, { replace: true });
   };
+
+  // Application-wide pull-to-refresh: refetch this collection's grid.
+  const { indicator: pullIndicator } = usePullToRefresh(() => library?.loadPage(collection, kind, sort));
 
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
+      {pullIndicator}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => navigate('library', { collection, sort })}
           className={`inline-flex min-h-11 items-center rounded-full text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
         >
-          \u2039 Library
+          {'\u2039'} Library
         </button>
         <SortButton current={sort} onSelect={setSort} />
       </div>
@@ -513,11 +526,11 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
 
   return (
     <>
-      <p className="mt-2 text-xs text-white/45" role="note">
-        {page.stale
-          ? `Offline ” showing the last synced data · ${page.total} ${page.total === 1 ? 'title' : 'titles'}`
-          : `Synced with your TorWatch server · ${page.total} ${page.total === 1 ? 'title' : 'titles'}`}
-      </p>
+      {page.stale ? (
+        <p className="mt-2 text-xs text-white/45" role="note">
+          Offline — showing the last synced data · {page.total} {page.total === 1 ? 'title' : 'titles'}
+        </p>
+      ) : null}
       <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
         {page.items.map((row) => (
           <LibraryCardButton key={row.canonicalId} row={row} navigate={navigate} label={`Open ${row.title}${row.metadataAvailable ? '' : ' (metadata unavailable)'}`} />

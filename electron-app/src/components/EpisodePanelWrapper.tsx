@@ -769,7 +769,7 @@ export default function EpisodePanel({
   const episodeArtwork = (episode: EpisodeSummary) => episode.stillUrl || null;
 
   return (
-    <aside className="min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl [overflow-wrap:anywhere]">
+    <aside className="min-w-0 max-w-full overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl [overflow-wrap:anywhere]">
       {artworkHydrating ? (
         <span className="sr-only" role="status" aria-live="polite">Loading episode artwork.</span>
       ) : null}
@@ -803,7 +803,10 @@ export default function EpisodePanel({
           ) : null}
           {seasonError ? <div className="px-5 py-4 text-sm text-red-100" role="alert">{seasonError}</div> : null}
 
-          <div className="app-scrollbar max-h-[580px] overflow-y-auto">
+          {/* Mobile: the list is the block — most of the viewport height with
+              contained scrolling, so the page no longer scroll-jacks while
+              browsing episodes. Desktop keeps the bounded card. */}
+          <div className="app-scrollbar max-h-[64dvh] min-h-[36dvh] overflow-y-auto overscroll-contain sm:max-h-[580px]">
             {episodes.map((episode) => {
               const artwork = episodeArtwork(episode);
               const isUpcoming = isEpisodeUpcoming(episode);
@@ -935,7 +938,7 @@ export default function EpisodePanel({
           ) : null}
 
           {torrentRows && displayedTorrentRows.length > 0 ? (
-            <div className="app-scrollbar max-h-[580px] overflow-y-auto">
+          <div className="app-scrollbar max-h-[64dvh] min-h-[36dvh] overflow-y-auto overscroll-contain sm:max-h-[580px]">
               <div className="flex items-center justify-between gap-3 px-5 py-3">
                 <p className="type-secondary font-medium text-white/65">Available sources</p>
                 {nextEpisode ? (

@@ -9,6 +9,7 @@ import { getVodBase } from '../lib/api-client';
 import { getDeviceId } from '../lib/device-id';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
+import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { ContinueCarousel } from '../components/shared/ContinueCarousel';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
 
@@ -35,6 +36,13 @@ type ContinueItem = {
 // Module-level cache to prevent duplicate calls across React Strict Mode re-renders
 const continueFetchCache = new Map<string, { timestamp: number; data: ContinueItem[] }>();
 const CONTINUE_CACHE_TTL = 5000; // 5 seconds cache
+// Bumped by pull-to-refresh so the ContinueRail refetches instead of using
+// its short-lived cache.
+let continueCacheEpoch = 0;
+function invalidateContinueCache(): void {
+  continueCacheEpoch += 1;
+  continueFetchCache.clear();
+}
 const catalogRequests = {
   movies: null as AbortController | null,
   tv: null as AbortController | null,
@@ -80,12 +88,13 @@ function preloadBackdrop(url?: string | null): Promise<void> {
   });
 }
 
-function ContinueRail({ navigate, variant = 'rail', onResumeRequest }: {
+function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey = 0 }: {
   navigate: (path: string, params?: Record<string, string>) => void;
   // 'rail' is the characterized desktop presentation (default); 'carousel'
   // is the accepted compact alpha presentation (ContinueCarousel).
   variant?: 'rail' | 'carousel';
   onResumeRequest?: (item: ContinueItem) => void;
+  reloadKey?: number;
 }) {
   const subjectId = useMemo(getDeviceId, []);
   const [rows, setRows] = useState<ContinueItem[]>([]);
@@ -96,9 +105,9 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest }: {
 
   useEffect(() => {
     if (!subjectId || fetchingRef.current) return;
-    
-    // Check cache first
-    const cached = continueFetchCache.get(subjectId);
+
+    // Check cache first (pull-to-refresh bumps the epoch to force a refetch)
+    const cached = reloadKey === 0 ? continueFetchCache.get(subjectId) : undefined;
     if (cached && Date.now() - cached.timestamp < CONTINUE_CACHE_TTL) {
       console.log('[ContinueRail] Using cached data');
       setRows(cached.data);
@@ -133,7 +142,7 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest }: {
       ctrl.abort();
       fetchingRef.current = false;
     };
-  }, [subjectId]);
+  }, [subjectId, reloadKey]);
 
   const dismiss = async (it: ContinueItem) => {
     const itemKey = `${it.seriesId}-${it.season}-${it.episode}`;
@@ -524,8 +533,18 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
     void loadTitlePage();
   };
 
+  // Application-wide pull-to-refresh (device pass): refetches the trending
+  // catalog shelves AND the continue rail (cache invalidated).
+  const [continueReloadKey, setContinueReloadKey] = useState(0);
+  const { indicator: pullIndicator } = usePullToRefresh(() => {
+    invalidateContinueCache();
+    setContinueReloadKey((key) => key + 1);
+    setCatalogReloadToken((token) => token + 1);
+  });
+
   return (
     <div>
+      {pullIndicator}
       <section
         className="relative isolate min-h-[520px] overflow-hidden border-b border-white/[0.08] md:min-h-[610px]"
         onMouseEnter={() => setFeaturedPointerPaused(true)}
@@ -683,7 +702,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
       </section>
 
       <div className="mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
-        <ContinueRail navigate={navigate} variant={continueVariant} onResumeRequest={onResumeRequest} />
+        <ContinueRail navigate={navigate} variant={continueVariant} onResumeRequest={onResumeRequest} reloadKey={continueReloadKey} />
 
         {/* Recommendations follow personal progress, before the broader
             rotating catalog shelves. Items remain mixed across title types. */}

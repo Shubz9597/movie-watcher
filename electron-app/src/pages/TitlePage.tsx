@@ -22,6 +22,7 @@ import {
 import { getSavedResumeSource } from '../lib/services/continue-service';
 import { useLibraryState } from '../lib/library-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
+import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type { ResumeSourceContext, SavedResumeSource } from '../lib/types';
 
 function IMDbMark({ className = '' }: { className?: string }) {
@@ -50,8 +51,11 @@ export default function TitlePage({
   const [seasons, setSeasons] = useState<any[]>([]);
   const [initialSeason, setInitialSeason] = useState(1);
   const [initialEpisodes, setInitialEpisodes] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+const [loading, setLoading] = useState(true);
+const [loadError, setLoadError] = useState<string | null>(null);
+// Application-wide pull-to-refresh: bumped to refetch the whole detail.
+const [refreshKey, setRefreshKey] = useState(0);
+const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) => key + 1));
   const [isAnimeMovie, setIsAnimeMovie] = useState(false);
   const [episodeArtworkHydrating, setEpisodeArtworkHydrating] = useState(false);
   const [readyHeroUrl, setReadyHeroUrl] = useState('');
@@ -565,7 +569,7 @@ export default function TitlePage({
     return () => {
       cancelled = true;
     };
-  }, [kind, id, params?.malId, requestedSeason, requestedEpisode, isTmdbBackedAnime, tmdbAnimeMediaKind]);
+  }, [kind, id, params?.malId, requestedSeason, requestedEpisode, isTmdbBackedAnime, tmdbAnimeMediaKind, refreshKey]);
 
   if (loading) {
     return (
@@ -653,6 +657,7 @@ export default function TitlePage({
 
   return (
     <div className="relative isolate min-h-screen px-5 pb-14 pt-6 md:px-8 lg:px-12">
+      {pullIndicator}
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[#0a0a0a]">
         {heroBackground ? (
           <img

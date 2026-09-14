@@ -1,7 +1,8 @@
 // Router adapter to make Next.js router work in Electron
 import { createContext, useContext, ReactNode } from 'react';
 
-type NavigateFunction = (path: string, params?: Record<string, string>) => void;
+export type NavigateOptions = { /** Replace the current history entry instead of pushing (tab/sort switches: the device back gesture then leaves the page, never walk back through tabs). */ replace?: boolean };
+type NavigateFunction = (path: string, params?: Record<string, string>, options?: NavigateOptions) => void;
 
 const RouterContext = createContext<{ navigate: NavigateFunction; goBack?: () => void } | null>(null);
 

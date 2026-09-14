@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -31,8 +32,8 @@ const (
 	defaultSourceTTL = 20 * time.Minute
 	maxSearches      = 4
 	maxTorrentSize   = 10 << 20
-	searchBudget    = 20 * time.Second
-	indexerBudget   = 8 * time.Second
+	searchBudget     = 20 * time.Second
+	indexerBudget    = 8 * time.Second
 )
 
 var (
@@ -76,9 +77,9 @@ type prowlarrLanguage struct {
 }
 
 type prowlarrQuery struct {
-	query   string
-	kind    Kind
-	request Request
+	query     string
+	kind      Kind
+	request   Request
 	indexerID int
 }
 
@@ -309,10 +310,10 @@ func (s *Service) enabledIndexers(ctx context.Context) ([]int, error) {
 		return nil, fmt.Errorf("list prowlarr indexers: status %d", resp.StatusCode)
 	}
 	var indexers []struct {
-		ID int `json:"id"`
-		Enable bool `json:"enable"`
+		ID       int    `json:"id"`
+		Enable   bool   `json:"enable"`
 		Protocol string `json:"protocol"`
-		Priority int `json:"priority"`
+		Priority int    `json:"priority"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&indexers); err != nil {
 		return nil, fmt.Errorf("decode prowlarr indexers: %w", err)
@@ -530,16 +531,59 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 			results = packs
 		}
 	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].languageRank != results[j].languageRank {
-			return results[i].languageRank > results[j].languageRank
+	// Swarm health first (device pass): a badly-seeded release must never
+	// outrank a healthy one merely because its title carries an explicit
+	// language tag. torrentHealthScore makes health the dominant term and
+	// language a bounded bonus; dead/unknown swarms (seeders<=0) are dropped
+	// entirely when enough known-alive alternatives exist.
+	alive := 0
+	for _, result := range results {
+		if result.Seeders > 0 {
+			alive++
 		}
-		if results[i].Seeders != results[j].Seeders {
-			return results[i].Seeders > results[j].Seeders
+	}
+	if alive >= 5 && alive < len(results) {
+		kept := results[:0]
+		for _, result := range results {
+			if result.Seeders > 0 {
+				kept = append(kept, result)
+			}
+		}
+		results = kept
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		si, sj := torrentHealthScore(results[i]), torrentHealthScore(results[j])
+		if si != sj {
+			return si > sj
 		}
 		return results[i].Size < results[j].Size
 	})
 	return results
+}
+
+// torrentHealthScore ranks one release. Health: log-scaled seeders (10 per
+// doubling) plus up to 5 points for a healthy seeder/leecher ratio. Language:
+// a bounded bonus (+25 for an explicitly matched original language, +12 for
+// an untagged release that plausibly retains it, −100 for disallowed
+// dubs/multi-language) — enough to break near-ties, never enough to rescue a
+// near-dead swarm.
+func torrentHealthScore(result Result) float64 {
+	score := 0.0
+	if result.Seeders > 0 {
+		score += math.Log2(float64(result.Seeders+1)) * 10.0
+		if total := result.Seeders + result.Leechers; total > 0 {
+			score += (float64(result.Seeders) / float64(total)) * 5.0
+		}
+	}
+	switch {
+	case result.languageRank >= 2:
+		score += 25
+	case result.languageRank == 1:
+		score += 12
+	default:
+		score -= 100
+	}
+	return score
 }
 
 func resultIdentityKeys(result Result) []string {
@@ -568,11 +612,8 @@ func resultIdentityKeys(result Result) []string {
 }
 
 func betterResult(candidate, current Result) bool {
-	if candidate.languageRank != current.languageRank {
-		return candidate.languageRank > current.languageRank
-	}
-	if candidate.Seeders != current.Seeders {
-		return candidate.Seeders > current.Seeders
+	if candidateScore, currentScore := torrentHealthScore(candidate), torrentHealthScore(current); candidateScore != currentScore {
+		return candidateScore > currentScore
 	}
 	if (candidate.MagnetURI != "") != (current.MagnetURI != "") {
 		return candidate.MagnetURI != ""

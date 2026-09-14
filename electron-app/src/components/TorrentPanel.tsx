@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
 import { Button } from './ui/button';
-import { Loader2, Play, RotateCcw } from 'lucide-react';
+import { ArrowDown, ArrowUp, Loader2, Play, RotateCcw } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
 import { getVodBase } from '../lib/api-client';
 import { resolveTorrentSource, searchMovieTorrents, searchAnimeTorrents } from '../lib/services/torrent-search-service';
@@ -337,7 +337,7 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside className="min-w-0 max-w-full max-h-[60vh] overflow-y-auto rounded-xl border border-white/[0.12] bg-[#0a0a0a]/75 backdrop-blur-2xl app-scrollbar [overflow-wrap:anywhere]">
+    <aside className="flex min-w-0 max-w-full max-h-[min(78dvh,760px)] flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] lg:max-h-none lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
           <p className="type-secondary font-medium text-white/65">Playback</p>
@@ -356,10 +356,12 @@ export default function TorrentPanel({
         </Button>
       </div>
 
+      <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+
       {loading && torrents === null && (
         <div className="flex items-center justify-center gap-2 px-5 py-14 text-sm text-white/60" role="status" aria-live="polite">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Finding sources---
+          Finding sources…
         </div>
       )}
 
@@ -442,11 +444,19 @@ export default function TorrentPanel({
                             </div>
                             <div className="type-caption text-numeric flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
                               <span>{t.size ? formatBytes(t.size) : 'Unknown size'}</span>
-                              <span className={typeof t.seeders === 'number' ? 'text-emerald-300/70' : 'text-white/40'}>
-                                {typeof t.seeders === 'number' ? `--- ${t.seeders}` : '--- Unknown seeders'}
-                              </span>
+                              {typeof t.seeders === 'number' ? (
+                                <span className="inline-flex items-center gap-1 text-emerald-300/80" title={`${t.seeders} seeders`}>
+                                  <ArrowUp className="h-3 w-3" aria-hidden="true" />
+                                  {t.seeders}
+                                </span>
+                              ) : (
+                                <span className="text-white/40">No seed data</span>
+                              )}
                               {typeof t.leechers === 'number' && (
-                                <span className="text-[#ffc285]/70">--- {t.leechers}</span>
+                                <span className="inline-flex items-center gap-1 text-[#ffc285]/80" title={`${t.leechers} peers`}>
+                                  <ArrowDown className="h-3 w-3" aria-hidden="true" />
+                                  {t.leechers}
+                                </span>
                               )}
                               {t.indexer && t.indexer !== '-' && <span>{t.indexer}</span>}
                               {t.publishDate && <span>{formatDate(t.publishDate)}</span>}
@@ -479,7 +489,7 @@ export default function TorrentPanel({
                                 className="min-h-11 rounded-full bg-white px-5 text-black hover:bg-white/85"
                               >
                                 <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
-                                {busyActionId === playActionId ? 'Opening---' : 'Play'}
+                                {busyActionId === playActionId ? 'Opening…' : 'Play'}
                               </Button>
                             )}
                           </div>
@@ -573,25 +583,9 @@ export default function TorrentPanel({
               );
             })}
           </ul>
-
-          {/* WF06: fixed Play footer --- the explicit playback action for the
-              selected source. Disabled without a selection; never auto-plays. */}
-          <div className="sticky bottom-0 border-t border-white/[0.1] bg-[#0c0c0c]/95 px-5 py-3 backdrop-blur-xl sm:hidden">
-            <Button
-                type="button"
-                onClick={() => {
-                  const selected = displayedTorrents.find((row) => actionKey(row) === selectedKey);
-                  if (selected) void playInMpv(selected);
-                }}
-                disabled={!selectedKey || Boolean(busyActionId)}
-                className="min-h-11 w-full rounded-full bg-white px-4 text-black hover:bg-white/85"
-              >
-                <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
-                {busyActionId ? 'Opening---' : selectedKey ? 'Play selected source' : 'Select a source to play'}
-              </Button>
-          </div>
         </>
       )}
+      </div>
     </aside>
   );
 }

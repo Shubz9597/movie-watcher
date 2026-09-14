@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -287,6 +288,14 @@ func GetClientFor(cat string) *torrent.Client {
 	cfg.DisableUTP = true
 	cfg.Seed = false
 	cfg.NoUpload = false
+	// TORRENT_LISTEN_PORT overrides the library's fixed default listen port
+	// (42069). 0 = pick a random free port — used by the test binaries so
+	// they never collide with a running backend. Unset keeps the default.
+	if raw := strings.TrimSpace(os.Getenv("TORRENT_LISTEN_PORT")); raw != "" {
+		if port, err := strconv.Atoi(raw); err == nil && port >= 0 && port <= 65535 {
+			cfg.ListenPort = port
+		}
+	}
 
 	c, err := torrent.NewClient(cfg)
 	if err != nil {

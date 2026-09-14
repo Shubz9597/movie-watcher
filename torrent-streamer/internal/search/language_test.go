@@ -124,12 +124,44 @@ func TestNormalizeFiltersAndRanksAudioProfile(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("len(normalize(English profile)) = %d, want 2", len(results))
 	}
-	if results[0].Title != "Example English Audio 1080p" {
-		t.Errorf("normalize(English profile)[0].Title = %q, want explicitly tagged English release first", results[0].Title)
+	// Swarm health FIRST (device pass): the untagged release (which retains
+	// the original language by convention) with 20 seeders outranks the
+	// explicitly tagged English release with only 5 — language is a bounded
+	// bonus, never a rescue for a weak swarm.
+	if results[0].Title != "Example 1080p" {
+		t.Errorf("normalize(English profile)[0].Title = %q, want the healthier untagged release first", results[0].Title)
 	}
 	for _, result := range results {
 		if strings.Contains(result.Title, "Hindi") {
 			t.Errorf("normalize(English profile) retained disallowed result %q", result.Title)
 		}
+	}
+
+	// Language still breaks near-ties: an explicitly tagged English release
+	// with 20 seeders outranks an untagged release with 5.
+	nearTie := []prowlarrRelease{
+		{Title: "Example 1080p", Indexer: "test", InfoHash: "4444444444444444444444444444444444444444", Seeders: 5},
+		{Title: "Example English Audio 1080p", Indexer: "test", InfoHash: "5555555555555555555555555555555555555555", Seeders: 20},
+	}
+	ranked := service.normalize(request, nearTie)
+	if len(ranked) != 2 {
+		t.Fatalf("len(normalize(near-tie)) = %d, want 2", len(ranked))
+	}
+	if ranked[0].Title != "Example English Audio 1080p" {
+		t.Errorf("normalize(near-tie)[0].Title = %q, want the tagged release when health is comparable", ranked[0].Title)
+	}
+
+	// Dead swarms are dropped when enough known-alive alternatives exist.
+	dead := []prowlarrRelease{
+		{Title: "Example alive 1 1080p", Indexer: "test", InfoHash: "6666666666666666666666666666666666666666", Seeders: 30},
+		{Title: "Example alive 2 1080p", Indexer: "test", InfoHash: "7777777777777777777777777777777777777777", Seeders: 25},
+		{Title: "Example alive 3 1080p", Indexer: "test", InfoHash: "8888888888888888888888888888888888888888", Seeders: 20},
+		{Title: "Example alive 4 1080p", Indexer: "test", InfoHash: "9999999999999999999999999999999999999999", Seeders: 15},
+		{Title: "Example alive 5 1080p", Indexer: "test", InfoHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Seeders: 10},
+		{Title: "Example dead 1080p", Indexer: "test", InfoHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Seeders: 0},
+	}
+	swept := service.normalize(request, dead)
+	if len(swept) != 5 {
+		t.Fatalf("len(normalize(dead)) = %d, want 5 (dead swarm filtered)", len(swept))
 	}
 }

@@ -6,6 +6,7 @@ import { getTitlesByGenre, getMovies, getTvShows, getAnimeByGenre, getAnimeList,
 import { selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
 import { CatalogFilters } from '../components/shared/CatalogFilters';
+import { usePullToRefresh } from '../lib/pull-to-refresh';
 
 export default function SeeAllPage({
   navigate,
@@ -129,8 +130,15 @@ export default function SeeAllPage({
     return () => observer.disconnect();
   }, [error, hasMore, items.length, loading]);
 
+  // Application-wide pull-to-refresh: refetch the collection from page one.
+  const { indicator: pullIndicator } = usePullToRefresh(() => {
+    setPage(1);
+    setReloadToken((token) => token + 1);
+  });
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-10 px-5 py-10 md:px-8 md:py-14 xl:px-12">
+      {pullIndicator}
       <div className="flex flex-col gap-6 border-b border-white/[0.08] pb-10 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="type-secondary mb-3 font-medium text-white/65">Browse library</p>
