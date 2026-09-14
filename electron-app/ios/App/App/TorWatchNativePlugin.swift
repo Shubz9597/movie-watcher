@@ -100,8 +100,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             // VLCMediaPlayer(options:) library bypasses shared-library loggers,
             // so the player uses the shared library and takes media-level
             // options instead. Remove once playback is verified on device.
-            VLCLibrary.shared().debugLogging = true
-            VLCLibrary.shared().debugLoggingLevel = 3
+            // (Modern non-deprecated logger API: libvlc always reports errors.)
+            VLCLibrary.shared().loggers = [VLCConsoleLogger()]
             let player = VLCMediaPlayer()
             player.delegate = self
 
@@ -313,8 +313,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         ])
     }
 
-    func mediaPlayerStateChanged(_ aNotificationName: Notification!) {
-        guard !terminalSent, let player = aNotificationName?.object as? VLCMediaPlayer,
+    func mediaPlayerStateChanged(_ aNotificationName: Notification) {
+        guard !terminalSent, let player = aNotificationName.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
         switch player.state {
         case .buffering:
@@ -370,16 +370,16 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private func emitTracks() {
         guard let player = mediaPlayer else { return }
         var audio: [[String: Any]] = []
-        let audioNames = player.audioTrackNames ?? []
-        let audioIndexes = player.audioTrackIndexes ?? []
+        let audioNames = player.audioTrackNames
+        let audioIndexes = player.audioTrackIndexes
         for (index, name) in audioNames.enumerated() where index < audioIndexes.count {
             guard let id = (audioIndexes[index] as? NSNumber)?.int32Value, id >= 0 else { continue }
             audio.append(["id": id, "label": name])
         }
         var subs: [[String: Any]] = []
         // Header-verified names: videoSubTitlesNames / videoSubTitlesIndexes.
-        let subNames = player.videoSubTitlesNames ?? []
-        let subIndexes = player.videoSubTitlesIndexes ?? []
+        let subNames = player.videoSubTitlesNames
+        let subIndexes = player.videoSubTitlesIndexes
         for (index, name) in subNames.enumerated() where index < subIndexes.count {
             guard let id = (subIndexes[index] as? NSNumber)?.int32Value, id >= 0 else { continue }
             subs.append(["id": id, "label": name])
