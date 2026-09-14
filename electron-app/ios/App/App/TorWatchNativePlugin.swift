@@ -266,10 +266,25 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private func applyVideoScale(_ player: VLCMediaPlayer) {
         if videoScaleMode == "fill" {
             if let size = surfaceView?.bounds.size, size.width > 1, size.height > 1 {
-                player.videoCropGeometry = aspectRatioString(size)
+                setCropGeometry(aspectRatioString(size), on: player)
             }
         } else {
-            player.videoCropGeometry = nil // libvlc default: aspect-fit letterbox
+            setCropGeometry(nil, on: player) // libvlc default: aspect-fit letterbox
+        }
+    }
+
+    /// MobileVLCKit's `videoCropGeometry` is a raw `char *` property: bridge a
+    /// Swift String through a C copy that libvlc's var system takes ownership
+    /// of (var_SetString duplicates), then release our buffer immediately.
+    private func setCropGeometry(_ geometry: String?, on player: VLCMediaPlayer) {
+        guard let geometry = geometry else {
+            player.videoCropGeometry = nil
+            return
+        }
+        geometry.withCString { pointer in
+            let copy = strdup(pointer)
+            player.videoCropGeometry = copy
+            free(copy)
         }
     }
 
