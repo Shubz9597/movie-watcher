@@ -104,7 +104,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 "--verbose=2",
             ])
             // libvlc logs only reach the console through an explicit logger.
-            VLCLibrary.sharedLibrary().loggers = [VLCConsoleLogger()]
+            VLCLibrary.shared().loggers = [VLCConsoleLogger()]
             player.delegate = self
 
             let surface = UIView(frame: rootVC.view.bounds)
