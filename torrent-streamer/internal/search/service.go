@@ -32,9 +32,52 @@ const (
 	defaultSourceTTL = 20 * time.Minute
 	maxSearches      = 4
 	maxTorrentSize   = 10 << 20
-	searchBudget     = 20 * time.Second
-	indexerBudget    = 8 * time.Second
+	// Latency is acceptable in exchange for completeness: renowned slow
+	// indexers (Nyaa via FlareSolverr commonly needs 10s+) must not be cut
+	// off mid-search.
+	searchBudget  = 35 * time.Second
+	indexerBudget = 14 * time.Second
 )
+
+// indexerTrust is a bounded reputation bonus for renowned sources (user
+// preference: YTS for movies, Nyaa.si/SubsPlease for anime, plus the other
+// established general trackers). Matched as normalized substrings of the
+// indexer name Prowlarr reports. The bonus breaks near-ties between similar
+// swarm health — it can never rescue a dead release over a healthy one.
+var indexerTrust = map[string]float64{
+	"yts":            12,
+	"nyaa":           12,
+	"subsplease":     12,
+	"tokyotoshokan":  10,
+	"eztv":           8,
+	"piratebay":      8,
+	"1337x":          8,
+	"rarbg":          6,
+	"torrentgalaxy":  6,
+	"magnetdownload": 4,
+}
+
+// indexerTrustBonus maps the raw indexer string to its reputation bonus.
+func indexerTrustBonus(indexer string) float64 {
+	var normalized strings.Builder
+	for _, r := range indexer {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			normalized.WriteRune(r)
+		} else if r >= 'A' && r <= 'Z' {
+			normalized.WriteRune(r + 32)
+		}
+	}
+	name := normalized.String()
+	if name == "" {
+		return 0
+	}
+	for token, bonus := range indexerTrust {
+		if strings.Contains(name, token) {
+			return bonus
+		}
+	}
+	return 0
+}
 
 var (
 	hexHashPattern    = regexp.MustCompile(`(?i)^[a-f0-9]{40}$`)
@@ -587,8 +630,9 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 // doubling) plus up to 5 points for a healthy seeder/leecher ratio. Language:
 // a bounded bonus (+25 for an explicitly matched original language, +12 for
 // an untagged release that plausibly retains it, −100 for disallowed
-// dubs/multi-language) — enough to break near-ties, never enough to rescue a
-// near-dead swarm.
+// dubs/multi-language). Source reputation (indexerTrust) adds up to +12 for
+// renowned sources — breaking near-ties in favor of YTS/Nyaa-class trackers
+// without ever rescuing a near-dead swarm.
 func torrentHealthScore(result Result) float64 {
 	score := 0.0
 	if result.Seeders > 0 {
@@ -605,7 +649,7 @@ func torrentHealthScore(result Result) float64 {
 	default:
 		score -= 100
 	}
-	return score
+	return score + indexerTrustBonus(result.Indexer)
 }
 
 func resultIdentityKeys(result Result) []string {

@@ -204,3 +204,34 @@ func newTestService(t *testing.T, baseURL string) *Service {
 	}
 	return service
 }
+
+// Source reputation: at equal swarm health, renowned sources (YTS for
+// movies, Nyaa.si/SubsPlease for anime) outrank unknown indexers; trust
+// never rescues a weaker release with a much smaller swarm.
+func TestIndexerTrustBreaksNearTies(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, "http://127.0.0.1:9696")
+	request := Request{Kind: KindMovie, Title: "Example", OriginalLanguage: "en"}
+	releases := []prowlarrRelease{
+		{Title: "Example 1080p", Indexer: "SomeUnknownIndexer", InfoHash: "1111111111111111111111111111111111111111", Seeders: 40},
+		{Title: "Example 1080p", Indexer: "YTS", InfoHash: "2222222222222222222222222222222222222222", Seeders: 40},
+	}
+	results := service.normalize(request, releases)
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	if results[0].Indexer != "YTS" {
+		t.Errorf("first result indexer = %q, want renowned YTS at equal health", results[0].Indexer)
+	}
+
+	// Trust is bounded: a much healthier swarm from an unknown source wins.
+	releases = []prowlarrRelease{
+		{Title: "Example 1080p", Indexer: "SomeUnknownIndexer", InfoHash: "3333333333333333333333333333333333333333", Seeders: 500},
+		{Title: "Example 1080p", Indexer: "YTS", InfoHash: "4444444444444444444444444444444444444444", Seeders: 30},
+	}
+	results = service.normalize(request, releases)
+	if results[0].Indexer != "SomeUnknownIndexer" {
+		t.Errorf("first result indexer = %q, want the 500-seeder unknown source (trust cannot beat 16x health)", results[0].Indexer)
+	}
+}

@@ -9,9 +9,19 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 var errProviderUnavailable = errors.New("catalog: provider unavailable")
+
+// Transient egress failures (ISP peering drops, provider 5xx bursts, the
+// documented "sometimes TMDb results do not load" flake) get ONE bounded
+// retry: cheap for the 99% clean path, and it removes the majority of the
+// user-visible "content error" flashes without any VPN machinery. 429 keeps
+// its dedicated rate-limit error; 404 is authoritative and never retried.
+func isTransientProviderError(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
+}
 
 // fetchJSON performs one provider HTTP call, mapping status codes to catalog
 // errors: 404 → ErrNotFound, 429 → ErrRateLimited, other 4xx/5xx → transport
@@ -34,6 +44,28 @@ func postJSON(ctx context.Context, client *http.Client, endpoint string, payload
 }
 
 func doProviderRequest(ctx context.Context, client *http.Client, newRequest func() (*http.Request, error), target any) error {
+	err := doProviderRequestOnce(ctx, client, newRequest, target)
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	// One bounded retry for transient failures. ErrNotFound/ErrRateLimited
+	// are authoritative answers and are returned as-is.
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrRateLimited) {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return err
+	case <-time.After(400 * time.Millisecond):
+	}
+	retryErr := doProviderRequestOnce(ctx, client, newRequest, target)
+	if retryErr != nil && !errors.Is(retryErr, ErrNotFound) && !errors.Is(retryErr, ErrRateLimited) {
+		return fmt.Errorf("%w (after one retry: %v)", err, retryErr)
+	}
+	return retryErr
+}
+
+func doProviderRequestOnce(ctx context.Context, client *http.Client, newRequest func() (*http.Request, error), target any) error {
 	req, err := newRequest()
 	if err != nil {
 		return fmt.Errorf("create provider request: %w", err)
