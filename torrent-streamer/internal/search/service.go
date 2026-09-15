@@ -30,13 +30,13 @@ import (
 const (
 	defaultCacheTTL  = 3 * time.Minute
 	defaultSourceTTL = 20 * time.Minute
-	maxSearches      = 4
+	maxSearches      = 10
 	maxTorrentSize   = 10 << 20
 	// Latency is acceptable in exchange for completeness: renowned slow
-	// indexers (Nyaa via FlareSolverr commonly needs 10s+) must not be cut
-	// off mid-search.
-	searchBudget  = 35 * time.Second
-	indexerBudget = 14 * time.Second
+	// indexers (Nyaa via FlareSolverr + VPN commonly needs 10-20s) must not
+	// be cut off mid-search.
+	searchBudget  = 90 * time.Second
+	indexerBudget = 30 * time.Second
 )
 
 // indexerTrust is a bounded reputation bonus for renowned sources (user
