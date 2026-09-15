@@ -8,6 +8,8 @@ import { usePlatform } from '../platform/PlatformProvider';
 import { findAnimeIMDbId, getMovie as getTmdbMovie, getTv as getTmdbTv } from '../lib/services/tmdb-service';
 import { getTvSeason, getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
 import { bffEpisodes, bffTitleDetail } from '../lib/services/catalog-bff';
+import { getVodBase } from '../lib/api-client';
+import { getDeviceId } from '../lib/device-id';
 import { getCatalogSource } from '../lib/catalog-source';
 import { getAnime as getAniListAnime } from '../lib/services/anilist-service';
 import { getAnime as getJikanAnime } from '../lib/services/jikan-service';
@@ -578,6 +580,34 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       cancelled = true;
     };
   }, [kind, id, params?.malId, requestedSeason, requestedEpisode, isTmdbBackedAnime, tmdbAnimeMediaKind, refreshKey]);
+
+  // Taste signal (v2 recommendation engine): a bounded fire-and-forget
+  // "opened title" ping. The server deduplicates per device+title; failures
+  // are invisible by contract.
+  const visitedCanonicalId = !id
+    ? null
+    : kind === 'movie'
+      ? `tmdb:movie:${id}`
+      : kind === 'tv'
+        ? `tmdb:tv:${id}`
+        : isTmdbBackedAnime
+          ? `tmdb:${tmdbAnimeMediaKind}:${id}`
+          : `anilist:${id}`;
+  useEffect(() => {
+    if (!visitedCanonicalId) return;
+    const visitedKind = kind === 'anime' && !isTmdbBackedAnime ? 'anime' : kind;
+    fetch(`${getVodBase()}/v1/taste/visited`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subjectId: getDeviceId(),
+        canonicalId: visitedCanonicalId,
+        kind: visitedKind,
+      }),
+      signal: AbortSignal.timeout(8000),
+      keepalive: true,
+    }).catch(() => {});
+  }, [visitedCanonicalId, kind, isTmdbBackedAnime, tmdbAnimeMediaKind]);
 
   if (loading) {
     return (

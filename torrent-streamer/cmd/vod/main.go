@@ -30,12 +30,38 @@ import (
 	"torrent-streamer/internal/scoring"
 	"torrent-streamer/internal/search"
 	"torrent-streamer/internal/skipsegments"
+	"torrent-streamer/internal/taste"
 	"torrent-streamer/internal/torrentx"
 	"torrent-streamer/internal/watch"
 	"torrent-streamer/migrations"
 )
 
 // startPlaybackSweeper expires playback sessions on a bounded interval.
+
+// tasteAdapter maps the taste store's concrete signal type onto the
+// recommendation engine's interface (keeps internal/taste decoupled from
+// internal/recommendations).
+type tasteAdapter struct {
+	store *taste.Store
+}
+
+func (a tasteAdapter) HouseholdSignals(ctx context.Context) ([]recommendations.TasteSignal, error) {
+	signals, err := a.store.HouseholdSignals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]recommendations.TasteSignal, 0, len(signals))
+	for _, signal := range signals {
+		out = append(out, recommendations.TasteSignal{
+			CanonicalID: signal.CanonicalID,
+			Kind:        signal.Kind,
+			Label:       signal.Label,
+			Weight:      signal.Weight,
+			Title:       signal.Title,
+		})
+	}
+	return out, nil
+}
 func startPlaybackSweeper(manager *playback.Manager, interval time.Duration) (stop func()) {
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -109,8 +135,10 @@ func main() {
 
 	// http mux & routes (endpoints are IDENTICAL to your original service)
 	mux := http.NewServeMux()
+	tasteStore := taste.New(db)
 	httpapi.RegisterRoutes(mux)         // /add, /files, /prefetch, /stream, /stats, /buffer/*
 	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external, /subtitles/import
+	httpapi.RegisterTasteRoutes(mux, taste.New(db))
 	mux.HandleFunc("/skip-segments", skipsegments.Handler)
 	httpapi.TorrentSearchHandlers{Service: torrentSearch}.Register(mux)
 	httpapi.IMDbRatingHandlers{Ratings: imdbStore}.Register(mux)
@@ -134,17 +162,35 @@ func main() {
 	}
 	// Recommendations (M4.1): wired ONLY when the household library and a
 	// catalog candidate provider both exist; the capability is advertised only
-	// then (contracts/recommendations-api.md §Negotiation).
+	// then (contracts/recommendations-api.md §Negotiation). The v2 taste
+	// engine: when the taste store is available, scoring uses the household
+	// taste profile (favourites + Watch Later + watch progress + opened
+	// titles); per-seed similar candidates route by namespace (TMDb for
+	// tmdb: seeds, AniList recommendations for anilist: seeds).
 	var recommendationService *recommendations.Service
 	if libraryStore != nil {
 		for _, provider := range catalogProviders {
 			if candidateProvider, ok := provider.(catalog.CandidateProvider); ok {
-				recommendationService = recommendations.New(recommendations.Deps{
+				deps := recommendations.Deps{
 					Library:               libraryStore,
 					Candidates:            recommendations.CatalogCandidates{Provider: candidateProvider},
 					SeedGenres:            recommendations.CatalogSeedGenres{Catalog: catalogService},
+					SeedSimilar:           recommendations.CatalogSeedSimilar{Provider: candidateProvider},
 					CandidateCacheVersion: recommendations.CandidatePoolVersion,
-				})
+				}
+				for _, p := range catalogProviders {
+					if anilistProvider, ok := p.(*catalog.AniList); ok {
+						deps.SeedSimilar = recommendations.NamespaceSeedSimilar{
+							TMDb:    recommendations.CatalogSeedSimilar{Provider: candidateProvider},
+							AniList: recommendations.AniListSeedSimilar{Provider: anilistProvider},
+						}
+						break
+					}
+				}
+				if tasteStore != nil {
+					deps.Taste = tasteAdapter{store: tasteStore}
+				}
+				recommendationService = recommendations.New(deps)
 				break
 			}
 		}

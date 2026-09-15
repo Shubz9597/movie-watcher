@@ -509,6 +509,16 @@ type CandidateProvider interface {
 	// PopularCandidates returns up to limit popular titles ordered by the
 	// provider's popularity (rank = slice position).
 	PopularCandidates(ctx context.Context, limit int) ([]Title, error)
+	// SeedSimilar returns the provider's "more like this" titles for one
+	// media-qualified canonical id (per-seed personalization candidates).
+	SeedSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error)
+}
+
+// SeedSimilarProvider is the narrower interface the recommendation wiring
+// needs for per-seed personalization candidates.
+type SeedSimilarProvider interface {
+	Provider
+	SeedSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error)
 }
 
 type tmdbGenreListResponse struct {
@@ -573,6 +583,60 @@ func (p *TMDb) PopularCandidates(ctx context.Context, limit int) ([]Title, error
 		if len(payload.Results) == 0 {
 			break
 		}
+	}
+	return titles, nil
+}
+
+// SeedSimilar returns the TMDb "recommendations" page for one media-qualified
+// canonical id (the personalization candidates behind the household
+// recommendations). Titles carry genre names so the recommendation scorer can
+// attribute them to seeds without a detail call each.
+func (p *TMDb) SeedSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error) {
+	if p.apiKey == "" {
+		return nil, errProviderUnavailable
+	}
+	mediaType, externalID := splitTMDbExternalID(strings.TrimPrefix(canonicalID, "tmdb:"))
+	if externalID == "" {
+		return nil, ErrNotFound
+	}
+	path := "/3/movie/" + externalID + "/recommendations"
+	if mediaType == "tv" {
+		path = "/3/tv/" + externalID + "/recommendations"
+	}
+	var movieGenres, tvGenres tmdbGenreListResponse
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/movie/list", nil), &movieGenres); err != nil {
+		return nil, err
+	}
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/tv/list", nil), &tvGenres); err != nil {
+		return nil, err
+	}
+	genreName := map[int]string{}
+	for _, genre := range append(movieGenres.Genres, tvGenres.Genres...) {
+		genreName[genre.ID] = genre.Name
+	}
+	var payload tmdbSearchResponse
+	if err := fetchJSON(ctx, p.http, p.endpoint(path, map[string]string{"page": "1"}), &payload); err != nil {
+		return nil, err
+	}
+	titles := make([]Title, 0, limit)
+	for _, result := range payload.Results {
+		if len(titles) >= limit {
+			break
+		}
+		media := result.MediaType
+		if media != "movie" && media != "tv" {
+			media = mediaType // recommendations responses always match the parent media type
+		}
+		title := p.titleFromMedia(media, result.ID,
+			result.Title, result.Name, result.OriginalTitle, result.OriginalName,
+			result.ReleaseDate, result.FirstAirDate, result.Overview,
+			result.PosterPath, result.BackdropPath, result.OriginalLanguage, result.GenreIDs)
+		for _, genreID := range result.GenreIDs {
+			if name, ok := genreName[genreID]; ok && name != "" {
+				title.Genres = append(title.Genres, name)
+			}
+		}
+		titles = append(titles, title)
 	}
 	return titles, nil
 }

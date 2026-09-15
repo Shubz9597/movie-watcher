@@ -208,6 +208,56 @@ func (p *AniList) NamedGenreSection(ctx context.Context, genre string, page int)
 	return titles, payload.Data.Page.PageInfo.LastPage, nil
 }
 
+// SeedSimilar returns AniList's own "recommendations" for one anime — the
+// per-seed personalization candidates for anilist: seeds (TMDb cannot
+// resolve those ids). Recommendations are AniList's community-ranked
+// next-watch titles for this media, mapped onto the shared Title shape.
+func (p *AniList) SeedSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error) {
+	const prefix = "anilist:"
+	if !strings.HasPrefix(canonicalID, prefix) {
+		return nil, ErrNotFound
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(canonicalID, prefix), 10, 64)
+	if err != nil || id <= 0 {
+		return nil, ErrNotFound
+	}
+	var payload struct {
+		Data struct {
+			Media struct {
+				Recommendations struct {
+					Nodes []struct {
+						MediaRecommendation *aniListMedia `json:"mediaRecommendation"`
+					} `json:"nodes"`
+				} `json:"recommendations"`
+			} `json:"Media"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	err = postJSON(ctx, p.http, p.base, map[string]any{
+		"query": "query ($id: Int) { Media(id: $id, type: ANIME) { recommendations(perPage: 12, sort: RATING_DESC) { nodes { mediaRecommendation { ...media } } } } } " + aniListMediaFields,
+		"variables": map[string]any{"id": id},
+	}, &payload)
+	if err != nil {
+		return nil, err
+	}
+	if len(payload.Errors) > 0 {
+		return nil, fmt.Errorf("anilist query failed: %s", payload.Errors[0].Message)
+	}
+	titles := make([]Title, 0, limit)
+	for _, node := range payload.Data.Media.Recommendations.Nodes {
+		if node.MediaRecommendation == nil {
+			continue
+		}
+		titles = append(titles, p.toTitle(*node.MediaRecommendation))
+		if len(titles) >= limit {
+			break
+		}
+	}
+	return titles, nil
+}
+
 func (p *AniList) toTitle(media aniListMedia) Title {
 	title := media.Title.English
 	if title == "" {
