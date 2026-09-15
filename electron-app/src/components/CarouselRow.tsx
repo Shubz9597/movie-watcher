@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import PosterCard from './PosterCard';
+import { LibraryToggle } from './shared/LibraryToggle';
 import type { MovieCard } from '../lib/types';
 
 type Props = {
@@ -17,6 +18,8 @@ type Props = {
   error?: string | null;
   onRetry?: () => void;
   onOpenSettings?: () => void;
+  /** Enables the per-card Watch Later / Favourites toggles. */
+  libraryKind?: 'movie' | 'tv' | 'anime';
 };
 
 export default function CarouselRow({
@@ -33,7 +36,18 @@ export default function CarouselRow({
   error,
   onRetry,
   onOpenSettings,
+  libraryKind,
 }: Props) {
+  // Canonical id for the household library: the catalog id when the provider
+  // supplied one, else the media-qualified form for the row's namespace.
+  const canonicalIdFor = React.useCallback((movie: MovieCard) => {
+    if (movie.catalogId) return movie.catalogId;
+    if (libraryKind === 'anime' && movie.sourceProvider !== 'tmdb') return `anilist:${movie.id}`;
+    if (libraryKind === 'anime' && movie.sourceKind === 'movie') return `tmdb:movie:${movie.id}`;
+    if (libraryKind === 'anime') return `tmdb:tv:${movie.id}`;
+    if (libraryKind === 'tv') return `tmdb:tv:${movie.id}`;
+    return `tmdb:movie:${movie.id}`;
+  }, [libraryKind]);
   const visible = React.useMemo(() => items.slice(0, maxItems), [items, maxItems]);
   const railRef = React.useRef<HTMLUListElement>(null);
   const [scrollState, setScrollState] = React.useState({ previous: false, next: false });
@@ -117,12 +131,22 @@ export default function CarouselRow({
           >
             {visible.map((movie, index) => (
               <li key={`${movie.sourceProvider || 'unknown'}-${movie.sourceKind || 'unknown'}-${movie.id}`} className="carousel-slide">
-                <PosterCard
-                  movie={movie}
-                  rank={index + 1}
-                  onOpen={onOpen}
-                  onPrefetch={onPrefetch}
-                />
+                <div className="relative">
+                  <PosterCard
+                    movie={movie}
+                    rank={index + 1}
+                    onOpen={onOpen}
+                    onPrefetch={onPrefetch}
+                  />
+                  {/* Watch Later / Favourites overlays (libraryKind set):
+                      siblings of the card button — never nested buttons. */}
+                  {libraryKind ? (
+                    <div className="absolute right-2 top-2 z-10 flex gap-1.5">
+                      <LibraryToggle canonicalId={canonicalIdFor(movie)} field="watch-later" />
+                      <LibraryToggle canonicalId={canonicalIdFor(movie)} field="favourites" />
+                    </div>
+                  ) : null}
+                </div>
               </li>
             ))}
             {seeAllHref && navigate ? (

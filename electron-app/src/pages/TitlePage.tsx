@@ -309,6 +309,12 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       setSeasons([{ seasonNumber, name: `Season ${seasonNumber}` }]);
       setInitialSeason(seasonNumber);
       setInitialEpisodes(episodes);
+      // Stills hydration on the BFF path too: `id` IS the AniList id for this
+      // route, and the metadata service falls back to AniList streaming
+      // thumbnails when ani.zip is unavailable.
+      if (episodes.some((episode) => !episode.stillUrl)) {
+        enrichAnimeEpisodeArtwork(Number(id));
+      }
     };
 
     async function load() {

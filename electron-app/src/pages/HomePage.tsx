@@ -698,6 +698,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           onPrefetch={(item) => prefetchItem('movie', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Movies – Trending')}&api=${encodeURIComponent('tmdb:trending:movie')}&kind=movie`}
           navigate={navigate}
+          libraryKind="movie"
         />
 
           <CarouselRow
@@ -712,6 +713,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           onPrefetch={(item) => prefetchItem('tv', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Series – Trending')}&api=${encodeURIComponent('tmdb:trending:tv')}&kind=tv`}
           navigate={navigate}
+          libraryKind="tv"
         />
 
           <CarouselRow
@@ -726,6 +728,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           onPrefetch={(item) => prefetchItem('anime', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Anime – Trending')}&api=${encodeURIComponent('anilist:trending:anime')}&kind=anime`}
           navigate={navigate}
+          libraryKind="anime"
         />
         </div>
       </div>
