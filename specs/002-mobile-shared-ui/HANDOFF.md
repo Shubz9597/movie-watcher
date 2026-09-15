@@ -41,8 +41,8 @@ One shared React UI (electron-app/src/) used by Electron desktop AND mobile via 
 
 ## 6. Gaps before v2 release (priority order)
 
-1. **Skip-intro on device** — chip/timestamps do not behave reliably; debug `/skip-segments` data for real episodes + chip wiring on both platforms.
-2. **Subtitle switching on device** — live track switching (slaves + spuTrack) is inconsistent; needs device logs (enable `VLCLibrary loggers` temporarily) around the switch moment.
+1. **Skip-intro on device** — chip/timestamps do not behave reliably; anime episodes now work server-side (aliases + stills fixed), so this is testable — debug `/skip-segments` data for real episodes + chip wiring on both platforms.
+2. **Subtitle switching on device** — subtitles verified working on device (size tuned via `sub-text-scale=75`); re-verify live track SWITCHING (slaves + spuTrack) with the latest build; if still inconsistent, enable `VLCLibrary loggers` temporarily around the switch moment.
 3. **Android on-device pass** — install debug APK, run the matrix in `docs/mobile-ui/vlc-playback-verification.md` (same as iOS).
 4. **Radxa deployment (NEXT SESSION FOCUS)**: rebuild Docker image with the new Go code, deploy with `PLAYBACK_TRANSCODE_MODE=off`, verify env inside the container, measure CPU/RAM during direct playback (script in the verification doc), confirm no ffmpeg spawns.
 5. **Tailscale Serve HTTPS**: written but never exercised end-to-end; first real use may surface ACL/CLI issues.
