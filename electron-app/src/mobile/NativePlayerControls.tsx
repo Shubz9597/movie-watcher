@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, HeartPulse } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
+import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 
 export type NativeTrackInfo = { id: number; label?: string; language?: string };
 
@@ -131,6 +132,18 @@ export default function NativePlayerControls(props: Props) {
   const [healthSpeed, setHealthSpeed] = useState(0);
   const subtitleOperation = useRef(0);
   const controlsHideTimer = useRef<number | null>(null);
+  // Web-rendered subtitle overlay (v2): sheet-loaded tracks (OpenSubtitles,
+  // torrent sidecars, imports) render as a web overlay with live pinch
+  // resize — VLC's own renderer has no runtime size API, and embedded tracks
+  // stay VLC-rendered at the engine's fixed size.
+  const [overlayCues, setOverlayCues] = useState<SubtitleCue[] | null>(null);
+  const [overlaySize, setOverlaySize] = useState<number>(() => {
+    const saved = Number(window.localStorage.getItem('mw_sub_overlay_px'));
+    return Number.isFinite(saved) && saved >= 12 && saved <= 48 ? saved : 18;
+  });
+  const overlaySizeRef = useRef(overlaySize);
+  overlaySizeRef.current = overlaySize;
+  const pinchGuardRef = useRef(0);
   // Double-tap seek zones: left third rewinds, right third advances.
   const lastTapRef = useRef<{ time: number; x: number } | null>(null);
   const singleTapTimer = useRef<number | null>(null);
@@ -232,6 +245,51 @@ export default function NativePlayerControls(props: Props) {
   const activeSkipSegment = useMemo(() => {
     return skipSegments.find((segment) => time.currentTime >= segment.start && time.currentTime <= segment.end && segment.type === 'intro') ?? null;
   }, [skipSegments, time.currentTime]);
+
+  // --- Web subtitle overlay: the active cue for the current playback time,
+  // derived (not stored) so a 500ms clock tick never misses a cue.
+  const activeOverlayCue = useMemo(() => {
+    if (!overlayCues) return null;
+    return overlayCues.find((cue) => time.currentTime >= cue.start && time.currentTime <= cue.end) ?? null;
+  }, [overlayCues, time.currentTime]);
+
+  // --- Pinch-to-resize on the video surface: two-finger spread adjusts the
+  // overlay font size live and persists per device. A pinch suppresses the
+  // tap gestures for a short guard window afterwards.
+  const pinchRef = useRef<{ dist0: number; size0: number } | null>(null);
+  const touchDist = (touches: React.TouchList): number => {
+    const a = touches[0];
+    const b = touches[1];
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  };
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length === 2) {
+      pinchRef.current = { dist0: touchDist(event.touches), size0: overlaySizeRef.current };
+      if (singleTapTimer.current !== null) {
+        window.clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
+      lastTapRef.current = null;
+    }
+  };
+  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const pinch = pinchRef.current;
+    if (!pinch || event.touches.length < 2) return;
+    const ratio = touchDist(event.touches) / pinch.dist0;
+    const next = Math.round(Math.max(12, Math.min(48, pinch.size0 * ratio)));
+    if (next !== overlaySizeRef.current) {
+      overlaySizeRef.current = next;
+      setOverlaySize(next);
+    }
+  };
+  const handleTouchEnd = () => {
+    if (pinchRef.current) {
+      pinchRef.current = null;
+      pinchGuardRef.current = Date.now() + 400; // ignore trailing taps
+      window.localStorage.setItem('mw_sub_overlay_px', String(overlaySizeRef.current));
+    }
+  };
+
 
   // --- Torrent telemetry (desktop TorrentHealthMenu parity) ---
   // Polls GET /buffer/info on the same 4s cadence as the desktop player,
@@ -350,6 +408,8 @@ export default function NativePlayerControls(props: Props) {
    *    (on-screen ±10s buttons were removed in favor of this)
    */
   const handleSurfaceTap = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // Trailing taps right after a pinch are gesture remnants — ignore.
+    if (Date.now() < pinchGuardRef.current) return;
     const x = event.clientX;
     const now = Date.now();
     const last = lastTapRef.current;
@@ -375,6 +435,21 @@ export default function NativePlayerControls(props: Props) {
     if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
   }, []);
 
+  // Sheet-loaded tracks render as the WEB overlay (pinch-resizable); embedded
+  // tracks stay VLC-rendered. Choosing one kind always clears the other so
+  // subtitles never render twice.
+  const applyOverlayFromUrl = async (url: string, hint: SubtitleFormat): Promise<void> => {
+    const res = await fetch(url, { headers: { Accept: 'text/vtt, text/plain, */*' }, signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error(`subtitle download failed (${res.status})`);
+    const raw = await res.text();
+    const cues = parseSubtitles(raw, hint);
+    if (cues.length === 0) throw new Error('That subtitle file has no readable cues.');
+    setOverlayCues(cues);
+    setSelectedEmbeddedSub(null);
+    setActiveSubtitleUrl(url);
+    player.selectSubtitleTrack(null); // never double-render over the overlay
+  };
+
   const chooseCatalogSubtitle = async (track: CatalogSubtitleTrack) => {
     if (loadingSubtitleUrl || importing) return;
     const operation = ++subtitleOperation.current;
@@ -382,10 +457,8 @@ export default function NativePlayerControls(props: Props) {
     setLoadingSubtitleUrl(track.url);
     setSubtitleError('');
     try {
-      await player.loadSubtitle({ url, label: track.label || track.fileName, language: track.lang });
       if (operation !== subtitleOperation.current) return;
-      setActiveSubtitleUrl(track.url);
-      setSelectedEmbeddedSub(null);
+      await applyOverlayFromUrl(url, (track.format || 'vtt') as SubtitleFormat);
     } catch {
       if (operation === subtitleOperation.current) setSubtitleError('The subtitle could not be loaded. Try again or choose another file.');
     } finally {
@@ -394,15 +467,17 @@ export default function NativePlayerControls(props: Props) {
   };
 
   const chooseEmbeddedSubtitle = (track: NativeTrackInfo) => {
+    setOverlayCues(null);
+    setActiveSubtitleUrl(null);
     player.selectSubtitleTrack(track.id);
     setSelectedEmbeddedSub(track.id);
-    setActiveSubtitleUrl(null);
   };
 
   const disableSubtitles = () => {
+    setOverlayCues(null);
+    setActiveSubtitleUrl(null);
     player.selectSubtitleTrack(null);
     setSelectedEmbeddedSub(null);
-    setActiveSubtitleUrl(null);
   };
 
   const chooseEmbeddedAudio = (track: NativeTrackInfo) => {
@@ -428,12 +503,12 @@ export default function NativePlayerControls(props: Props) {
       body.append('file', file);
       const res = await fetch(`${origin}/subtitles/import`, { method: 'POST', body, signal: AbortSignal.timeout(30000) });
       if (!res.ok) throw new Error('The subtitle could not be imported. Check the file and try again.');
-      const data = (await res.json()) as { url?: string; fileName?: string; error?: string };
+      const data = (await res.json()) as { url?: string; fileName?: string; format?: string; error?: string };
       if (!res.ok || !data.url) {
         throw new Error(data.error ?? 'The subtitle could not be imported.');
       }
       if (operation !== subtitleOperation.current || origin !== getVodBase()) return;
-      await player.loadSubtitle({ url: `${origin}${data.url}`, label: data.fileName ?? file.name });
+      await applyOverlayFromUrl(`${origin}${data.url}`, (data.format || 'vtt') as SubtitleFormat);
       if (operation !== subtitleOperation.current) return;
       setActiveSubtitleUrl(data.url);
       setSelectedEmbeddedSub(null);
@@ -484,11 +559,30 @@ export default function NativePlayerControls(props: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] select-none bg-transparent" onPointerUp={handleSurfaceTap}>
+    <div
+      className="fixed inset-0 z-[60] touch-none select-none bg-transparent"
+      onPointerUp={handleSurfaceTap}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+    >
       <BufferingLoader title={title} logoUrl={logoUrl} visible={!hasVideo} progress={buffering.progress} />
       <div className={`native-rebuffer${showRebuffering ? ' native-rebuffer--visible' : ''}`} role={showRebuffering ? 'status' : undefined} aria-label="Buffering" aria-hidden={!showRebuffering}>
         <LoaderCircle aria-hidden="true" />
       </div>
+      {/* Web-rendered subtitle overlay (sheet-loaded tracks): pinch anywhere
+          on the video to resize — the size persists per device. */}
+      {hasVideo && activeOverlayCue ? (
+        <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-all duration-200" style={{ bottom: controlsVisible || activeSheet !== 'none' ? '9.5rem' : '3rem' }}>
+          <span
+            className="whitespace-pre-line rounded bg-black/55 px-3 py-1 text-center leading-snug text-white [text-shadow:_0_1px_3px_rgb(0_0_0/90%)]"
+            style={{ fontSize: `${overlaySize}px` }}
+          >
+            {activeOverlayCue.text}
+          </span>
+        </div>
+      ) : null}
       {/* Top bar — safe-area aware so the close button never sits under the
           Dynamic Island / notch in either orientation. */}
       <div

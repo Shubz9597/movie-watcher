@@ -61,9 +61,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // drawable; "fill" center-crops the source to the drawable's aspect so the
     // video covers the display (never stretched).
     private var videoScaleMode: String = "fit"
-    // Initial sidecar subtitles attach as soon as the media opens (VLC slaves
-    // need a live demuxer; they never force a restart).
-    private var pendingSubtitleURLs: [URL] = []
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var rotationObserver: NSObjectProtocol?
@@ -82,13 +79,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         let seekTo = call.getDouble("seekTo")
-        var sidecars: [URL] = []
-        for item in call.getArray("subtitles") ?? [] {
-            guard let dict = item as? [String: Any],
-                  let sidecarString = dict["url"] as? String,
-                  let sidecarURL = URL(string: sidecarString) else { continue }
-            sidecars.append(sidecarURL)
-        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let bridge = self.bridge, let rootVC = bridge.viewController else {
@@ -100,7 +90,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             self.teardown()
             self.playId = newPlayId
             self.terminalSent = false
-            self.pendingSubtitleURLs = sidecars
 
             // Playback verified on device: the temporary shared-library
             // diagnostic logging is retired, so the player uses a PRIVATE
@@ -399,7 +388,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             notifyListeners("buffering", data: ["active": true, "playId": playId])
         case .playing:
             applyPendingSeek(player)
-            attachPendingSubtitles()
             notifyListeners("buffering", data: ["active": false, "playId": playId])
             notifyListeners("playbackState", data: ["state": "playing", "playId": playId])
             emitTracks()
@@ -417,9 +405,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 "playId": playId,
             ])
         case .esAdded:
-            // New elementary streams (or an attached subtitle) settled: report
-            // the inventory and flush pending initial sidecars.
-            attachPendingSubtitles()
+            // New elementary streams (or an attached subtitle) settled.
             emitTracks()
         default:
             break
@@ -434,15 +420,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let duration = Double(player.media?.length.intValue ?? 0)
         let upper = duration > 0 ? duration : Double(Int32.max)
         player.time = VLCTime(int: Int32(max(0, min(upper, seconds * 1000))))
-    }
-
-    private func attachPendingSubtitles() {
-        guard let player = mediaPlayer, !pendingSubtitleURLs.isEmpty else { return }
-        let remaining = pendingSubtitleURLs
-        pendingSubtitleURLs = []
-        for url in remaining {
-            player.addPlaybackSlave(url, type: .subtitle, enforce: false)
-        }
     }
 
     private func emitTracks() {
@@ -513,7 +490,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         subtitleFiles.removeAll()
         surfaceView?.removeFromSuperview()
         surfaceView = nil
-        pendingSubtitleURLs = []
         makeWebViewTransparent(false)
         if TorWatchPlaybackState.videoAttached {
             requestOrientation(false)

@@ -128,10 +128,6 @@ class TorWatchNativePlugin : Plugin() {
         }
         val title = call.getString("title") ?: "TorWatch"
         val seekTo: Double? = call.getDouble("seekTo")
-        val sidecars: List<String> = call.getArray("subtitles")
-            ?.toList<Any>()
-            ?.mapNotNull { item -> (item as? JSONObject)?.optString("url")?.takeIf { it.isNotBlank() } }
-            ?: emptyList()
 
         // Replacement safety: tear the previous player down BEFORE creating
         // the new one; late events from it are ignored via terminalSent.
@@ -220,14 +216,10 @@ class TorWatchNativePlugin : Plugin() {
 
         val media = Media(newLibVlc, Uri.parse(url))
         media.setHWDecoderEnabled(true, false)
-        // Initial sidecars (session contract offers) attach as slaves.
-        for (sidecar in sidecars) {
-            try {
-                media.addSlave(IMedia.Slave(IMedia.Slave.Type.Subtitle, 0, sidecar))
-            } catch (ignored: Exception) {
-                // A malformed sidecar never breaks video playback.
-            }
-        }
+        // Session sidecar offers are NOT attached as slaves: the web layer
+        // renders sheet-loaded subtitles itself (pinch-resizable overlay),
+        // and auto-attached slaves would double-render under the overlay.
+        // The web layer still asks for embedded spu tracks via setSpuTrack.
         player.media = media
         media.release()
         player.attachViews(layout, null, true, true)
