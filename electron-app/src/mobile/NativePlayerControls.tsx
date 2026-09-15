@@ -22,6 +22,8 @@ export type NativePlayerControlsSurface = {
   selectSubtitleTrack(trackId: number | null): void;
   setVideoScale(mode: 'fit' | 'fill'): void;
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null>;
+  /** Embedded-subtitle text scale (% of default) — engine recreate at position. */
+  setEmbeddedSubtitleScale(percent: number): void;
   subscribeTime(listener: (update: { currentTime: number; duration: number }) => void): () => void;
   subscribeState(listener: (state: 'playing' | 'paused') => void): () => void;
   subscribeTracks(listener: (update: {
@@ -151,6 +153,8 @@ export default function NativePlayerControls(props: Props) {
   activeSheetRef.current = activeSheet;
   const controlsVisibleRef = useRef(controlsVisible);
   controlsVisibleRef.current = controlsVisible;
+  const selectedEmbeddedSubRef = useRef<number | null>(null);
+  selectedEmbeddedSubRef.current = selectedEmbeddedSub;
 
   const progress = time.duration > 0 ? ((scrubTo ?? time.currentTime) / time.duration) * 100 : 0;
 
@@ -287,6 +291,12 @@ export default function NativePlayerControls(props: Props) {
       pinchRef.current = null;
       pinchGuardRef.current = Date.now() + 400; // ignore trailing taps
       window.localStorage.setItem('mw_sub_overlay_px', String(overlaySizeRef.current));
+      // Embedded subs scale via the same gesture: one engine recreate at the
+      // current position when an embedded track is actually selected.
+      if (selectedEmbeddedSubRef.current !== null) {
+        const percent = Math.round(75 * (overlaySizeRef.current / 18));
+        player.setEmbeddedSubtitleScale(Math.max(25, Math.min(200, percent)));
+      }
     }
   };
 

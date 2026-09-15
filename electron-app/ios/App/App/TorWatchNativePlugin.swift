@@ -48,6 +48,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         CAPPluginMethod(name: "setSubtitleDelay", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setAudioDelay", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVideoScale", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSubtitleScale", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPlaybackOrientation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "loadSubtitle", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise),
@@ -61,6 +62,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // drawable; "fill" center-crops the source to the drawable's aspect so the
     // video covers the display (never stretched).
     private var videoScaleMode: String = "fit"
+    // Current media + subtitle text scale (% of default), kept so the engine
+    // can be recreated in place when the user pinch-resizes embedded subs.
+    private var currentMediaURL: URL?
+    private var currentSubTextScale: Int = 75
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var rotationObserver: NSObjectProtocol?
@@ -79,67 +84,78 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         let seekTo = call.getDouble("seekTo")
+        // Subtitle text scale (%) from the device preference (pinch on the
+        // video persists it); applied to the freshly created engine.
+        let requestedScale = Int(call.getDouble("subTextScale") ?? Double(currentSubTextScale))
+        currentSubTextScale = max(25, min(200, requestedScale))
+        currentMediaURL = url
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let bridge = self.bridge, let rootVC = bridge.viewController else {
                 call.reject("The player surface is unavailable.")
                 return
             }
-            // Replacement safety: tear the previous player down BEFORE creating
-            // the new one; late events from it are ignored via terminalSent.
-            self.teardown()
-            self.playId = newPlayId
-            self.terminalSent = false
-
-            // Playback verified on device: the temporary shared-library
-            // diagnostic logging is retired, so the player uses a PRIVATE
-            // library again — which gives clean control over libvlc options.
-            // sub-text-scale = % of default subtitle size (75 = a touch
-            // smaller than default for phone screens).
-            let player = VLCMediaPlayer(options: [
-                "--audio-time-stretch",
-                "--network-caching=4000", // LAN stream of a possibly-incomplete torrent
-                "--sub-text-scale=75",
-            ])
-            player.delegate = self
-
-            let surface = UIView(frame: rootVC.view.bounds)
-            surface.backgroundColor = .black
-            surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            // Index 0: BEHIND the WebView. The WebView becomes transparent
-            // while the surface is attached (restored on teardown).
-            rootVC.view.insertSubview(surface, at: 0)
-            self.surfaceView = surface
-            self.makeWebViewTransparent(true)
-
-            let media = VLCMedia(url: url)
-            player.media = media
-            player.drawable = surface
-
-            TorWatchPlaybackState.videoAttached = true
-            self.requestOrientation(true)
-            self.applyVideoScale(player)
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-            try? AVAudioSession.sharedInstance().setActive(true)
-            UIApplication.shared.isIdleTimerDisabled = true
-            self.backgroundObserver = NotificationCenter.default.addObserver(
-                forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                if self?.mediaPlayer?.isPlaying == true { self?.mediaPlayer?.pause() }
-            }
-            // Fill mode crops to the DRAWABLE's aspect ratio: recompute when
-            // the device rotates or the window resizes (tablet multitasking).
-            self.rotationObserver = NotificationCenter.default.addObserver(
-                forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                guard let self = self, let player = self.mediaPlayer else { return }
-                self.applyVideoScale(player)
-            }
-            self.mediaPlayer = player
-            self.pendingSeek = seekTo
-            player.play()
+            self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId)
             call.resolve()
         }
+    }
+
+    /// Creates the VLC player + surface for [url] and starts playback. Shared
+    /// by play() (fresh start) and setSubtitleScale() (in-place engine
+    /// recreation when embedded subtitles are active and the user pinch-
+    /// resizes — libvlc has no runtime text-scale API, so the engine rebuilds
+    /// at the current position with a ~1s hiccup).
+    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String) {
+        // Replacement safety: tear the previous player down BEFORE creating
+        // the new one; late events from it are ignored via terminalSent.
+        teardown()
+        playId = newPlayId
+        terminalSent = false
+
+        // sub-text-scale = % of default subtitle size (user-tunable via the
+        // pinch gesture; 75 = a touch smaller than default for phones).
+        let player = VLCMediaPlayer(options: [
+            "--audio-time-stretch",
+            "--network-caching=4000", // LAN stream of a possibly-incomplete torrent
+            "--sub-text-scale=\(currentSubTextScale)",
+        ])
+        player.delegate = self
+
+        let surface = UIView(frame: rootVC.view.bounds)
+        surface.backgroundColor = .black
+        surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // Index 0: BEHIND the WebView. The WebView becomes transparent
+        // while the surface is attached (restored on teardown).
+        rootVC.view.insertSubview(surface, at: 0)
+        surfaceView = surface
+        makeWebViewTransparent(true)
+
+        let media = VLCMedia(url: url)
+        player.media = media
+        player.drawable = surface
+
+        TorWatchPlaybackState.videoAttached = true
+        requestOrientation(true)
+        applyVideoScale(player)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        UIApplication.shared.isIdleTimerDisabled = true
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            if self?.mediaPlayer?.isPlaying == true { self?.mediaPlayer?.pause() }
+        }
+        // Fill mode crops to the DRAWABLE's aspect ratio: recompute when
+        // the device rotates or the window resizes (tablet multitasking).
+        rotationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self, let player = self.mediaPlayer else { return }
+            self.applyVideoScale(player)
+        }
+        mediaPlayer = player
+        pendingSeek = seekTo
+        player.play()
     }
 
     @objc func seek(_ call: CAPPluginCall) {
@@ -296,6 +312,37 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let landscape = call.getBool("landscape") ?? true
         TorWatchPlaybackState.videoAttached = landscape
         requestOrientation(landscape)
+        call.resolve()
+    }
+
+    /// Embedded-subtitle text scale (% of default, 25..200). Applied by
+    /// recreating the engine at the current position — libvlc has no runtime
+    /// text-scale API, so this carries a ~1s hiccup and only fires when
+    /// embedded tracks are actually active (the web overlay resizes live).
+    @objc func setSubtitleScale(_ call: CAPPluginCall) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.setSubtitleScale(call) }; return }
+        let percent = max(25, min(200, Int(call.getDouble("percent") ?? 75)))
+        guard let requestPlayId = call.getString("playId"), requestPlayId == playId,
+              let url = currentMediaURL else {
+            call.resolve()
+            return
+        }
+        if percent == currentSubTextScale {
+            call.resolve()
+            return
+        }
+        currentSubTextScale = percent
+        let positionMs = mediaPlayer?.time.intValue ?? 0
+        // Same session continues server-side: no terminal event, just an
+        // in-place engine rebuild at the current position (playback resumes).
+        teardown()
+        playId = requestPlayId
+        terminalSent = false
+        guard let bridge = self.bridge, let rootVC = bridge.viewController else {
+            call.resolve()
+            return
+        }
+        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId)
         call.resolve()
     }
 

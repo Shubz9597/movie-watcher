@@ -36,10 +36,13 @@ export interface TorWatchNativePlugin {
     subtitles: Array<{ url: string; language?: string; label?: string; default?: boolean }>;
     seekTo?: number;
     playId: string;
+    // Embedded-subtitle text scale (% of default) from the device preference.
+    subTextScale?: number;
   }): Promise<void>;
   seek(options: { positionSec: number; playId: string }): Promise<void>;
   seekBy?(options: { deltaSeconds: number; playId: string }): Promise<void>;
   togglePlayback?(options: { playId: string }): Promise<void>;
+  setSubtitleScale?(options: { percent: number; playId: string }): Promise<void>;
   selectAudioTrack?(options: { trackId: number; playId: string }): Promise<void>;
   selectSubtitleTrack?(options: { trackId: number | null; playId: string }): Promise<void>;
   setSubtitleDelay?(options: { seconds: number; playId: string }): Promise<void>;
@@ -55,6 +58,16 @@ export interface TorWatchNativePlugin {
 }
 
 export type PluginListenerHandle = { remove: () => Promise<void> | void };
+
+/** Embedded-subtitle text scale preference (% of default), per device. */
+export function readEmbeddedScalePref(): number {
+  try {
+    const saved = Number(window.localStorage.getItem('mw_sub_embedded_scale'));
+    return Number.isFinite(saved) && saved >= 25 && saved <= 200 ? saved : 75;
+  } catch {
+    return 75;
+  }
+}
 
 export function isNativeCapacitor(): boolean {
   const capacitor = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
@@ -159,7 +172,12 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
         subtitles: input.subtitles,
         seekTo: input.seekTo,
         playId: input.playId,
+        subTextScale: readEmbeddedScalePref(),
       });
+    },
+    async setSubtitleScale(percent: number, playId: string) {
+      if (currentPlayId !== playId) return;
+      await plugin.setSubtitleScale?.({ percent, playId });
     },
     async seek(positionSec: number, playId: string) {
       if (currentPlayId !== playId) return;
@@ -319,6 +337,10 @@ export class NativePlayer implements PlayerPort {
 
   setVideoScale(mode: 'fit' | 'fill'): void {
     this.controller.setVideoScale(mode);
+  }
+
+  setEmbeddedSubtitleScale(percent: number): void {
+    this.controller.setEmbeddedSubtitleScale(percent);
   }
 
   setPlaybackOrientation(landscape: boolean): void {

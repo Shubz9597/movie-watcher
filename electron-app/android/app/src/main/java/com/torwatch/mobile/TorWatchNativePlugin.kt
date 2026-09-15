@@ -76,6 +76,11 @@ class TorWatchNativePlugin : Plugin() {
     private var videoLayout: VLCVideoLayout? = null
     private var playId: String = ""
     private var terminalSent = false
+    // Current media + subtitle text scale (% of default), kept so the engine
+    // can be recreated in place when the user pinch-resizes embedded subs.
+    private var currentUrl: String? = null
+    private var currentTitle: String = "TorWatch"
+    private var currentSubTextScale: Int = 75
     private var attachedOrientation = Configuration.ORIENTATION_UNDEFINED
     private var previousOrientation = Configuration.ORIENTATION_UNDEFINED
     private var pendingSeek: Long? = null
@@ -128,6 +133,11 @@ class TorWatchNativePlugin : Plugin() {
         }
         val title = call.getString("title") ?: "TorWatch"
         val seekTo: Double? = call.getDouble("seekTo")
+        // Subtitle text scale (%) from the device preference (pinch on the
+        // video persists it); applied to the freshly created engine.
+        call.getInt("subTextScale")?.let { if (it in 25..200) currentSubTextScale = it }
+        currentUrl = url
+        currentTitle = title
 
         // Replacement safety: tear the previous player down BEFORE creating
         // the new one; late events from it are ignored via terminalSent.
@@ -142,14 +152,29 @@ class TorWatchNativePlugin : Plugin() {
         playId = newPlayId
         terminalSent = false
 
+        startPlaybackEngine(activity, url, title, seekTo)
+
+        mainHandler.postDelayed(timeTicker, TIME_TICK_MS)
+        scheduleTracksRefresh()
+        call.resolve()
+    }
+
+    /**
+     * Creates the LibVLC engine + player + surface for [url] and starts
+     * playback at the pending seek position. Shared by play() (fresh start)
+     * and setSubtitleScale() (in-place engine recreation when embedded
+     * subtitles are active and the user pinches a new text size — libvlc has
+     * no runtime text-scale API, so the engine is rebuilt at the current
+     * position with a ~1s hiccup).
+     */
+    private fun startPlaybackEngine(activity: android.app.Activity, url: String, title: String, seekTo: Double?) {
+        val enginePlayId = playId
         val newLibVlc = LibVLC(
             activity,
             arrayListOf(
                 "--audio-time-stretch",
                 "--network-caching=$NETWORK_CACHING_MS",
-                // % of default subtitle size (75 = a touch smaller than
-                // default for phone screens).
-                "--sub-text-scale=75",
+                "--sub-text-scale=$currentSubTextScale",
             ),
         )
         libVLC = newLibVlc
@@ -158,7 +183,7 @@ class TorWatchNativePlugin : Plugin() {
 
         player.setEventListener { event ->
             mainHandler.post {
-                if (event == null || playId != newPlayId || mediaPlayer !== player || terminalSent) return@post
+                if (event == null || playId != enginePlayId || mediaPlayer !== player || terminalSent) return@post
                 when (event.type) {
                     MediaPlayer.Event.Playing -> {
                         applyPendingSeek()
@@ -228,10 +253,6 @@ class TorWatchNativePlugin : Plugin() {
             pendingSeek = (seekTo * 1000.0).toLong()
         }
         player.play()
-
-        mainHandler.postDelayed(timeTicker, TIME_TICK_MS)
-        scheduleTracksRefresh()
-        call.resolve()
     }
 
     @PluginMethod
@@ -263,6 +284,35 @@ class TorWatchNativePlugin : Plugin() {
         } else {
             player.play()
         }
+        call.resolve()
+    }
+
+    /**
+     * Embedded-subtitle text scale (% of default, 25..200). Applied by
+     * recreating the engine at the current position — libvlc has no runtime
+     * text-scale API, so this carries a ~1s hiccup and only fires when
+     * embedded tracks are actually active (the web overlay resizes live).
+     */
+    @PluginMethod
+    fun setSubtitleScale(call: PluginCall) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { setSubtitleScale(call) }; return }
+        val percent = (call.getInt("percent") ?: 75).coerceIn(25, 200)
+        if (call.getString("playId") != playId) { call.resolve(); return }
+        val activity = bridge?.activity
+        val url = currentUrl
+        if (percent == currentSubTextScale || activity == null || url == null || mediaPlayer == null) {
+            call.resolve()
+            return
+        }
+        currentSubTextScale = percent
+        val positionMs = mediaPlayer?.time ?: 0L
+        // Same session continues server-side: no terminal event, just an
+        // in-place engine rebuild at the current position (playback resumes).
+        teardown()
+        playId = call.getString("playId") ?: playId
+        terminalSent = false
+        pendingSeek = positionMs
+        startPlaybackEngine(activity, url, currentTitle, null)
         call.resolve()
     }
 

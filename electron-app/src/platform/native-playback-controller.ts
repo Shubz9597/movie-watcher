@@ -85,6 +85,7 @@ export type NativePlaybackBridge = {
   // Fit preserves the whole picture (letterbox); Fill uses the whole display
   // with intentional center-crop. Never stretch.
   setVideoScale?(mode: 'fit' | 'fill', playId: string): Promise<void>;
+  setSubtitleScale?(percent: number, playId: string): Promise<void>;
   // Orientation handoff: locks landscape the moment the user enters playback
   // (before metadata/session prepare) and restores app orientation on close.
   // OS-denied requests resolve harmlessly; playback continues unrotated.
@@ -272,6 +273,17 @@ export class NativePlaybackController {
   setVideoScale(mode: 'fit' | 'fill'): void {
     if (this.currentPlayId === '') return;
     this.bridge.setVideoScale?.(mode, this.currentPlayId).catch(() => {});
+  }
+
+  /**
+   * Embedded-subtitle text scale (% of default). Applied by recreating the
+   * native engine at the current position (~1s hiccup) — only meaningful
+   * while an embedded track is actually selected. The web overlay resizes
+   * live and separately.
+   */
+  setEmbeddedSubtitleScale(percent: number): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.setSubtitleScale?.(percent, this.currentPlayId).catch(() => {});
   }
 
   /** Landscape lock for the playback surface (page-level, not play-scoped). */
