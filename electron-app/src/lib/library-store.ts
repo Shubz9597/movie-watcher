@@ -41,6 +41,10 @@ export type LibraryOverviewState = {
   /** True when the displayed data is a previously-loaded snapshot that could
       not be refreshed (offline / unreachable) — consumers must label it. */
   stale?: boolean;
+  /** True while a background revalidation refetches ALREADY-LOADED data: the
+      previous shelves stay on screen (stale-while-revalidate) instead of the
+      shimmer flashing on every 15s sync poll. */
+  revalidating?: boolean;
 };
 
 export type LibraryPageState = {
@@ -51,6 +55,8 @@ export type LibraryPageState = {
   cursor: string | null;
   loadingMore: boolean;
   error: string | null;
+  /** Same stale-while-revalidate flag as the overview. */
+  revalidating?: boolean;
   /** See LibraryOverviewState.stale. */
   stale?: boolean;
 };
@@ -256,9 +262,18 @@ export class LibraryStore {
     // Capture the last good snapshot BEFORE the loading state replaces it: a
     // failed refresh must fall back to it, labelled stale (M3.4 offline reads).
     const previous = this.snapshot.overviews[key];
-    this.publish({
-      overviews: { ...this.snapshot.overviews, [key]: { status: 'loading', shelves: [], revision: '', error: null } },
-    });
+    // Stale-while-revalidate: a revalidation of ALREADY-LOADED data keeps the
+    // previous shelves on screen (flagged, not wiped) — the 15s sync poll
+    // must never flash the skeleton over a visible library.
+    if (previous && previous.status === 'ready') {
+      this.publish({
+        overviews: { ...this.snapshot.overviews, [key]: { ...previous, revalidating: true } },
+      });
+    } else {
+      this.publish({
+        overviews: { ...this.snapshot.overviews, [key]: { status: 'loading', shelves: [], revision: '', error: null } },
+      });
+    }
     try {
       const data = await fetchLibraryOverview(collection, sort, this.deps);
       if (!this.isCurrent(seq, key, startedGeneration)) return;
@@ -280,7 +295,7 @@ export class LibraryStore {
       this.publish({
         overviews: {
           ...this.snapshot.overviews,
-          [key]: { status: 'ready', shelves: data.shelves, revision: data.revision, error: null },
+          [key]: { status: 'ready', shelves: data.shelves, revision: data.revision, error: null, revalidating: false },
         },
         memberships,
       });
@@ -293,7 +308,7 @@ export class LibraryStore {
         this.publish({
           overviews: {
             ...this.snapshot.overviews,
-            [key]: { ...previous, stale: true, error: libraryErrorCopy(error) },
+            [key]: { ...previous, stale: true, revalidating: false, error: libraryErrorCopy(error) },
           },
         });
         return;
@@ -321,12 +336,23 @@ export class LibraryStore {
     const seq = this.nextSeq(key);
     const startedGeneration = backendGeneration();
     const previous = this.snapshot.pages[key];
-    this.publish({
-      pages: {
-        ...this.snapshot.pages,
-        [key]: { status: 'loading', items: [], total: 0, revision: '', cursor: null, loadingMore: false, error: null },
-      },
-    });
+    // Stale-while-revalidate (same contract as the overview): keep loaded
+    // items on screen during background revalidation.
+    if (previous && previous.status === 'ready') {
+      this.publish({
+        pages: {
+          ...this.snapshot.pages,
+          [key]: { ...previous, revalidating: true },
+        },
+      });
+    } else {
+      this.publish({
+        pages: {
+          ...this.snapshot.pages,
+          [key]: { status: 'loading', items: [], total: 0, revision: '', cursor: null, loadingMore: false, error: null },
+        },
+      });
+    }
     try {
       const data = await fetchLibraryPage(collection, kind, sort, undefined, PAGE_LIMIT, this.deps);
       if (!this.isCurrent(seq, key, startedGeneration)) return;
@@ -341,6 +367,7 @@ export class LibraryStore {
             cursor: data.nextCursor ?? null,
             loadingMore: false,
             error: null,
+            revalidating: false,
           },
         },
         memberships: this.mergeMembershipRows(data.items, collection, data.revision),
@@ -351,7 +378,7 @@ export class LibraryStore {
         this.publish({
           pages: {
             ...this.snapshot.pages,
-            [key]: { ...previous, stale: true, error: libraryErrorCopy(error) },
+            [key]: { ...previous, stale: true, revalidating: false, error: libraryErrorCopy(error) },
           },
         });
         return;

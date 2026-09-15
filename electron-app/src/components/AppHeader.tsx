@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { LibraryBig, Search, Settings2 } from 'lucide-react';
 import { loadSeeAllPage } from '../lib/route-loaders';
-import torWatchLogo from '../assets/torwatch-symbol.png';
+import torWatchLogo from '../assets/torwatch-app-icon.png';
 
 const loadGlobalSearch = () => import('./GlobalSearch');
 const GlobalSearch = lazy(loadGlobalSearch);
@@ -67,7 +67,7 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
           <img
             src={torWatchLogo}
             alt=""
-            className="h-9 w-14 object-contain invert transition-opacity group-hover:opacity-85"
+            className="h-9 w-9 object-contain transition-opacity group-hover:opacity-85"
           />
         </button>
 
