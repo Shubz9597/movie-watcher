@@ -35,6 +35,10 @@ type Title struct {
 	Genres        []string          `json:"genres,omitempty"`
 	ExternalLinks map[string]string `json:"externalLinks,omitempty"`
 	Seasons       []Season          `json:"seasons,omitempty"`
+	// Alternative titles (romaji/native for anime, AKA titles elsewhere).
+	// Torrent search fans out over these: indexers index release names under
+	// the ORIGINAL/romaji title, not the localized display title.
+	AltTitles []string `json:"altTitles,omitempty"`
 }
 
 // Season summarizes one season of a series/anime title. TMDb supplies the

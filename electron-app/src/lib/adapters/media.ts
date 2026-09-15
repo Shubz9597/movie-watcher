@@ -488,6 +488,7 @@ export type BackendTitleDetail = {
   externalLinks?: Record<string, string>;
   ratings?: { imdb?: { rating?: number; votes?: number; imdbId?: string } };
   seasons?: Array<{ number: number; name?: string; episodeCount?: number; airDate?: string; poster?: string }>;
+  altTitles?: string[];
 };
 
 // detailFromBackendTitle maps the BFF title detail onto the renderer Detail
@@ -524,7 +525,13 @@ export function detailFromBackendTitle(row: BackendTitleDetail): Detail {
     rating: null,
     imdbRating,
     imdbVotes: typeof row.ratings?.imdb?.votes === 'number' ? row.ratings.imdb.votes : null,
-    altTitles: row.originalTitle ? [row.originalTitle] : undefined,
+    // Torrent search fans out over these: anime indexers file releases under
+    // the romaji/original title, not the localized display title. Merge the
+    // backend's altTitles with the original title, deduped.
+    altTitles: Array.from(new Set([
+      ...(Array.isArray(row.altTitles) ? row.altTitles.filter((t): t is string => Boolean(t)) : []),
+      ...(row.originalTitle ? [row.originalTitle] : []),
+    ])),
     totalEpisodes: totalEpisodes > 0 ? totalEpisodes : null,
     malId: providerIds.jikan ? Number(providerIds.jikan) : null,
   };

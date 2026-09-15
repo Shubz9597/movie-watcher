@@ -288,6 +288,28 @@ func (s *Service) searchAll(ctx context.Context, request Request) ([]prowlarrRel
 		errs = append(errs, searchCtx.Err())
 	}
 	if len(releases) == 0 && len(errs) > 0 {
+		// Resilience fallback (anime indexer flakiness): per-indexer scoped
+		// queries fail hard when ONE tracker is unavailable ("all selected
+		// indexers being unavailable", Prowlarr status 400). Retry the primary
+		// query UNSCOPED — Prowlarr tolerates individual indexer failures in
+		// unscoped mode and returns whatever healthy indexers provide.
+		//
+		// A fallback that SUCCEEDS but finds nothing is a truthful 0-result
+		// response (the trackers are simply not serving this title right now)
+		// — never upgraded into a hard error, so the client can render its
+		// retryable empty state.
+		variants := buildQueries(request)
+		if len(variants) > 0 {
+			retry := variants[0]
+			retry.indexerID = 0
+			found, fallbackErr := s.query(searchCtx, retry)
+			if fallbackErr == nil {
+				return found, nil
+			}
+			errs = append(errs, fallbackErr)
+		}
+	}
+	if len(releases) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("all prowlarr searches failed: %w", errors.Join(errs...))
 	}
 	return releases, nil

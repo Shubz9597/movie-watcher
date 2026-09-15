@@ -1,5 +1,6 @@
 const ANIZIP_EPISODES_URL = 'https://api.ani.zip/mappings';
 const ANIME_KITSU_META_BASE = 'https://anime-kitsu.strem.fun/meta/series';
+const ANILIST_GRAPHQL_URL = 'https://graphql.anilist.co';
 const ANIZIP_TTL_MS = 15 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 6_000;
 
@@ -22,6 +23,19 @@ type KitsuVideo = {
 type KitsuResponse = {
   meta?: {
     videos?: KitsuVideo[] | null;
+  } | null;
+};
+
+type AniListStreamEpisode = {
+  title?: string | null;
+  thumbnail?: string | null;
+};
+
+type AniListResponse = {
+  data?: {
+    Media?: {
+      streamingEpisodes?: AniListStreamEpisode[] | null;
+    } | null;
   } | null;
 };
 
@@ -103,17 +117,65 @@ export async function getAnimeEpisodeMetadata(
         }
       }
 
+      // api.ani.zip has a history of outages (it answered 400 for every valid
+      // id during the 2026-09 device pass). When it yields nothing, fall back
+      // to AniList's own streamingEpisodes thumbnails — one GraphQL request,
+      // CORS-enabled, ordered by absolute episode number.
+      if (episodes.size === 0) {
+        const fallback = await fetchAniListEpisodeThumbnails(anilistId);
+        for (const [episodeNumber, metadata] of fallback) {
+          episodes.set(episodeNumber, metadata);
+        }
+      }
+
       responseCache.set(anilistId, {
         episodes,
         expiresAt: Date.now() + ANIZIP_TTL_MS,
       });
       return episodes;
     } catch (error) {
-      console.warn('[AniZip] Anime episode artwork is unavailable; keeping placeholders.', error);
-      return new Map();
+      console.warn('[AniZip] Anime episode artwork is unavailable; falling back to AniList.', error);
+      try {
+        return await fetchAniListEpisodeThumbnails(anilistId);
+      } catch (fallbackError) {
+        console.warn('[AniList] Episode artwork is unavailable; keeping placeholders.', fallbackError);
+        return new Map();
+      }
     }
   })().finally(() => inFlight.delete(anilistId));
 
   inFlight.set(anilistId, request);
   return request;
+}
+
+/**
+ * AniList streamingEpisodes fallback: one bounded GraphQL request that
+ * returns per-episode thumbnails (CORS `*`, no API key). Entries arrive in
+ * absolute episode order; the episode number is parsed from the entry title
+ * ("Episode 7 - …") with the array index as a safe fallback.
+ */
+async function fetchAniListEpisodeThumbnails(anilistId: number): Promise<Map<number, AnimeEpisodeMetadata>> {
+  const episodes = new Map<number, AnimeEpisodeMetadata>();
+  const response = await fetch(ANILIST_GRAPHQL_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      query: 'query ($id: Int) { Media(id: $id, type: ANIME) { streamingEpisodes { title thumbnail } } }',
+      variables: { id: anilistId },
+    }),
+    signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`anilist.co HTTP ${response.status}`);
+  const payload = (await response.json()) as AniListResponse;
+  const entries = payload?.data?.Media?.streamingEpisodes ?? [];
+  entries.forEach((entry, index) => {
+    const stillUrl = safeImageUrl(entry.thumbnail);
+    if (!stillUrl) return;
+    const match = /episode\s+(\d+)/i.exec(String(entry.title || ''));
+    const episodeNumber = match ? Number(match[1]) : index + 1;
+    if (Number.isInteger(episodeNumber) && episodeNumber > 0 && !episodes.has(episodeNumber)) {
+      episodes.set(episodeNumber, { stillUrl });
+    }
+  });
+  return episodes;
 }

@@ -192,6 +192,17 @@ type tmdbDetailResponse struct {
 			Iso639_1 string `json:"iso_639_1"`
 		} `json:"logos"`
 	} `json:"images"`
+	// AlternativeTitles (append_to_response=alternative_titles): romaji and
+	// AKA titles feed torrent search — anime indexers file releases under the
+	// romaji title, not the localized display title.
+	AlternativeTitles struct {
+		Results []struct {
+			Title string `json:"title"`
+		} `json:"results"`
+		Titles []struct {
+			Title string `json:"title"`
+		} `json:"titles"`
+	} `json:"alternative_titles"`
 }
 
 // Detail resolves a tmdb:<id> title. Qualified external ids ("movie:N" /
@@ -211,7 +222,7 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 	var payload tmdbDetailResponse
 	// Images ride along with every detail fetch (logo artwork for the player
 	// buffering overlay); one extra upstream field, no second request.
-	detailParams := map[string]string{"append_to_response": "images", "include_image_language": "en,null"}
+	detailParams := map[string]string{"append_to_response": "images,alternative_titles", "include_image_language": "en,null"}
 	if mediaType == "" {
 		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, detailParams), &payload)
 		if movieErr == nil {
@@ -259,6 +270,35 @@ func (p *TMDb) detailToTitle(mediaType, externalID string, payload tmdbDetailRes
 	}
 	if fallbackLogo != "" {
 		title.Artwork["logo"] = "https://image.tmdb.org/t/p/w500" + fallbackLogo
+	}
+	// Alternative titles feed torrent search: anime indexers file releases
+	// under the romaji title, which usually differs from the display title.
+	seenTitles := map[string]struct{}{strings.ToLower(title.Title): {}, strings.ToLower(title.OriginalTitle): {}}
+	addAltTitle := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		// Torrent queries are capped (maxSearches): drop non-Latin-script
+		// translations (CJK/Cyrillic/Hangul) so the romaji/ASCII variants —
+		// the ones torrent indexers actually index — land within the budget.
+		for _, r := range trimmed {
+			if r >= 0x0400 { // Cyrillic and everything East Asian above it
+				return
+			}
+		}
+		key := strings.ToLower(trimmed)
+		if _, dup := seenTitles[key]; dup {
+			return
+		}
+		seenTitles[key] = struct{}{}
+		title.AltTitles = append(title.AltTitles, trimmed)
+	}
+	for _, row := range payload.AlternativeTitles.Results {
+		addAltTitle(row.Title)
+	}
+	for _, row := range payload.AlternativeTitles.Titles {
+		addAltTitle(row.Title)
 	}
 	if payload.Runtime > 0 {
 		title.Runtime = payload.Runtime
