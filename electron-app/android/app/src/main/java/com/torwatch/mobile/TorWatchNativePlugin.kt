@@ -151,6 +151,9 @@ class TorWatchNativePlugin : Plugin() {
             arrayListOf(
                 "--audio-time-stretch",
                 "--network-caching=$NETWORK_CACHING_MS",
+                // % of default subtitle size (75 = a touch smaller than
+                // default for phone screens).
+                "--sub-text-scale=75",
             ),
         )
         libVLC = newLibVlc

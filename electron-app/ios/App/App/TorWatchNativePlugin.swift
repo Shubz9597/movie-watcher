@@ -102,14 +102,16 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             self.terminalSent = false
             self.pendingSubtitleURLs = sidecars
 
-            // TEMPORARY diagnosis: libvlc's failure reasons print to the Xcode
-            // console — but ONLY via the SHARED library instance. A private
-            // VLCMediaPlayer(options:) library bypasses shared-library loggers,
-            // so the player uses the shared library and takes media-level
-            // options instead. Remove once playback is verified on device.
-            // (Modern non-deprecated logger API: libvlc always reports errors.)
-            VLCLibrary.shared().loggers = [VLCConsoleLogger()]
-            let player = VLCMediaPlayer()
+            // Playback verified on device: the temporary shared-library
+            // diagnostic logging is retired, so the player uses a PRIVATE
+            // library again — which gives clean control over libvlc options.
+            // sub-text-scale = % of default subtitle size (75 = a touch
+            // smaller than default for phone screens).
+            let player = VLCMediaPlayer(options: [
+                "--audio-time-stretch",
+                "--network-caching=4000", // LAN stream of a possibly-incomplete torrent
+                "--sub-text-scale=75",
+            ])
             player.delegate = self
 
             let surface = UIView(frame: rootVC.view.bounds)
@@ -122,9 +124,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             self.makeWebViewTransparent(true)
 
             let media = VLCMedia(url: url)
-            // Media-level equivalent of the previous --network-caching=4000:
-            // a deeper buffer absorbs peer-driven throughput dips.
-            media.addOptions([":network-caching": 4000])
             player.media = media
             player.drawable = surface
 
