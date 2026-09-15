@@ -34,6 +34,7 @@ fragment media on Media {
   id
   idMal
   title { english romaji native userPreferred }
+  synonyms
   startDate { year month day }
   description(asHtml: false)
   averageScore
@@ -72,6 +73,7 @@ type aniListMedia struct {
 		Native        string `json:"native"`
 		UserPreferred string `json:"userPreferred"`
 	} `json:"title"`
+	Synonyms []string `json:"synonyms"`
 	StartDate struct {
 		Year  int `json:"year"`
 		Month int `json:"month"`
@@ -303,6 +305,35 @@ func (p *AniList) toTitle(media aniListMedia) Title {
 		Runtime:       media.Duration,
 		Genres:        media.Genres,
 		ExternalLinks: externalLinks,
+	}
+	// Alternative titles feed torrent search: anime indexers (Nyaa etc.)
+	// file releases under the ROMAJI title, which frequently differs from
+	// the localized display title. Romaji, native and AniList synonyms all
+	// become aliases (deduped against the display title).
+	seenTitles := map[string]struct{}{strings.ToLower(title): {}}
+	addAlt := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		// Non-Latin-script translations (CJK etc.) are skipped: the torrent
+		// query budget is capped and indexers index Latin-script names.
+		for _, r := range trimmed {
+			if r >= 0x0400 {
+				return
+			}
+		}
+		key := strings.ToLower(trimmed)
+		if _, dup := seenTitles[key]; dup {
+			return
+		}
+		seenTitles[key] = struct{}{}
+		result.AltTitles = append(result.AltTitles, trimmed)
+	}
+	addAlt(media.Title.Romaji)
+	addAlt(media.Title.English)
+	for _, synonym := range media.Synonyms {
+		addAlt(synonym)
 	}
 	// Anime surfaces a single season with the known episode count so clients
 	// can render episode skeletons without extra provider calls (T042.1).

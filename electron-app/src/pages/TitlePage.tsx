@@ -210,22 +210,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       }));
     };
 
-    const loadBffTmdbEpisodes = async (tmdbId: number, season: number): Promise<BffEpisodeRow[]> => {
-      const seasonData = await getTvSeason(tmdbId, season);
-      return Array.isArray(seasonData.episodes)
-        ? seasonData.episodes.map((ep: any) => ({
-            id: ep.id,
-            episodeNumber: ep.episode_number,
-            seasonNumber: ep.season_number,
-            name: ep.name,
-            overview: ep.overview,
-            airDate: ep.air_date,
-            stillUrl: stillUrlFrom(ep.still_path),
-            runtime: ep.runtime,
-          }))
-        : [];
-    };
-
     const loadBffTitle = async () => {
       // M3.1.1: detail requests use the media-qualified canonical id built
       // from the route's explicit media namespace (kind / mediaKind) — the
@@ -258,7 +242,11 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           ? requestedSeason
           : seasonsData[0]?.seasonNumber ?? 1;
         setInitialSeason(firstSeason);
-        setInitialEpisodes(await loadBffTmdbEpisodes(Number(id), firstSeason));
+        // Episodes resolve SERVER-SIDE (BFF → TMDb): a direct client
+        // api.themoviedb.org call from the phone WebView is the flaky link
+        // (ISP peering) and broke anime episodes + stills on device. The
+        // direct renderer call remains for the desktop renderer path only.
+        setInitialEpisodes(await bffEpisodeRows(`tmdb:tv:${id}`, firstSeason));
         return;
       }
 
