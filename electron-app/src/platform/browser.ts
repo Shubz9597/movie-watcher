@@ -295,6 +295,12 @@ export class BrowserConnection implements ConnectionConfig {
     this.current = await probeBackendOrigin(normalized);
     console.debug('[Platform/Browser] probe result', this.current.status);
     this.emit();
+    // saveOrigin is the launch/connect flow: an unreachable probe must
+    // REJECT so the caller's catch surfaces the failure. Returning
+    // normally left the first Connect click looking like a no-op.
+    if (this.current.status === 'unreachable') {
+      throw new Error(`unreachable: ${normalized}`);
+    }
     return this.current.origin;
   }
 

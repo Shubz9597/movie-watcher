@@ -152,7 +152,12 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
       <input
         id={inputId}
         value={origin}
-        onChange={(event) => setOrigin(event.target.value)}
+        onChange={(event) => {
+          setOrigin(event.target.value);
+          // Editing invalidates the previous attempt: never keep a stale
+          // error on screen while the user corrects the address.
+          if (error) setError(null);
+        }}
         placeholder="http://192.168.1.10:4001"
         inputMode="url"
         autoCapitalize="none"
