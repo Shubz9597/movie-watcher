@@ -38,9 +38,9 @@ export function connectionFailureMessage(error: unknown, origin: string): string
   } catch {
     // Origin validation owns malformed-address feedback.
   }
-  if (error instanceof ConnectionTimeoutError ||
-      (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError')) {
-    return `Connection to ${host} timed out. Confirm staging is running and both computers are on the same network.`;
-  }
-  return `Could not reach ${host}. Confirm Windows staging is running with LAN mode, both computers are on the same private network, and Windows Firewall allows TCP port 4001.`;
+  const timedOut = error instanceof ConnectionTimeoutError ||
+      (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError');
+  // Detail (host, error kind) belongs in the log; the UI stays one short line.
+  console.error(`[Connection] ${timedOut ? 'Timed out' : 'Unreachable'} reaching ${host}:`, error);
+  return 'Connection failed. Check your server and try again.';
 }

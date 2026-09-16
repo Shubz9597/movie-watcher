@@ -29,8 +29,10 @@ export function normalizeOrigin(raw: string): string | null {
   return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${port}`;
 }
 
-/** Probe /readyz then /v1/version. Deterministic; injected fetch in tests. */
-export async function probeOrigin(fetchImpl: typeof fetch, origin: string, timeoutMs = 5_000): Promise<ProbeState> {
+/** Probe /readyz then /v1/version. Deterministic; injected fetch in tests.
+ * 15s default: the first HTTPS request to a fresh Tailscale Serve name can
+ * stall on certificate provisioning well past 5s. */
+export async function probeOrigin(fetchImpl: typeof fetch, origin: string, timeoutMs = 15_000): Promise<ProbeState> {
   try {
     const ready = await fetchWithTimeout(fetchImpl, `${origin}/readyz`, {}, timeoutMs);
     if (!ready.ok) {

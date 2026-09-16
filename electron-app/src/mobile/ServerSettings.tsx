@@ -65,7 +65,7 @@ export function ServerSettings(props: {
         case 'blocked-unreachable':
           setState({
             kind: 'unreachable',
-            message: 'Could not reach this address. Confirm Windows staging is running in LAN mode and Firewall allows TCP port 4001.',
+            message: 'Connection failed. Check your server and try again.',
           });
           setError('Nothing was saved. Correct the address or server connection, then retry.');
           return;

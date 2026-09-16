@@ -166,7 +166,6 @@ export async function probeBackendOrigin(origin: string): Promise<ServerCompatib
     }
     return { status: 'unreachable', origin, message: `The server responded with status ${response.status}.` };
   } catch (error) {
-    console.warn('[Platform] version probe failed', origin, error);
     return { status: 'unreachable', origin, message: connectionFailureMessage(error, origin) };
   }
 }

@@ -739,7 +739,7 @@ test("probeOrigin: unreachable and incompatible remain separate states", async (
   const offline = await probeOrigin(async () => { throw new TypeError("down"); }, ORIGIN);
   assert.equal(offline.kind, "unreachable");
   assert.doesNotMatch(offline.message, /TypeError|down/u, "opaque WKWebView errors never leak into the UI");
-  assert.match(offline.message, /same private network|Firewall/u, "failure gives an actionable recovery path");
+  assert.match(offline.message, /Connection failed/u, "failure gives one short, actionable line");
   const incompatible = await probeOrigin(async (url) =>
     String(url).includes("/readyz") ? jsonResponse(200, { status: "ok" }) : jsonResponse(404, {}),
     ORIGIN);
@@ -749,12 +749,21 @@ test("probeOrigin: unreachable and incompatible remain separate states", async (
 test("probeOrigin: a hung WKWebView fetch becomes a bounded, friendly timeout", async () => {
   const result = await probeOrigin(() => new Promise(() => {}), ORIGIN, 5);
   assert.equal(result.kind, "unreachable");
-  assert.match(result.message, /timed out/u);
+  assert.match(result.message, /Connection failed/u);
   assert.doesNotMatch(result.message, /TypeError|AbortError/u);
 });
 
-test("connection diagnostics never expose opaque platform error bodies", () => {
-  const message = connectionFailureMessage(new TypeError("Load failed"), "http://192.168.1.50:4001");
-  assert.match(message, /192\.168\.1\.50:4001/u);
-  assert.doesNotMatch(message, /TypeError|Load failed/u);
+test("connection diagnostics: short UI message, host/error detail goes to the log", () => {
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.join(' '));
+  let message;
+  try {
+    message = connectionFailureMessage(new TypeError("Load failed"), "http://192.168.1.50:4001");
+  } finally {
+    console.error = originalError;
+  }
+  assert.match(message, /Connection failed/u);
+  assert.doesNotMatch(message, /192\.168\.1\.50:4001|TypeError|Load failed/u, "the UI line stays short");
+  assert.match(logged.join('\n'), /192\.168\.1\.50:4001/u, "host detail is logged");
 });

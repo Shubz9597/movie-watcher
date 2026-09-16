@@ -17,12 +17,12 @@ const CENTER_HOLD_MS = 700;
 function connectionFailureMessage(err: unknown, candidate: string): string {
   const message = err instanceof Error ? err.message : '';
   if (/unreachable|network|fetch/i.test(message)) {
-    return `Could not reach ${candidate}. Check that the server is running and that both devices are on the same network.`;
+    return 'Connection failed. Check your server and try again.';
   }
   if (/incompatible/i.test(message)) {
-    return `${candidate} is running an incompatible TorWatch version. Update the server.`;
+    return 'This server is not compatible. Update the server.';
   }
-  return message || 'The server address could not be applied. Check it and retry.';
+  return message || 'Connection failed. Check your server and try again.';
 }
 
 function normalizedServerOrigin(raw: string): string | null {
