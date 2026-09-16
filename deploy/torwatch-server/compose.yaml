@@ -1,9 +1,16 @@
 # torWatch homeserver stack (plan P7, FR-008/FR-009).
 # Standalone package: never the root docker-compose.yml (Electron-owned).
-# Only the Caddy gateway exposes ports; postgres/prowlarr/vod stay on the
-# internal network (FR-008). Secrets come exclusively from the operator's
-# .env file (constitution principle VI) — never committed, never baked into
-# images.
+#
+# Container names are the DEFAULT service names (postgres, prowlarr, etc.)
+# so other Docker projects on shared networks can resolve them by hostname.
+# Only Caddy exposes ports to the host network; postgres/prowlarr/vod stay
+# on the internal network (FR-008). Secrets come exclusively from the
+# operator's .env file — never committed, never baked into images.
+#
+# VPN: Prowlarr + FlareSolverr route through Gluetun (Mullvad WireGuard) so
+# indexers behind ISP blocks / Cloudflare are reachable. The vod backend
+# stays DIRECT (torrent peers + TMDb work without VPN). Set
+# WIREGUARD_PRIVATE_KEY in .env to activate; leave empty to run without VPN.
 name: torwatch-server
 
 networks:
@@ -17,8 +24,29 @@ volumes:
   subcache:
 
 services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    environment:
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:-mullvad}
+      VPN_TYPE: ${VPN_TYPE:-wireguard}
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:-}
+      SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-Sweden}
+    ports:
+      # Prowlarr web UI + FlareSolverr, reachable on the host for management.
+      # Both services share Gluetun's network namespace, so these ports are
+      # bound to Gluetun's interfaces.
+      - "${PROWLARR_PORT:-9696}:9696"
+      - "${FLARESOLVERR_PORT:-8191}:8191"
+    volumes:
+      - torrentdata:/gluetun
+
   postgres:
     image: postgres:16-alpine
+    container_name: postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-torwatch}
@@ -36,25 +64,39 @@ services:
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
     restart: unless-stopped
+    # ALL traffic through the Gluetun VPN tunnel: indexers behind ISP blocks
+    # and Cloudflare are reachable. Shares Gluetun's network namespace, so
+    # Prowlarr's port 9696 is accessible via the gluetun hostname.
+    network_mode: service:gluetun
     environment:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
     volumes:
       - torrentdata:/config
-    networks:
-      - internal
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    # Same VPN route as Prowlarr (solves Cloudflare for the same indexers).
+    network_mode: service:gluetun
+    environment:
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
 
   vod:
     image: ${TORWATCH_IMAGE:?TORWATCH_IMAGE must pin an immutable tag, e.g. torwatch-server:1.0.0}
+    container_name: torwatch-vod
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       PG_DSN: postgres://${POSTGRES_USER:-torwatch}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-torwatch}?sslmode=disable
-      PROWLARR_URL: http://prowlarr:9696
+      # Prowlarr shares Gluetun's network namespace: reachable at gluetun:9696.
+      PROWLARR_URL: http://gluetun:9696
       PROWLARR_API_KEY: ${PROWLARR_API_KEY:?PROWLARR_API_KEY is required}
       LISTEN: 0.0.0.0:4001
       TORRENT_DATA_ROOT: /data/torrents
@@ -66,7 +108,7 @@ services:
       PLAYBACK_MAX_SESSIONS: ${PLAYBACK_MAX_SESSIONS:-2}
       TARGET_BUFFER_MAX_BYTES: ${TARGET_BUFFER_MAX_BYTES:-134217728}
       WARM_READ_AHEAD_MB: ${WARM_READ_AHEAD_MB:-64}
-      WARM_READ_AHEAD_MB_4K: ${WARM_READ_AHEAD_MB_4K:-64}
+      WARM_READ_AHEAD_MB_4K: ${WARM_READ_AHEAD_MB:-64}
       OPENSUB_API_KEY: ${OPENSUB_API_KEY:-}
       OPENSUB_USER_TOKEN: ${OPENSUB_USER_TOKEN:-}
       TORWATCH_APP_VERSION: ${TORWATCH_VERSION:-dev}
@@ -79,6 +121,7 @@ services:
 
   gateway:
     image: caddy:2-alpine
+    container_name: caddy
     restart: unless-stopped
     depends_on:
       - vod
