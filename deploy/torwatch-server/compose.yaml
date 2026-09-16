@@ -34,7 +34,10 @@ services:
       VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:-mullvad}
       VPN_TYPE: ${VPN_TYPE:-wireguard}
       WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:-}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:-}
       SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-Switzerland}
+      SERVER_CITIES: ${VPN_SERVER_CITIES:-}
+      TZ: ${TZ:-Asia/Kolkata}
     ports:
       # Prowlarr web UI + FlareSolverr, reachable on the host for management.
       # Both services share Gluetun's network namespace, so these ports are
@@ -43,6 +46,10 @@ services:
       - "${FLARESOLVERR_PORT:-8191}:8191"
     volumes:
       - torrentdata:/gluetun
+    networks:
+      # Gateway (internet-accessible) for the VPN tunnel; the internal
+      # network is internal:true = no outbound, which blocks WireGuard.
+      - gateway
 
   postgres:
     image: postgres:16-alpine
@@ -66,6 +73,8 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
+    depends_on:
+      - gluetun
     # ALL traffic through the Gluetun VPN tunnel: indexers behind ISP blocks
     # and Cloudflare are reachable. Shares Gluetun's network namespace, so
     # Prowlarr's port 9696 is accessible via the gluetun hostname.
@@ -81,6 +90,8 @@ services:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     restart: unless-stopped
+    depends_on:
+      - gluetun
     # Same VPN route as Prowlarr (solves Cloudflare for the same indexers).
     network_mode: service:gluetun
     environment:
