@@ -111,6 +111,7 @@ services:
       WARM_READ_AHEAD_MB_4K: ${WARM_READ_AHEAD_MB:-64}
       OPENSUB_API_KEY: ${OPENSUB_API_KEY:-}
       OPENSUB_USER_TOKEN: ${OPENSUB_USER_TOKEN:-}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
       TORWATCH_APP_VERSION: ${TORWATCH_VERSION:-dev}
     volumes:
       - torrentdata:/data/torrents
