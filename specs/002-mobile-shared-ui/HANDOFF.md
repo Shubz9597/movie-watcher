@@ -1,10 +1,12 @@
-﻿# HANDOFF — torWatch feature 002 (shared mobile UI + household library)
+﻿# HANDOFF — torWatch v2 (full-stack media server)
 
-Fresh-session context handoff. Updated 2026-09-15 (end of session 4). The working tree is COMMITTED on branch `001-torwatch` with the latest code. Read top-to-bottom before touching code.
+Fresh-session context handoff. Updated 2026-09-16 (end of session 5). Branch `001-torwatch` is COMMITTED with all code. The **PRODUCTION Docker stack is RUNNING on this machine** (not staging). Read top-to-bottom before touching code.
 
 ## 1. Architecture (current)
 
-One shared React UI (electron-app/src/) used by Electron desktop AND mobile via Capacitor 8.5.2. Go BFF (torrent-streamer) owns catalog, library, recommendations, playback sessions, torrent search/resolution, subtitles, skip-segments. Native playback: **MobileVLCKit 3.7.3 (iOS) / LibVLC 3.6.2 (Android)** rendering BEHIND the Capacitor WebView; the whole control surface is shared React (`src/mobile/NativePlayerControls.tsx`). `ios-vlc`/`android-vlc` profiles direct-play the ORIGINAL file (embedded tracks preserved); `PLAYBACK_TRANSCODE_MODE=off` refuses auto-transcode while keeping ffprobe + remux fallback.
+One shared React UI (electron-app/src/) used by Electron desktop AND mobile via Capacitor 8.5.2. Go BFF (torrent-streamer) owns catalog, library, recommendations, playback sessions, torrent search/resolution, subtitles, skip-segments, taste engine. Native playback: **MobileVLCKit 3.7.3 (iOS) / LibVLC 3.6.2 (Android)** rendering BEHIND the Capacitor WebView; the whole control surface is shared React (`src/mobile/NativePlayerControls.tsx`). `ios-vlc`/`android-vlc` profiles direct-play the ORIGINAL file; `PLAYBACK_TRANSCODE_MODE=off` refuses auto-transcode while keeping ffprobe + remux fallback.
+
+**Production stack** (deploy/torwatch-server/compose.yaml): Gluetun VPN (Mullvad WireGuard, Switzerland) → Prowlarr + FlareSolverr route through it via `network_mode: service:gluetun`; PostgreSQL + vod backend on the internal network; Caddy gateway on :8080. Container names are the default service names (`postgres`, `prowlarr`, `gluetun`, `flaresolverr`, `caddy`, `torwatch-vod`).
 
 ## 2. Authoritative documents
 
@@ -12,65 +14,86 @@ One shared React UI (electron-app/src/) used by Electron desktop AND mobile via 
 2. specs/002-mobile-shared-ui/spec.md · plan.md · tasks.md
 3. contracts/playback-api.md · contracts/library-api.md
 4. docs/mobile-ui/vlc-playback-verification.md (device matrix + CPU/RAM script)
-5. docs/mobile-ui/mobile-build-run.md · deploy/desktop-staging/README.md
+5. deploy/torwatch-server/.env.example (all config slots documented)
 
-## 3. Current state (2026-09-15, end of session 4)
+## 3. Current state (2026-09-16)
 
-- **Branch `001-torwatch` is COMMITTED with the latest code** (VLC migration, splash, icons, anime fixes all in).
-- Staging: running `-WithProwlarr -WithCapacitorOrigins -LanMode`; postgres + prowlarr healthy; `TMDB_API_KEY` configured (live catalog); `OPENSUB_API_KEY` supported via .env; `TORRENT_DATA_ROOT=Z:/Torrent/vod_files`.
-- **iPhone: VLC playback INSTALLED and device-tested by the user.** Working: landscape entry before prep, logo buffering loader, seek/±10s double-tap, telemetry panel, Fit/Fill, subtitle sheet (OpenSubtitles + import + embedded + timing), splash → connect flow with the TV icon.
-- **Known iPhone issues (OPEN, priority):**
-  1. **Skip-intro does not work reliably** — the chip/timestamps need investigation on device (server /skip-segments + chip wiring).
-  2. **Subtitle switching mid-playback is inconsistent** — switching tracks/slaves live needs a device-side debug (VLC slave attach + spuTrack selection).
-- Android APK builds but is NOT yet installed/verified on a device.
-- Radxa deployment + Tailscale Serve: NOT started (next session).
+- **Branch `001-torwatch`**: all code committed, working tree clean.
+- **PRODUCTION stack RUNNING** (Docker Compose from `deploy/torwatch-server/`): all 6 containers up — gluetun (VPN tunnel to Mullvad Switzerland), postgres (healthy), prowlarr (5 indexers active), flaresolverr, torwatch-vod (backend), caddy (gateway on :8080).
+- **iPhone: VLC playback device-tested.** Working: landscape entry, logo buffering loader, seek/±10s double-tap, telemetry panel, Fit/Fill, subtitle sheet, pinch-resizable web overlay for loaded tracks, splash → connect flow with TV icon.
+- **Known iPhone issues (OPEN):**
+  1. **Skip-intro** — chip/timestamps need device testing; anime episodes now work server-side so this is testable.
+  2. **Subtitle switching mid-playback** — re-verify with latest build (web overlay replaced VLC slaves for sheet-loaded tracks, which may have fixed it).
+  3. **Subtitle font size for embedded tracks** — fixed at `sub-text-scale=75`; not pinch-resizable (VLC limitation). Web overlay IS pinch-resizable.
+- **Android APK builds but NOT installed/verified on device.**
+- **Tailscale Serve: NOT tested.**
+- **Radxa deployment: NOT started** (next session).
 
 ## 4. Player architecture notes (load-bearing)
 
-- The native VLC surface sits at index 0 BEHIND the (transparent) WebView; every control is React. Never paint opaque backgrounds on ancestors during playback (`html.native-playback` rules).
-- Orientation is page-level: PlayerPage locks landscape on mount via `setPlaybackOrientation`, unlocks on unmount/failure/retry. `play()` re-locks idempotently.
+- Native VLC surface at index 0 BEHIND the transparent WebView; every control is React (`html.native-playback` transparency rules).
+- Orientation: PlayerPage locks landscape on mount via `setPlaybackOrientation`, unlocks on unmount/failure/retry.
 - Fit/Fill: Android `SURFACE_BEST_FIT/SURFACE_FILL`; iOS `videoCropGeometry` = drawable's reduced "W:H" via a strdup bridge (raw `char *` property — never assign a Swift String), recomputed on orientation change.
-- Subtitles: runtime VLC slaves (downloaded to temp files first, failure-reported, cleanup on teardown); embedded tracks via native track ids; delays are MICROSECONDS on both platforms.
-- Telemetry: `GET /buffer/info?magnet=&cat=&fileIndex=` (4s poll, only while the stats sheet is open); download speed derived from downloadedBytes deltas.
-- Torrent search: per-indexer scoped queries with an UNSCOPED fallback when all fail (a successful-but-empty fallback is a truthful `200, total 0`); health-first ranking (`torrentHealthScore`: log-scaled seeders + ratio, language bonus, and a bounded SOURCE-REPUTATION bonus for renowned indexers — YTS/Nyaa/SubsPlease +12, EZTV/TPB/1337x +8, etc.; see `indexerTrust` in service.go) with `searchBudget` 35s / `indexerBudget` 14s so slow renowned indexers complete — latency is acceptable, completeness is not negotiable. Aliases from TMDb `alternative_titles` (Latin-script filtered) land inside the maxSearches=4 query budget.
+- **Subtitles**: sheet-loaded tracks (OpenSubtitles/sidecars/imports) render as a **web overlay** (`src/lib/subtitle-parser.ts` parses VTT/SRT/ASS, pinning to `subscribeTime` for cue sync) — pinch-resizable, size persisted per device. Embedded tracks stay VLC-rendered at `sub-text-scale=75`. Choosing one type always clears the other. Initial session sidecars are NOT auto-attached as VLC slaves (removed to prevent double-render).
+- **Engine recreation**: `setSubtitleScale` / `setVideoScale` recreate the native engine at the current position (~1s hiccup) — used for embedded sub size changes. Both private-library player and shared-library logger paths exist; the shared-library diagnostic logging is retired.
+- Telemetry: `GET /buffer/info?magnet=&cat=&fileIndex=` (4s poll, only while stats sheet open); speed from downloadedBytes deltas.
+- Torrent search: per-indexer scoped queries with UNSCOPED fallback (successful-but-empty fallback = truthful `200, total 0`); health-first ranking (`torrentHealthScore`: log-scaled seeders + ratio + language bonus + source reputation bonus for YTS/Nyaa/SubsPlease etc.); `maxSearches=10` (all indexers concurrent), `searchBudget=90s`, `indexerBudget=30s` (VPN latency headroom). Aliases from TMDb `alternative_titles` (Latin-script filtered) and AniList romaji/synonyms.
 
-## 5. Recently completed (sessions 2-4)
+## 5. Taste engine (v2 recommendations)
 
-- VLC migration end-to-end (search ranking, alt titles, unscoped fallback, AniList stills fallback, telemetry panel, Fit/Fill, landscape-at-entry, compact sheets, splash + TV brand icons, OPENSUB_API_KEY passthrough, Anime search/stills fixes). Full details in git history of `001-torwatch`.
-- Provider egress resilience: ONE bounded retry (400ms backoff) for transient provider failures in `internal/catalog/http.go` (TMDb `providers_unavailable` transients). 404/429 stay authoritative.
+- `internal/taste/taste.go`: household-wide signals from (1) library favourites +5, (2) Watch Later +3, (3) watched ≥50% +4 / started +2, (4) opened titles +1 (from `taste_events` table, migration 008). Completed ≥90% → exclusion set. Subject is dedup only, never a profile key.
+- Scoring: candidates score against the WEIGHTED genre map (sum of profile weights per genre), replacing binary seed points. Reasons per contributing signal ("Because you favourited/watched/opened X").
+- Candidate pool: per-seed TMDb recommendations for `tmdb:` seeds + AniList `Media.recommendations` for `anilist:` seeds, ranked ahead of the global weekly trending pool. `CandidatePoolVersion=2`.
+- Fresh deployment: empty signals → popular fallback → hydrates automatically from usage.
 
-## 6. Gaps before v2 release (priority order)
+## 6. Gaps before v2 release
 
-1. **Skip-intro on device** — chip/timestamps do not behave reliably; anime episodes now work server-side (aliases + stills fixed), so this is testable — debug `/skip-segments` data for real episodes + chip wiring on both platforms.
-2. **Subtitle switching on device** — subtitles verified working on device (size tuned via `sub-text-scale=75`); re-verify live track SWITCHING (slaves + spuTrack) with the latest build; if still inconsistent, enable `VLCLibrary loggers` temporarily around the switch moment.
-3. **Android on-device pass** — install debug APK, run the matrix in `docs/mobile-ui/vlc-playback-verification.md` (same as iOS).
-4. **Radxa deployment (NEXT SESSION FOCUS)**: rebuild Docker image with the new Go code, deploy with `PLAYBACK_TRANSCODE_MODE=off`, verify env inside the container, measure CPU/RAM during direct playback (script in the verification doc), confirm no ffmpeg spawns.
-5. **Tailscale Serve HTTPS**: written but never exercised end-to-end; first real use may surface ACL/CLI issues.
-6. **Egress routing (Gluetun)**: catalog calls now have a bounded retry; full VPN routing of ALL egress (Prowlarr/TMDb/indexers) through Gluetun is a Radxa-session infra task — decide which endpoints route through it vs direct.
-7. **Torrentio-style aggregation (evaluation)**: see §7 — decide whether to add a fast aggregator indexer vs tuning Prowlarr.
-8. **Release engineering**: Android release build + signing, versionCode/Name bump, installer with the new icons (untested), PWA manifest icon check, library Reset for a clean household start.
+1. **Skip-intro on device** — testable now (anime episodes work server-side).
+2. **Subtitle switching on device** — may be fixed by the web overlay change; re-test.
+3. **Android on-device pass** — debug APK builds, never installed.
+4. **Radxa deployment** — compose is ready; just move to the Radxa, `docker compose up -d`, verify env + CPU/RAM.
+5. **Tailscale Serve HTTPS** — never exercised.
+6. **Release engineering** — Android release build + signing, versionCode/Name, installer with new icons, PWA manifest.
+7. **Prowlarr EZTV** — API bootstrap failed (missing required field); add manually via Prowlarr UI if needed.
 
-## 7. Torrentio / debrid / FlareSolverr — what they are
+## 7. Production environment (deploy/torwatch-server/.env)
 
-- **FlareSolverr** (already deployed, port 8191): a headless-browser proxy that solves Cloudflare challenges for indexers that block plain HTTP clients. Some Prowlarr indexers are configured to use it. If an indexer shows "unavailable", its FlareSolverr path is the usual suspect. It adds latency — that is why scoped searches feel slow before results appear.
-- **Torrentio**: a Stremio add-on that aggregates MANY indexers at once and caches/ranks results — very fast because the heavy lifting happens on THEIR servers. We cannot use Torrentio itself inside Prowlarr (it is an add-on, not a Torznab indexer), but the same speed is achievable locally by (a) the existing 3-minute search cache, (b) keeping healthy indexers only, and (c) optionally adding a Torznab-compatible fast aggregator if one is self-hostable.
-- **Debrid (Real-Debrid/Premiumize etc.)**: PAID services that instantly serve cached torrents from their own seedboxes. It would bypass our own torrent client entirely — different architecture, ongoing cost, and it defeats the self-hosted Radxa design. Not recommended for v2; our anacrolix client + buffer controller already streams while downloading.
+`TORWATCH_IMAGE=torwatch-server:1.0.0` · `TORWATCH_VERSION=1.0.0` · `POSTGRES_USER/PASSWORD/DB` · `PROWLARR_API_KEY` (synced from Prowlarr's generated key — see below) · `VPN_SERVICE_PROVIDER=mullvad` · `VPN_TYPE=wireguard` · `WIREGUARD_PRIVATE_KEY` · `WIREGUARD_ADDRESSES` · `VPN_SERVER_COUNTRIES=Switzerland` · `TMDB_API_KEY` · `OPENSUB_API_KEY` · `GATEWAY_PORT=8080`
 
-## 8. Environment variables (staging .env)
+**Prowlarr API key sync**: Prowlarr generates its own key on first boot. Read it via `docker exec prowlarr cat /config/config.xml`, then update `.env` with that key and `docker compose up -d vod` to restart the backend with the correct key.
 
-`STAGING_PG_PASSWORD` (required) · `TMDB_API_KEY` (set) · `OPENSUB_API_KEY` (empty → OpenSubtitles off) · `FFMPEG_PATH`/`FFPROBE_PATH` (set) · `PROWLARR_URL`/`PROWLARR_API_KEY` (from data\prowlarr\config.xml) · `TORRENT_DATA_ROOT=Z:/Torrent/vod_files` · `PLAYBACK_TRANSCODE_MODE` (auto here; compose defaults off for Radxa) · `TAILNET_*` optional
-
-## 9. Commands
+## 8. Commands
 
 ```powershell
-# Staging
-cd deploy\desktop-staging
-staging.ps1 Stop / Start -WithProwlarr -WithCapacitorOrigins -LanMode
-staging.ps1 Status / Verify / RestartBackend   # RestartBackend does NOT rebuild: build the exe first (go build -o ..\deploy\desktop-staging\build\torwatch-staging.exe ./cmd/vod from torrent-streamer)
+# Production stack (Docker)
+cd deploy\torwatch-server
+docker compose up -d
+docker compose ps / logs / down
+
+# Rebuild the vod image after Go code changes
+cd D:\Projects\movie-watcher
+docker build -f deploy/torwatch-server/Dockerfile -t torwatch-server:1.0.0 --build-arg TORWATCH_VERSION=1.0.0 .
+cd deploy\torwatch-server
+docker compose up -d vod
 
 # Mobile (ALWAYS mobile:build before an Xcode/Studio build — it runs cap sync)
 cd electron-app
 npm run mobile:build
 npm run cap:open:ios     # Mac; run `npm run setup:ios-vlc` there first
 npm run cap:open:android
+
+# Staging (separate — uses staging.ps1, NOT the prod compose)
+cd deploy\desktop-staging
+staging.ps1 Stop / Start / Status / Verify / RestartBackend
 ```
+
+## 9. Verification results (2026-09-16, production stack)
+
+- ✅ All 6 containers up (gluetun VPN tunnel confirmed, Mullvad Switzerland exit IP)
+- ✅ readyz: postgres ok, prowlarr ok
+- ✅ Episodes: 38 for Frieren S1, all with stills (server-side TMDb)
+- ✅ Torrents: 50 results for Frieren (Nyaa.si 167-seeder first, health-ranked)
+- ✅ Library favourite write: 200 (tmdb:tv:209867)
+- ✅ Taste visited ping: ok:true
+- ⚠️ Recommendations: 0 items (fresh DB — hydrates as you use the app)
+- ⚠️ Catalog search: transient TMDb flakiness (bounded retry added; pull-to-refresh as manual recovery)
