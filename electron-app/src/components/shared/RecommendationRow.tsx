@@ -13,6 +13,7 @@ import { Check, ChevronRight, ListFilter, RotateCw, Sparkles } from 'lucide-reac
 import { PageBackButton } from './PageBackButton';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import { titleRouteParams } from '../../lib/canonical-route';
+import { LibraryToggle } from './LibraryToggle';
 import { SelectionSurface } from '../primitives';
 import {
   fetchRecommendations,
@@ -90,40 +91,48 @@ function RecommendationCard({ item, navigate, index }: {
   index: number;
 }) {
   return (
-    <button
-      type="button"
-      onClick={() => navigate('title', titleRouteParams(item.canonicalId))}
-      aria-label={`${item.title}${item.reason.code === 'seed_genre' ? `, ${item.reason.text}` : ', popular pick'}`}
-      className={`group relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] ${FOCUS_RING_CLASS}`}
-    >
-      {item.artwork?.poster ? (
-        <img
-          src={item.artwork.poster}
-          alt=""
-          width="342"
-          height="513"
-          loading="lazy"
-          decoding="async"
-          className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
-        />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-          <Sparkles className="h-6 w-6 opacity-30" aria-hidden="true" />
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => navigate('title', titleRouteParams(item.canonicalId))}
+        aria-label={`${item.title}${item.reason.code === 'seed_genre' ? `, ${item.reason.text}` : ', popular pick'}`}
+        className={`group relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] ${FOCUS_RING_CLASS}`}
+      >
+        {item.artwork?.poster ? (
+          <img
+            src={item.artwork.poster}
+            alt=""
+            width="342"
+            height="513"
+            loading="lazy"
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
+            <Sparkles className="h-6 w-6 opacity-30" aria-hidden="true" />
+          </div>
+        )}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 pb-1.5 pt-6 text-left">
+          <span className="line-clamp-2 text-xs font-medium leading-4 text-white">{item.title}</span>
+          <span className="mt-0.5 block text-[10px] capitalize leading-3 text-white/60">
+            {item.type === 'series' ? 'Series' : item.type}{item.year ? ` · ${item.year}` : ''}
+          </span>
+          {/* Truthful reason: favourite-grounded vs Popular pick are
+              distinguishable in text, never by color alone. */}
+          <span className="mt-0.5 line-clamp-1 block text-[10px] leading-3 text-white/60">
+            {item.reason.text}
+          </span>
         </div>
-      )}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 pb-1.5 pt-6 text-left">
-        <span className="line-clamp-2 text-xs font-medium leading-4 text-white">{item.title}</span>
-        <span className="mt-0.5 block text-[10px] capitalize leading-3 text-white/60">
-          {item.type === 'series' ? 'Series' : item.type}{item.year ? ` · ${item.year}` : ''}
-        </span>
-        {/* Truthful reason: favourite-grounded vs Popular pick are
-            distinguishable in text, never by color alone. */}
-        <span className="mt-0.5 line-clamp-1 block text-[10px] leading-3 text-white/60">
-          {item.reason.text}
-        </span>
+        <span className="sr-only">Recommendation {index + 1}</span>
+      </button>
+      {/* Same Watch Later / Favourites overlays as every other rail: the
+          card is a sibling of the toggles (never nested buttons). */}
+      <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1.5">
+        <LibraryToggle canonicalId={item.canonicalId} field="watch-later" variant="overlay" />
+        <LibraryToggle canonicalId={item.canonicalId} field="favourites" variant="overlay" />
       </div>
-      <span className="sr-only">Recommendation {index + 1}</span>
-    </button>
+    </div>
   );
 }
 

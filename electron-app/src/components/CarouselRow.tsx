@@ -139,11 +139,14 @@ export default function CarouselRow({
                     onPrefetch={onPrefetch}
                   />
                   {/* Watch Later / Favourites overlays (libraryKind set):
-                      siblings of the card button — never nested buttons. */}
+                      siblings of the card button — never nested buttons.
+                      Vertical column on the right edge with a scrim, so the
+                      controls stay clear of the rank badge and readable on
+                      busy poster art. */}
                   {libraryKind ? (
-                    <div className="absolute right-2 top-2 z-10 flex gap-1.5">
-                      <LibraryToggle canonicalId={canonicalIdFor(movie)} field="watch-later" />
-                      <LibraryToggle canonicalId={canonicalIdFor(movie)} field="favourites" />
+                    <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1.5">
+                      <LibraryToggle canonicalId={canonicalIdFor(movie)} field="watch-later" variant="overlay" />
+                      <LibraryToggle canonicalId={canonicalIdFor(movie)} field="favourites" variant="overlay" />
                     </div>
                   ) : null}
                 </div>

@@ -67,7 +67,8 @@ function Read-StagingEnvironment {
     foreach ($name in @(
         "STAGING_PG_PASSWORD", "STAGING_PG_PORT", "BACKEND_PORT", "FRONTEND_PORT",
         "TMDB_API_KEY", "OPENSUB_API_KEY", "FFMPEG_PATH", "FFPROBE_PATH",
-        "TAILNET_FRONTEND_SERVE_PORT", "TAILNET_BACKEND_SERVE_PORT", "TAILNET_ORIGIN"
+        "TAILNET_FRONTEND_SERVE_PORT", "TAILNET_BACKEND_SERVE_PORT", "TAILNET_ORIGIN",
+        "PROWLARR_URL", "PROWLARR_API_KEY"
     )) {
         $processValue = [Environment]::GetEnvironmentVariable($name)
         if ($processValue) { $values[$name] = $processValue }
@@ -324,30 +325,59 @@ function Wait-HttpReady([string]$url, [int]$timeoutSeconds) {
     throw "Timed out waiting for $url"
 }
 
-function Get-ProwlarrConnection {
+function Get-ProwlarrConnection($envValues) {
+    # Operator-provided overrides win (.env or process env): they point at an
+    # EXTERNAL Prowlarr instance (e.g. the operator's own Docker deployment).
+    $url = $envValues["PROWLARR_URL"]
+    $apiKey = $envValues["PROWLARR_API_KEY"]
+    if ($apiKey -and $url) {
+        return @{ url = $url.TrimEnd('/'); apiKey = $apiKey }
+    }
+    if ($apiKey -and -not $url) {
+        return @{ url = "http://127.0.0.1:9696"; apiKey = $apiKey }
+    }
     $configPath = Join-Path $repositoryRoot "data\prowlarr\config.xml"
     if (-not (Test-Path -LiteralPath $configPath)) {
-        throw "Prowlarr configuration is missing at data\prowlarr\config.xml. Start the repository Prowlarr service once before using -WithProwlarr."
+        throw "No Prowlarr connection configured. Either set PROWLARR_URL and PROWLARR_API_KEY in deploy\desktop-staging\.env (external instance), or start the repository Prowlarr once (docker compose up -d flaresolverr prowlarr) so data\prowlarr\config.xml exists."
     }
     $xml = Get-Content -LiteralPath $configPath -Raw
     $match = [regex]::Match($xml, "<ApiKey>([^<]+)</ApiKey>", "IgnoreCase")
     if (-not $match.Success -or -not $match.Groups[1].Value.Trim()) {
         throw "Prowlarr API key is missing from its saved configuration."
     }
-    return @{ url = "http://127.0.0.1:9696"; apiKey = $match.Groups[1].Value.Trim() }
+    $resolvedUrl = if ($url) { $url.TrimEnd('/') } else { "http://127.0.0.1:9696" }
+    return @{ url = $resolvedUrl; apiKey = $match.Groups[1].Value.Trim() }
 }
 
 function Assert-ProwlarrReady($connection) {
-    try {
-        $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 `
-            -Uri "$($connection.url)/api/v1/system/status" `
-            -Headers @{ "X-Api-Key" = $connection.apiKey }
-        if ($response.StatusCode -eq 200) {
-            Repair-ProwlarrFlareSolverrProxy $connection
-            return
+    # Retry briefly (the container may still be booting) and NEVER swallow the
+    # cause: a 401 (wrong API key) and a refused connection are different
+    # problems with different fixes.
+    $lastError = ""
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 `
+                -Uri "$($connection.url)/api/v1/system/status" `
+                -Headers @{ "X-Api-Key" = $connection.apiKey }
+            if ($response.StatusCode -eq 200) {
+                Repair-ProwlarrFlareSolverrProxy $connection
+                return
+            }
+            $lastError = "HTTP $($response.StatusCode)"
+        } catch {
+            $response = $_.Exception.Response
+            if ($response -ne $null) {
+                $lastError = "HTTP $([int]$response.StatusCode) $($response.StatusCode) from Prowlarr"
+            } else {
+                $lastError = $_.Exception.Message
+            }
         }
-    } catch { }
-    throw "Prowlarr is not ready on 127.0.0.1:9696. Run 'docker compose up -d flaresolverr prowlarr' from the repository root, then retry."
+        Start-Sleep -Seconds 2
+    }
+    if ($lastError -match " 401 ") {
+        throw "Prowlarr rejected the API key ($lastError). The running Prowlarr is not the instance data\prowlarr\config.xml belongs to. Set PROWLARR_API_KEY (and PROWLARR_URL) in deploy\desktop-staging\.env to YOUR instance's key (Prowlarr Settings > General), or start the repository instance: docker compose up -d flaresolverr prowlarr"
+    }
+    throw "Prowlarr is not reachable at $($connection.url) ($lastError). Check the container is up and the port is published, or set PROWLARR_URL/PROWLARR_API_KEY in deploy\desktop-staging\.env for an external instance."
 }
 
 # Repair-ProwlarrFlareSolverrProxy: inside the Docker network, Prowlarr must
@@ -451,7 +481,7 @@ function Get-OriginPlan($envValues, [bool]$useTailscale, [string]$scheme) {
 }
 
 function New-BackendEnvironment($envValues, $origins, [bool]$withStub, [bool]$withProwlarr, [bool]$lanMode) {
-    $prowlarr = if ($withProwlarr) { Get-ProwlarrConnection } else { $null }
+    $prowlarr = if ($withProwlarr) { Get-ProwlarrConnection $envValues } else { $null }
     $backendEnv = @{
         PG_DSN = "postgres://torwatch:$($envValues["STAGING_PG_PASSWORD"])@127.0.0.1:$($envValues["STAGING_PG_PORT"])/torwatch?sslmode=disable"
         LISTEN = if ($lanMode) { "0.0.0.0:$($envValues["BACKEND_PORT"])" } else { "127.0.0.1:$($envValues["BACKEND_PORT"])" }
@@ -525,9 +555,9 @@ function Start-Staging {
 
     $originPlan = Get-OriginPlan $envValues $useTailscale $tailnetScheme
     if ($WithProwlarr) {
-        $prowlarr = Get-ProwlarrConnection
+        $prowlarr = Get-ProwlarrConnection $envValues
         Assert-ProwlarrReady $prowlarr
-        Write-Stage "Live Prowlarr source discovery enabled (saved key loaded privately from data\prowlarr\config.xml)."
+        Write-Stage "Live Prowlarr source discovery enabled ($($prowlarr.url); key loaded privately, never echoed)."
     }
 
     # 1. Private tailnet exposure FIRST (fail fast, before any local process
@@ -903,7 +933,12 @@ try {
         "VerifyPlayback" { Invoke-PlaybackVerification }
         "Reset" { Reset-StagingData }
     }
+    # Machine-catchable completion marker: automation (agents, CI, scripts)
+    # scans for this line instead of guessing whether the command finished.
+    Write-Stage "COMMAND COMPLETE $Command"
+    exit 0
 } catch {
     Write-Fail $_.Exception.Message
+    Write-Stage "COMMAND FAILED $Command"
     exit 1
 }

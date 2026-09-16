@@ -35,7 +35,7 @@ const FIELD_META = {
   },
 } as const;
 
-export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canonicalId: string; field: LibraryCollection; variant?: 'icon' | 'label' }) {
+export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canonicalId: string; field: LibraryCollection; variant?: 'icon' | 'overlay' | 'label' }) {
   const state = useLibraryState();
   const store = useLibrary();
   const meta = FIELD_META[field];
@@ -96,7 +96,7 @@ export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canoni
         aria-busy={pending || undefined}
         title={label}
         onClick={onClick}
-        className={`relative inline-flex ${variant === 'label' ? 'min-h-12 gap-2 border border-white/20 bg-[#202020] px-4 text-sm font-medium hover:bg-[#2b2b2b]' : TOUCH_TARGET_CLASS} items-center justify-center rounded-full transition ${FOCUS_RING_CLASS} ${
+        className={`relative inline-flex ${variant === 'label' ? 'min-h-12 gap-2 border border-white/20 bg-[#202020] px-4 text-sm font-medium hover:bg-[#2b2b2b]' : variant === 'overlay' ? 'h-11 w-11 border border-white/15 bg-black/55 backdrop-blur-sm' : TOUCH_TARGET_CLASS} items-center justify-center rounded-full transition ${FOCUS_RING_CLASS} ${
           error
             ? 'text-red-300 after:absolute after:inset-0 after:rounded-full after:ring-2 after:ring-red-400/70'
             : active
