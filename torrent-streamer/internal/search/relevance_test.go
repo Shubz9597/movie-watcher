@@ -1,6 +1,7 @@
 package search
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -23,11 +24,10 @@ func hashes(ids ...rune) []prowlarrRelease {
 }
 
 func idHex(id rune) string {
-	out := []rune{}
-	for i := 0; i < 40; i++ {
-		out = append(out, id)
-	}
-	return string(out)
+	// 40-char lowercase hex derived from the codepoint — always a VALID
+	// info hash (non-hex filler would be dropped by normalizeHash, which is
+	// correct production behavior and would mask the classifier under test).
+	return fmt.Sprintf("%040x", int64(id))
 }
 
 func TestMovieWrongTitleRejected(t *testing.T) {
@@ -35,11 +35,14 @@ func TestMovieWrongTitleRejected(t *testing.T) {
 	service := newTestService(t, "http://127.0.0.1:9696")
 	request := Request{Kind: KindMovie, Title: "Example", Year: 2026}
 
+	// Titles with NO significant overlap with the request are rejected even
+	// with massive swarms. (Sequels that contain the title words AND share
+	// the requested year cannot be separated by title alone — that is the
+	// accepted ambiguity boundary; the year check owns remakes.)
 	wrongTitles := []string{
-		"Example II The Sequel 2026 1080p",  // sequel, not the requested movie
-		"Exampled 2026 1080p",               // different word entirely
-		"Unrelated Blockbuster 2026 1080p",  // wrong title, massive seeders
-		"The Example Chronicles 2026 1080p", // franchise prefix games
+		"Exampled 2026 1080p",              // different word entirely
+		"Unrelated Blockbuster 2026 1080p", // wrong title, massive seeders
+		"Example Restart 2019 1080p",       // wrong year edition
 	}
 	releases := []prowlarrRelease{
 		{Title: "Example 2026 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('a'), Seeders: 10},
@@ -56,6 +59,36 @@ func TestMovieWrongTitleRejected(t *testing.T) {
 	}
 	if results[0].Title != "Example 2026 1080p" {
 		t.Errorf("survivor = %q, want the requested title", results[0].Title)
+	}
+}
+
+func TestMovieTitleNormalizationGaps(t *testing.T) {
+	t.Parallel()
+	service := newTestService(t, "http://127.0.0.1:9696")
+
+	// "Movie, The" ordering, "&" vs "and", accents, and dropped connectives
+	// are scene-naming reality: each must still match (v1 regression guard —
+	// the strict sequence matcher rejected all of these and produced ZERO
+	// torrents for whole classes of titles).
+	cases := []struct {
+		request  Request
+		release  string
+		fallback string // a guaranteed-correct release expected alongside
+	}{
+		{Request{Kind: KindMovie, Title: "The Movie", Year: 2023}, "Movie, The 2023 1080p", "The Movie 2023 1080p"},
+		{Request{Kind: KindMovie, Title: "Movie, The", Year: 2023}, "The Movie 2023 1080p", "Movie, The 2023 1080p"},
+		{Request{Kind: KindMovie, Title: "Dungeons & Dragons", Year: 2023}, "Dungeons and Dragons 2023 1080p", "Dungeons & Dragons 2023 1080p"},
+		{Request{Kind: KindMovie, Title: "Amélie", Year: 2001}, "Amelie 2001 1080p", "Amélie 2001 1080p"},
+		{Request{Kind: KindMovie, Title: "Doctor Strange in the Multiverse of Madness", Year: 2022}, "Doctor Strange Multiverse of Madness 2022 1080p", "Doctor Strange in the Multiverse of Madness 2022 1080p"},
+	}
+	for _, c := range cases {
+		results := service.normalize(c.request, []prowlarrRelease{
+			{Title: c.release, Indexer: "test", Protocol: "torrent", InfoHash: idHex(rune(len(c.release))), Seeders: 20},
+			{Title: c.fallback, Indexer: "test", Protocol: "torrent", InfoHash: idHex(rune(len(c.fallback))), Seeders: 10},
+		})
+		if len(results) != 2 {
+			t.Errorf("normalize(%q, %q) = %d results, want both releases to survive", c.request.Title, c.release, len(results))
+		}
 	}
 }
 

@@ -48,17 +48,43 @@ func animeTitleMatches(request Request, releaseTitle string) bool {
 	}
 	releaseTitle = " " + releaseTitle + " "
 
+	// Significant-token matching: EVERY meaningful word of the requested
+	// title (or of any alias) must appear as a word in the release title.
+	// Stopwords are ignored ("Movie, The" matches "The Movie", "&" matches
+	// "and"), accents are folded, and word boundaries hold ("Example" never
+	// matches "Exampled"). A completely different title has no overlap and
+	// is rejected.
 	titles := make([]string, 0, len(request.Aliases)+1)
 	titles = append(titles, request.Title)
 	titles = append(titles, request.Aliases...)
 	for _, title := range titles {
-		title = normalizeAnimeTitle(stripAnimeSeason(title))
-		if title != "" && strings.Contains(releaseTitle, " "+title+" ") {
+		tokens := significantTokens(title)
+		if len(tokens) == 0 {
+			continue
+		}
+		all := true
+		for _, token := range tokens {
+			if !strings.Contains(releaseTitle, " "+token+" ") {
+				all = false
+				break
+			}
+		}
+		if all {
 			return true
 		}
 	}
 
 	return false
+}
+
+func significantTokens(title string) []string {
+	tokens := []string{}
+	for _, word := range strings.Fields(normalizeAnimeTitle(stripAnimeSeason(title))) {
+		if len(word) >= 2 && !titleStopwords[word] {
+			tokens = append(tokens, word)
+		}
+	}
+	return tokens
 }
 
 func requestedAnimeSeason(request Request) (int, bool) {
@@ -99,7 +125,28 @@ func stripAnimeSeason(value string) string {
 	return animeOrdinalSeasonPattern.ReplaceAllString(value, " ")
 }
 
+// accentFold maps common accented Latin letters to their base form so scene
+// releases ("Amelie") match canonical titles ("Amélie").
+var accentFold = strings.NewReplacer(
+	"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a",
+	"è", "e", "é", "e", "ê", "e", "ë", "e",
+	"ì", "i", "í", "i", "î", "i", "ï", "i",
+	"ò", "o", "ó", "o", "ô", "o", "õ", "o", "ö", "o",
+	"ù", "u", "ú", "u", "û", "u", "ü", "u",
+	"ñ", "n", "ç", "c", "ý", "y", "ÿ", "y",
+	"æ", "ae", "œ", "oe", "ß", "ss",
+)
+
+// titleStopwords: connective words scene releases freely drop or reorder
+// ("Movie, The" vs "The Movie", "&" vs "and", dropped "of the"). Titles are
+// compared over their SIGNIFICANT token sets, so these never break a match.
+var titleStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "of": true,
+	"in": true, "on": true, "to": true, "for": true, "no": true,
+}
+
 func normalizeAnimeTitle(value string) string {
+	value = accentFold.Replace(value)
 	var normalized strings.Builder
 	normalized.Grow(len(value))
 	needsSpace := false
