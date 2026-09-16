@@ -118,7 +118,8 @@ export function ServerSettings(props: {
           autoCorrect="off"
           spellCheck={false}
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          disabled={saving || state.kind === 'probing'}
+          onChange={(event) => { setValue(event.target.value); if (error) setError(null); }}
           placeholder="https://your-node.your-tailnet.ts.net"
           // text-base (16px): iOS auto-zooms the viewport when focusing any
           // input below 16px — 16px is the mobile-correct size, not a style
@@ -156,8 +157,8 @@ export function ServerSettings(props: {
           <button
             type="button"
             onClick={() => void probe()}
-            disabled={!normalized || state.kind === 'probing'}
-            className="flex min-h-12 w-full items-center justify-center rounded-full border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:opacity-40"
+            disabled={!normalized || saving || state.kind === 'probing'}
+            className="flex min-h-12 w-full items-center justify-center rounded-full border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {state.kind === 'probing' ? 'Testing…' : 'Test connection'}
           </button>

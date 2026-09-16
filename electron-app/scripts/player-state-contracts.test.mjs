@@ -127,8 +127,11 @@ test("episode progress ignores incomplete or self-referencing continuations", ()
 
 test("renderer CSP permits anime episode artwork metadata providers", () => {
   const providerOrigins = ["https://api.ani.zip", "https://anime-kitsu.strem.fun"];
-  for (const htmlName of ["index.html", "player-controls.html", "setup.html", "startup.html"]) {
-    const html = fs.readFileSync(path.resolve(scriptDir, `../src/${htmlName}`), "utf8");
+  // browser.html is the phone/browser entry: its CSP must permit the same
+  // metadata providers or anime stills silently never load on mobile.
+  for (const htmlName of ["index.html", "player-controls.html", "setup.html", "startup.html", "browser.html"]) {
+    // Collapse whitespace: some templates break the meta tag across lines.
+    const html = fs.readFileSync(path.resolve(scriptDir, `../src/${htmlName}`), "utf8").replace(/\s+/gu, " ");
     const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)?.[1] || "";
     const connectSource = policy.match(/connect-src ([^;]+)/)?.[1] || "";
     for (const origin of providerOrigins) {

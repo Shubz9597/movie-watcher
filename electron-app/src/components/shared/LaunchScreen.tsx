@@ -152,6 +152,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
       <input
         id={inputId}
         value={origin}
+        disabled={pending}
         onChange={(event) => {
           setOrigin(event.target.value);
           // Editing invalidates the previous attempt: never keep a stale
