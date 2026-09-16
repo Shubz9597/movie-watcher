@@ -10,14 +10,29 @@ import (
 var (
 	animeSeasonPattern        = regexp.MustCompile(`(?i)\bs(?:eason)?[ ._-]*(\d{1,2})(?:[ ._-]*e\d{1,3})?(?:\b|_)`)
 	animeOrdinalSeasonPattern = regexp.MustCompile(`(?i)\b(\d{1,2})(?:st|nd|rd|th)[ ._-]*season\b`)
+	// cjkTitlePattern matches Japanese-script release titles (kanji, hiragana,
+	// katakana). The app's anime preference is ROMAJI/English-subbed releases;
+	// Japanese-script titles are raws or local-language releases and are never
+	// relevant, whatever alias matched them.
+	cjkTitlePattern = regexp.MustCompile(`[\p{Han}\p{Hiragana}\p{Katakana}]`)
 )
 
 func animeReleaseRelevant(request Request, releaseTitle string) bool {
+	if cjkTitlePattern.MatchString(releaseTitle) {
+		return false // romaji preference: Japanese-script titles are excluded
+	}
 	if !animeTitleMatches(request, releaseTitle) {
 		return false
 	}
 
 	wantSeason, hasWantedSeason := requestedAnimeSeason(request)
+	if !hasWantedSeason {
+		// Anime requests without an explicit season (title-level search)
+		// mean the FIRST season: absolute episode numbering starts at 1 and
+		// later seasons always mark themselves ("S2", "2nd Season") in their
+		// titles. Defaulting keeps sequels out of a season-1 title's results.
+		wantSeason, hasWantedSeason = 1, true
+	}
 	gotSeason, hasReleaseSeason := explicitAnimeSeason(releaseTitle)
 	if !hasWantedSeason || !hasReleaseSeason {
 		return true

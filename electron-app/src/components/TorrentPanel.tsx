@@ -195,6 +195,7 @@ export default function TorrentPanel({
           imdbId,
           title,
           year,
+          aliases: titleAliases,
           originalLanguage,
         });
       }

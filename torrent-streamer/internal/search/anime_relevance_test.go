@@ -19,10 +19,45 @@ func TestAnimeReleaseRelevant(t *testing.T) {
 	}{
 		{name: "romanized alias", title: "[SubsPlease] Sousou no Frieren - 02 (1080p)", want: true},
 		{name: "canonical punctuation variant", title: "Frieren Beyond Journeys End - 02", want: true},
-		{name: "native alias", title: "葬送のフリーレン - 02", want: true},
+		// Romaji preference: Japanese-script release titles are excluded even
+		// when a native alias matches them.
+		{name: "native alias", title: "葬送のフリーレン - 02", want: false},
+		{name: "mixed-script release", title: "[SubsPlease] 葬送のフリーレン - 02 (1080p)", want: false},
 		{name: "wrong Frieren season", title: "[Erai-raws] Sousou no Frieren 2nd Season - 02 (1080p)", want: false},
 		{name: "wrong anime", title: "[SubsPlease] Link Click S3 - 02 (1080p)", want: false},
 		{name: "unrelated numbered release", title: "[Erai-raws] Bleach: Sennen Kessen-hen - 02", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := animeReleaseRelevant(request, test.title)
+			if got != test.want {
+				t.Errorf("animeReleaseRelevant(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
+			}
+		})
+	}
+}
+
+func TestAnimeReleaseRelevantDefaultsToFirstSeason(t *testing.T) {
+	t.Parallel()
+
+	// Title-level anime search sends NO season: sequels that mark themselves
+	// ("S2", "2nd Season") must still be excluded.
+	request := Request{
+		Kind:    KindAnime,
+		Title:   "Frieren: Beyond Journey's End",
+		Aliases: []string{"Sousou no Frieren"},
+	}
+	tests := []struct {
+		name  string
+		title string
+		want  bool
+	}{
+		{name: "seasonless release", title: "[SubsPlease] Sousou no Frieren - 05 (1080p)", want: true},
+		{name: "explicit first season", title: "Sousou no Frieren S1 - 05", want: true},
+		{name: "second season marker", title: "[SubsPlease] Sousou no Frieren S2 - 02", want: false},
+		{name: "ordinal sequel", title: "Sousou no Frieren 2nd Season - 02", want: false},
 	}
 
 	for _, test := range tests {

@@ -86,7 +86,10 @@ var (
 	seasonEpisode     = regexp.MustCompile(`(?i)\bS(\d{1,2})[ ._-]*E(\d{1,3})\b`)
 	episodeToken      = regexp.MustCompile(`(?i)\b(?:EP?|Episode|#)[ ._-]*(\d{1,4})\b`)
 	packToken         = regexp.MustCompile(`(?i)\b(complete|batch|season[ ._-]*pack|full[ ._-]*season|collection)\b`)
-	episodeRange      = regexp.MustCompile(`(?i)\b(?:EP?|Episodes?)?[ ._-]*(\d{1,3})[ ._-]*(?:-|to)[ ._-]*(\d{1,3})\b`)
+	// episodeRange matches multi-episode spans in both "01-12" and
+	// "E01-E12" forms: the E/EP/Episode prefix is optional on EACH number
+	// ("E01-E12" previously never matched — the second E broke the pattern).
+	episodeRange      = regexp.MustCompile(`(?i)\b(?:EP?|Episodes?)?[ ._-]*(\d{1,3})[ ._-]*(?:-|to)[ ._-]*(?:EP?|Episodes?)?[ ._-]*(\d{1,3})\b`)
 )
 
 type cacheEntry struct {
@@ -113,6 +116,7 @@ type prowlarrRelease struct {
 	InfoHash    string             `json:"infoHash"`
 	PublishDate string             `json:"publishDate"`
 	Languages   []prowlarrLanguage `json:"languages"`
+	ImdbID      string             `json:"imdbId"`
 }
 
 type prowlarrLanguage struct {
@@ -520,11 +524,15 @@ func setEpisodeParams(params url.Values, request Request) {
 func (s *Service) normalize(request Request, releases []prowlarrRelease) []Result {
 	results := make([]Result, 0, len(releases))
 	resultByKey := make(map[string]int, len(releases)*2)
+	episodeRequested := request.Episode != nil || request.Absolute != nil
 	for _, release := range releases {
 		if release.Protocol != "" && !strings.EqualFold(release.Protocol, "torrent") {
 			continue
 		}
-		if request.Kind == KindAnime && !animeReleaseRelevant(request, release.Title) {
+		// Relevance audit: one classification gate for title, year, season,
+		// episode, and pack coverage. Rejected releases never reach ranking.
+		class := classifyRelease(request, release)
+		if class == classReject {
 			continue
 		}
 		languageRank, allowed := releaseLanguageRank(request, release)
@@ -551,7 +559,7 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		if indexer == "" {
 			indexer = release.IndexerName
 		}
-		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate, languageRank: languageRank}
+		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate, languageRank: languageRank, verified: class == classVerified}
 		if request.Episode != nil {
 			matched := matchesEpisode(release.Title, request.Season, request.Episode, request.Absolute)
 			result.EpisodeMatch = &matched
@@ -580,27 +588,29 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 			resultByKey[key] = resultIndex
 		}
 	}
-	if request.Episode != nil {
-		exact := make([]Result, 0, len(results))
-		packs := make([]Result, 0, len(results))
+	if episodeRequested {
+		// NO fallback: when an episode was requested, releases with NO
+		// matching evidence are dropped instead of surfacing the whole raw
+		// indexer dump. If nothing at all matched, the answer is "no
+		// episode results" — never unrelated releases.
+		matched := make([]Result, 0, len(results))
 		for _, result := range results {
-			if result.EpisodeMatch != nil && *result.EpisodeMatch && result.SeasonPack == nil {
-				exact = append(exact, result)
-			} else if result.SeasonPack != nil {
-				packs = append(packs, result)
+			if (result.EpisodeMatch != nil && *result.EpisodeMatch) || result.verified {
+				matched = append(matched, result)
 			}
 		}
-		if len(exact) > 0 {
-			results = exact
-		} else if len(packs) > 0 {
-			results = packs
+		if len(matched) == 0 {
+			return []Result{}
 		}
+		results = matched
 	}
 	// Swarm health first (device pass): a badly-seeded release must never
 	// outrank a healthy one merely because its title carries an explicit
 	// language tag. torrentHealthScore makes health the dominant term and
 	// language a bounded bonus; dead/unknown swarms (seeders<=0) are dropped
-	// entirely when enough known-alive alternatives exist.
+	// entirely when enough known-alive alternatives exist. VERIFICATION is
+	// the top sort key: ambiguous releases (no verifiable evidence) can never
+	// outrank a verified match, whatever their seeder count.
 	alive := 0
 	for _, result := range results {
 		if result.Seeders > 0 {
@@ -617,6 +627,9 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		results = kept
 	}
 	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].verified != results[j].verified {
+			return results[i].verified
+		}
 		si, sj := torrentHealthScore(results[i]), torrentHealthScore(results[j])
 		if si != sj {
 			return si > sj

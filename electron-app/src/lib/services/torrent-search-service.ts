@@ -59,6 +59,7 @@ export async function searchMovieTorrents(params: {
   imdbId?: string;
   title?: string;
   year?: number;
+  aliases?: string[];
   originalLanguage?: string;
 }): Promise<SearchResponse> {
   if (!params.title?.trim()) throw new Error('A movie title is required.');

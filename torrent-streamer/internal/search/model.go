@@ -46,6 +46,9 @@ type Result struct {
 	EpisodeMatch *bool       `json:"episodeMatch,omitempty"`
 	SeasonPack   *SeasonPack `json:"seasonPack,omitempty"`
 	languageRank int
+	// verified: explicit release evidence (year/season/episode/pack coverage)
+	// confirmed the request. Unexported: an internal ranking input only.
+	verified bool
 }
 
 // Response contains ranked search results.
