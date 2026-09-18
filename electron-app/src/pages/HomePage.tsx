@@ -535,9 +535,14 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
     navigate('title', params);
   }, [navigate]);
 
-  const prefetchItem = useCallback((_k: 'movie' | 'tv' | 'anime', _item: MovieCard) => {
-    void loadTitlePage();
-  }, []);
+  // Stable per-kind callbacks (perf): CarouselRow is React.memo'd, but the
+  // fresh inline closures `(item) => openItem('movie', item)` previously
+  // defeated the memo on every hero-rotation re-render — all three rails
+  // (45 cards + toggles) re-rendered every 8 seconds.
+  const openMovie = useCallback((item: MovieCard) => openItem('movie', item), [openItem]);
+  const openTv = useCallback((item: MovieCard) => openItem('tv', item), [openItem]);
+  const openAnime = useCallback((item: MovieCard) => openItem('anime', item), [openItem]);
+  const prefetch = useCallback(() => void loadTitlePage(), []);
 
   const openSetup = useCallback(() => void window.electronAPI?.openSetup(), []);
   const retryCatalog = useCallback(() => {
@@ -705,8 +710,8 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           error={moviesError}
           onRetry={retryCatalog}
           onOpenSettings={openSetup}
-          onOpen={(item) => openItem('movie', item)}
-          onPrefetch={(item) => prefetchItem('movie', item)}
+          onOpen={openMovie}
+          onPrefetch={prefetch}
           seeAllHref={`/see-all?title=${encodeURIComponent('Movies – Trending')}&api=${encodeURIComponent('tmdb:trending:movie')}&kind=movie`}
           navigate={navigate}
           libraryKind="movie"
@@ -720,8 +725,8 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           error={seriesError}
           onRetry={retryCatalog}
           onOpenSettings={openSetup}
-          onOpen={(item) => openItem('tv', item)}
-          onPrefetch={(item) => prefetchItem('tv', item)}
+          onOpen={openTv}
+          onPrefetch={prefetch}
           seeAllHref={`/see-all?title=${encodeURIComponent('Series – Trending')}&api=${encodeURIComponent('tmdb:trending:tv')}&kind=tv`}
           navigate={navigate}
           libraryKind="tv"
@@ -735,8 +740,8 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           error={animeError}
           onRetry={retryCatalog}
           emptyMessage="Anime providers are temporarily unavailable. Reopen the app or try again shortly."
-          onOpen={(item) => openItem('anime', item)}
-          onPrefetch={(item) => prefetchItem('anime', item)}
+          onOpen={openAnime}
+          onPrefetch={prefetch}
           seeAllHref={`/see-all?title=${encodeURIComponent('Anime – Trending')}&api=${encodeURIComponent('anilist:trending:anime')}&kind=anime`}
           navigate={navigate}
           libraryKind="anime"

@@ -23,7 +23,7 @@ import {
   type Detail,
 } from '../lib/adapters/media';
 import { getSavedResumeSource } from '../lib/services/continue-service';
-import { useLibraryState } from '../lib/library-react';
+import { useLibrary, useLibrarySelector } from '../lib/library-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type { ResumeSourceContext, SavedResumeSource } from '../lib/types';
@@ -39,6 +39,13 @@ function IMDbMark({ className = '' }: { className?: string }) {
   );
 }
 
+// Module scope (perf): Intl.DisplayNames resolves locale data; constructing
+// it on every render is wasted work. Constructed once per JS context.
+const languageFormatter =
+  typeof Intl !== 'undefined' && 'DisplayNames' in Intl
+    ? new Intl.DisplayNames(['en'], { type: 'language' })
+    : null;
+
 export default function TitlePage({
   navigate,
   kind,
@@ -51,6 +58,7 @@ export default function TitlePage({
   params?: Record<string, string>;
 }) {
   const platform = usePlatform();
+  const library = useLibrary();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [seasons, setSeasons] = useState<any[]>([]);
   const [initialSeason, setInitialSeason] = useState(1);
@@ -84,8 +92,11 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           : kind === 'anime'
             ? `anilist:${id}`
             : null;
-  const libraryState = useLibraryState();
-  const libraryAvailable = Boolean(libraryState?.availability === 'available' && libraryCanonicalId);
+  // Sliced subscription (perf): TitlePage is the heaviest tree in the app
+  // (hero, cast, up to 1000 episode rows) — it must NOT re-render on every
+  // library publish (toggle taps, 15s sync polls) just to read availability.
+  const libraryAvailability = useLibrarySelector(library, (snapshot) => snapshot?.availability);
+  const libraryAvailable = Boolean(libraryAvailability === 'available' && libraryCanonicalId);
   const saveUnavailableCopy = 'Library saving arrives with library sync (M3) — nothing is saved yet.';
   const resumeContext = useMemo<ResumeSourceContext | null>(() => {
     const subjectId = params?.resumeSubjectId?.trim();
@@ -622,10 +633,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
     );
   }
 
-  const languageFormatter =
-    typeof Intl !== 'undefined' && 'DisplayNames' in Intl
-      ? new Intl.DisplayNames(['en'], { type: 'language' })
-      : null;
   const languageName = detail.originalLanguage && languageFormatter ? languageFormatter.of(detail.originalLanguage) : null;
 
   const formatRuntime = (minutes?: number | null) => {

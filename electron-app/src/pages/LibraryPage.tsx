@@ -15,7 +15,7 @@ import { useEffect, useState } from 'react';
 import { ChevronRight, Film, Ghost, ListFilter, Tv } from 'lucide-react';
 import { SelectionSurface, UnderlineTabs } from '../components/primitives';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
-import { useLibrary, useLibraryState } from '../lib/library-react';
+import { useLibrary, useLibrarySelector } from '../lib/library-react';
 import type { LibraryController } from '../lib/library-store.ts';
 import { overviewKey, pageKey } from '../lib/library-store.ts';
 import { titleRouteParams } from '../lib/canonical-route';
@@ -195,26 +195,29 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
   sort: LibrarySort;
   navigate: Navigate;
 }) {
-  const state = useLibrarySnapshot(library);
+  // Sliced subscriptions (perf): the grid re-renders only when availability
+  // or THIS collection's overview changes — not on every library publish
+  // (toggle taps, membership reconciles, 15s sync polls).
+  const availability = useLibrarySelector(library, (snapshot) => snapshot?.availability);
   const key = overviewStateKey(collection, sort);
+  const overview = useLibrarySelector(library, (snapshot) => snapshot?.overviews[key]);
 
   useEffect(() => {
-    if (state.availability === 'available') {
+    if (availability === 'available') {
       library.ensureOverview(collection, sort);
     }
-  }, [library, state.availability, collection, sort]);
+  }, [library, availability, collection, sort]);
 
-  if (state.availability === 'checking') {
+  if (availability === 'checking') {
     return <ShelfSkeleton />;
   }
-  if (state.availability === 'unavailable') {
+  if (availability === 'unavailable') {
     return <UnavailableState onRetry={() => void library.refreshCapability()} />;
   }
-  if (state.availability === 'unreachable') {
+  if (availability === 'unreachable') {
     return <ErrorState message="The TorWatch server could not be reached. The library is stored on the server." onRetry={() => void library.refreshCapability()} label="library availability" />;
   }
 
-  const overview = state.overviews[key];
   if (!overview || overview.status === 'loading') {
     return <ShelfSkeleton />;
   }
@@ -433,11 +436,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
   );
 }
 
-// --- Shared snapshot hook ------------------------------------------------------
-
-function useLibrarySnapshot(library: LibraryController) {
-  return useLibraryState() ?? library.getSnapshot();
-}
+// --- Shared snapshot helpers ---------------------------------------------------
 
 function overviewStateKey(collection: LibraryCollection, sort: LibrarySort): string {
   return overviewKey(collection, sort);
@@ -497,26 +496,27 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
   sort: LibrarySort;
   navigate: Navigate;
 }) {
-  const state = useLibrarySnapshot(library);
+  // Sliced subscriptions (perf): see ServerLibraryOverview above.
+  const availability = useLibrarySelector(library, (snapshot) => snapshot?.availability);
   const key = pageKey(collection, kind, sort);
+  const page = useLibrarySelector(library, (snapshot) => snapshot?.pages[key]);
 
   useEffect(() => {
-    if (state.availability === 'available') {
+    if (availability === 'available') {
       library.ensurePage(collection, kind, sort);
     }
-  }, [library, state.availability, collection, kind, sort]);
+  }, [library, availability, collection, kind, sort]);
 
-  if (state.availability === 'checking') {
+  if (availability === 'checking') {
     return <ShelfSkeleton />;
   }
-  if (state.availability === 'unavailable') {
+  if (availability === 'unavailable') {
     return <UnavailableState onRetry={() => void library.refreshCapability()} />;
   }
-  if (state.availability === 'unreachable') {
+  if (availability === 'unreachable') {
     return <ErrorState message="The TorWatch server could not be reached. The library is stored on the server." onRetry={() => void library.refreshCapability()} label="library availability" />;
   }
 
-  const page = state.pages[key];
   if (!page || page.status === 'loading') {
     return <ShelfSkeleton />;
   }

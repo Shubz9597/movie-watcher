@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / IDE
+.idea/
+*.swp
+*.swo
+.vscode/
+
+# Logs / temp
+*.log
+tmp/
+.cache/
+
+# Build artifacts (if anyone tests against real builds here)
+*.apk
+*.aab
+*.ipa
+*.jsbundle

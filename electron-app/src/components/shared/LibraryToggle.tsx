@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bookmark, Heart } from 'lucide-react';
 import { FOCUS_RING_CLASS, TOUCH_TARGET_CLASS } from '../../lib/design-tokens';
-import { useLibrary, useLibraryState } from '../../lib/library-react';
+import { useLibrary, useLibrarySelector } from '../../lib/library-react';
 import { flagKey } from '../../lib/library-store.ts';
 import type { LibraryCollection } from '../../lib/services/library-service';
 
@@ -36,15 +36,17 @@ const FIELD_META = {
 } as const;
 
 export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canonicalId: string; field: LibraryCollection; variant?: 'icon' | 'overlay' | 'label' }) {
-  const state = useLibraryState();
   const store = useLibrary();
+  // Sliced subscriptions (perf): a toggle re-renders only when ITS membership,
+  // pending flag, or error changes — not on every library publish. With
+  // dozens of toggles on one screen this keeps toggles O(1) per store update.
+  const membership = useLibrarySelector(store, (snapshot) => snapshot?.memberships[canonicalId]);
+  const pendingKey = flagKey(field, canonicalId);
+  const pending = useLibrarySelector(store, (snapshot) => Boolean(snapshot?.pending[pendingKey]));
+  const error = useLibrarySelector(store, (snapshot) => snapshot?.errors[pendingKey] ?? null);
   const meta = FIELD_META[field];
   const Icon = meta.icon;
 
-  const membership = state?.memberships[canonicalId];
-  const pendingKey = flagKey(field, canonicalId);
-  const pending = Boolean(state?.pending[pendingKey]);
-  const error = state?.errors[pendingKey] ?? null;
   const active = field === 'watch-later' ? membership?.watchLater ?? false : membership?.favourite ?? false;
   const queuedTarget = store?.lastTargetFor(canonicalId, field);
   // While PENDING, the icon shows the in-flight intent; on ERROR the

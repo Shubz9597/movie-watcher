@@ -1,0 +1,27 @@
+# Windsurf Rules — React Native Performance Audit
+#
+# Copy this file to the ROOT of your React Native project (keep the name `.windsurfrules`),
+# or paste its contents into Windsurf's global/workspace rules. Full skill: SKILL.md + AGENTS.md.
+
+When the task involves React Native performance for this app, follow SKILL.md and AGENTS.md exactly. Key rules:
+
+- Find the REAL bottleneck before changing anything. Every fix must trace to a named cause: a heavy/inline `renderItem`, a non-memoized row, an unstable prop, a missing `useEffect` cleanup, a blocking startup call, a full-res image in a list, etc. Do not add `useMemo`/`useCallback`/`React.memo` without a measured reason.
+
+- Never judge final performance from a debug build. Debug JS runs without Hermes optimizations and with dev warnings — it is not representative. Turn OFF remote JS debugging when measuring. Label every observation debug vs release; measure cold start and scroll in RELEASE.
+
+- Validate, don't assume. Run and quote what you can:
+  * npm run typecheck   (or tsc --noEmit)
+  * npm run lint
+  * npm test
+  * Android: cd android && ./gradlew assembleRelease (and bundleRelease for Play)
+  * iOS: cd ios && pod install, then build/run with the Release scheme
+  * a profiler trace where available (React DevTools Profiler / Hermes / Android Studio / Instruments)
+  Mark any check you cannot run as "unverified until run" with the exact command.
+
+- Make surgical, behavior-preserving edits that match the project's conventions (TS vs JS, state library, navigation library, list component). No refactors, no reformatting, no dependency churn.
+
+- Do NOT: swap FlatList → FlashList (or add any heavy library) without measuring the bottleneck and explaining the trade-off; toggle Hermes blindly (check RN version + platform); remove business logic, analytics, crash reporting, or monitoring; break Android/iOS builds; change signing config, package name, or bundle identifier.
+
+- Present a short fix plan (issues, files, strategy, tests, risk) BEFORE editing.
+
+- Final report must include: Summary, Issues Found (with severity), Files Changed, Fixes Applied, Validation, Manual Testing Steps, Remaining Risks, Next Steps. Use the checklists in checklists/ and the worked examples in examples/.

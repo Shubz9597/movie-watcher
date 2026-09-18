@@ -22,7 +22,15 @@ export function useSearchViewport(active: boolean) {
       // Focus alone is insufficient (hardware keyboards). A real viewport
       // reduction is required; keep chrome hidden during keyboard dismissal.
       keyboardOpen = (editing || keyboardOpen) && fullHeight - height > 120 && (viewport?.scale ?? 1) < 1.1;
-      setFrame({ height, top: viewport?.offsetTop ?? 0, keyboardOpen });
+      const top = viewport?.offsetTop ?? 0;
+      // Perf (mobile): visualViewport scroll fires continuously while the
+      // keyboard opens/closes; skip the state write (and the AppShell
+      // re-render) when nothing actually changed.
+      setFrame((previous) => (
+        previous.height === height && previous.top === top && previous.keyboardOpen === keyboardOpen
+          ? previous
+          : { height, top, keyboardOpen }
+      ));
     };
     const previous = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';

@@ -22,6 +22,42 @@ export class CatalogBffError extends Error {
   }
 }
 
+// Perf (mobile): renderer mode's provider services carry TTL caches; the bff
+// path had none, so revisiting rails or retyping a search re-downloaded
+// identical payloads over cellular. Short TTL for search results and section
+// pages only — catalog metadata that is stable at human timescales (the
+// desktop provider path behaves the same). Title detail and episode lists
+// are deliberately NOT cached: manual refresh must always refetch.
+const BFF_CACHE_TTL_MS = 60_000;
+const BFF_CACHE_MAX_ENTRIES = 60;
+const bffResponseCache = new Map<string, { at: number; payload: unknown }>();
+const inFlight = new Map<string, Promise<unknown>>();
+
+async function cachedBffCall<T>(path: string, deps: BffDeps | undefined, load: () => Promise<T>): Promise<T> {
+  if (deps?.fetchImpl) return load();
+  const key = `${backendGeneration()}|${path}`;
+  const entry = bffResponseCache.get(key);
+  if (entry && Date.now() - entry.at < BFF_CACHE_TTL_MS) return entry.payload as T;
+  if (entry) bffResponseCache.delete(key);
+  const existing = inFlight.get(key);
+  if (existing) return existing as Promise<T>;
+  let tracked!: Promise<T>;
+  tracked = load()
+    .then((payload) => {
+      if (bffResponseCache.size >= BFF_CACHE_MAX_ENTRIES) {
+        const oldest = bffResponseCache.keys().next();
+        if (typeof oldest.value === 'string') bffResponseCache.delete(oldest.value);
+      }
+      bffResponseCache.set(key, { at: Date.now(), payload });
+      return payload;
+    })
+    .finally(() => {
+      if (inFlight.get(key) === tracked) inFlight.delete(key);
+    });
+  inFlight.set(key, tracked);
+  return tracked;
+}
+
 type BffTitle = {
   id: string;
   type: 'movie' | 'series' | 'anime';
@@ -62,6 +98,24 @@ type BffEpisode = {
 };
 
 async function catalogFetch<T>(path: string, deps?: BffDeps): Promise<T> {
+  // Perf (mobile): the bff path is the production mobile transport and had no
+  // request hygiene — identical concurrent requests each opened their own
+  // connection. In-flight dedupe shares one response (fixture/test fetches
+  // bypass everything). No TTL cache here on purpose: title detail and
+  // episode lists stay uncached so manual refresh always refetches.
+  if (deps?.fetchImpl) return performCatalogFetch<T>(path, deps);
+  const key = `${backendGeneration()}|${path}`;
+  const existing = inFlight.get(key);
+  if (existing) return existing as Promise<T>;
+  let tracked!: Promise<T>;
+  tracked = performCatalogFetch<T>(path, deps).finally(() => {
+    if (inFlight.get(key) === tracked) inFlight.delete(key);
+  });
+  inFlight.set(key, tracked);
+  return tracked;
+}
+
+async function performCatalogFetch<T>(path: string, deps?: BffDeps): Promise<T> {
   const doFetch = deps?.fetchImpl ?? fetch.bind(globalThis);
   // Origin-switch guard (M1.2): a request started on one server origin is
   // aborted on switch, and a response that raced the switch is discarded
@@ -166,9 +220,9 @@ export async function bffSearch(
   limit = 24,
   deps?: BffDeps,
 ): Promise<BffTitle[]> {
-  const payload = await catalogFetch<{ results: BffTitle[] }>(
-    withClientId(`/v2/catalog/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}&limit=${limit}`),
-    deps,
+  const path = withClientId(`/v2/catalog/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}&limit=${limit}`);
+  const payload = await cachedBffCall(path, deps, () =>
+    catalogFetch<{ results: BffTitle[] }>(path, deps),
   );
   return payload.results ?? [];
 }
@@ -262,11 +316,14 @@ export async function bffSectionPage(
     params.set('genre', String(genre));
     params.set('type', type === 'anime' ? 'anime' : type === 'series' ? 'series' : 'movie');
   }
-  const payload = await catalogFetch<{
-    results: BffTitle[];
-    page?: number;
-    totalPages?: number;
-  }>(withClientId(`/v2/catalog/sections?${params.toString()}`), deps);
+  const path = withClientId(`/v2/catalog/sections?${params.toString()}`);
+  const payload = await cachedBffCall(path, deps, () =>
+    catalogFetch<{
+      results: BffTitle[];
+      page?: number;
+      totalPages?: number;
+    }>(path, deps),
+  );
   if (!Array.isArray(payload?.results)) {
     throw new CatalogBffError('unsupported_capability', 'Update the TorWatch backend to load catalog sections with title summaries.');
   }

@@ -1,6 +1,6 @@
 // Electron-compatible EpisodePanel that uses services directly
 // This wraps the original but handles API calls through services
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
 import { ArrowLeft, ChevronRight, Clock3, Loader2, Play } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
@@ -233,10 +233,14 @@ export default function EpisodePanel({
     const releaseTime = episodeReleaseTime(episode);
     return releaseTime !== null && releaseTime > availabilityNow;
   });
+  // O(1) id→index lookup (perf): the previous per-episode findIndex made the
+  // episode list render O(n²) — up to ~1M steps per render pass for a
+  // 1000-episode anime back-catalogue.
+  const episodeIndexById = useMemo(() => new Map(episodes.map((episode, index) => [episode.id, index])), [episodes]);
   const isEpisodeUpcoming = (episode: EpisodeSummary) => {
     const releaseTime = episodeReleaseTime(episode);
     if (releaseTime !== null && releaseTime > availabilityNow) return true;
-    const episodeIndex = episodes.findIndex((item) => item.id === episode.id);
+    const episodeIndex = episodeIndexById.get(episode.id) ?? -1;
     return firstUpcomingIndex >= 0 && episodeIndex >= firstUpcomingIndex;
   };
   const isEpisodeAvailableForContinuation = (episode: EpisodeSummary) => {

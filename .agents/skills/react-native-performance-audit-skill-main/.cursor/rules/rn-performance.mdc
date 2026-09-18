@@ -1,0 +1,31 @@
+---
+description: React Native performance — audit, fix, and validate startup, rendering, FlatList/SectionList, images, state, navigation, animations, memory leaks, Hermes, and bundle size. Triggers on RN app/screen/component/list/store work, or when handling reported slowness, jank, re-renders, or memory growth.
+globs:
+  - App.tsx
+  - App.js
+  - index.ts
+  - index.js
+  - "src/screens/**"
+  - "src/components/**"
+  - "src/navigation/**"
+  - "src/store/**"
+  - "src/hooks/**"
+  - "**/*.tsx"
+  - package.json
+  - app.json
+  - app.config.js
+  - metro.config.js
+  - babel.config.js
+alwaysApply: false
+---
+
+# React Native Performance Audit (Cursor Rule)
+
+When working on React Native performance for this project, follow the full skill in `SKILL.md` and the behavior contract in `AGENTS.md` (same folder). Summary of non-negotiables:
+
+- **Find the real bottleneck first — don't blindly optimize.** Every fix traces to a named cause (heavy `renderItem`, unstable prop, missing cleanup, blocking startup call). Don't add `useMemo`/`useCallback`/`React.memo` "just in case."
+- **Separate debug from release.** Debug JS is far slower than release. Never give a final verdict from a debug build; label each observation debug/release; measure cold start and scroll in release.
+- **Validate, don't assume.** Run and quote what you can: `npm run typecheck`, `npm run lint`, `npm test`, a release build (`./gradlew assembleRelease` / iOS Release scheme), and a profiler trace where available. Mark unrun checks "unverified until run."
+- **Make surgical edits that preserve behavior.** Match project conventions (TS/JS, state lib, navigation lib, list component). No refactors or reformatting.
+- **Do NOT:** swap FlatList→FlashList (or add heavy libs) without measuring and explaining; toggle Hermes blindly; remove business logic, analytics, crash reporting, or monitoring; break Android/iOS builds; change signing config, package name, or bundle id.
+- **Report** with: Summary, Issues Found (with severity), Files Changed, Fixes Applied, Validation, Manual Testing Steps, Remaining Risks, Next Steps. Use the checklists in `checklists/` and the examples in `examples/`.

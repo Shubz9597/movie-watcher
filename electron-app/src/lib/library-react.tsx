@@ -31,3 +31,34 @@ export function useLibraryState(): LibrarySnapshot | null {
     store?.getSnapshot ?? nullSnapshot,
   );
 }
+
+// Slice subscription: re-renders ONLY when the selected slice changes
+// (Object.is) instead of on every publish of the whole snapshot. Selectors
+// must return primitives or snapshot-stable references (a slice of the
+// current snapshot), never freshly-built objects.
+const selectorCaches = new WeakMap<LibraryController, Map<(snapshot: LibrarySnapshot | null) => unknown, { snapshot: LibrarySnapshot | null; result: unknown }>>();
+
+function selectCached<T>(store: LibraryController | null, selector: (snapshot: LibrarySnapshot | null) => T): T {
+  if (!store) return selector(null);
+  let bySelector = selectorCaches.get(store);
+  if (!bySelector) {
+    bySelector = new Map();
+    selectorCaches.set(store, bySelector);
+  }
+  // Inline (per-render) selectors accumulate; keep the cache bounded.
+  if (bySelector.size > 32) bySelector.clear();
+  const cached = bySelector.get(selector);
+  const snapshot = store.getSnapshot();
+  if (cached && cached.snapshot === snapshot) return cached.result as T;
+  const result = selector(snapshot);
+  bySelector.set(selector, { snapshot, result });
+  return result;
+}
+
+export function useLibrarySelector<T>(store: LibraryController | null, selector: (snapshot: LibrarySnapshot | null) => T): T {
+  return useSyncExternalStore(
+    store?.subscribe ?? nullSubscribe,
+    () => selectCached(store, selector),
+    () => selectCached(store, selector),
+  );
+}

@@ -111,16 +111,32 @@ async function fetchAniListAnime(
 
 // BFF-mode enrichment (T042.4): resolve the title through the catalog
 // contract. Enrichment failures keep the raw seriesId as display fallback.
+// Perf (mobile): Home mount fans out to one detail request per item; a
+// pull-to-refresh repeats the burst seconds later. Enrichment metadata
+// (title/poster/year) is stable, so a short TTL cache applies. Failures
+// (nulls) are cached too — a doomed lookup should not re-fan-out.
+const ENRICHMENT_TTL_MS = 300_000;
+const enrichmentCache = new Map<string, { at: number; data: {
+  title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number;
+} | null }>();
+
 async function fetchBffEnrichment(seriesId: string): Promise<{
   title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number;
 } | null> {
+  const cached = enrichmentCache.get(seriesId);
+  if (cached && Date.now() - cached.at < ENRICHMENT_TTL_MS) return cached.data;
+  if (cached) enrichmentCache.delete(seriesId);
   const catalogId = catalogIdForSeriesId(seriesId);
-  if (!catalogId) return null;
-  try {
-    return continueEnrichmentFromBackend(await bffTitleDetail(catalogId));
-  } catch {
-    return null;
+  let data: { title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
+  if (catalogId) {
+    try {
+      data = continueEnrichmentFromBackend(await bffTitleDetail(catalogId));
+    } catch {
+      data = null;
+    }
   }
+  enrichmentCache.set(seriesId, { at: Date.now(), data });
+  return data;
 }
 
 async function enrichItem(item: RawContinueItem, useBff: boolean, legacy: LegacyProviders | null): Promise<EnrichedContinueItem> {
@@ -160,7 +176,24 @@ async function enrichItem(item: RawContinueItem, useBff: boolean, legacy: Legacy
   };
 }
 
+// Perf (mobile): concurrent getContinueList calls for the same subject (e.g.
+// Strict Mode double-mount or rapid focus) share one request instead of
+// firing the 1+12 network burst twice.
+const continueInFlight = new Map<string, Promise<EnrichedContinueItem[]>>();
+
 export async function getContinueList(subjectId: string, limit = 12): Promise<EnrichedContinueItem[]> {
+  const key = `${subjectId}|${limit}`;
+  const existing = continueInFlight.get(key);
+  if (existing) return existing;
+  let request!: Promise<EnrichedContinueItem[]>;
+  request = getContinueListUncached(subjectId, limit).finally(() => {
+    if (continueInFlight.get(key) === request) continueInFlight.delete(key);
+  });
+  continueInFlight.set(key, request);
+  return request;
+}
+
+async function getContinueListUncached(subjectId: string, limit: number): Promise<EnrichedContinueItem[]> {
   try {
     const vodUrl = `${getVodBase()}/v1/continue?subjectId=${encodeURIComponent(subjectId)}&limit=${limit}`;
     const res = await fetch(vodUrl, { cache: 'no-store' });
