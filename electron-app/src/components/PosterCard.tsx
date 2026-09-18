@@ -83,7 +83,9 @@ export default function PosterCard({
         <div className="absolute inset-0 bg-black/0 transition group-hover:bg-black/25" />
 
         {typeof rank === 'number' ? (
-          <span className="font-label absolute left-2.5 top-2.5 rounded bg-black/80 px-2 py-1 text-xs text-white/90 backdrop-blur-md">
+          // No backdrop blur: one blur layer per rail card is a mobile-GPU
+          // scroll killer; the solid scrim is equally readable.
+          <span className="font-label absolute left-2.5 top-2.5 rounded bg-black/80 px-2 py-1 text-xs text-white/90">
             {String(rank).padStart(2, '0')}
           </span>
         ) : null}
