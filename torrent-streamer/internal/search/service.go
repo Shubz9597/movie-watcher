@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,9 +35,11 @@ const (
 	maxTorrentSize   = 10 << 20
 	// Latency is acceptable in exchange for completeness: renowned slow
 	// indexers (Nyaa via FlareSolverr + VPN commonly needs 10-20s) must not
-	// be cut off mid-search.
-	searchBudget  = 90 * time.Second
-	indexerBudget = 30 * time.Second
+	// be cut off mid-search. Budgets align with the /v1/torrents/search
+	// handler cap (55s, under the iOS WKWebView ~60s fetch idle limit):
+	// per-indexer 20s + one unscoped fallback retry (20s) fits inside it.
+	searchBudget  = 55 * time.Second
+	indexerBudget = 20 * time.Second
 )
 
 // indexerTrust is a bounded reputation bonus for renowned sources (user
@@ -103,6 +106,30 @@ type sourceEntry struct {
 	resolved    *ResolveResult
 }
 
+// flexString accepts a JSON string, number, or null. Prowlarr versions
+// disagree on field types (this instance returns imdbId as a NUMBER, others
+// as a string) — one strict field must never discard an entire response.
+type flexString string
+
+func (s *flexString) UnmarshalJSON(data []byte) error {
+	trimmed := string(bytes.TrimSpace(data))
+	if trimmed == "null" || trimmed == `""` {
+		*s = ""
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*s = flexString(value)
+		return nil
+	}
+	// Number/bool: keep the literal text.
+	*s = flexString(trimmed)
+	return nil
+}
+
 type prowlarrRelease struct {
 	Title       string             `json:"title"`
 	Indexer     string             `json:"indexer"`
@@ -116,7 +143,7 @@ type prowlarrRelease struct {
 	InfoHash    string             `json:"infoHash"`
 	PublishDate string             `json:"publishDate"`
 	Languages   []prowlarrLanguage `json:"languages"`
-	ImdbID      string             `json:"imdbId"`
+	ImdbID      flexString         `json:"imdbId"`
 }
 
 type prowlarrLanguage struct {
@@ -490,7 +517,27 @@ func (s *Service) query(ctx context.Context, query prowlarrQuery) ([]prowlarrRel
 		return nil, fmt.Errorf("decode prowlarr search for %q: %w", query.query, err)
 	}
 	var releases []prowlarrRelease
-	if err := json.Unmarshal(raw, &releases); err == nil {
+	decodeErr := json.Unmarshal(raw, &releases)
+	if decodeErr != nil {
+		// Lenient fallback: decode release-by-release so ONE malformed field
+		// can never discard the whole indexer response. This was observed in
+		// the wild: a Prowlarr build returning numeric imdbId rejected every
+		// healthy response and produced zero results everywhere.
+		var rawReleases []json.RawMessage
+		if rawErr := json.Unmarshal(raw, &rawReleases); rawErr == nil {
+			for _, rawRelease := range rawReleases {
+				var release prowlarrRelease
+				if err := json.Unmarshal(rawRelease, &release); err == nil {
+					releases = append(releases, release)
+				}
+			}
+		}
+		if len(releases) == 0 {
+			return nil, fmt.Errorf("decode prowlarr search for %q: %w", query.query, decodeErr)
+		}
+		log.Printf("[search] lenient decode kept %d releases for %q (strict decode failed: %v)", len(releases), query.query, decodeErr)
+	}
+	if len(releases) > 0 {
 		return releases, nil
 	}
 	var wrapped struct {

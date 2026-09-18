@@ -49,7 +49,9 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, children
             aria-label="TorWatch home"
             className={`inline-flex h-12 w-16 items-center justify-center rounded-xl ${FOCUS_RING_CLASS}`}
           >
-            <img src={torWatchLogo} alt="" className="h-9 w-9 object-contain" />
+            {/* -translate-y-1: the icon artwork sits low inside its PNG;
+                optically centered against the row of 44px action buttons. */}
+            <img src={torWatchLogo} alt="" className="h-9 w-9 -translate-y-1 object-contain" />
           </button>
           {/* M1.4 UI pass: connection status at a glance (mobile header). */}
           <ConnectionChip onOpenSettings={onOpenSettings} />

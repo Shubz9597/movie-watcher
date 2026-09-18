@@ -38,10 +38,15 @@ export function ContinueCarousel({ items, onResumeRequest, onOpenTitle, onDismis
 
   return (
     <div
-      className="hide-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-2 md:mx-0 md:px-0"
+      className="hide-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 md:mx-0"
       onPointerDown={beginPointer}
       onPointerMove={movePointer}
     >
+      {/* Structural edge spacers instead of container padding: scrollable
+          padding disappears the moment the rail is swiped, leaving cards
+          flush against the screen edge. Spacers keep the 20px inset at both
+          rest positions on compact widths. */}
+      <div aria-hidden="true" className="w-5 shrink-0 snap-start md:hidden" />
       {items.map((item) => {
         const pct = Math.max(0, Math.min(100, Math.round(Number(item.percent) || 0)));
         const displayTitle = item.title || item.seriesId;
@@ -120,6 +125,7 @@ export function ContinueCarousel({ items, onResumeRequest, onOpenTitle, onDismis
           </article>
         );
       })}
+      <div aria-hidden="true" className="w-5 shrink-0 md:hidden" />
     </div>
   );
 }

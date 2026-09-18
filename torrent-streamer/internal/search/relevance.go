@@ -38,8 +38,8 @@ func classifyRelease(request Request, release prowlarrRelease) releaseClass {
 	// 1. Title gate (every kind). An imdbId match from the indexer itself is
 	// authoritative and bypasses textual title matching (release titles are
 	// noisy; indexer ids are not).
-	if normalizeIMDBID(release.ImdbID) != "" && request.IMDBID != "" &&
-		normalizeIMDBID(release.ImdbID) == normalizeIMDBID(request.IMDBID) {
+	if normalizeIMDBID(string(release.ImdbID)) != "" && request.IMDBID != "" &&
+		normalizeIMDBID(string(release.ImdbID)) == normalizeIMDBID(request.IMDBID) {
 		return classifyEvidence(request, release.Title)
 	}
 	if request.Kind == KindAnime {

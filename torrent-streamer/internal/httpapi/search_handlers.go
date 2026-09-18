@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -48,14 +49,30 @@ func (h TorrentSearchHandlers) handleSearch(w http.ResponseWriter, r *http.Reque
 		writeSearchError(w, http.StatusBadRequest, "title and a valid kind are required")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	// 55s: MUST stay under the iOS WKWebView fetch idle limit (~60s) while
+	// covering the service's per-indexer budget (20s) plus the unscoped
+	// fallback retry (20s). The previous 35s cap killed searches that were
+	// still healthy on slow indexers (Nyaa via FlareSolverr commonly takes
+	// 10-20s alone) — every real-device search surfaced as a timeout.
+	ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
 	defer cancel()
+	started := time.Now()
 	response, err := h.Service.Search(ctx, request)
+	log.Printf("[search] kind=%s title=%q took=%s results=%d err=%v",
+		request.Kind, truncateSearchLogTitle(request.Title), time.Since(started).Round(time.Millisecond), len(response.Results), err)
 	if err != nil {
 		writeSearchError(w, searchErrorStatus(err), err.Error())
 		return
 	}
 	writeSearchJSON(w, http.StatusOK, response)
+}
+
+func truncateSearchLogTitle(title string) string {
+	runes := []rune(title)
+	if len(runes) > 40 {
+		return string(runes[:40]) + "…"
+	}
+	return title
 }
 
 func (h TorrentSearchHandlers) handleResolve(w http.ResponseWriter, r *http.Request) {

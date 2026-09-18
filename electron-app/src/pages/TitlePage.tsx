@@ -163,8 +163,10 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
 
     const enrichAnimeEpisodeArtwork = (anilistId: number) => {
       setEpisodeArtworkHydrating(true);
+      console.info('[TitlePage] Episode artwork hydration starting for anilist id:', anilistId);
       void getAnimeEpisodeMetadata(anilistId)
         .then((metadata) => {
+          console.info('[TitlePage] Episode artwork hydration finished:', metadata.size, 'stills for anilist', anilistId);
           if (cancelled || metadata.size === 0) return;
           setInitialEpisodes((current) => current.map((episode) => ({
             ...episode,
