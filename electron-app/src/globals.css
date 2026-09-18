@@ -898,3 +898,22 @@ body,
 .torwatch-route-enter {
   animation: torwatch-route-in var(--motion-route) var(--ease-standard);
 }
+
+/* Coarse pointers (phones/tablets): :hover fires in WKWebView whenever a
+   finger is DOWN during a scroll drag, so every card's hover transition
+   (lift, scale, overlay fade) animated mid-scroll and dropped frames.
+   Hover effects are meaningless on touch - neutralize them entirely. */
+@media (hover: none) {
+  .group:hover .group-hover\:-translate-y-1 { transform: none; }
+  .group:hover .group-hover\:scale-105 { transform: none; }
+  .group:hover .group-hover\:opacity-100 { opacity: 0; }
+  .group:hover .group-hover\:bg-black\/25 { background-color: transparent; }
+}
+
+/* 60fps scroll pass: below-fold rails are skipped entirely by the renderer
+   until they approach the viewport (content-visibility). The intrinsic size
+   estimate keeps the scrollbar stable. Supported in WKWebView 16+/Chromium. */
+.tw-cull {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 620px;
+}

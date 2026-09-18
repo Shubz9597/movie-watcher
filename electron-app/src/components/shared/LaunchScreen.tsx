@@ -14,7 +14,7 @@ type LaunchScreenProps = {
 // the connect screen begins its shared-element movement.
 const CENTER_HOLD_MS = 700;
 
-function connectionFailureMessage(err: unknown, candidate: string): string {
+function connectionFailureMessage(err: unknown): string {
   const message = err instanceof Error ? err.message : '';
   if (/unreachable|network|fetch/i.test(message)) {
     return 'Connection failed. Check your server and try again.';
@@ -130,7 +130,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
       await onConnect(candidate);
     } catch (err) {
       console.error('[Connection] Server address could not be applied:', err);
-      setError(connectionFailureMessage(err, candidate));
+      setError(connectionFailureMessage(err));
     } finally {
       setPending(false);
     }

@@ -4,7 +4,7 @@
 // handlers, and there is deliberately no full-width resume bar.
 // The Electron desktop Home keeps its existing rail by default; this
 // component is the compact/alpha presentation selected explicitly.
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 import { Play } from 'lucide-react';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import type { EnrichedContinueItem } from '../../lib/services/continue-service';
@@ -18,7 +18,7 @@ type ContinueCarouselProps = {
   onDismiss?: (item: EnrichedContinueItem) => void;
 };
 
-export function ContinueCarousel({ items, onResumeRequest, onOpenTitle, onDismiss }: ContinueCarouselProps) {
+export const ContinueCarousel = memo(function ContinueCarousel({ items, onResumeRequest, onOpenTitle, onDismiss }: ContinueCarouselProps) {
   // Drag detection: any pointer movement beyond the threshold between down
   // and up marks the gesture as a scroll, not a tap, so releasing a swipe on
   // a card cannot start playback or navigation.
@@ -129,3 +129,4 @@ export function ContinueCarousel({ items, onResumeRequest, onOpenTitle, onDismis
     </div>
   );
 }
+);

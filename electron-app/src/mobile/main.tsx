@@ -119,8 +119,15 @@ if (!rootElement) throw new Error('The mobile root element is missing.');
 const root = ReactDOM.createRoot(rootElement);
 root.render(<StartupSplash />);
 
+// Startup watchdog: a cold WKWebView start can STALL (not fail) on the
+// dynamic imports or composition — a hung promise used to leave the splash
+// up forever until the user killed the app (second launch worked because
+// everything was warm). The watchdog converts any stall into the recoverable
+// failure screen; a boot that finishes late still swaps the app in.
+const STARTUP_WATCHDOG_MS = 12_000;
+
 async function start(): Promise<void> {
-  try {
+  const boot = (async () => {
     const [browser, native] = await Promise.all([
       import('../browser/main'),
       import('../platform/native-player'),
@@ -133,6 +140,21 @@ async function start(): Promise<void> {
       composed.platform.player = new native.NativePlayer();
     }
     root.render(<MobileShell composed={composed} browser={browser} />);
+  })();
+
+  const watchdog = new Promise<'timeout'>((resolve) => {
+    setTimeout(() => resolve('timeout'), STARTUP_WATCHDOG_MS);
+  });
+
+  try {
+    const outcome = await Promise.race([boot.then(() => 'ready' as const), watchdog]);
+    if (outcome === 'timeout') {
+      console.error('[Mobile] Startup watchdog fired: boot did not complete within', STARTUP_WATCHDOG_MS, 'ms.');
+      root.render(<StartupFailure />);
+      // Late completion still recovers: boot keeps running and its render
+      // replaces the failure screen. A late FAILURE keeps the failure screen.
+      void boot.then(() => undefined, () => undefined);
+    }
   } catch (error) {
     console.error('[Mobile] Startup failed:', error);
     root.render(<StartupFailure />);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
 import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
@@ -144,7 +144,7 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
     };
   }, [subjectId, reloadKey]);
 
-  const dismiss = async (it: ContinueItem) => {
+  const dismiss = useCallback(async (it: ContinueItem) => {
     const itemKey = `${it.seriesId}-${it.season}-${it.episode}`;
     if (dismissingKey) return;
     setDismissingKey(itemKey);
@@ -174,9 +174,12 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
     } finally {
       setDismissingKey(null);
     }
-  };
+  }, []);
 
-  const openResumeSources = (it: ContinueItem) => {
+    const handleResume = useCallback((item: ContinueItem) => onResumeRequest?.(item), [onResumeRequest]);
+
+// Stabilized for the memoized ContinueCarousel (see openItem note above).
+  const openResumeSources = useCallback((it: ContinueItem) => {
     const isAnimeSeries = it.seriesId?.startsWith('mal:') || it.seriesId?.startsWith('anilist:');
     const kind = it.kind || (it.seriesId?.startsWith('tmdb:movie:') ? 'movie' : isAnimeSeries ? 'anime' : 'tv');
     const id = kind === 'anime' ? it.anilistId : it.tmdbId;
@@ -195,11 +198,11 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
     };
     if (kind === 'anime' && it.malId) titleParams.malId = String(it.malId);
     navigate('title', titleParams);
-  };
+  }, [navigate, subjectId]);
 
   if (loading) {
     return (
-      <section className="border-t border-white/[0.08] py-8 md:py-10">
+      <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
         <div className="mb-4">
           <p className="type-secondary mb-2 font-medium text-white/65">Your library</p>
           <h2 className="type-section-title text-white">Continue watching</h2>
@@ -222,7 +225,7 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
   if (!rows.length) return null;
 
   return (
-    <section className="border-t border-white/[0.08] py-8 md:py-10">
+    <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
       <div className="mb-4">
         <p className="type-secondary mb-2 font-medium text-white/65">Your library</p>
         <h2 className="type-section-title text-white">Continue watching</h2>
@@ -235,7 +238,7 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
       {variant === 'carousel' ? (
         <ContinueCarousel
           items={rows}
-          onResumeRequest={(item) => onResumeRequest?.(item)}
+          onResumeRequest={handleResume}
           onOpenTitle={openResumeSources}
           onDismiss={(item) => void dismiss(item)}
         />
@@ -519,7 +522,10 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
     if (featuredMoveId.current === moveId) setFeaturedIndex(nextIndex);
   };
 
-  const openItem = (k: 'movie' | 'tv' | 'anime', item: MovieCard) => {
+  // Stabilized: memoized rails (CarouselRow/ContinueCarousel/RecommendationRow)
+  // compare props — fresh closures here would defeat the memoization and
+  // re-render every card on the hero rotation timer.
+  const openItem = useCallback((k: 'movie' | 'tv' | 'anime', item: MovieCard) => {
     const params: Record<string, string> = { kind: k, id: String(item.id) };
     if (k === 'anime' && item.malId) params.malId = String(item.malId);
     if (k === 'anime' && item.sourceProvider === 'tmdb') {
@@ -527,11 +533,16 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
       params.mediaKind = item.sourceKind === 'movie' ? 'movie' : 'tv';
     }
     navigate('title', params);
-  };
+  }, [navigate]);
 
-  const prefetchItem = (_k: 'movie' | 'tv' | 'anime', _item: MovieCard) => {
+  const prefetchItem = useCallback((_k: 'movie' | 'tv' | 'anime', _item: MovieCard) => {
     void loadTitlePage();
-  };
+  }, []);
+
+  const openSetup = useCallback(() => void window.electronAPI?.openSetup(), []);
+  const retryCatalog = useCallback(() => {
+    setCatalogReloadToken((token) => token + 1);
+  }, []);
 
   // Application-wide pull-to-refresh (device pass): refetches the trending
   // catalog shelves AND the continue rail (cache invalidated).
@@ -692,8 +703,8 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           items={movies}
           loading={moviesLoading}
           error={moviesError}
-          onRetry={() => setCatalogReloadToken((token) => token + 1)}
-          onOpenSettings={() => void window.electronAPI?.openSetup()}
+          onRetry={retryCatalog}
+          onOpenSettings={openSetup}
           onOpen={(item) => openItem('movie', item)}
           onPrefetch={(item) => prefetchItem('movie', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Movies – Trending')}&api=${encodeURIComponent('tmdb:trending:movie')}&kind=movie`}
@@ -707,8 +718,8 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           items={series}
           loading={seriesLoading}
           error={seriesError}
-          onRetry={() => setCatalogReloadToken((token) => token + 1)}
-          onOpenSettings={() => void window.electronAPI?.openSetup()}
+          onRetry={retryCatalog}
+          onOpenSettings={openSetup}
           onOpen={(item) => openItem('tv', item)}
           onPrefetch={(item) => prefetchItem('tv', item)}
           seeAllHref={`/see-all?title=${encodeURIComponent('Series – Trending')}&api=${encodeURIComponent('tmdb:trending:tv')}&kind=tv`}
@@ -722,7 +733,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           items={anime}
           loading={animeLoading && !anime.length}
           error={animeError}
-          onRetry={() => setCatalogReloadToken((token) => token + 1)}
+          onRetry={retryCatalog}
           emptyMessage="Anime providers are temporarily unavailable. Reopen the app or try again shortly."
           onOpen={(item) => openItem('anime', item)}
           onPrefetch={(item) => prefetchItem('anime', item)}

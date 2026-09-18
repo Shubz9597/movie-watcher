@@ -8,7 +8,7 @@
 // bounded Retry row that never blocks or replaces the rest of Home; a server
 // without the recommendations capability renders nothing at all. Qualified
 // opaque canonical ids drive navigation.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, ListFilter, RotateCw, Sparkles } from 'lucide-react';
 import { PageBackButton } from './PageBackButton';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
@@ -173,7 +173,7 @@ export function RecommendationRowView({ state, retry, navigate }: {
   if (state.status === 'hidden') return null; // older server: section absent
   if (state.status === 'loading') {
     return (
-      <section aria-label="Recommendations" className="border-t border-white/[0.08] py-8 md:py-10">
+      <section aria-label="Recommendations" className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
         <div className="mb-4 flex items-center justify-between">
           <div className="h-6 w-56 animate-pulse rounded bg-white/10" />
         </div>
@@ -209,7 +209,7 @@ export function RecommendationRowView({ state, retry, navigate }: {
   if (!data || data.items.length === 0) return null; // truthful empty: no fabricated row
 
   return (
-    <section aria-label={data.fallback ? 'Popular picks' : 'Recommendations for your household'} className="border-t border-white/[0.08] py-8 md:py-10">
+    <section aria-label={data.fallback ? 'Popular picks' : 'Recommendations for your household'} className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
       <SectionHeader fallback={data.fallback} degraded={data.degraded} navigate={navigate} />
       <div className="hide-scrollbar flex gap-4 overflow-x-auto pb-2">
         {data.items.map((item, index) => (
@@ -223,10 +223,12 @@ export function RecommendationRowView({ state, retry, navigate }: {
 }
 
 // RecommendationRow composes the loading hook with the pure view.
-export function RecommendationRow({ navigate, deps }: { navigate: Navigate; deps?: { fetchImpl?: typeof fetch } }) {
+// Memoized: the featured-hero rotation timer re-renders Home periodically;
+// this section must not re-render (and re-paint) with it.
+export const RecommendationRow = memo(function RecommendationRow({ navigate, deps }: { navigate: Navigate; deps?: { fetchImpl?: typeof fetch } }) {
   const { state, retry } = useRecommendations(deps);
   return <RecommendationRowView state={state} retry={retry} navigate={navigate} />;
-}
+});
 
 // RecommendationsAllPageView: the pure See-all presentation for one RowState.
 export function RecommendationsAllPageView({ state, retry, navigate }: {

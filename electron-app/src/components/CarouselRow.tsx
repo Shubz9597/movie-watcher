@@ -22,7 +22,7 @@ type Props = {
   libraryKind?: 'movie' | 'tv' | 'anime';
 };
 
-export default function CarouselRow({
+function CarouselRow({
   title,
   subtitle,
   items,
@@ -106,7 +106,7 @@ export default function CarouselRow({
   };
 
   return (
-    <section className="border-t border-white/[0.08] py-8 md:py-10">
+    <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
       <div className="shelf-heading mb-5">
         <div className="min-w-0">
           <h2 className="type-section-title text-white">{title}</h2>
@@ -241,3 +241,7 @@ function RailSkeleton() {
     </div>
   );
 }
+
+// Memoized: the featured-hero rotation timer re-renders Home every few
+// seconds; rails must not re-render (and re-paint) with it.
+export default React.memo(CarouselRow);
