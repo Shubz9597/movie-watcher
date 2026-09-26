@@ -1,0 +1,20 @@
+# Disposable verification fixture (acceptance §6 "gateway streaming contract"):
+# adds a range-capable static file server and a matching gateway route so the
+# byte-range pass-through of the PRODUCTION Caddyfile can be checked with a
+# controlled local asset. Never used in a release deployment:
+#
+#   docker compose --env-file .env -f compose.yaml -f tests/compose.fixture.yaml up -d
+#   TORWATCH_VERIFY_STREAM_URL=http://127.0.0.1:$GATEWAY_PORT/fixtures/movie.bin \
+#     TORWATCH_VERIFY_SSE_URL=http://127.0.0.1:$GATEWAY_PORT/buffer/info scripts/verify.sh
+services:
+  fixtures:
+    image: caddy:2.10.0-alpine
+    command: caddy file-server --root /srv --listen :9090
+    volumes:
+      - ./tests/fixture:/srv:ro
+    networks:
+      - gateway
+
+  gateway:
+    volumes:
+      - ./tests/Caddyfile.fixture:/etc/caddy/Caddyfile:ro

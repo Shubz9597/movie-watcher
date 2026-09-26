@@ -35,6 +35,6 @@ COPY --from=build /out/torwatch-vod /usr/local/bin/torwatch-vod
 USER torwatch:torwatch
 EXPOSE 4001
 STOPSIGNAL SIGTERM
-HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=5 \
+HEALTHCHECK --interval=15s --timeout=3s --start-period=90s --retries=5 \
   CMD curl -fsS http://127.0.0.1:4001/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/torwatch-vod"]

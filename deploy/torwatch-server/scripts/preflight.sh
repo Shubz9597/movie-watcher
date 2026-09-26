@@ -69,7 +69,11 @@ esac
 [ -w "$TORWATCH_DATA_DIR" ] || fail "data root $TORWATCH_DATA_DIR is not writable by the current user"
 for SUB in postgres prowlarr flaresolverr downloads subtitles logs backups; do
   if [ -d "$TORWATCH_DATA_DIR/$SUB" ]; then
-    [ -w "$TORWATCH_DATA_DIR/$SUB" ] || fail "$TORWATCH_DATA_DIR/$SUB is not writable"
+    # WARN, not fail: on Linux hosts some of these directories are written by
+    # container UIDs (e.g. the postgres image user), not by the invoking
+    # operator account, so a root-owned directory here can still be healthy.
+    [ -w "$TORWATCH_DATA_DIR/$SUB" ] \
+      || warn "$TORWATCH_DATA_DIR/$SUB is not writable by the current user (verify container UID ownership — Fedora runbook §3)"
   else
     warn "$TORWATCH_DATA_DIR/$SUB does not exist yet (runbook §3 creates it; containers may fail without it)"
   fi

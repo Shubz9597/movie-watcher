@@ -31,8 +31,10 @@ echo "[update] $OLD_IMAGE -> $NEW_TAG"
 
 BACKUP_ROOT="${TORWATCH_DATA_DIR:-.}/backups"
 mkdir -p "$BACKUP_ROOT"
-BACKUP_PATH="$BACKUP_ROOT/pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
-"$(dirname "$0")/backup.sh" "$BACKUP_PATH" --env-file "$ENV_FILE"
+BACKUP_PARENT="$BACKUP_ROOT/pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
+"$(dirname "$0")/backup.sh" "$BACKUP_PARENT" --env-file "$ENV_FILE"
+BACKUP_PATH="$(ls -1d "$BACKUP_PARENT"/backup-* 2>/dev/null | tail -n 1 || true)"
+[ -n "$BACKUP_PATH" ] || { echo "update: pre-update backup did not produce a backup directory" >&2; exit 1; }
 
 record_digest() {
   if command -v docker >/dev/null 2>&1; then
@@ -57,13 +59,20 @@ COMPOSE_FILES=(-f compose.yaml)
 [ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ] && COMPOSE_FILES+=(-f compose.vpn.yaml)
 
 set_image "$NEW_TAG" "${NEW_TAG##*:}"
-docker compose "${COMPOSE_FILES[@]}" pull vod
+if ! docker compose "${COMPOSE_FILES[@]}" pull vod; then
+  if docker image inspect "$NEW_TAG" >/dev/null 2>&1; then
+    echo "[update] WARN: registry pull failed; using local image $NEW_TAG"
+  else
+    echo "update: image $NEW_TAG is neither pullable nor present locally — keeping $OLD_IMAGE" >&2
+    set_image "$OLD_IMAGE" "$OLD_VERSION"
+    exit 1
+  fi
+fi
 docker compose "${COMPOSE_FILES[@]}" up -d vod
 
 if "$(dirname "$0")/verify.sh" --env-file "$ENV_FILE"; then
   echo "[update] new image digests: $(record_digest "$NEW_TAG")"
   echo "UPDATE OK ($OLD_IMAGE -> $NEW_TAG)"
-  echo "[update] backup taken before the update: $BACKUP_PATH"
 else
   echo "UPDATE FAILED — rolling back to $OLD_IMAGE" >&2
   set_image "$OLD_IMAGE" "$OLD_VERSION"
@@ -76,3 +85,4 @@ else
   echo "  - full data restore: scripts/restore.sh $BACKUP_PATH --yes" >&2
   exit 1
 fi
+echo "[update] pre-update backup: $BACKUP_PATH"

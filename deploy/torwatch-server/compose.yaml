@@ -23,10 +23,12 @@
 name: torwatch-server
 
 networks:
-  # Faces the LAN via the published gateway port only.
+  # Application bridge (non-internal): services that need the host's normal
+  # outbound route (prowlarr, flaresolverr) plus the gateway and vod. LAN
+  # exposure is governed ONLY by published ports — just the gateway's.
   gateway:
-  # East-west traffic between application services. internal:true = no
-  # outbound route to the host's default gateway.
+  # East-west isolation for PostgreSQL: no outbound route, reachable only by
+  # the application service.
   internal:
     internal: true
 
@@ -66,7 +68,8 @@ services:
     volumes:
       - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config${SELINUX_MOUNT_OPTS:-}
     networks:
-      - internal
+      # Outbound indexer traffic uses the host's normal route in direct mode.
+      - gateway
     stop_grace_period: 30s
     logging:
       driver: json-file
@@ -86,7 +89,8 @@ services:
       LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
     networks:
-      - internal
+      # Outbound challenge traffic uses the host's normal route in direct mode.
+      - gateway
     stop_grace_period: 30s
     logging:
       driver: json-file
@@ -100,6 +104,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      # Inherited from the image; overridden to widen the cold-start window
+      # (first boot waits on Prowlarr bootstrap).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4001/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 90s
+      retries: 5
     environment:
       PG_DSN: postgres://${POSTGRES_USER:-torwatch}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-torwatch}?sslmode=disable
       PROWLARR_URL: http://prowlarr:9696

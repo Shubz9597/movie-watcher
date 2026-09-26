@@ -240,22 +240,15 @@ func waitReady(ctx context.Context, opts Options, apiKey string) error {
 	}
 }
 
-type indexerSchema struct {
-	ID             int            `json:"id"`
-	Implementation string         `json:"implementation"`
-	ConfigContract string         `json:"configContract"`
-	InfoLink       string         `json:"infoLink"`
-	Fields         []indexerField `json:"fields"`
-}
-
 type indexerField struct {
 	Name  string `json:"name"`
 	Value any    `json:"value"`
 }
 
 // installStarters adds the starter set to an EMPTY instance. A populated
-// instance is preserved untouched (idempotent re-runs land here too). The
-// returned preserved value is the count of existing indexers kept.
+// instance is preserved untouched (idempotent re-runs land here too, matching
+// the V1 Electron semantics). The returned preserved value is the count of
+// existing indexers kept.
 func installStarters(ctx context.Context, opts Options, apiKey string) (added []string, preserved int, failed []string, err error) {
 	existing, err := prowlarrGet(ctx, opts, apiKey, "indexer")
 	if err != nil {
@@ -265,13 +258,9 @@ func installStarters(ctx context.Context, opts Options, apiKey string) (added []
 		return nil, len(list), nil, nil
 	}
 
-	schemasRaw, err := prowlarrGet(ctx, opts, apiKey, "indexer/schema")
+	schemas, err := prowlarrGetList(ctx, opts, apiKey, "indexer/schema")
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("bootstrap: fetch indexer schema: %w", err)
-	}
-	schemas, err := decodeIndexers(schemasRaw)
-	if err != nil {
-		return nil, 0, nil, err
 	}
 
 	profilesRaw, err := prowlarrGet(ctx, opts, apiKey, "appProfile")
@@ -293,27 +282,30 @@ func installStarters(ctx context.Context, opts Options, apiKey string) (added []
 			failed = append(failed, starter.Name)
 			continue
 		}
-		payload := schema
-		payload.ID = 0
-		payload.Fields = setFields(payload.Fields, map[string]any{
+
+		// Round-trip the ENTIRE schema object (V1 parity: the Electron
+		// launcher posts a clone of the schema minus id). Prowlarr rejects
+		// partial payloads with HTTP 400.
+		payload, err := cloneJSONMap(schema)
+		if err != nil {
+			failed = append(failed, starter.Name)
+			continue
+		}
+		delete(payload, "id")
+		payload["name"] = starter.Name
+		payload["enable"] = true
+		payload["priority"] = starter.Priority
+		payload["appProfileId"] = appProfileID
+		payload["tags"] = []any{}
+		payload["fields"] = setSchemaFields(schema["fields"], map[string]any{
 			"baseSettings.grabLimit":                15,
 			"torrentBaseSettings.appMinimumSeeders": starter.MinimumSeeders,
 			"torrentBaseSettings.preferMagnetUrl":   preferMagnet(starter),
 		})
 		// Starter-specific fields override the defaults.
-		payload.Fields = setFields(payload.Fields, starter.Fields)
+		payload["fields"] = setSchemaFields(payload["fields"], starter.Fields)
 
-		body, err := json.Marshal(map[string]any{
-			"name":           starter.Name,
-			"enable":         true,
-			"priority":       starter.Priority,
-			"appProfileId":   appProfileID,
-			"tags":           []any{},
-			"fields":         payload.Fields,
-			"implementation": schema.Implementation,
-			"configContract": schema.ConfigContract,
-			"infoLink":       schema.InfoLink,
-		})
+		body, err := json.Marshal(payload)
 		if err != nil {
 			failed = append(failed, starter.Name)
 			continue
@@ -336,45 +328,59 @@ func preferMagnet(s Starter) bool {
 	return true
 }
 
-func findSchema(schemas []indexerSchema, starter Starter) (*indexerSchema, bool) {
-	for i := range schemas {
-		candidate := &schemas[i]
+// findSchema locates the schema entry for a starter: by implementation when
+// set, otherwise by the definitionFile field value.
+func findSchema(schemas []map[string]any, starter Starter) (map[string]any, bool) {
+	for _, schema := range schemas {
 		if starter.Implementation != "" {
-			if candidate.Implementation == starter.Implementation {
-				return candidate, true
+			if v, _ := schema["implementation"].(string); v == starter.Implementation {
+				return schema, true
 			}
 			continue
 		}
-		for _, field := range candidate.Fields {
-			if field.Name == "definitionFile" && field.Value == starter.Definition {
-				return candidate, true
+		fields, _ := schema["fields"].([]any)
+		for _, f := range fields {
+			field, _ := f.(map[string]any)
+			if field == nil || field["name"] != "definitionFile" {
+				continue
+			}
+			if v, _ := field["value"].(string); v == starter.Definition {
+				return schema, true
 			}
 		}
 	}
 	return nil, false
 }
 
-func setFields(fields []indexerField, values map[string]any) []indexerField {
-	out := make([]indexerField, len(fields))
+// setSchemaFields sets values on a decoded JSON fields array, preserving
+// field order and every untouched field.
+func setSchemaFields(rawFields any, values map[string]any) []any {
+	fields, _ := rawFields.([]any)
+	out := make([]any, len(fields))
 	copy(out, fields)
-	for i := range out {
-		if v, ok := values[out[i].Name]; ok {
-			out[i].Value = v
+	for _, f := range out {
+		field, _ := f.(map[string]any)
+		if field == nil {
+			continue
+		}
+		name, _ := field["name"].(string)
+		if v, ok := values[name]; ok {
+			field["value"] = v
 		}
 	}
 	return out
 }
 
-func decodeIndexers(raw any) ([]indexerSchema, error) {
-	data, err := json.Marshal(raw)
+func cloneJSONMap(src map[string]any) (map[string]any, error) {
+	data, err := json.Marshal(src)
 	if err != nil {
-		return nil, fmt.Errorf("bootstrap: encode schema list: %w", err)
+		return nil, err
 	}
-	var list []indexerSchema
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, fmt.Errorf("bootstrap: decode indexer schema list: %w", err)
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
 	}
-	return list, nil
+	return out, nil
 }
 
 func firstAppProfileID(raw any) (int, error) {
@@ -417,6 +423,25 @@ func prowlarrGet(ctx context.Context, opts Options, apiKey, route string) (any, 
 		return nil, fmt.Errorf("prowlarr %s returned invalid JSON: %w", route, err)
 	}
 	return payload, nil
+}
+
+// prowlarrGetList fetches a route expected to return a JSON object array.
+func prowlarrGetList(ctx context.Context, opts Options, apiKey, route string) ([]map[string]any, error) {
+	raw, err := prowlarrGet(ctx, opts, apiKey, route)
+	if err != nil {
+		return nil, err
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("prowlarr %s returned an unexpected shape", route)
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, entry := range list {
+		if m, ok := entry.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 func prowlarrPost(ctx context.Context, opts Options, apiKey, route string, body []byte) error {

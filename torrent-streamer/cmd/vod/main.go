@@ -131,6 +131,10 @@ func main() {
 	// (architecture §8). V1 Electron launches never set it, so their behavior
 	// is unchanged: Electron keeps providing PROWLARR_API_KEY and waiting.
 	if configFile := strings.TrimSpace(os.Getenv("PROWLARR_CONFIG_FILE")); configFile != "" {
+		// Bootstrap diagnostics must never be swallowed by the diagnostics
+		// allow-list filter: headless operators debug first installs from
+		// these lines, and none of them carry secret values.
+		bootstrapLog := slog.New(slog.NewTextHandler(os.Stderr, nil))
 		res, err := bootstrap.Run(context.Background(), bootstrap.Options{
 			BaseURL:     prowlarrURL,
 			HTTPClient:  prowlarrHTTP,
@@ -138,6 +142,7 @@ func main() {
 			ConfigFile:  configFile,
 			Timeout:     2 * time.Minute,
 			Starters:    bootstrap.DefaultStarters(),
+			Log:         bootstrapLog,
 		})
 		if err != nil {
 			exitOnError("Prowlarr bootstrap failed", err)

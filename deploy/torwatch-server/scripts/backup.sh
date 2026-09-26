@@ -75,7 +75,10 @@ archive_dir() {
 }
 
 echo "[backup] prowlarr configuration -> prowlarr-$STAMP.tar.gz"
-archive_dir "${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR required}/prowlarr" "prowlarr-$STAMP"
+if [ ! -f "${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR required}/prowlarr/config.xml" ]; then
+  echo "[backup] WARN: prowlarr/config.xml not present — archiving an uninitialized prowlarr state" >&2
+fi
+archive_dir "${TORWATCH_DATA_DIR:?}/prowlarr" "prowlarr-$STAMP"
 
 echo "[backup] subtitle cache -> subtitles-$STAMP.tar.gz"
 archive_dir "${TORWATCH_DATA_DIR:?}/subtitles" "subtitles-$STAMP"

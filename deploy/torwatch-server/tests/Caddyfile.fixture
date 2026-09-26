@@ -1,0 +1,25 @@
+# Production Caddyfile + ONE extra route for the disposable range fixture
+# (tests/compose.fixture.yaml). Kept in lockstep on purpose: everything below
+# the fixture marker must stay identical to ../Caddyfile.
+
+:8080 {
+	# --- disposable fixture route (tests only) ---
+	handle_path /fixtures/* {
+		reverse_proxy fixtures:9090 {
+			flush_interval -1
+		}
+	}
+
+	# --- production config (identical to ../Caddyfile) ---
+	@sse path /buffer/info
+	reverse_proxy @sse vod:4001 {
+		flush_interval -1
+	}
+
+	@media path /stream
+	reverse_proxy @media vod:4001 {
+		flush_interval -1
+	}
+
+	reverse_proxy vod:4001
+}

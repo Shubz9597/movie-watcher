@@ -27,9 +27,9 @@ GATEWAY="http://127.0.0.1:${GATEWAY_PORT:-8080}"
 COMPOSE_FILES=(-f compose.yaml)
 [ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ] && COMPOSE_FILES+=(-f compose.vpn.yaml)
 
-echo "[verify] /healthz (retrying up to ${TORWATCH_VERIFY_TRIES:-30}x2s for startup/rolling restarts)"
+echo "[verify] /healthz (retrying up to ${TORWATCH_VERIFY_TRIES:-90}x2s for startup/rolling restarts)"
 BODY=""
-for _ in $(seq 1 "${TORWATCH_VERIFY_TRIES:-30}"); do
+for _ in $(seq 1 "${TORWATCH_VERIFY_TRIES:-90}"); do
   BODY="$(curl -fsS "$GATEWAY/healthz" 2>/dev/null || true)"
   [ "$BODY" = '{"status":"ok"}' ] && break
   sleep 2
@@ -38,7 +38,7 @@ done
 
 echo "[verify] /readyz"
 READY=""
-for _ in $(seq 1 "${TORWATCH_VERIFY_TRIES:-30}"); do
+for _ in $(seq 1 "${TORWATCH_VERIFY_TRIES:-90}"); do
   READY="$(curl -fsS "$GATEWAY/readyz" 2>/dev/null || true)"
   case "$READY" in *'"status":"ok"'*) break ;; esac
   sleep 2
@@ -65,9 +65,10 @@ if command -v docker >/dev/null 2>&1; then
     [ -n "$LINE" ] || continue
     # shapes: 0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp, 127.0.0.1:9696->9696/tcp
     HOST_PART="${LINE%%:*}"
+    HOST_PART="${HOST_PART//[\[\]]/}"
     case "$HOST_PART" in
-      127.0.0.1|\[::1\]|::1) ;;                    # loopback: always safe
-      0.0.0.0|\[::\]|::|"")
+      127.0.0.1|::1) ;;                             # loopback: always safe
+      0.0.0.0|::|"")
         case "$LINE" in
           *":${GATEWAY_PORT:-8080}->"*) ;;         # gateway: the intended LAN port
           *) echo "  UNEXPECTED published port: $LINE" >&2; AUDIT_OK=0 ;;

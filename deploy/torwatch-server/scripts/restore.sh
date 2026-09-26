@@ -109,8 +109,12 @@ if ls "$BACKUP_DIR"/downloads-*.tar.gz >/dev/null 2>&1; then
 fi
 
 # --- restart and verify --------------------------------------------------------
-echo "[restore] restarting vod and prowlarr"
-docker compose "${COMPOSE_FILES[@]}" up -d prowlarr vod
+# --force-recreate is REQUIRED here: the restored directories were replaced
+# by new inodes, and a plain start/up reuses existing containers whose bind
+# mounts still point at the old directories (observed on Docker Desktop and
+# safest everywhere). Recreating re-resolves every bind mount.
+echo "[restore] restarting vod and prowlarr (recreated to re-resolve bind mounts)"
+docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate prowlarr vod
 
 if [ -n "$DB_FAIL" ]; then
   echo "RESTORE FAIL: $DB_FAIL — previous state preserved under $PRE_RESTORE; do not delete it before diagnosis" >&2
@@ -118,7 +122,7 @@ if [ -n "$DB_FAIL" ]; then
 fi
 
 echo "[restore] verifying health through the gateway"
-for _ in $(seq 1 "${TORWATCH_RESTORE_TRIES:-30}"); do
+for _ in $(seq 1 "${TORWATCH_RESTORE_TRIES:-90}"); do
   if curl -fsS "http://127.0.0.1:${GATEWAY_PORT:-8080}/healthz" 2>/dev/null | grep -q '"status":"ok"'; then
     echo "RESTORE OK (pre-restore state retained at $PRE_RESTORE)"
     exit 0
