@@ -7,8 +7,9 @@ Version:            2.0.0-rc.1
 Git revision:       1f56e0b (branch 001-build-torwatch-version)
                     baseline for this session: e6bb8fa
 Bundle checksum:    torwatch-server-2.0.0-rc.1-bundle.tar.gz
-                    sha256 778e1fa33dabb430445d427e9835451d1ed830aa84666d12bff8c5ef12a678cf
-                    (git archive of deploy/torwatch-server at 1f56e0b)
+                    sha256 43540729fcad00d008e3dfe8e85070303844382a77427c9c4894e70afbcde19a
+                    (git archive HEAD deploy/torwatch-server at 1ef14e4; the
+                    archive embeds the ref, so re-cut bundles pin the commit)
 Application image:  torwatch-server:2.0.0-rc.1 (local build, revision 1f56e0b,
                     builtAt 2026-09-26T20:24:07Z)
                     image ID sha256:cd0fc4092e91e13e19dd15303da0453e27e89d3977bb0f82925638e6b4f76708
