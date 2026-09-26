@@ -12,11 +12,13 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver
 	"github.com/joho/godotenv"
 
+	"torrent-streamer/internal/bootstrap"
 	"torrent-streamer/internal/buildinfo"
 	"torrent-streamer/internal/catalog"
 	"torrent-streamer/internal/config"
@@ -124,6 +126,26 @@ func main() {
 	prowlarrURL := serverConfig.ProwlarrURL
 	prowlarrAPIKey := serverConfig.ProwlarrAPIKey
 	prowlarrHTTP := &http.Client{Timeout: 25 * time.Second}
+	// Container deployments enable headless Prowlarr bootstrap by pointing
+	// PROWLARR_CONFIG_FILE at a read-only mount of Prowlarr's config.xml
+	// (architecture §8). V1 Electron launches never set it, so their behavior
+	// is unchanged: Electron keeps providing PROWLARR_API_KEY and waiting.
+	if configFile := strings.TrimSpace(os.Getenv("PROWLARR_CONFIG_FILE")); configFile != "" {
+		res, err := bootstrap.Run(context.Background(), bootstrap.Options{
+			BaseURL:     prowlarrURL,
+			HTTPClient:  prowlarrHTTP,
+			ExplicitKey: prowlarrAPIKey,
+			ConfigFile:  configFile,
+			Timeout:     2 * time.Minute,
+			Starters:    bootstrap.DefaultStarters(),
+		})
+		if err != nil {
+			exitOnError("Prowlarr bootstrap failed", err)
+		}
+		prowlarrAPIKey = res.APIKey
+		log.Printf("[boot] prowlarr bootstrap complete keySource=%s preserved=%d added=%d failed=%d",
+			res.KeySource, res.IndexersPreserved, len(res.IndexersAdded), len(res.IndexersFailed))
+	}
 	searchCli = &torrentx.TorznabClient{BaseURL: prowlarrURL, APIKey: prowlarrAPIKey, HTTP: prowlarrHTTP}
 	torrentSearch, err := search.NewService(prowlarrURL, prowlarrAPIKey, prowlarrHTTP)
 	if err != nil {
@@ -361,7 +383,10 @@ func main() {
 	log.Printf("[boot] VOD listening on %s root=%s prebuffer=%dB/%s waitMetadata=%s trackersMode=%s",
 		addr, config.DataRoot(), config.PrebufferBytes(), config.PrebufferTimeout(), config.WaitMetadata(), config.TrackersMode())
 
-	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// SIGTERM (docker stop / Compose stop) must trigger the same graceful
+	// shutdown as Ctrl+C: the 15 s srv.Shutdown window below only runs when
+	// the context is cancelled by a caught signal.
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go refreshIMDbRatings(rootCtx, imdbStore)
 
