@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import type { MovieCard } from '../lib/types';
 
 const PREFETCH_DELAY_MS = 300;
 
-export default function PosterCard({
+// Memoized: grids render dozens of cards and grow via load-more; without
+// memo every parent render (typing, page append) reconciles every card.
+function PosterCardBase({
   movie,
   rank,
   onOpen,
@@ -122,3 +124,9 @@ export default function PosterCard({
     </button>
   );
 }
+
+// Shallow compare is sufficient: `movie` is a stable per-item object from
+// the fetched pages, and callers pass stable callbacks (see SeeAllPage /
+// SearchPage grids).
+export const PosterCard = memo(PosterCardBase);
+export default PosterCard;

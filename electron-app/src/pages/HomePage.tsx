@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
 import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
@@ -88,7 +88,10 @@ function preloadBackdrop(url?: string | null): Promise<void> {
   });
 }
 
-function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey = 0 }: {
+// Memoized: the hero carousel re-renders HomePage every 8 s (featuredIndex
+// rotation); the rail's props are stable, so memo keeps the 12 continue
+// cards from reconciling on every tick.
+const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey = 0 }: {
   navigate: (path: string, params?: Record<string, string>) => void;
   // 'rail' is the characterized desktop presentation (default); 'carousel'
   // is the accepted compact alpha presentation (ContinueCarousel).
@@ -144,9 +147,13 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
     };
   }, [subjectId, reloadKey]);
 
+  // In-flight guard lives in a ref: the useCallback closure would otherwise
+  // read a stale `dismissingKey` (always null) and allow a double POST.
+  const dismissingRef = useRef(false);
   const dismiss = useCallback(async (it: ContinueItem) => {
     const itemKey = `${it.seriesId}-${it.season}-${it.episode}`;
-    if (dismissingKey) return;
+    if (dismissingRef.current) return;
+    dismissingRef.current = true;
     setDismissingKey(itemKey);
     setDismissError(null);
     try {
@@ -172,11 +179,13 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
       console.error('[ContinueRail] Could not remove item:', error);
       setDismissError('Could not remove that title. Check the backend connection and try again.');
     } finally {
+      dismissingRef.current = false;
       setDismissingKey(null);
     }
   }, []);
 
     const handleResume = useCallback((item: ContinueItem) => onResumeRequest?.(item), [onResumeRequest]);
+    const handleDismiss = useCallback((item: ContinueItem) => void dismiss(item), [dismiss]);
 
 // Stabilized for the memoized ContinueCarousel (see openItem note above).
   const openResumeSources = useCallback((it: ContinueItem) => {
@@ -240,7 +249,7 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
           items={rows}
           onResumeRequest={handleResume}
           onOpenTitle={openResumeSources}
-          onDismiss={(item) => void dismiss(item)}
+          onDismiss={handleDismiss}
         />
       ) : (
       <div className="hide-scrollbar flex snap-x snap-mandatory gap-3.5 overflow-x-auto pb-2 md:gap-4">
@@ -323,7 +332,7 @@ function ContinueRail({ navigate, variant = 'rail', onResumeRequest, reloadKey =
       )}
     </section>
   );
-}
+});
 
 export default function HomePage({ navigate, continueVariant = 'rail', onResumeRequest, recommendationDeps }: {
   navigate: (path: string, params?: Record<string, string>) => void;
@@ -751,6 +760,8 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
     </div>
   );
 }
+
+
 
 
 

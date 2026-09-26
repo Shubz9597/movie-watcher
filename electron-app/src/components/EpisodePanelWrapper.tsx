@@ -131,10 +131,11 @@ function EpisodeArtworkMedia({
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
     src ? 'loading' : 'idle',
   );
-
-  useEffect(() => {
-    setLoadState(src ? 'loading' : 'idle');
-  }, [src]);
+  // rerender-derived-state-no-effect: no reset effect here — both call sites
+  // key this component on the artwork URL, so a src change REMOUNTS it and
+  // the initializer already yields 'loading'. The effect would only add an
+  // extra render pass and a window where the new src renders with the old
+  // load state.
 
   const showLoading = hydrating || loadState === 'loading';
 
@@ -772,10 +773,12 @@ export default function EpisodePanel({
     resumeContext.season === (activeEpisode.seasonNumber || selectedSeason) &&
     resumeContext.episode === activeEpisode.episodeNumber
   );
-  const displayedTorrentRows = (() => {
+  // Memoized re-rank (rerender-memo): mirrors TorrentPanel — busy-flag flips
+  // and artwork hydration must not re-rank the whole torrent list.
+  const displayedTorrentRows = useMemo(() => {
     const preferredSource = resumeAppliesToActiveEpisode && resumeSource ? resumeSource : historySource;
     return prioritizePreviouslyUsedTorrent(torrentRows || [], preferredSource);
-  })();
+  }, [resumeAppliesToActiveEpisode, resumeSource, historySource, torrentRows]);
   const activeEpisodeIndex = activeEpisode
     ? episodes.findIndex((episode) => episode.id === activeEpisode.id)
     : -1;

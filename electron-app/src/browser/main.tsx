@@ -4,7 +4,7 @@
 // slice, not a separate app. It never touches window.electronAPI. Fixture
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
-import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactElement, ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import '../globals.css';
@@ -191,6 +191,9 @@ function BrowserApp({
   const { showGate, reconnecting, compat } = useConnectionGate();
   const { connection } = usePlatform();
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
+  // rerender-memo-with-default-value: stable deps object so the memoized
+  // recommendation components don't re-render (or refetch) on every render.
+  const recommendationDeps = useMemo(() => (recsFetch ? { fetchImpl: recsFetch } : undefined), [recsFetch]);
   useScrollRestoration(`${route.path}?${route.params.toString()}`);
 
   // M1.4 repair (flash fix): the full-screen LaunchScreen renders ONLY during
@@ -278,7 +281,7 @@ function BrowserApp({
               navigate={navigate}
               continueVariant="carousel"
               onResumeRequest={requestResume}
-              recommendationDeps={recsFetch ? { fetchImpl: recsFetch } : undefined}
+              recommendationDeps={recommendationDeps}
             />
           </>
         )}
@@ -328,14 +331,14 @@ function BrowserApp({
             by the deterministic fixture fetch (?recs=<scenario>), so the
             M4.2 states are capturable without a backend. */}
         {route.path === 'recommendations' && recsFetch ? (
-          <SharedRecommendationsAllPage navigate={navigate} deps={{ fetchImpl: recsFetch }} />
+          <SharedRecommendationsAllPage navigate={navigate} deps={recommendationDeps} />
         ) : route.path === 'recommendations' ? (
           <RecommendationsAllPage navigate={navigate} />
         ) : null}
         {route.path === 'recommendations-states' && recsFetch ? (
           <div className="mx-auto max-w-[1600px] space-y-10 px-5 py-6 md:px-8">
-            <RecommendationRow navigate={navigate} deps={{ fetchImpl: recsFetch }} />
-            <SharedRecommendationsAllPage navigate={navigate} deps={{ fetchImpl: recsFetch }} />
+            <RecommendationRow navigate={navigate} deps={recommendationDeps} />
+            <SharedRecommendationsAllPage navigate={navigate} deps={recommendationDeps} />
           </div>
         ) : null}
         {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations', 'search'].includes(route.path) && (
@@ -489,3 +492,4 @@ if (!(window as unknown as { __TORWATCH_MOBILE_ENTRY?: boolean }).__TORWATCH_MOB
     }
   });
 }
+

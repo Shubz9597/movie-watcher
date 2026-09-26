@@ -51,24 +51,28 @@ export type RowState = {
 function useRecommendations(deps?: { fetchImpl?: typeof fetch }) {
   const [state, setState] = useState<RowState>({ status: 'loading', data: null, error: null });
   const generationRef = useRef(0);
+  // rerender-dependencies: subscribe to the primitive, not the `deps`
+  // object — callers pass it inline, so object identity changes every
+  // parent render and an object dep would refetch on each one.
+  const fetchImpl = deps?.fetchImpl;
 
   const load = useCallback(async () => {
     const startedGeneration = generationRef.current = backendGeneration();
     setState((current) => ({ ...current, status: 'loading', error: null }));
     try {
-      if (!(await hasLiveRecommendationsCapability(deps))) {
+      if (!(await hasLiveRecommendationsCapability({ fetchImpl }))) {
         // Older server: no recommendation section at all (never a fake row).
         setState({ status: 'hidden', data: null, error: null });
         return;
       }
-      const data = await fetchRecommendations(deps);
+      const data = await fetchRecommendations({ fetchImpl });
       if (generationChanged(startedGeneration)) return; // stale/cross-origin discard
       setState({ status: 'ready', data, error: null });
     } catch (error) {
       if (generationChanged(startedGeneration)) return;
       setState({ status: 'error', data: null, error: String((error as Error)?.message ?? error) });
     }
-  }, [deps]);
+  }, [fetchImpl]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -165,12 +169,17 @@ function SectionHeader({ fallback, degraded, navigate }: { fallback: boolean; de
 // RecommendationRowView is the pure presentation for one RowState — exported
 // so tests/captures can render exact states deterministically (SSR never runs
 // the loading effect).
-export function RecommendationRowView({ state, retry, navigate }: {
+export function RecommendationRowView({ state, retry, navigate, loadingPlaceholder = 'skeleton' }: {
   state: RowState;
   retry: () => void;
   navigate: Navigate;
+  // 'skeleton' reserves the rail layout while loading (Home: no CLS).
+  // 'none' renders nothing while loading — used where the host page must
+  // open instantly and this slow section pops in when ready (SearchPage).
+  loadingPlaceholder?: 'skeleton' | 'none';
 }) {
   if (state.status === 'hidden') return null; // older server: section absent
+  if (state.status === 'loading' && loadingPlaceholder === 'none') return null;
   if (state.status === 'loading') {
     return (
       <section aria-label="Recommendations" className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
@@ -225,9 +234,13 @@ export function RecommendationRowView({ state, retry, navigate }: {
 // RecommendationRow composes the loading hook with the pure view.
 // Memoized: the featured-hero rotation timer re-renders Home periodically;
 // this section must not re-render (and re-paint) with it.
-export const RecommendationRow = memo(function RecommendationRow({ navigate, deps }: { navigate: Navigate; deps?: { fetchImpl?: typeof fetch } }) {
+export const RecommendationRow = memo(function RecommendationRow({ navigate, deps, loadingPlaceholder }: {
+  navigate: Navigate;
+  deps?: { fetchImpl?: typeof fetch };
+  loadingPlaceholder?: 'skeleton' | 'none';
+}) {
   const { state, retry } = useRecommendations(deps);
-  return <RecommendationRowView state={state} retry={retry} navigate={navigate} />;
+  return <RecommendationRowView state={state} retry={retry} navigate={navigate} loadingPlaceholder={loadingPlaceholder} />;
 });
 
 // RecommendationsAllPageView: the pure See-all presentation for one RowState.

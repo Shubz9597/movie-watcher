@@ -917,3 +917,14 @@ body,
   content-visibility: auto;
   contain-intrinsic-size: auto 620px;
 }
+
+/* App-like touch behavior (mobile bottom-nav responsiveness): disables the
+   WebView double-tap-zoom gesture on interactive elements so rapid bottom-nav
+   taps are never consumed as potential zooms, and removes the tap highlight
+   delay. Pinch zoom stays disabled at the viewport level (mobile.html). */
+button,
+a,
+[role='button'] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

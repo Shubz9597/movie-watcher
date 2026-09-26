@@ -1,5 +1,5 @@
 // Router adapter to make Next.js router work in Electron
-import { createContext, useContext, ReactNode } from 'react';
+import { createContext, useContext, useMemo, ReactNode } from 'react';
 
 export type NavigateOptions = { /** Replace the current history entry instead of pushing (tab/sort switches: the device back gesture then leaves the page, never walk back through tabs). */ replace?: boolean };
 type NavigateFunction = (path: string, params?: Record<string, string>, options?: NavigateOptions) => void;
@@ -15,7 +15,10 @@ export function RouterProvider({
   navigate: NavigateFunction;
   goBack?: () => void;
 }) {
-  return <RouterContext.Provider value={{ navigate, goBack }}>{children}</RouterContext.Provider>;
+  // Stable context value (rerender-memo): a fresh object would invalidate
+  // every useRouter() consumer on each provider render.
+  const value = useMemo(() => ({ navigate, goBack }), [navigate, goBack]);
+  return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
 }
 
 // Hook that mimics Next.js useRouter

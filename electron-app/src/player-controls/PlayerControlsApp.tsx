@@ -302,10 +302,17 @@ export function PlayerControlsApp({ bridge }: Props) {
     if (dragFrameRef.current) window.cancelAnimationFrame(dragFrameRef.current);
   }, []);
 
+  // advanced-event-handler-refs: keep the latest showHud in a ref and
+  // register the global mousemove listener ONCE. Re-registering per state
+  // flip (pause/menu/segments) churned the listener, and the previous
+  // handler re-armed its hide timer on every single mousemove.
+  const showHudRef = useRef(showHud);
+  showHudRef.current = showHud;
   useEffect(() => {
-    document.addEventListener('mousemove', showHud);
-    return () => document.removeEventListener('mousemove', showHud);
-  }, [showHud]);
+    const onMouseMove = () => showHudRef.current();
+    document.addEventListener('mousemove', onMouseMove);
+    return () => document.removeEventListener('mousemove', onMouseMove);
+  }, []);
 
   useEffect(() => {
     const onPointerUp = (event: PointerEvent) => {

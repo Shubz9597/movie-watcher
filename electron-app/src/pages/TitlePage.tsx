@@ -28,6 +28,10 @@ import { LibraryToggle } from '../components/shared/LibraryToggle';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type { ResumeSourceContext, SavedResumeSource } from '../lib/types';
 
+// rerender-memo-with-default-value: stable fallback so EpisodePanel's props
+// keep their identity while seasons load or a season list is unavailable.
+const DEFAULT_SINGLE_SEASON = [{ seasonNumber: 1, name: 'Season 1' }];
+
 function IMDbMark({ className = '' }: { className?: string }) {
   return (
     <span
@@ -265,18 +269,22 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
 
       // Anime (AniList-id route): the server detail already merges
       // AniList/Jikan/Cinemeta enrichment, so no client-side Jikan fallback.
+      // Detail and episodes are independent — fetch in parallel (one RTT
+      // saved on every anime title page); `row` is only needed for the
+      // skeleton fallback count when the episode list comes back empty.
       const catalogId = `anilist:${id}`;
-      const row = await bffTitleDetail(catalogId);
-      publishDetail(detailFromBackendTitle(row));
       const seasonNumber = Number.isInteger(requestedSeason) && requestedSeason > 0 ? requestedSeason : 1;
-      let episodes: BffEpisodeRow[] = [];
-      try {
-        episodes = await bffEpisodeRows(catalogId, seasonNumber);
-      } catch (error) {
-        // Episode artwork/titles may be unavailable while the catalog still
-        // knows the episode count. Keep those numbered episodes usable.
-        console.warn('[TitlePage] Episode metadata unavailable; using the catalog count.', error);
-      }
+      const [row, episodeRows] = await Promise.all([
+        bffTitleDetail(catalogId),
+        bffEpisodeRows(catalogId, seasonNumber).catch((error) => {
+          // Episode artwork/titles may be unavailable while the catalog still
+          // knows the episode count. Keep those numbered episodes usable.
+          console.warn('[TitlePage] Episode metadata unavailable; using the catalog count.', error);
+          return [] as BffEpisodeRow[];
+        }),
+      ]);
+      publishDetail(detailFromBackendTitle(row));
+      let episodes: BffEpisodeRow[] = episodeRows;
       if (episodes.length === 0) {
         const knownCount = row.seasons?.find((season) => season.number === seasonNumber)?.episodeCount ?? 0;
         episodes = Array.from({ length: Math.min(1000, Math.max(
@@ -930,7 +938,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                 imdbId={detail.imdbId}
                 year={detail.year}
                 originalLanguage={detail.originalLanguage}
-                seasons={seasons.length > 0 ? seasons : [{ seasonNumber: 1, name: 'Season 1' }]}
+                seasons={seasons.length > 0 ? seasons : DEFAULT_SINGLE_SEASON}
                 initialSeason={initialSeason}
                 initialEpisodes={initialEpisodes}
                 initialArtworkHydrating={episodeArtworkHydrating}

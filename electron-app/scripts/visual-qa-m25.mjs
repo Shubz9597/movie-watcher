@@ -1,8 +1,11 @@
 // M2.5 visual-QA matrix (docs/mobile-ui/visual-qa.md, bounded browser pass).
 // Captures the REAL built dist-browser app across the browser viewport
-// matrix and stress states, exercises carousel/library/sheet interactions,
-// and writes results + a capture index for the report. Captures land in
-// specs/002-mobile-shared-ui/evidence/captures/m25/.
+// matrix and stress states, exercises carousel/search interactions, and
+// writes results + a capture index for the report.
+// UPDATED for the M1.4 shell redesign: the search trigger NAVIGATES to the
+// `search` route (SearchPage); the GlobalSearch modal is desktop-only.
+// The library back-restoration interaction was SUPERSEDED — LibraryPage now
+// renders through the M3 library store and is covered by that work stream.
 import http from 'node:http';
 import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -90,7 +93,7 @@ async function main() {
   try {
     // Viewport matrix: Home at every width (primary phone sizes + stress).
     for (const viewport of Object.keys(VIEWPORTS)) {
-      await shoot(browser, `home-${viewport.replace('x', 'x')}`, `${base}?fixtures=1`, viewport);
+      await shoot(browser, `home-${viewport}`, `${base}?fixtures=1`, viewport);
     }
 
     // Library + title at key widths.
@@ -99,21 +102,15 @@ async function main() {
       await shoot(browser, `title-${viewport}`, `${base}?fixtures=1#title?kind=movie&id=693134`, viewport);
     }
 
-    // Open sheet at small + desktop widths (WF02a).
+    // Search page (M1.4 shell redesign: the search trigger NAVIGATES to the
+    // search route — the old modal is desktop-only now). Captures the page
+    // with recents + the progressive results state while typing.
     for (const viewport of ['320x568', '390x844', '1440x900']) {
-      await shoot(browser, `search-sheet-${viewport}`, `${base}?fixtures=1`, viewport, {
+      await shoot(browser, `search-sheet-${viewport}`, `${base}?fixtures=1#search`, viewport, {
         before: async (page) => {
-          await page.waitForSelector('[aria-label="Search titles"]', { timeout: 30000 });
-          await clickVisible(page, '[aria-label="Search titles"]');
-          await page.waitForSelector('[aria-label="Search movies, series, and anime"]', { timeout: 20000 });
-          await page.type('[aria-label="Search movies, series, and anime"]', 'dune', { delay: 25 });
-          await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.trim().startsWith('Filters')), { timeout: 20000 }).catch(() => undefined);
-          await page.evaluate(() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const opener = buttons.find((b) => b.textContent?.trim().startsWith('Filters'));
-            if (opener && opener.offsetParent !== null) { opener.focus(); opener.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
-          });
-          await page.waitForSelector('[role="dialog"][aria-label="Filter results"]', { timeout: 15000 }).catch(() => undefined);
+          await page.waitForSelector('.search-page input', { timeout: 30000 });
+          await page.type('.search-page input', 'dune', { delay: 25 });
+          await page.waitForFunction(() => document.querySelectorAll('.search-result-grid > li').length > 0, { timeout: 20000 }).catch(() => undefined);
         },
       });
     }
@@ -124,22 +121,14 @@ async function main() {
       await shoot(browser, `text200-${name}-390x844`, url, '390x844', { textScale: 2 });
     }
 
-    // Reduced motion: home + open sheet.
+    // Reduced motion: home + search route.
     await shoot(browser, 'reduced-motion-home-390x844', `${base}?fixtures=1`, '390x844', { reducedMotion: true });
-    await shoot(browser, 'reduced-motion-sheet-390x844', `${base}?fixtures=1`, '390x844', {
+    await shoot(browser, 'reduced-motion-search-390x844', `${base}?fixtures=1#search`, '390x844', {
       reducedMotion: true,
       before: async (page) => {
-        await page.waitForSelector('[aria-label="Search titles"]', { timeout: 30000 });
-        await clickVisible(page, '[aria-label="Search titles"]');
-        await page.waitForSelector('[aria-label="Search movies, series, and anime"]', { timeout: 20000 });
-        await page.type('[aria-label="Search movies, series, and anime"]', 'dune', { delay: 25 });
-        await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.trim().startsWith('Filters')), { timeout: 20000 }).catch(() => undefined);
-        await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button'));
-          const opener = buttons.find((b) => b.textContent?.trim().startsWith('Filters'));
-          if (opener) { opener.focus(); opener.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
-        });
-        await page.waitForSelector('[role="dialog"][aria-label="Filter results"]', { timeout: 15000 }).catch(() => undefined);
+        await page.waitForSelector('.search-page input', { timeout: 30000 });
+        await page.type('.search-page input', 'dune', { delay: 25 });
+        await page.waitForFunction(() => document.querySelectorAll('.search-result-grid > li').length > 0, { timeout: 20000 }).catch(() => undefined);
       },
     });
 
@@ -168,7 +157,8 @@ async function main() {
     }
 
     // Swipe-versus-tap: a drag release over artwork must NOT resume; a plain
-    // artwork tap shows the truthful resume notice. Functional assertions.
+    // artwork tap opens the title page WITH resume context (the browser has
+    // no native player — real playback stays behind M1.3). Functional checks.
     {
       const page = await newPage(browser, '390x844');
       await page.goto(`${base}?fixtures=1`, { waitUntil: 'networkidle2', timeout: 45000 });
@@ -181,80 +171,38 @@ async function main() {
       for (let i = 1; i <= 8; i += 1) await page.mouse.move(box.x + box.width / 2 - i * 30, box.y + box.height / 2);
       await page.mouse.up();
       await page.evaluate(() => new Promise((r) => setTimeout(r, 500)));
-      const afterDrag = await page.evaluate(() => ({
-        noticeShown: document.body.innerText.includes('arrives with the mobile player'),
-        hash: window.location.hash,
-      }));
-      // Plain tap: must show the truthful resume notice (no navigation).
-      await page.evaluate((sel) => {
-        document.querySelector(sel)?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      }, resumeButton);
-      await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+      const afterDrag = await page.evaluate(() => ({ hash: window.location.hash }));
+      // Plain tap: real pointer sequence (down→up) like a user's tap — it
+      // navigates to the title page WITH the resume context. (A synthetic
+      // click without a pointerdown would trip the carousel's stale-gesture
+      // suppression, which exists to protect drag-release-on-artwork.)
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForFunction(() => window.location.hash.includes('title?'), { timeout: 15000 }).catch(() => undefined);
       const afterTap = await page.evaluate(() => ({
-        noticeShown: document.body.innerText.includes('arrives with the mobile player'),
         hash: window.location.hash,
+        hasResumeContext: window.location.hash.includes('resumeSubjectId='),
       }));
-      const swipeOk = !afterDrag.noticeShown && afterDrag.hash === '';
-      const tapOk = afterTap.noticeShown && afterTap.hash === '';
-      console.log(`[interaction] swipe-vs-tap: drag-no-play=${swipeOk} tap-resume-intent=${tapOk}`);
+      const swipeOk = !afterDrag.hash && !afterDrag.hash.includes('title');
+      const tapOk = afterTap.hash.includes('title?') && afterTap.hasResumeContext;
+      console.log(`[interaction] swipe-vs-tap: drag-no-play=${swipeOk} tap-resume-context=${tapOk}`);
       index.push({ name: 'interaction-swipe-vs-tap', result: { swipeOk, tapOk, afterDrag, afterTap } });
       if (!swipeOk || !tapOk) failures.push({ name: 'swipe-vs-tap', error: `drag=${swipeOk} tap=${tapOk}` });
-      await page.close();
-    }
-
-    // Library back restoration: shelf -> View all -> back restores tab+scroll.
-    // (Wait for the CATEGORY heading — the shelf previews' "Open Stress…"
-    // labels also exist on the library page and would race.)
-    {
-      const page = await newPage(browser, '390x844');
-      await page.goto(`${base}?fixtures=1&stress=100#/library?collection=watch-later`, { waitUntil: 'networkidle2', timeout: 45000 });
-      await page.waitForSelector('[aria-label="Movies shelf"]', { timeout: 30000 });
-      await page.evaluate(() => {
-        const shelf = document.querySelector('[aria-label="Movies shelf"]');
-        shelf?.scrollIntoView();
-        shelf?.querySelector('button[aria-label^="View all"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      });
-      await page.waitForFunction(() => document.body.innerText.includes('Watch Later — Movies'), { timeout: 15000 });
-      await page.evaluate(() => window.scrollBy(0, 900));
-      const beforeBack = await page.evaluate(() => ({ hash: window.location.hash, scrollY: Math.round(window.scrollY) }));
-      await page.evaluate(() => {
-        const back = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '← Library');
-        back?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      });
-      await page.waitForSelector('[aria-label="Movies shelf"]', { timeout: 30000 });
-      await page.evaluate(() => new Promise((r) => setTimeout(r, 1200)));
-      const afterBack = await page.evaluate(() => ({
-        hash: window.location.hash,
-        scrollY: Math.round(window.scrollY),
-        maxScroll: Math.round(document.documentElement.scrollHeight - window.innerHeight),
-        tabWatchLater: document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim(),
-      }));
-      // The Library page is shorter than the grid: a correct restore is the
-      // saved position clamped to the page's actual max scroll.
-      const restored = beforeBack.hash.includes('collection=watch-later')
-        && afterBack.hash.includes('collection=watch-later')
-        && afterBack.maxScroll > 0
-        && afterBack.scrollY >= Math.min(beforeBack.scrollY, afterBack.maxScroll) - 5
-        && afterBack.tabWatchLater === 'Watch Later';
-      console.log(`[interaction] library back restoration: ${restored ? 'PASS' : 'FAIL'} ${JSON.stringify({ beforeBack, afterBack })}`);
-      index.push({ name: 'interaction-library-back', result: { restored, beforeBack, afterBack } });
-      if (!restored) failures.push({ name: 'library-back-restoration', error: 'scroll/tab not restored' });
       await page.close();
     }
 
     // Simulated keyboard occlusion (NOT a native software keyboard): focus
     // the search input at phone size; the viewport does not resize because
     // no IME is present — captured and labelled as simulated only.
-    await shoot(browser, 'simulated-keyboard-focus-search-390x844', `${base}?fixtures=1`, '390x844', {
+    await shoot(browser, 'simulated-keyboard-focus-search-390x844', `${base}?fixtures=1#search`, '390x844', {
       before: async (page) => {
-        await page.waitForSelector('[aria-label="Search titles"]', { timeout: 30000 });
-        await clickVisible(page, '[aria-label="Search titles"]');
-        await page.waitForSelector('[aria-label="Search movies, series, and anime"]', { timeout: 20000 });
-        await page.focus('[aria-label="Search movies, series, and anime"]');
-        await page.type('[aria-label="Search movies, series, and anime"]', 'dune', { delay: 30 });
+        await page.waitForSelector('.search-page input', { timeout: 30000 });
+        await page.focus('.search-page input');
+        await page.type('.search-page input', 'dune', { delay: 30 });
       },
     });
-    index.push({ name: 'note-simulated-keyboard', result: 'Captured with an focused input at phone size; no native software keyboard is present in headless Chromium. Native IME occlusion is verified only on devices (M5/M6).' });
+    index.push({ name: 'note-simulated-keyboard', result: 'Captured with a focused input at phone size; no native software keyboard is present in headless Chromium. Native IME occlusion is verified only on devices (M5/M6).' });
   } finally {
     await browser.close();
     server.close();
@@ -269,4 +217,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

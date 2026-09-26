@@ -60,14 +60,21 @@ function saveRecent(entries: RecentEntry[]): void {
   }
 }
 
+// Per-source progress: the slowest API must not hold the whole grid back —
+// each source's results render as they settle (progressive, not all-or-nothing).
+type SourceStatus = 'idle' | 'pending' | 'ready' | 'failed';
+type SourceState = { status: SourceStatus; items: Basic[] };
+const IDLE_SOURCE: SourceState = { status: 'idle', items: [] };
+const PENDING_SOURCE: SourceState = { status: 'pending', items: [] };
+const FAILED_SOURCE: SourceState = { status: 'failed', items: [] };
+
 export default function SearchPage(props: { navigate: (path: string, params?: Record<string, string>) => void }) {
   const { navigate } = props;
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [query, setQuery] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
-  const [results, setResults] = React.useState<Basic[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [tmdbState, setTmdbState] = React.useState<SourceState>(IDLE_SOURCE);
+  const [animeState, setAnimeState] = React.useState<SourceState>(IDLE_SOURCE);
   const [recent, setRecent] = React.useState<RecentEntry[]>(() => loadRecent());
 
   React.useEffect(() => {
@@ -83,81 +90,91 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
 
   React.useEffect(() => {
     if (!active) {
-      setResults([]);
-      setLoading(false);
-      setError(null);
-      return;
+      setTmdbState(IDLE_SOURCE);
+      setAnimeState(IDLE_SOURCE);
+        return;
     }
     let cancelled = false;
-    const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    void (async () => {
-      const [tmdbResult, animeResult] = await Promise.allSettled([
-        catalogGateway.searchMulti(debounced, 1),
-        catalogGateway.searchAnime(debounced, 1, 12),
-      ]);
-      if (cancelled) return;
-      const merged: Basic[] = [];
-      if (tmdbResult.status === 'fulfilled') {
-        for (const card of [...(tmdbResult.value.movie ?? []), ...(tmdbResult.value.tv ?? [])]) {
-          if (isTmdbAnime(card)) continue;
-          merged.push({
-            id: card.id,
-            title: card.title,
-            year: card.year,
-            rating: card.rating ?? null,
-            posterUrl: card.posterPath ?? null,
-            backdropUrl: card.backdropUrl ?? null,
-            originalLanguage: card.originalLanguage,
-            genreIds: card.genreIds,
-            sourceProvider: 'tmdb',
-            sourceKind: card.sourceKind ?? 'movie',
-          });
-        }
+    setTmdbState(PENDING_SOURCE);
+    setAnimeState(PENDING_SOURCE);
+    const mapTmdb = (cards: NonNullable<Awaited<ReturnType<typeof catalogGateway.searchMulti>>>) => {
+      const mapped: Basic[] = [];
+      for (const card of [...(cards.movie ?? []), ...(cards.tv ?? [])]) {
+        if (isTmdbAnime(card)) continue;
+        mapped.push({
+          id: card.id,
+          title: card.title,
+          year: card.year,
+          rating: card.rating ?? null,
+          posterUrl: card.posterPath ?? null,
+          backdropUrl: card.backdropUrl ?? null,
+          originalLanguage: card.originalLanguage,
+          genreIds: card.genreIds,
+          sourceProvider: 'tmdb',
+          sourceKind: card.sourceKind ?? 'movie',
+        });
       }
-      if (animeResult.status === 'fulfilled') {
-        for (const item of selectAniListCatalog(
-          animeResult.value.items.map((card) => ({
-            id: card.id,
-            title: card.title,
-            year: card.year,
-            rating: card.rating ?? null,
-            posterUrl: card.posterPath ?? null,
-            backdropUrl: card.backdropUrl ?? null,
-            originalLanguage: card.originalLanguage,
-            genreIds: card.genreIds,
-            sourceProvider: 'anilist' as const,
-            sourceKind: 'anime' as const,
-          })),
-          12,
-        )) {
-          merged.push(item);
-        }
-      }
-      const failed = [tmdbResult, animeResult].filter((r) => r.status === 'rejected').length;
-      if (failed === 2) setError('Search is unavailable right now. Check the connection and retry.');
-      else if (failed === 1) setError('Some sources could not be reached ” showing what is available.');
-      setResults(rankSearchResults(merged, debounced));
-      setLoading(false);
-    })().catch(() => {
-      if (!cancelled) {
-        setLoading(false);
-        setError('Search failed. Check the connection and retry.');
-      }
-    });
-    return () => {
-      cancelled = true;
-      controller.abort();
+      return mapped;
     };
+    const mapAnime = (items: Awaited<ReturnType<typeof catalogGateway.searchAnime>>['items']) =>
+      selectAniListCatalog(
+        items.map((card) => ({
+          id: card.id,
+          title: card.title,
+          year: card.year,
+          rating: card.rating ?? null,
+          posterUrl: card.posterPath ?? null,
+          backdropUrl: card.backdropUrl ?? null,
+          originalLanguage: card.originalLanguage,
+          genreIds: card.genreIds,
+          sourceProvider: 'anilist' as const,
+          sourceKind: 'anime' as const,
+        })),
+        12,
+      ).map((item) => ({
+        id: item.id,
+        title: item.title,
+        year: item.year,
+        rating: item.rating ?? null,
+        posterUrl: item.posterUrl,
+        backdropUrl: item.backdropUrl,
+        originalLanguage: item.originalLanguage,
+        genreIds: item.genreIds,
+        sourceProvider: 'anilist' as const,
+        sourceKind: 'anime' as const,
+      }));
+    // Both searches run concurrently; each renders as IT settles, so the
+    // slower source can never block the faster one behind a full-page skeleton.
+    catalogGateway.searchMulti(debounced, 1).then(
+      (cards) => { if (!cancelled) setTmdbState({ status: 'ready', items: mapTmdb(cards) }); },
+      () => { if (!cancelled) setTmdbState(FAILED_SOURCE); },
+    );
+    catalogGateway.searchAnime(debounced, 1, 12).then(
+      (page) => { if (!cancelled) setAnimeState({ status: 'ready', items: mapAnime(page.items) }); },
+      () => { if (!cancelled) setAnimeState(FAILED_SOURCE); },
+    );
+    return () => { cancelled = true; };
   }, [active, debounced]);
 
-  const openTitle = (kind: SearchKind, item: Basic): void => {
+  const searching = tmdbState.status === 'pending' || animeState.status === 'pending';
+  const failedCount = (tmdbState.status === 'failed' ? 1 : 0) + (animeState.status === 'failed' ? 1 : 0);
+  const results = React.useMemo(
+    () => rankSearchResults([...tmdbState.items, ...animeState.items], debounced),
+    [tmdbState, animeState, debounced],
+  );
+
+  // rerender-memo: read the frequently-changing values through a ref so the
+  // per-item callbacks (and thus the memoized PosterCards) stay stable while
+  // the user types.
+  const openTitleState = React.useRef({ query, recent });
+  openTitleState.current = { query, recent };
+  const openTitle = React.useCallback((kind: SearchKind, item: Basic): void => {
+    const { query: currentQuery, recent: currentRecent } = openTitleState.current;
     // Remember the search that produced this result (shared storage key with
     // the legacy dialog shape: kind + item + timestamp).
-    if (query.trim()) {
+    if (currentQuery.trim()) {
       const entry: RecentEntry = { kind, item, searchedAt: Date.now() };
-      const next = uniqueRecentSearches([entry, ...recent], MAX_RECENT);
+      const next = uniqueRecentSearches([entry, ...currentRecent], MAX_RECENT);
       setRecent(next);
       saveRecent(next);
     }
@@ -169,7 +186,32 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
       params.mediaKind = item.sourceKind === 'movie' ? 'movie' : 'tv';
     }
     navigate('title', params);
-  };
+  }, [navigate]);
+
+  // Stable per-item cards + callbacks: a keystroke re-renders this component,
+  // but every memoized PosterCard now bails out (no fresh objects/closures).
+  const cards = React.useMemo(
+    () =>
+      results.map((item) => {
+        const kind: SearchKind =
+          item.sourceProvider === 'anilist' ? 'anime' : item.sourceKind === 'tv' ? 'tv' : 'movie';
+        return {
+          key: `${kind}-${item.id}`,
+          card: {
+            id: item.id,
+            title: item.title,
+            posterPath: item.posterUrl ?? null,
+            backdropUrl: item.backdropUrl ?? null,
+            year: item.year,
+            rating: item.rating ?? null,
+            originalLanguage: item.originalLanguage,
+            genreIds: item.genreIds,
+          },
+          onOpen: () => openTitle(kind, item),
+        };
+      }),
+    [results, openTitle],
+  );
 
   return (
     <div className="search-page mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col px-5 pt-4 md:px-8">
@@ -236,40 +278,32 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
               </ul>
             </section>
           ) : null}
-          <RecommendationRow navigate={navigate} />
+          {/* The recommendations fetch is the slowest call on this page; do
+              not hold the idle page on its skeleton — the section pops in
+              when it arrives, after the input and recents are interactive. */}
+          <RecommendationRow navigate={navigate} loadingPlaceholder="none" />
         </div>
       ) : (
         <div className="mt-8">
           <div className="min-h-6 text-sm" role="status">
-            {loading ? <span className="text-white/60">Searching…</span> : null}
-            {!loading && error ? <span className="text-[#ffc285]">{error}</span> : null}
-            {!loading && !error && results.length ? (
+            {/* Progressive: partial results show while the slower source is
+                still in flight — the fast source never waits behind it. */}
+            {searching ? <span className="text-white/60">{results.length ? 'Showing more results…' : 'Searching…'}</span> : null}
+            {!searching && failedCount === 2 ? <span className="text-[#ffc285]">Search is unavailable right now. Check the connection and retry.</span> : null}
+            {!searching && failedCount === 1 ? <span className="text-[#ffc285]">Some sources could not be reached — showing what is available.</span> : null}
+            {!searching && failedCount === 0 && results.length ? (
               <span className="text-white/55">{results.length} results for “{debounced}”</span>
             ) : null}
-            {!loading && !error && !results.length ? (
+            {!searching && failedCount === 0 && !results.length ? (
               <span className="text-white/55">No results for “{debounced}”. Try a different spelling.</span>
             ) : null}
           </div>
           <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
-            {results.map((item) => {
-              const kind: SearchKind =
-                item.sourceProvider === 'anilist' ? 'anime' : item.sourceKind === 'tv' ? 'tv' : 'movie';
-              const card = {
-                id: item.id,
-                title: item.title,
-                posterPath: item.posterUrl ?? null,
-                backdropUrl: item.backdropUrl ?? null,
-                year: item.year,
-                rating: item.rating ?? null,
-                originalLanguage: item.originalLanguage,
-                genreIds: item.genreIds,
-              };
-              return (
-                <li key={`${kind}-${item.id}`}>
-                  <PosterCard movie={card} onOpen={() => openTitle(kind, item)} />
-                </li>
-              );
-            })}
+            {cards.map(({ key, card, onOpen }) => (
+              <li key={key}>
+                <PosterCard movie={card} onOpen={onOpen} />
+              </li>
+            ))}
           </ul>
         </div>
       )}
@@ -277,3 +311,4 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
     </div>
   );
 }
+

@@ -155,6 +155,10 @@ export function SetupApp({ api }: SetupAppProps) {
     api.getMode().then((state) => {
       if (!cancelled) setModeState({ ...initialModeState, ...state });
     });
+    // The bridge uses REPLACE-style single-listener registration (each call
+    // overwrites `statusListener`/`checkListener`/mode state), so there is
+    // no handler stacking to unsubscribe — re-running the effect just
+    // re-registers. `cancelled` guards state writes after unmount.
     api.onMode((state) => setModeState((current) => ({ ...current, ...state })));
     api.onStatus((message) => setStatus({ tone: '', message }));
     api.onCheck(updateCheck);

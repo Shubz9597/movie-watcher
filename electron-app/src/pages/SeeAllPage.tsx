@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import PosterCard from '../components/PosterCard';
 import type { MovieCard } from '../lib/types';
@@ -28,6 +28,19 @@ export default function SeeAllPage({
   const activeCollectionRef = useRef('');
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const loadMorePendingRef = useRef(false);
+
+  // Stable callbacks (rerender-memo): the memoized PosterCards bail out of
+  // re-rendering on load-more instead of reconciling the whole grid.
+  const prefetchTitle = useCallback(() => void loadTitlePage(), []);
+  const openTitle = useCallback((movie: MovieCard) => {
+    const params: Record<string, string> = { kind, id: String(movie.id) };
+    if (kind === 'anime' && movie.malId) params.malId = String(movie.malId);
+    if (kind === 'anime' && movie.sourceProvider === 'tmdb') {
+      params.provider = 'tmdb';
+      params.mediaKind = movie.sourceKind === 'movie' ? 'movie' : 'tv';
+    }
+    navigate('title', params);
+  }, [kind, navigate]);
 
   useEffect(() => {
     const collectionKey = `${kind}:${api}`;
@@ -91,7 +104,14 @@ export default function SeeAllPage({
           if (page === 1) {
             setItems(cards);
           } else {
-            setItems((previous) => selectAniListCatalog([...previous, ...cards]));
+            // js-combine-iterations: dedupe only the NEW page against the
+            // already-shown ids instead of re-processing the whole
+            // accumulated array on every load-more (O(n) per page).
+            setItems((previous) => {
+              const seen = new Set(previous.map((item) => item.id));
+              const fresh = cards.filter((card) => !seen.has(card.id));
+              return fresh.length ? [...previous, ...fresh] : previous;
+            });
           }
           setTotalPages(data.totalPages);
         }
@@ -159,16 +179,8 @@ export default function SeeAllPage({
           >
             <PosterCard
               movie={m}
-              onPrefetch={() => void loadTitlePage()}
-              onOpen={(movie) => {
-                const params: Record<string, string> = { kind, id: String(movie.id) };
-                if (kind === 'anime' && movie.malId) params.malId = String(movie.malId);
-                if (kind === 'anime' && movie.sourceProvider === 'tmdb') {
-                  params.provider = 'tmdb';
-                  params.mediaKind = movie.sourceKind === 'movie' ? 'movie' : 'tv';
-                }
-                navigate('title', params);
-              }}
+              onPrefetch={prefetchTitle}
+              onOpen={openTitle}
             />
           </li>
         ))}

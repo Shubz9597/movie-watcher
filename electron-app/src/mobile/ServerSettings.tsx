@@ -18,7 +18,10 @@ export function ServerSettings(props: {
   fetchImpl?: typeof fetch;
 }) {
   const fetchImpl = props.fetchImpl ?? fetch.bind(globalThis);
-  const current = props.storage.getPreference('mw_server_origin') ?? '';
+  // js-cache-storage: read the persisted origin once (lazy state init) — the
+  // component re-renders on every keystroke and storage I/O does not change
+  // underneath it.
+  const [current] = React.useState(() => props.storage.getPreference('mw_server_origin') ?? '');
   const [value, setValue] = React.useState(current);
   const [state, setState] = React.useState<ProbeState>({ kind: 'idle' });
   const [error, setError] = React.useState<string | null>(null);

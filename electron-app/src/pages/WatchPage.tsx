@@ -18,9 +18,20 @@ export default function WatchPage({
   const [error, setError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
 
+  // Primitive deps only (rerender-dependencies): `params` is a fresh object
+  // per App render — depending on it would tear down and restart MPV on
+  // every parent re-render.
+  const streamUrl = params.streamUrl;
+  const magnet = params.magnet;
+  const titleParam = params.title;
+  const catParam = params.cat;
+  const fileIndexParam = params.fileIndex;
+  const seasonParam = params.season;
+  const episodeParam = params.episode;
+
   useEffect(() => {
     const api = window.electronAPI;
-    const finalUrl = params.streamUrl || params.magnet;
+    const finalUrl = streamUrl || magnet;
     if (!finalUrl) {
       setStarting(false);
       setError('This playback link does not include a stream or torrent source.');
@@ -66,12 +77,12 @@ export default function WatchPage({
       try {
         const result = await api.playInMpv({
           url: finalUrl,
-          magnet: params.magnet,
-          title: params.title || 'Playing',
-          cat: params.cat || 'movie',
-          fileIndex: params.fileIndex ? Number(params.fileIndex) : 0,
-          season: params.season !== undefined ? Number(params.season) : undefined,
-          episode: params.episode !== undefined ? Number(params.episode) : undefined,
+          magnet,
+          title: titleParam || 'Playing',
+          cat: catParam || 'movie',
+          fileIndex: fileIndexParam ? Number(fileIndexParam) : 0,
+          season: seasonParam !== undefined ? Number(seasonParam) : undefined,
+          episode: episodeParam !== undefined ? Number(episodeParam) : undefined,
         });
         if (cancelled) return;
         if (!result.ok) throw new Error(result.error || 'The player could not start.');
@@ -99,7 +110,7 @@ export default function WatchPage({
         });
       }
     };
-  }, [params, retryToken]);
+  }, [streamUrl, magnet, titleParam, catParam, fileIndexParam, seasonParam, episodeParam, retryToken]);
 
   const formatTime = (seconds: number) => {
     if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
