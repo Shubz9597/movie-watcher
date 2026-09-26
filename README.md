@@ -124,11 +124,15 @@ go test ./...
 
 When WireGuard credentials are saved, the single Prowlarr and FlareSolverr instances use Gluetun's HTTP proxy, which also provides TMDb's fallback route. Without credentials, torWatch creates Gluetun but leaves it stopped, while those same search-service containers use Docker's normal outbound route, which may follow a compatible system-wide VPN. The bundled Go torrent process always runs on the Windows host, so users who require peer traffic to pass through a VPN must use a system-wide VPN.
 
-## Version 2 server-package planning
+## Version 2 server-package
 
-The current Electron-managed runtime remains the Version 1 behavior. The
-architecture and implementation handoff for a separate, deployable Version 2
-Linux server package starts at
-[`docs/v2-server-package/README.md`](docs/v2-server-package/README.md). Those
-documents are planning and acceptance criteria; the standalone package has not
-yet been implemented.
+The current Electron-managed runtime remains the Version 1 behavior. A
+separate, deployable Version 2 Linux server package is implemented under
+[`deploy/torwatch-server/`](deploy/torwatch-server/README.md) (release
+candidate 2.0.0-rc.1: direct mode + optional embedded-VPN overlay, single
+LAN-published gateway, `TORWATCH_DATA_DIR` bind-mounted state, Prowlarr
+bootstrap, backup/restore/update/rollback tooling, ARM64+AMD64 images). The
+original architecture and acceptance handoff remains at
+[`docs/v2-server-package/README.md`](docs/v2-server-package/README.md),
+now with a Fedora runbook (`docs/v2-server-package/fedora-runbook.md`) and
+the Radxa runbook.

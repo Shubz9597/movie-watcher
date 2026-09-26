@@ -1,7 +1,10 @@
 # TorWatch Version 2 server package handoff
 
-Status: architecture and implementation instructions only. No Version 2 server
-package has been implemented yet.
+Status: the standalone package is **implemented** under
+`deploy/torwatch-server/` and is at release-candidate quality for the
+private-LAN milestone (2.0.0-rc.1, live-verified on a disposable AMD64
+stack; Fedora and Radxa hardware verification pending). The documents here
+remain the authoritative architecture and acceptance contract for it.
 
 This directory is the authoritative handoff for creating a portable TorWatch
 Server package that can run on a Radxa ROCK 3A or another Linux host. It is

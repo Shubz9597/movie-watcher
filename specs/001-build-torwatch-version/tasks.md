@@ -227,15 +227,31 @@
   - `/stats` becomes live (closes its v1-compat removal gate — update evidence). Depends on T055, T056.
 - [x] T058 [US3] Create deployment bundle per docs/v2-server-package/: compose.yaml, compose.vpn.yaml, .env.example, Caddyfile, README.md in deploy/torwatch-server/
   - Single gateway entrypoint (FR-008); internal deps not exposed; root docker-compose.yml NEVER repurposed; secrets only in .env (Gate VI). Depends on T011, T014.
-- [ ] T059 [P] [US3] Add package scripts (preflight, backup, restore, update, verify) in deploy/torwatch-server/scripts/ with smoke checks against a disposable Compose stack
+- [x] T059 [P] [US3] Add package scripts (preflight, backup, restore, update, verify) in deploy/torwatch-server/scripts/ with smoke checks against a disposable Compose stack
   - Gate VI: backup/restore/update/rollback functional. Depends on T058.
-  - Scripts WRITTEN (preflight fail-closed validated via compose config); **executable smoke checks PENDING** (Docker daemon unavailable this session) — see evidence/p7-report.md. Completes when the disposable-stack run is recorded.
-- [ ] T060 [P] [US3] Add multi-arch image build (ARM64 + AMD64) with immutable tags and package-owned Prowlarr bootstrap config in deploy/torwatch-server/ (Dockerfile + build docs in README.md)
+  - COMPLETE 2026-09-26: all five scripts reworked fail-closed; 26 stubbed-Docker
+    regression tests (`scripts/tests/run-tests.sh`, one per corrected defect) PASS;
+    live backup→mutate→restore and update→failed-verify→rollback drills PASS on a
+    disposable stack (Windows Docker Desktop) — see evidence/p8-release.md.
+- [x] T060 [P] [US3] Add multi-arch image build (ARM64 + AMD64) with immutable tags and package-owned Prowlarr bootstrap config in deploy/torwatch-server/ (Dockerfile + build docs in README.md)
   - Depends on T058. Rollback: prior immutable tag.
-  - Dockerfile + build-images.sh (buildx arm64+amd64, immutable tags) WRITTEN; **image build PENDING** (no Docker daemon) — completes when a build is recorded.
-- [ ] T061 [US3] Verify gateway passes media byte-ranges and SSE without buffering (config test in deploy/torwatch-server/Caddyfile + disposable-stack check documented in deploy/torwatch-server/README.md)
+  - COMPLETE 2026-09-26 (with a scope note): Dockerfile declares and embeds
+    version/revision/builtAt build args (previously the undeclared arg embedded
+    nothing), non-root uid 1000, pinned bases, healthcheck, STOPSIGNAL SIGTERM
+    with graceful-shutdown handling in cmd/vod; build-images.sh default builds
+    the NATIVE platform locally with --load (safe PC path) and --push
+    --platforms for the release manifest. linux/amd64 built and live-verified;
+    linux/arm64 built and executed under QEMU (reports arch=arm64). The combined
+    multi-arch manifest PUSH + digest recording awaits registry credentials
+    (release-time step; evidence/p8-release.md). Prowlarr bootstrap is
+    package-owned via internal/bootstrap (see T082-series note below).
+- [x] T061 [US3] Verify gateway passes media byte-ranges and SSE without buffering (config test in deploy/torwatch-server/Caddyfile + disposable-stack check documented in deploy/torwatch-server/README.md)
   - Depends on T058, T060. Performance goal: streaming/SSE latency no worse than V1.
-  - Caddyfile config written and compose-validated (`flush_interval -1` for /stream + /buffer/info); **live gateway pass-through check PENDING** (needs disposable stack).
+  - COMPLETE 2026-09-26: Caddyfile drops global `encode` (media safety) and keeps
+    `flush_interval -1` for /stream and /buffer/info; live disposable-stack check
+    PASS — `Range: bytes=0-1023` → 206 with exactly 1024 bytes and preserved
+    Content-Range/Accept-Ranges, mid-range exact, invalid → 416, HEAD 206 headers,
+    immediate SSE first tick (`retry: 2000`) — evidence/p8-release.md.
 - [ ] T062 [US3] Run migration/rollback drill: apply migration 005 on a disposable stack, run pre-005 binary against migrated DB (must work), restore backup, record in specs/001-build-torwatch-version/evidence/p7-rollback-drill.md
   - Depends on T052, T053. Exit-gate requirement from plan P7.
   - DRILL EXECUTED 2026-09-06 (see evidence/p7-rollback-drill.md): migrations 001–006 applied by the current binary on a disposable PostgreSQL; DB-gated migration/ordered-progress suites PASS (`-p 1`); pre-005 binary (built from a HEAD worktree) runs against the migrated DB; pg_dump drop/restore round trip preserves schema+data. Checklist box left unticked pending operator review because the drill ran the backend binary directly (not inside the deploy/torwatch-server compose stack) and the race gate (T064) is still open.
@@ -243,6 +259,12 @@
   - Depends on T057, T058–T061. SC-006 evidence recorded in evidence/p7-radxa.md.
 - [ ] T064 Run Phase 8 exit gate: `go test ./internal/watch/... ./internal/httpapi/... -run 'Progress|Lease|Admission'`; `Set-Location torrent-streamer; go test ./...`; `go test -race ./...`; `Set-Location electron-app; npm test`; `docker compose config` (root untouched) + package config checks; record test report in evidence/p7-report.md
   - Acceptance sections §5–§7 of docs/v2-server-package/acceptance-tests.md must pass with recorded results.
+  - 2026-09-26 STATUS: go test/vet ./... PASS; npm test PASS; root compose config
+    PASS; package direct+VPN compose config PASS; §5 compose tests + §6
+    disposable-stack integration tests PASS (evidence/p8-release.md).
+    REMAINING OPEN ITEM for this gate: `go test -race ./...` requires a C
+    toolchain (blocked on this Windows PC; run on the Fedora machine), plus the
+    credential/hardware items listed in evidence/p8-release.md.
 
 ---
 

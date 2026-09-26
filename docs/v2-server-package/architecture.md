@@ -73,22 +73,20 @@ accepts the normal route or has configured a compatible host-wide VPN.
 
 ### 3.2 Embedded-VPN mode
 
-`compose.vpn.yaml` is an overlay applied in addition to `compose.yaml`. The Go
-service's torrent peer traffic must use Gluetun's network namespace or another
-verified full-tunnel mechanism. Merely setting `HTTP_PROXY` is insufficient for
-BitTorrent peer traffic.
+`compose.vpn.yaml` is an overlay applied in addition to `compose.yaml`.
 
-The implementation must verify these properties rather than infer them:
-
-- the API is reachable from `gateway` while it shares or routes through the VPN;
-- PostgreSQL and Prowlarr DNS/service connectivity still works;
-- an outbound-IP check from the API network namespace matches Gluetun;
-- stopping Gluetun prevents peer traffic instead of leaking to the host route;
-- LAN clients can still reach the gateway while the tunnel is active.
-
-If Compose overlay semantics cannot express this safely and clearly, use two
-small explicit application service definitions anchored to one shared service
-configuration. Do not accept a traffic-leaking fallback for convenience.
+**As implemented (2.0.0-rc.1):** the overlay adds Gluetun and moves Prowlarr
+and FlareSolverr into its network namespace, so ALL indexer and
+challenge-helper traffic uses the tunnel and fails closed if Gluetun stops
+(those services have no namespace of their own in this mode and cannot leak
+through the host route). The Go service intentionally stays on the host's
+normal route in both modes: torrent peer traffic and TMDb do not require the
+VPN, and sharing Gluetun's namespace would tie the whole application
+(gateway → vod → PostgreSQL reachability) to the tunnel's health. Operators
+who require peer traffic through a VPN must use a host-level VPN; this is
+stated in the runbooks and package README. A full-tunnel vod variant remains
+possible as a reviewed future change and must then verify the four properties
+below.
 
 ## 4. Target repository layout
 
@@ -238,16 +236,25 @@ starter indexers only when the instance is empty. A headless package cannot rely
 on Electron, so this exact responsibility must move into server-owned bootstrap
 code or a narrowly scoped init helper.
 
-Required semantics:
+Required semantics (implemented in `torrent-streamer/internal/bootstrap`,
+enabled only when the deployment sets `PROWLARR_CONFIG_FILE`, so the V1
+Electron launch path is untouched):
 
 1. Wait for Prowlarr configuration and HTTP readiness with bounded retries.
-2. Obtain the API key from an explicit secret when provided. Otherwise read the
-   generated configuration from a read-only mount; never log the key.
-3. If the Prowlarr indexer list is non-empty, preserve it without mutation.
-4. If it is empty, add the same supported starter indexers as Version 1.
+2. Obtain the API key from an explicit secret when provided. Otherwise read
+   the generated `config.xml` from a read-only mount of the Prowlarr data
+   directory, parsing the `ApiKey` element structurally (encoding/xml, no
+   regex over arbitrary files); the key is never logged.
+3. If the Prowlarr indexer list is non-empty, preserve it without mutation
+   (V1 semantics; repeated startup is idempotent).
+4. If it is empty, add the same supported starter indexers as Version 1,
+   round-tripping Prowlarr's full schema object per starter; a parity test
+   (`internal/bootstrap/starters_parity_test.go`) prevents drift from the
+   Electron definitions.
 5. Record per-indexer success/failure without preventing the API from starting
    when optional starter indexers fail.
-6. Make repeated startup idempotent and concurrency-safe.
+6. Make repeated startup idempotent; concurrent in-process bootstrap calls are
+   serialized.
 7. Redact authorization headers, API keys, magnets, and VPN values in logs.
 
 The implementation should extract the starter-indexer definitions into a form

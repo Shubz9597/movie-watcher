@@ -1,12 +1,14 @@
 # TorWatch Server Radxa ROCK 3A deployment runbook
 
 This is the required operator experience for the finished Version 2 server
-package. Commands assume a 64-bit Debian-family Radxa OS, Docker Engine with the
-Compose plugin, and a release bundle containing `deploy/torwatch-server/`.
+package. Commands assume a 64-bit Debian-family Radxa OS, Docker Engine with
+the Compose plugin, and a release bundle containing `deploy/torwatch-server/`.
 
-The current repository does not yet contain that implementation. An agent must
-complete and validate the implementation plan before treating this runbook as a
-working installer.
+The package is implemented under `deploy/torwatch-server/` (release candidate
+2.0.0-rc.1). The AMD64/Fedora first-target runbook is
+[fedora-runbook.md](fedora-runbook.md); only hardware/SELinux details differ.
+This runbook has not yet been executed on ROCK 3A hardware — that acceptance
+(T063) remains open.
 
 ## 1. Hardware and network prerequisites
 
@@ -124,7 +126,7 @@ Direct mode:
 ./scripts/preflight.sh --mode direct
 ```
 
-Embedded-VPN mode:
+Embedded-VPN mode (Compose >= 2.24 required):
 
 ```bash
 ./scripts/preflight.sh --mode embedded-vpn
@@ -177,7 +179,8 @@ Expected results:
 - gateway `/healthz` succeeds;
 - gateway `/readyz` succeeds or reports only a documented optional degradation;
 - `/v1/version` reports `linux/arm64` and the installed release;
-- only the configured gateway port is published.
+- only the configured gateway port is published (Prowlarr's admin port is
+  loopback-only; verify with `./scripts/verify.sh`'s port audit).
 
 ## 7. Configure Prowlarr
 
@@ -191,12 +194,11 @@ instead of a LAN-wide port:
 ssh -L 9696:127.0.0.1:9696 <radxa-user>@<radxa-address>
 ```
 
-This requires the finished bundle to offer a loopback-only maintenance path or
-an equivalent documented command. Then browse locally to
-`http://127.0.0.1:9696`.
-
-Close the tunnel after administration. Never add `0.0.0.0:9696:9696` to the
-released manifest.
+The package publishes Prowlarr's admin port on the host loopback
+(`127.0.0.1:${PROWLARR_ADMIN_PORT:-9696}`), so the SSH tunnel works without
+any additional bundle configuration. Browse locally to
+`http://127.0.0.1:9696` and close the tunnel after administration. Never add
+`0.0.0.0:9696:9696` to the released manifest.
 
 ## 8. Verify from another LAN device
 
@@ -274,23 +276,29 @@ Periodically prove restoration using a disposable data root.
 Read release notes, especially database migration and rollback notes. Then:
 
 ```bash
-./scripts/update.sh --version <exact-version>
+./scripts/update.sh <repo>:<exact-version>
 ```
 
-The script must create a backup, pull exact images, record digests, start the new
-version, wait for readiness, and run verification. It must never silently update
-dependency images through floating tags.
+The script creates a pre-update backup under `$TORWATCH_DATA_DIR/backups/`,
+pulls the exact image (or falls back to a locally present image), records
+digests, starts the new version, waits for readiness, and runs verification.
+It rolls back automatically to the previous tag when verification fails. It
+must never silently update dependency images through floating tags.
 
 ## 13. Rollback
 
 If the release declares binary rollback compatible, run the exact rollback
 command printed by `update.sh`, selecting the previous semantic version and its
-recorded dependency digests.
+recorded dependency digests. `update.sh` also performs this rollback
+automatically when post-update verification fails.
 
-If a migration is not backward compatible:
+If a migration is not backward compatible, or the deployment is otherwise
+unhealthy:
 
 1. stop gateway and application writers;
-2. restore the pre-update backup with `restore.sh`;
+2. restore the pre-update backup with `restore.sh <backup-dir-or-timestamp> --yes`
+   (it validates checksums before stopping writers and recreates the
+   containers so replaced directories re-resolve);
 3. select the previous exact bundle and image versions;
 4. start and run `verify.sh`;
 5. preserve failed-version logs after redaction for diagnosis.
