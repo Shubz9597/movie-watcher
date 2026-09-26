@@ -1,0 +1,11 @@
+# Keep the build context small: source + module files only.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!migrations/
+!pkg/
+**/*_test.go
+**/testdata/
+!/.gitignore
