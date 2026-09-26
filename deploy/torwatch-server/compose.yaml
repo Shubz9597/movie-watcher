@@ -1,117 +1,118 @@
-# torWatch homeserver stack (plan P7, FR-008/FR-009).
+# torWatch homeserver stack — DIRECT mode (plan P7, FR-008/FR-009).
 # Standalone package: never the root docker-compose.yml (Electron-owned).
 #
-# Container names are the DEFAULT service names (postgres, prowlarr, etc.)
-# so other Docker projects on shared networks can resolve them by hostname.
-# Only Caddy exposes ports to the host network; postgres/prowlarr/vod stay
-# on the internal network (FR-008). Secrets come exclusively from the
-# operator's .env file — never committed, never baked into images.
+# Mode: this file is direct mode — no Gluetun, no VPN credentials required.
+# Prowlarr and FlareSolverr use the host's normal outbound route. For
+# embedded-VPN mode add the optional overlay:
 #
-# VPN: Prowlarr + FlareSolverr route through Gluetun (Mullvad WireGuard) so
-# indexers behind ISP blocks / Cloudflare are reachable. The vod backend
-# stays DIRECT (torrent peers + TMDb work without VPN). Set
-# WIREGUARD_PRIVATE_KEY in .env to activate; leave empty to run without VPN.
+#   docker compose --env-file .env -f compose.yaml -f compose.vpn.yaml ...
+#
+# Publishing: only the Caddy gateway is published to the LAN (FR-008).
+# Prowlarr's admin UI is loopback-only (127.0.0.1) for operator
+# administration via `ssh -L 9696:127.0.0.1:9696 <host>`; it is NOT
+# reachable from other LAN hosts. PostgreSQL, FlareSolverr and the Go
+# service publish nothing.
+#
+# Storage: all persistent state lives beneath the operator's
+# TORWATCH_DATA_DIR bind-mounted tree (architecture §6). SELinux-enforcing
+# hosts (Fedora) set SELINUX_MOUNT_OPTS=,z in .env — see the Fedora runbook.
+#
+# Secrets come exclusively from the operator's .env file — never committed,
+# never baked into images, never echoed to logs.
+
 name: torwatch-server
 
 networks:
+  # Faces the LAN via the published gateway port only.
   gateway:
+  # East-west traffic between application services. internal:true = no
+  # outbound route to the host's default gateway.
   internal:
     internal: true
 
-volumes:
-  pgdata:
-  torrentdata:
-  subcache:
-
 services:
-  gluetun:
-    image: qmcgaw/gluetun:latest
-    container_name: gluetun
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    environment:
-      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:-mullvad}
-      VPN_TYPE: ${VPN_TYPE:-wireguard}
-      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:-}
-      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:-}
-      SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-Switzerland}
-      SERVER_CITIES: ${VPN_SERVER_CITIES:-}
-      TZ: ${TZ:-Asia/Kolkata}
-    ports:
-      # Prowlarr web UI + FlareSolverr, reachable on the host for management.
-      # Both services share Gluetun's network namespace, so these ports are
-      # bound to Gluetun's interfaces.
-      - "${PROWLARR_PORT:-9696}:9696"
-      - "${FLARESOLVERR_PORT:-8191}:8191"
-    volumes:
-      - torrentdata:/gluetun
-    networks:
-      # Gateway (internet-accessible) for the VPN tunnel; the internal
-      # network is internal:true = no outbound, which blocks WireGuard.
-      - gateway
-
   postgres:
-    image: postgres:16-alpine
-    container_name: postgres
+    image: postgres:16.9-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-torwatch}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-torwatch}
+      TZ: ${TZ:-UTC}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/postgres:/var/lib/postgresql/data${SELINUX_MOUNT_OPTS:-}
     networks:
       - internal
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torwatch}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-torwatch} -d ${POSTGRES_DB:-torwatch}"]
       interval: 10s
       timeout: 3s
-      retries: 10
+      retries: 12
+      start_period: 15s
 
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
-    container_name: prowlarr
+    image: lscr.io/linuxserver/prowlarr:2.6.5
     restart: unless-stopped
-    depends_on:
-      - gluetun
-    # ALL traffic through the Gluetun VPN tunnel: indexers behind ISP blocks
-    # and Cloudflare are reachable. Shares Gluetun's network namespace, so
-    # Prowlarr's port 9696 is accessible via the gluetun hostname.
-    network_mode: service:gluetun
     environment:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
     volumes:
-      - torrentdata:/config
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config${SELINUX_MOUNT_OPTS:-}
+    networks:
+      - internal
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+    # Loopback-only administration (architecture §2: never 0.0.0.0:9696).
+    # Reach it from a workstation with:
+    #   ssh -L 9696:127.0.0.1:9696 <user>@<torwatch-host>
+    ports:
+      - "127.0.0.1:${PROWLARR_ADMIN_PORT:-9696}:9696"
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
     restart: unless-stopped
-    depends_on:
-      - gluetun
-    # Same VPN route as Prowlarr (solves Cloudflare for the same indexers).
-    network_mode: service:gluetun
     environment:
       LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    networks:
+      - internal
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
 
   vod:
-    image: ${TORWATCH_IMAGE:?TORWATCH_IMAGE must pin an immutable tag, e.g. torwatch-server:1.0.0}
-    container_name: torwatch-vod
+    image: ${TORWATCH_IMAGE:?TORWATCH_IMAGE must pin an immutable tag, e.g. torwatch-server:2.0.0-rc.1}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       PG_DSN: postgres://${POSTGRES_USER:-torwatch}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-torwatch}?sslmode=disable
-      # Prowlarr shares Gluetun's network namespace: reachable at gluetun:9696.
-      PROWLARR_URL: http://gluetun:9696
-      PROWLARR_API_KEY: ${PROWLARR_API_KEY:?PROWLARR_API_KEY is required}
+      PROWLARR_URL: http://prowlarr:9696
+      # Headless Prowlarr bootstrap: the backend reads the generated key from
+      # the read-only config mount when PROWLARR_API_KEY is not supplied
+      # (internal/bootstrap; no circular key setup on first install).
+      PROWLARR_CONFIG_FILE: /prowlarr-config/config.xml
+      PROWLARR_API_KEY: ${PROWLARR_API_KEY:-}
       LISTEN: 0.0.0.0:4001
       TORRENT_DATA_ROOT: /data/torrents
       SUB_CACHE_DIR: /data/subcache
+      LOG_FILE: /data/logs/backend.log
+      ERROR_LOG_FILE: /data/logs/errors.log
       WATCH_MAX_ACTIVE_TITLES: ${WATCH_MAX_ACTIVE_TITLES:-1}
       # Direct VLC playback on small hosts; video conversion is opt-in.
       PLAYBACK_TRANSCODE_MODE: ${PLAYBACK_TRANSCODE_MODE:-off}
@@ -119,27 +120,42 @@ services:
       PLAYBACK_MAX_SESSIONS: ${PLAYBACK_MAX_SESSIONS:-2}
       TARGET_BUFFER_MAX_BYTES: ${TARGET_BUFFER_MAX_BYTES:-134217728}
       WARM_READ_AHEAD_MB: ${WARM_READ_AHEAD_MB:-64}
-      WARM_READ_AHEAD_MB_4K: ${WARM_READ_AHEAD_MB:-64}
+      WARM_READ_AHEAD_MB_4K: ${WARM_READ_AHEAD_MB_4K:-64}
       OPENSUB_API_KEY: ${OPENSUB_API_KEY:-}
       OPENSUB_USER_TOKEN: ${OPENSUB_USER_TOKEN:-}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TORWATCH_APP_VERSION: ${TORWATCH_VERSION:-dev}
     volumes:
-      - torrentdata:/data/torrents
-      - subcache:/data/subcache
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/downloads:/data/torrents${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/subtitles:/data/subcache${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/logs:/data/logs${SELINUX_MOUNT_OPTS:-}
+      # Read-only view of Prowlarr's generated configuration for bootstrap.
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/prowlarr-config:ro${SELINUX_MOUNT_OPTS:-}
     networks:
       - gateway
       - internal
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
 
   gateway:
-    image: caddy:2-alpine
-    container_name: caddy
+    image: caddy:2.10.0-alpine
     restart: unless-stopped
     depends_on:
       - vod
     ports:
+      # The ONLY LAN-published service (FR-008).
       - "${GATEWAY_PORT:-8080}:8080"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     networks:
       - gateway
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3

@@ -1,0 +1,106 @@
+# torWatch homeserver stack — OPTIONAL embedded-VPN overlay (architecture §3).
+# Apply IN ADDITION to compose.yaml:
+#
+#   docker compose --env-file .env -f compose.yaml -f compose.vpn.yaml ...
+#
+# What changes in VPN mode:
+#   - gluetun establishes the full tunnel (WireGuard/OpenVPN per .env).
+#   - prowlarr and flaresolverr join gluetun's network namespace, so ALL
+#     indexer and challenge traffic uses the VPN. Prowlarr is then reachable
+#     at http://gluetun:9696 from the app, and its loopback-only admin port
+#     is published on gluetun (still 127.0.0.1 — never the LAN).
+#   - The Go service (vod) stays on the normal host route: torrent peer
+#     traffic and TMDb do not require the VPN, and sharing gluetun's
+#     namespace would make the whole app (gateway → vod → postgres) die with
+#     the tunnel. As-implemented mode boundary: ONLY indexer traffic is
+#     tunnelled. Operators who require peer traffic through a VPN must use a
+#     host-level VPN (documented in the runbooks). If gluetun stops, indexer
+#     traffic fails closed — it cannot leak through the host route because
+#     prowlarr/flaresolverr have no namespace of their own in this mode.
+#
+# Requires Compose >= 2.24 (!override merge tag) and /dev/net/tun on the host.
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.40.0
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:-}
+      VPN_TYPE: ${VPN_TYPE:-wireguard}
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:?WIREGUARD_PRIVATE_KEY is required in VPN mode}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?WIREGUARD_ADDRESSES is required in VPN mode}
+      SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-}
+      SERVER_CITIES: ${VPN_SERVER_CITIES:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/gluetun:/gluetun${SELINUX_MOUNT_OPTS:-}
+    networks:
+      # gluetun needs a non-internal attachment so the WireGuard/OpenVPN
+      # endpoint can route out; vod reaches gluetun:9696 over this network.
+      - gateway
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+    # Loopback-only administration of the namespaced services (Prowlarr UI,
+    # FlareSolverr). Reach them via the SSH tunnel documented in the runbook.
+    ports:
+      - "127.0.0.1:${PROWLARR_ADMIN_PORT:-9696}:9696"
+      - "127.0.0.1:${FLARESOLVERR_PORT:-8191}:8191"
+    healthcheck:
+      test: ["CMD", "gluetun", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # !override (Compose >= 2.24): REPLACE the direct-mode service definitions
+  # so the services share gluetun's network namespace instead of joining the
+  # internal network. Their published loopback ports move to gluetun above.
+  prowlarr: !override
+    image: lscr.io/linuxserver/prowlarr:2.6.5
+    restart: unless-stopped
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    network_mode: service:gluetun
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config${SELINUX_MOUNT_OPTS:-}
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+
+  flaresolverr: !override
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    restart: unless-stopped
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    network_mode: service:gluetun
+    environment:
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+      TZ: ${TZ:-UTC}
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+
+  vod:
+    environment:
+      # Prowlarr shares gluetun's namespace in VPN mode.
+      PROWLARR_URL: http://gluetun:9696

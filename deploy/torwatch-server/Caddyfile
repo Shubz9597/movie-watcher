@@ -1,10 +1,11 @@
 # Gateway entrypoint (FR-008): the ONLY client-facing surface.
-# /stream and /buffer/info (SSE + media byte-ranges) must never be buffered
-# (plan P7 performance goal; T061 verification).
+# /stream (media byte-ranges) and /buffer/info (SSE) must never be buffered
+# or compressed (plan P7 performance goal; T061 verification).
+#
+# No `encode` directive: API JSON is small, and global compression risks
+# buffering/transforming media responses.
 
 :8080 {
-	encode zstd gzip
-
 	# SSE: flush every event immediately, disable buffering entirely.
 	@sse path /buffer/info
 	reverse_proxy @sse vod:4001 {
