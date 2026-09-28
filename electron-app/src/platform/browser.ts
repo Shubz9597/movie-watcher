@@ -7,6 +7,8 @@ import type { ConnectionConfig, DeviceStorage, PlayerPort, PlayerRequest, Server
 import { probeBackendOrigin } from './electron.ts'
 import { getBackendOrigin, setBackendOrigin } from '../lib/connection-service.ts'
 import { getDeviceId } from '../lib/device-id.ts'
+import { ConnectionCoordinator } from '../lib/connection-coordinator.ts'
+import { normalizeOrigin } from '../mobile/origin-config.ts'
 import { browserProgressContext, buildBrowserStreamUrl, type BrowserProgressContext } from './browser-player-core.ts'
 
 const SERVER_ORIGIN_KEY = 'mw_server_origin';
@@ -264,8 +266,17 @@ export class BrowserStorage implements DeviceStorage {
 export class BrowserConnection implements ConnectionConfig {
   private listeners = new Set<(compat: ServerCompatibility) => void>();
   private current: ServerCompatibility;
+  // C02: the shared coordinator owns probe/save semantics (dedup, generation
+  // guards, probe-first persistence, protocol-vs-capability separation).
+  private coordinator: ConnectionCoordinator;
+  // C1: durable saved configuration is distinct from a fallback origin
+  // (`?server=` preview parameter or build-time default is NOT evidence of
+  // completed phone setup).
+  private configured: boolean;
 
-  constructor(private readonly storage: DeviceStorage, initialOrigin: string) {
+  constructor(private readonly storage: DeviceStorage, initialOrigin: string, initialConfigured = false) {
+    this.configured = initialConfigured;
+    this.coordinator = new ConnectionCoordinator({ origin: initialOrigin, configured: initialConfigured });
     this.current = { status: 'checking', origin: initialOrigin };
     // M1.4 repair: initialize the connection service's backend origin ONCE at
     // construction. Without this, getBackendOrigin() (used by ALL API calls)
@@ -281,8 +292,34 @@ export class BrowserConnection implements ConnectionConfig {
   }
 
   async saveOrigin(origin: string): Promise<string> {
-    this.storage.setPreference(SERVER_ORIGIN_KEY, origin);
-    return this.applyOrigin(origin);
+    // C02 probe-first save: the candidate is validated (syntax → reachability
+    // → protocol) BEFORE persistence; a failure throws so the caller's catch
+    // surfaces it, and the previously active URL is preserved throughout.
+    const outcome = await this.coordinator.save(origin, {
+      persist: (validated) => this.storage.setPreference(SERVER_ORIGIN_KEY, validated),
+      readPersisted: () => this.storage.getPreference(SERVER_ORIGIN_KEY),
+      activeOrigin: this.current.origin,
+    }, {
+      fetchImpl: fetch.bind(globalThis),
+      normalize: (raw) => normalizeOrigin(raw),
+      apply: async (restore) => {
+        await this.applyOrigin(restore);
+      },
+    });
+    if (outcome.result === 'invalid') {
+      throw new Error('Enter a complete server address, such as http://192.168.1.50:4001.');
+    }
+    if (outcome.result !== 'saved') {
+      throw new Error(outcome.message || `The server address could not be applied (${outcome.result}).`);
+    }
+    // Validation AND durability succeeded: now activate the runtime origin
+    // (request cancellation and cache resets follow the switch) and mark the
+    // configuration as saved.
+    const normalized = setBackendOrigin(outcome.origin);
+    this.configured = true;
+    this.current = { status: 'ready', origin: normalized, message: undefined };
+    this.emit();
+    return this.current.origin;
   }
 
   private async applyOrigin(origin: string): Promise<string> {
@@ -310,9 +347,10 @@ export class BrowserConnection implements ConnectionConfig {
     // cancels in-flight requests and fires origin-switch listeners — killing
     // native playback) and emits 'checking', which unmounted the app to the
     // launch screen on every re-check. A check only PROBES and emits.
-    const probed = await probeBackendOrigin(this.current.origin);
-    this.current = probed;
-    this.emit();
+    // C02: concurrent check() calls are deduplicated into one probe; a probe
+    // superseded by a newer mutation commits nothing (generation guard).
+    const state = await this.coordinator.check(this.current.origin, this.configured, fetch.bind(globalThis));
+    this.current = state;
     return this.current;
   }
 
@@ -331,14 +369,21 @@ export class BrowserConnection implements ConnectionConfig {
 // resolveBrowserOrigin: URL parameter wins (explicit, shareable), then the
 // persisted preference, then the build-time default.
 export function resolveBrowserOrigin(search: string): string {
+  return resolveBrowserOriginSource(search).origin;
+}
+
+/** C1: the origin AND whether it represents durable saved configuration.
+ *  The `?server=` preview parameter and the empty default are fallbacks —
+ *  not evidence of completed setup. */
+export function resolveBrowserOriginSource(search: string): { origin: string; configured: boolean } {
   const params = new URLSearchParams(search);
   const fromUrl = params.get('server');
-  if (fromUrl && fromUrl.trim()) return fromUrl.trim();
+  if (fromUrl && fromUrl.trim()) return { origin: fromUrl.trim(), configured: false };
   try {
     const stored = window.localStorage.getItem(SERVER_ORIGIN_KEY);
-    if (stored && stored.trim()) return stored.trim();
+    if (stored && stored.trim()) return { origin: stored.trim(), configured: true };
   } catch {
     // storage unavailable — fall through to the default
   }
-  return '';
+  return { origin: '', configured: false };
 }

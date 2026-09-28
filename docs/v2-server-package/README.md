@@ -23,8 +23,8 @@ are not part of this implementation.
 4. [radxa-runbook.md](radxa-runbook.md) is the operator procedure the finished
    package must support.
 
-For a new implementation chat, copy
-[HANDOFF-PROMPT.md](HANDOFF-PROMPT.md) or give the agent that file as its task.
+For a new implementation chat, start from this README and
+[implementation-plan.md](implementation-plan.md).
 
 ## Objective
 

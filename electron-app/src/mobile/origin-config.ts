@@ -4,12 +4,13 @@
 
 import type { ConnectionConfig } from '../platform/contracts.ts';
 import { connectionFailureMessage, fetchWithTimeout } from '../lib/connection-diagnostics.ts';
+import { CLIENT_SUPPORTED_PROTOCOL_RANGE, rangesOverlap } from '../lib/version-check.ts';
 export type ProbeState =
   | { kind: 'idle' }
   | { kind: 'probing' }
   | { kind: 'unreachable'; message: string }
   | { kind: 'incompatible'; message: string }
-  | { kind: 'reachable'; nativePlayback: boolean; capabilities: string[] };
+  | { kind: 'reachable'; nativePlayback: boolean; protocolCompatible: boolean; capabilities: string[] };
 
 export function normalizeOrigin(raw: string): string | null {
   const trimmed = raw.trim().replace(/\/+$/, '');
@@ -46,11 +47,18 @@ export async function probeOrigin(fetchImpl: typeof fetch, origin: string, timeo
     if (!versionResponse.ok) {
       return { kind: 'incompatible', message: 'This server does not expose a compatible version endpoint.' };
     }
-    const version = (await versionResponse.json()) as { capabilities?: string[] };
+    const version = (await versionResponse.json()) as { capabilities?: string[]; supportedProtocolRange?: number[] };
     const capabilities = Array.isArray(version.capabilities) ? version.capabilities : [];
     return {
       kind: 'reachable',
       nativePlayback: capabilities.includes('playback.compat.v1'),
+      // Protocol verification is separate from optional capabilities: a
+      // reachable compatible server missing an optional capability is still
+      // saveable (the limitation surfaces at the affected action). A missing
+      // range fails open for pre-P1 servers.
+      protocolCompatible:
+        !version.supportedProtocolRange ||
+        rangesOverlap(version.supportedProtocolRange, CLIENT_SUPPORTED_PROTOCOL_RANGE),
       capabilities,
     };
   } catch (error) {
@@ -88,6 +96,7 @@ export async function applyServerOrigin(deps: {
   if (probed.kind !== 'reachable') {
     return { result: 'error', message: 'The probe did not complete.' };
   }
+  if (!probed.protocolCompatible) return { result: 'blocked-incompatible' };
   let previousOrigin: string;
   try {
     previousOrigin = await deps.connection.loadOrigin();

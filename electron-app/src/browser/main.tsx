@@ -23,7 +23,7 @@ import { goBackHash, initializeHashNavigation, navigateHash } from '../lib/hash-
 import { PlatformProvider, useConnectionGate, usePlatform } from '../platform/PlatformProvider';
 import { LaunchScreen } from '../components/shared/LaunchScreen';
 import type { Platform } from '../platform/contracts';
-import { BrowserConnection, BrowserStorage, resolveBrowserOrigin } from '../platform/browser';
+import { BrowserConnection, BrowserStorage, resolveBrowserOriginSource } from '../platform/browser';
 
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
@@ -88,7 +88,9 @@ export async function composePlatform(): Promise<{
     };
   }
   const storage = new BrowserStorage();
-  const origin = resolveBrowserOrigin(window.location.search) || storage.getPreference('mw_server_origin') || '';
+  // C1: the resolved origin carries whether it is durable saved configuration
+  // (a `?server=` preview parameter or empty default is NOT configured setup).
+  const { origin, configured } = resolveBrowserOriginSource(window.location.search);
   const { BrowserPlayer } = await import('../platform/browser');
   // M3.4: the phone/browser entry now uses the SAME server-backed library
   // store as desktop - no duplicate screen tree, no local fork. Availability
@@ -105,7 +107,7 @@ export async function composePlatform(): Promise<{
   return {
     platform: {
       kind: 'browser',
-      connection: new BrowserConnection(storage, origin),
+      connection: new BrowserConnection(storage, origin, configured),
       storage,
       player: new BrowserPlayer(),
     },
