@@ -1,0 +1,200 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"torrent-streamer/internal/buildinfo"
+	"torrent-streamer/internal/downloads"
+)
+
+// DownloadsHandlers serves the offline-download preparation contract
+// finalized in docs/offline-downloads/contracts.md (D01, implemented D02a).
+// Register is a no-op when the store is absent: the routes then do not exist
+// (older servers 404 them). The downloads.offline.v1 capability stays
+// UNADVERTISED until the prep pipeline is functional (D02b) — these routes
+// are safely inactive until then and clients never call unadvertised
+// surfaces.
+type DownloadsHandlers struct {
+	// Store is the storage-backed service; nil disables the surface.
+	Store downloads.Service
+	Build buildinfo.Info
+	// AllowedOrigins is the explicit CORS origin allowlist for the versioned
+	// browser/mobile surfaces (same policy as CatalogHandlers).
+	AllowedOrigins []string
+	// Now is overridable for tests; UTC time is the default.
+	Now func() time.Time
+}
+
+func (h DownloadsHandlers) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now().UTC()
+}
+
+// Register mounts the /v1/downloads/* routes additively.
+func (h DownloadsHandlers) Register(mux *http.ServeMux) {
+	if h.Store == nil {
+		return
+	}
+	allow := NewOriginAllowlist(h.AllowedOrigins)
+	routes := []struct {
+		method  string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{"POST", "/v1/downloads/jobs", h.handleCreate},
+		{"GET", "/v1/downloads/jobs/{id}", h.handleGet},
+		{"POST", "/v1/downloads/jobs/{id}/cancel", h.handleCancel},
+		{"POST", "/v1/downloads/jobs/{id}/renew", h.handleRenew},
+		{"GET", "/v1/downloads/jobs/{id}/manifest", h.handleManifest},
+	}
+	for _, route := range routes {
+		mux.HandleFunc(route.method+" "+route.path, allowlistCORS(allow, route.handler))
+		// Browser/mobile cross-origin preflights arrive as OPTIONS; the
+		// allowlist answers them at the same path.
+		mux.HandleFunc("OPTIONS "+route.path, allowlistCORS(allow, func(http.ResponseWriter, *http.Request) {}))
+	}
+}
+
+func (h DownloadsHandlers) clientID(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("clientId"))
+}
+
+func (h DownloadsHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
+	if !negotiationContext(w, r, h.Build) {
+		return
+	}
+	var body struct {
+		ClientID       string `json:"clientId"`
+		IdempotencyKey string `json:"idempotencyKey"`
+		SeriesID       string `json:"seriesId"`
+		Season         int    `json:"season"`
+		Episode        int    `json:"episode"`
+		PickID         int64  `json:"pickId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeSystemError(w, http.StatusBadRequest, ErrorDetail{Code: "bad_json", Message: "The request body is not valid JSON."})
+		return
+	}
+	job, created, err := h.Store.Create(r.Context(), downloads.CreateRequest{
+		ClientID:       body.ClientID,
+		IdempotencyKey: body.IdempotencyKey,
+		SeriesID:       body.SeriesID,
+		Season:         body.Season,
+		Episode:        body.Episode,
+		PickID:         body.PickID,
+	})
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	status := http.StatusCreated
+	if !created {
+		// Idempotent replay: the same attempt key returns the same job.
+		status = http.StatusOK
+	}
+	writeJSON(w, status, h.jobBody(job))
+}
+
+func (h DownloadsHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
+	if !negotiationContext(w, r, h.Build) {
+		return
+	}
+	clientID := h.clientID(r)
+	jobID := r.PathValue("id")
+	job, err := h.Store.Get(r.Context(), clientID, jobID)
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.jobBody(job))
+}
+
+func (h DownloadsHandlers) handleCancel(w http.ResponseWriter, r *http.Request) {
+	if !negotiationContext(w, r, h.Build) {
+		return
+	}
+	job, err := h.Store.Cancel(r.Context(), h.clientID(r), r.PathValue("id"))
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.jobBody(job))
+}
+
+func (h DownloadsHandlers) handleRenew(w http.ResponseWriter, r *http.Request) {
+	if !negotiationContext(w, r, h.Build) {
+		return
+	}
+	job, err := h.Store.Renew(r.Context(), h.clientID(r), r.PathValue("id"), h.now())
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.jobBody(job))
+}
+
+func (h DownloadsHandlers) handleManifest(w http.ResponseWriter, r *http.Request) {
+	if !negotiationContext(w, r, h.Build) {
+		return
+	}
+	manifest, err := h.Store.Manifest(r.Context(), h.clientID(r), r.PathValue("id"))
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, manifest)
+}
+
+// jobBody is the client-facing job representation (contracts.md §3): safe
+// fields only — no pick internals, no provider data.
+type jobBody struct {
+	JobID      string     `json:"jobId"`
+	State      string     `json:"state"`
+	ReasonCode string     `json:"reasonCode"`
+	ReadyAt    *time.Time `json:"readyAt,omitempty"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+}
+
+func (h DownloadsHandlers) jobBody(job downloads.Job) jobBody {
+	return jobBody{
+		JobID:      job.ID,
+		State:      job.State,
+		ReasonCode: job.ReasonCode,
+		ReadyAt:    job.ReadyAt,
+		ExpiresAt:  job.ExpiresAt,
+	}
+}
+
+// writeStoreError maps service errors onto the contract's safe responses
+// (contracts.md §3 errors). Internal failures never leak details.
+func (h DownloadsHandlers) writeStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, downloads.ErrNotFound), errors.Is(err, downloads.ErrNotReady):
+		// A missing OR not-yet-ready package is uniformly "no manifest" —
+		// never a partial manifest response (contracts.md §4).
+		writeSystemError(w, http.StatusNotFound, ErrorDetail{Code: "not_found", Message: "That download does not exist."})
+	case errors.Is(err, downloads.ErrNotCancellable):
+		writeSystemError(w, http.StatusConflict, ErrorDetail{Code: "not_cancellable", Message: "That download cannot be cancelled in its current state."})
+	case errors.Is(err, downloads.ErrExpired):
+		writeSystemError(w, http.StatusConflict, ErrorDetail{Code: "retention_expired", Message: "That download's server preparation has expired. Prepare it again."})
+	case errors.Is(err, downloads.ErrInvalidSource):
+		writeSystemError(w, http.StatusBadRequest, ErrorDetail{Code: "invalid_source", Message: "That source could not be prepared for download."})
+	case errors.Is(err, downloads.ErrInvalidRequest):
+		writeSystemError(w, http.StatusBadRequest, ErrorDetail{Code: "bad_request", Message: "The download request is incomplete."})
+	default:
+		writeSystemError(w, http.StatusInternalServerError, ErrorDetail{Code: "download_failed", Message: "The download request could not be processed."})
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}

@@ -325,6 +325,15 @@ func main() {
 		AllowedOrigins: allowedOrigins,
 		PlaybackRoot:   config.PlaybackDataRoot(),
 	}.Register(mux)
+	// Offline downloads (D02a): durable job surface behind the finalized
+	// contract. The downloads.offline.v1 capability stays UNADVERTISED until
+	// the prep pipeline is functional (D02b) — these routes are safely
+	// inactive until then (contracts.md §2).
+	httpapi.DownloadsHandlers{
+		Store:          downloads.NewStore(db),
+		Build:          build,
+		AllowedOrigins: allowedOrigins,
+	}.Register(mux)
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
 		Picks: torrentx.EnsureDeps{
