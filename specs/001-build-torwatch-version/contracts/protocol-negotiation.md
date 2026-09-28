@@ -29,7 +29,8 @@ Secrets (DSN passwords, API keys) MUST never appear in component details (FR-012
   "goVersion": "go1.24.2",
   "os": "linux",
   "arch": "arm64",
-  "capabilities": ["catalog.bff.v2", "leases.shared", "progress.serverOrdered"]
+  "capabilities": ["catalog.bff.v2", "leases.shared", "progress.serverOrdered"],
+  "instanceId": "8f0e3d1c-5a2b-4c7d-9e8f-0a1b2c3d4e5f"
 }
 ```
 
@@ -40,6 +41,12 @@ Secrets (DSN passwords, API keys) MUST never appear in component details (FR-012
   - `catalog.bff.v2` — `/v2/catalog/*` is available (advertised from P3 onward).
   - `leases.shared` — shared per-title leases with `clientId` correlation (P7).
   - `progress.serverOrdered` — server-ordered progress with `seq` guard (P7).
+- `instanceId` — OPTIONAL, additive (offline-downloads D01; see
+  `docs/offline-downloads/contracts.md` §1): persistent identity of the server
+  INSTANCE. Stable across restarts and URL changes; changed by a reinstall.
+  Clients MUST scope downloads and offline-progress import by it, never by URL
+  or hostname. Servers that cannot read their instance identity omit the field;
+  clients then keep offline downloads disabled.
 
 ## Negotiation rules
 

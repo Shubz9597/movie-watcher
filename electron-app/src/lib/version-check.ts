@@ -36,6 +36,9 @@ type ServerVersion = {
   protocolVersion?: number;
   supportedProtocolRange?: number[];
   capabilities?: string[];
+  // Offline-downloads contracts §1: persistent server-instance identity.
+  // Undefined on older servers; clients keep downloads disabled without it.
+  instanceId?: string;
 };
 
 let cache: { version: ServerVersion | null; fetchedAt: number } | null = null;

@@ -22,6 +22,7 @@ import (
 	"torrent-streamer/internal/buildinfo"
 	"torrent-streamer/internal/catalog"
 	"torrent-streamer/internal/config"
+	"torrent-streamer/internal/downloads"
 	"torrent-streamer/internal/httpapi"
 	"torrent-streamer/internal/imdb"
 	"torrent-streamer/internal/janitor"
@@ -119,6 +120,14 @@ func main() {
 
 	serverConfig := config.LoadServerConfig()
 	mustOpenDB(serverConfig.PGDSN)
+	// Persistent server-instance identity (offline-downloads contracts §1):
+	// created once in the database, stable across restarts and URL changes;
+	// clients scope downloads and offline progress by it, never by URL.
+	instanceID, err := downloads.EnsureInstanceID(context.Background(), db)
+	if err != nil {
+		exitOnError("server instance identity", err)
+	}
+	log.Printf("[boot] server instance %s", instanceID)
 	imdbStore := imdb.NewStore(db)
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
@@ -275,6 +284,7 @@ func main() {
 	build := buildinfo.New(buildinfo.Options{
 		ServerVersion: serverConfig.AppVersion,
 		Capabilities:  capabilities,
+		InstanceID:    instanceID,
 	})
 	// Explicit CORS origin allowlist for the versioned browser/mobile
 	// surfaces; default preserves the Electron file:// and dev-server origins.

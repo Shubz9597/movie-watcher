@@ -34,6 +34,11 @@ type Info struct {
 	OS                     string   `json:"os"`
 	Arch                   string   `json:"arch"`
 	Capabilities           []string `json:"capabilities"`
+	// InstanceID is the persistent server-instance identity (offline-downloads
+	// contracts §1): stable across restarts and URL changes, changed by a
+	// reinstall. Additive and optional — servers that cannot read their
+	// instance identity omit it, and clients keep downloads disabled.
+	InstanceID string `json:"instanceId,omitempty"`
 }
 
 // Options overrides the ldflags defaults for a constructed Info.
@@ -45,6 +50,9 @@ type Options struct {
 	// phase onward; leases.shared / progress.serverOrdered only when those
 	// land).
 	Capabilities []string
+	// InstanceID is the persistent server-instance identity (offline-downloads
+	// contracts §1). Empty omits the field for older deployments.
+	InstanceID string
 }
 
 // New returns the version/capability payload for this server.
@@ -67,5 +75,6 @@ func New(opts Options) Info {
 		OS:                     runtime.GOOS,
 		Arch:                   runtime.GOARCH,
 		Capabilities:           capabilities,
+		InstanceID:             opts.InstanceID,
 	}
 }
