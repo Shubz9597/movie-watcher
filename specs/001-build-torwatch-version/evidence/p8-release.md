@@ -97,6 +97,31 @@ Bootstrap idempotency across restarts: preserved=N added=0 failed=0.
 - Secrets only in .env; no secrets in compose render, labels, or healthcheck
   output — PASS
 
+## Direct-mode indexer reachability (no VPN) — 2026-09-28
+
+Disposable stack on the operator's tailnet-routed WSL host (Docker Engine
+29.1.3, egress 27.58.144.232, DNS via the tailnet/Pi-hole resolver; no
+Gluetun in the manifest). Prowlarr starter indexers, Torznab search
+"one piece":
+
+| Indexer | Result (no VPN) |
+| --- | --- |
+| Knaben | 89 items |
+| LimeTorrents | 40 items |
+| SubsPlease | 90 items |
+| The Pirate Bay | 100 items |
+| YTS | 31 items |
+| Nyaa.si | HTTP 429 (site reachable, rate-limited by repeated test queries) |
+| TorrentDownload | HTTP 429 (same) |
+
+Conclusion: direct mode retrieves real indexer data on this network; the
+embedded-VPN overlay stays optional (its documented purpose is sites that
+are genuinely blocked on the operator's path). nyaa.si showed transient TLS
+resets earlier in the session and answered 200 later on the same path —
+consistent with intermittent ISP/site-level filtering, which is the case the
+VPN overlay covers. First-boot Prowlarr also self-restarts several times
+while syncing its 557 Cardigann definitions; scripts already retry.
+
 ## Skipped / pending (with reasons)
 
 - Live embedded-VPN mode: no VPN credentials on this PC. Overlay renders and
