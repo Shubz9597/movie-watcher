@@ -4,17 +4,17 @@ All boxes are initially unchecked. Check one only when its outcome and evidence 
 
 ## B: baseline and coordination
 
-- [ ] B01 Read the packet, constitution and active feature 001/002 contracts. Record git status, current owners, baseline `npm test`, Go tests/vet, mobile/browser build, and existing failures in `evidence/baseline.md`. Checkpoint the homeserver work before any overlapping backend change. Never overwrite unrelated edits.
-- [ ] B02 Capture current mobile launch, Settings, navigation and native player behavior; map every caller of the gate/player interfaces. Identify the Mac/Xcode/device path for native validation. Missing hardware does not block C/contract work but does block final native completion.
+- [x] B01 Read the packet, constitution and active feature 001/002 contracts. Record git status, current owners, baseline `npm test`, Go tests/vet, mobile/browser build, and existing failures in `evidence/baseline.md`. Checkpoint the homeserver work before any overlapping backend change. Never overwrite unrelated edits.
+- [x] B02 Capture current mobile launch, Settings, navigation and native player behavior; map every caller of the gate/player interfaces. Identify the Mac/Xcode/device path for native validation. Missing hardware does not block C/contract work but does block final native completion.
 
 Rollback: baseline work is documentation only. Exit: known failures and pending hardware are explicit; current consumers identified.
 
 ## C: first setup and connection recovery (independent release)
 
-- [ ] C01 Implement the pure configuration/tab/deep-link launch policy, independent of reachability. Establish tests for every table row in spec C2 before migrating the shell. Include missing config versus read error, late probes that never navigate, Downloads deep links, and failed local inventory reads. No three-second redirect timer.
-- [ ] C02 Centralize config/probe/save semantics. Migrate existing saved URL, preserve failed setup draft, verify compatible protocol separately from optional capabilities, deduplicate checks, preserve active URL on failed edits. Keep origin-generation cancellation and stale-response protections.
-- [ ] C03 Migrate mobile/browser shell consumers to contextual availability. First installation shows WF01; configured users always get shell/Settings access. Use explicit fixture inventory only in preview. Preserve desktop Electron setup behavior.
-- [ ] C04 Implement WF02/WF03/WF07 states by extending the existing shell and connection/settings components referenced in visual-reference.md. Home failure contains only Server unavailable, Retry and Go to settings. Append Downloads after the existing Home/Library/Search tabs. Remove the obsolete mobile blocking gate only after all its consumers and tests have migrated. Do not rewrite old test expectations without explaining the specified behavior change.
+- [x] C01 Implement the pure configuration/tab/deep-link launch policy, independent of reachability. Establish tests for every table row in spec C2 before migrating the shell. Include missing config versus read error, late probes that never navigate, Downloads deep links, and failed local inventory reads. No three-second redirect timer.
+- [x] C02 Centralize config/probe/save semantics. Migrate existing saved URL, preserve failed setup draft, verify compatible protocol separately from optional capabilities, deduplicate checks, preserve active URL on failed edits. Keep origin-generation cancellation and stale-response protections.
+- [x] C03 Migrate mobile/browser shell consumers to contextual availability. First installation shows WF01; configured users always get shell/Settings access. Use explicit fixture inventory only in preview. Preserve desktop Electron setup behavior.
+- [x] C04 Implement WF02/WF03/WF07 states by extending the existing shell and connection/settings components referenced in visual-reference.md. Home failure contains only Server unavailable, Retry and Go to settings. Append Downloads after the existing Home/Library/Search tabs. Remove the obsolete mobile blocking gate only after all its consumers and tests have migrated. Do not rewrite old test expectations without explaining the specified behavior change.
 - [ ] C05 Verify acceptance C1–C9 and X1–X3, mobile/browser builds, `npm test`, and a real configured-phone launch with server off. Record screenshots and no-redirect behavior. This can be reported as Connection milestone complete, not Offline downloads complete.
 
 Rollback: revert the C integration as one checkpoint while retaining configuration; do not reset preferences. Exit: configured users cannot be locked out by a probe, first-run setup works, navigation and other clients pass regression checks.

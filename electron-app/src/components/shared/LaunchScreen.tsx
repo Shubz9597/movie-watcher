@@ -116,6 +116,20 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
   const [origin, setOrigin] = React.useState(compat.origin);
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // Retries preserve the field, error, AND focus: re-enabling the input after
+  // a failed attempt returns keyboard focus to it (a disabled element drops
+  // focus, so the restore must happen after the enabled re-render).
+  React.useEffect(() => {
+    if (!pending && error) {
+      // Defer past the commit that inserted the error panel: an immediate
+      // focus() inside that commit silently no-ops in Chromium (active
+      // element resets to body right after), while a deferred call sticks.
+      const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [pending, error]);
 
   const submit = async (): Promise<void> => {
     if (pending) return;
@@ -151,6 +165,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
       </label>
       <input
         id={inputId}
+        ref={inputRef}
         value={origin}
         disabled={pending}
         onChange={(event) => {
