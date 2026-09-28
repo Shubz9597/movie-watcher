@@ -4,7 +4,7 @@
 // carries `fixtures=1`; no production entry imports it, and no code falls
 // back to it silently. The fetch shim scopes itself to backend-URL paths so
 // non-backend traffic (CDN artwork etc.) is untouched.
-import type { ConnectionConfig, DeviceStorage, ServerCompatibility } from './contracts.ts'
+import type { ConnectionConfig, DeviceStorage, DownloadsInventory, DownloadsPort, ServerCompatibility } from './contracts.ts'
 import { setBackendOrigin } from '../lib/connection-service.ts'
 
 export type FixtureScenario = 'ok' | 'unreachable' | 'incompatible' | 'provider-failure';
@@ -288,6 +288,35 @@ export class FixtureStorage implements DeviceStorage {
   }
   setPreference(key: string, value: string): void {
     this.values.set(key, value);
+  }
+}
+
+// Fixture downloads (offline-downloads C): TEST-ONLY local inventory for the
+// WF05/WF06 preview surfaces, activated only by the explicit
+// ?downloads=<scenario> fixture parameter. Production entries never import
+// this; a normal browser must not imply it can save files offline.
+export class FixtureDownloads implements DownloadsPort {
+  private readonly mode: 'items' | 'empty' | 'storage-error';
+  constructor(mode: 'items' | 'empty' | 'storage-error' = 'items') {
+    this.mode = mode;
+  }
+  async inventory(): Promise<DownloadsInventory> {
+    if (this.mode === 'storage-error') {
+      return { available: true, unreadable: true, items: [] };
+    }
+    if (this.mode === 'empty') {
+      return { available: true, unreadable: false, items: [] };
+    }
+    return {
+      available: true,
+      unreadable: false,
+      items: [
+        { downloadId: 'fixture-download-1', title: 'Dune: Part Two', subtitle: '1080p · 2.0 GB', state: 'ready', sizeBytes: 2147483648 },
+        { downloadId: 'fixture-download-2', title: 'Breaking Bad', subtitle: 'S1 E4 · 460 MB', state: 'ready', sizeBytes: 482344960 },
+        { downloadId: 'fixture-download-3', title: 'Frieren: Beyond Journey\'s End', subtitle: 'S1 E9 · partial', state: 'ready', sizeBytes: 524288000, waitingForServer: true },
+        { downloadId: 'fixture-download-4', title: 'Interstellar', subtitle: '1080p · needs repair', state: 'needs-repair', sizeBytes: 1610612736 },
+      ],
+    };
   }
 }
 

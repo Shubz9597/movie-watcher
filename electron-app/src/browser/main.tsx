@@ -20,18 +20,34 @@ import { loadPlayerPage, loadRecommendationsPage, loadSeeAllPage, loadTitlePage 
 import { RouterProvider } from '../lib/router-adapter';
 import { AppShell } from '../components/shared/AppShell';
 import { goBackHash, initializeHashNavigation, navigateHash } from '../lib/hash-navigation';
-import { PlatformProvider, useConnectionGate, usePlatform } from '../platform/PlatformProvider';
+import { PlatformProvider, useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import { LaunchScreen } from '../components/shared/LaunchScreen';
-import type { Platform } from '../platform/contracts';
+import { resolveLaunch, type LaunchDecision, type DeepLinkIntent } from '../lib/launch-policy';
+import type { Platform, DeviceStorage, DownloadsPort } from '../platform/contracts';
 import { BrowserConnection, BrowserStorage, resolveBrowserOriginSource } from '../platform/browser';
 
 const TitlePage = lazy(loadTitlePage);
 const SeeAllPage = lazy(loadSeeAllPage);
 const PlayerPage = lazy(loadPlayerPage);
 const SearchPage = lazy(() => import('../pages/SearchPage'));
+const DownloadsPage = lazy(() => import('../pages/DownloadsPage'));
 const RecommendationsAllPage = lazy(loadRecommendationsPage);
 
-export async function composePlatform(): Promise<{
+// Composition-time launch input (offline-downloads C03): the entry resolves
+// the initial surface from configuration, local inventory and saved tab via
+// the pure launch policy — never from reachability.
+export type LaunchComposition = {
+  surface: LaunchDecision['surface'];
+  tab?: Extract<LaunchDecision, { surface: 'shell' }>['tab'];
+  downloadsAvailable: boolean;
+};
+
+export async function composePlatform(overrides?: {
+  // Local downloads port provided by the entry (mobile native adapter). The
+  // browser entry has none: a browser must not imply it can save files
+  // offline.
+  downloads?: DownloadsPort;
+}): Promise<{
   platform: Platform;
   // M1.4: the mobile shell reuses the composition's storage adapter.
   storage: import('../platform/contracts').DeviceStorage;
@@ -43,13 +59,15 @@ export async function composePlatform(): Promise<{
   librarySync?: LibrarySync;
   // M4.2 capture fixture transport (dev-only).
   recsFetch?: typeof fetch;
+  // C03: resolved initial surface/tab and Downloads-tab availability.
+  launch: LaunchComposition;
 }> {
   const params = new URLSearchParams(window.location.search);
   const fixtureScenario = params.get('fixtures');
   if (fixtureScenario) {
     // Explicit, test-only: dynamically import the fixture modules so no
     // production path bundles or activates them.
-    const [{ FixtureConnection, FixtureStorage, installFixtureAdapter }, { fixtureLibraryProvider, createStressLibraryFixture, createLibraryStateFixture }, { createRecommendationsFixtureFetch }, { BrowserPlayer }] = await Promise.all([
+    const [{ FixtureConnection, FixtureStorage, installFixtureAdapter, FixtureDownloads }, { fixtureLibraryProvider, createStressLibraryFixture, createLibraryStateFixture }, { createRecommendationsFixtureFetch }, { BrowserPlayer }] = await Promise.all([
       import('../platform/fixtures'),
       import('../platform/library-fixtures'),
       import('../platform/recommendation-fixtures'),
@@ -59,6 +77,12 @@ export async function composePlatform(): Promise<{
       ? fixtureScenario
       : 'ok') as 'ok' | 'unreachable' | 'incompatible' | 'provider-failure';
     installFixtureAdapter(scenario);
+    // Offline-downloads C fixture preview: ?downloads=items|empty|storage-error
+    // drives the REAL Downloads surfaces through the deterministic fixture.
+    const downloadsScenario = params.get('downloads');
+    const downloads: DownloadsPort | undefined = ['items', 'empty', 'storage-error'].includes(downloadsScenario ?? '')
+      ? new FixtureDownloads(downloadsScenario as 'items' | 'empty' | 'storage-error')
+      : undefined;
     // M2.4 measurement workload: ?stress=100 scales the preview library;
     // ?stressArtwork=1 adds harness-served placeholder artwork (cached
     // after first decode) for the cached-artwork scroll workload.
@@ -77,6 +101,7 @@ export async function composePlatform(): Promise<{
         connection: new FixtureConnection(scenario),
         storage: fixtureStorage,
         player: new BrowserPlayer(),
+        downloads,
       },
       // Preview-only library data; the page renders its truthful label.
       libraryProvider: Number.isFinite(stressCount) && stressCount > 0
@@ -85,6 +110,10 @@ export async function composePlatform(): Promise<{
       libraryController: libraryScenario && libraryScenario !== 'none' ? createLibraryStateFixture(libraryScenario) : null,
       storage: fixtureStorage,
       recsFetch: recsScenario ? createRecommendationsFixtureFetch(recsScenario) : undefined,
+      // Fixture previews always render the shell (their scenario drives
+      // availability); the downloads tab exists only with an explicit
+      // downloads fixture.
+      launch: { surface: 'shell', tab: 'home', downloadsAvailable: downloads !== undefined },
     };
   }
   const storage = new BrowserStorage();
@@ -104,12 +133,18 @@ export async function composePlatform(): Promise<{
     console.error('[Library] Initial capability check failed:', error);
   });
   const librarySync = attachLibrarySync(libraryStore);
+  const downloads = overrides?.downloads;
+  // C03: resolve the initial surface from configuration + local inventory
+  // (read WITHOUT network) + saved tab via the pure launch policy. The
+  // startup splash covers this bounded, local read.
+  const launch = await resolveLaunchComposition({ storage, downloads, configured, origin });
   return {
     platform: {
       kind: 'browser',
       connection: new BrowserConnection(storage, origin, configured),
       storage,
       player: new BrowserPlayer(),
+      downloads,
     },
     // M1.4: the mobile shell reuses the SAME composition and needs the
     // storage adapter for its settings surface.
@@ -117,28 +152,78 @@ export async function composePlatform(): Promise<{
     libraryProvider: null,
     libraryController: libraryStore,
     librarySync,
+    launch,
   };
 }
 
-function useHashRouter() {
-  const [route, setRoute] = useState(() => parseHash(window.location.hash));
+/**
+ * C03 launch resolution: pure-policy inputs only. Configuration comes from
+ * durable storage (a read failure is a recovery state, never first install);
+ * the local inventory is read without any network request; reachability is
+ * NOT consulted. A hash route is the deep link — explicit links already land
+ * on their route through the hash router, so the policy resolves the default
+ * tab with no deep-link override.
+ */
+async function resolveLaunchComposition(deps: {
+  storage: DeviceStorage;
+  downloads?: DownloadsPort;
+  configured: boolean;
+  origin: string;
+}): Promise<LaunchComposition> {
+  let inventory: import('../platform/contracts').DownloadsInventory;
+  try {
+    inventory = deps.downloads ? await deps.downloads.inventory() : { available: false, unreadable: false, items: [] };
+  } catch (error) {
+    console.error('[Launch] Local inventory read failed:', error);
+    inventory = { available: Boolean(deps.downloads), unreadable: true, items: [] };
+  }
+  const savedOrigin = deps.storage.getPreference('mw_server_origin');
+  const configReadError = deps.storage.lastError != null;
+  const decision = resolveLaunch({
+    // Durable saved configuration wins over the fallback resolution: a
+    // previously configured user who ALSO passed ?server= is still configured.
+    configuration: configReadError
+      ? { kind: 'read-error' }
+      : savedOrigin
+        ? { kind: 'present', origin: savedOrigin }
+        : deps.configured
+          ? { kind: 'present', origin: deps.origin }
+          : { kind: 'missing' },
+    inventory: inventory.unreadable
+      ? { kind: 'read-error' }
+      : inventory.items.length > 0
+        ? { kind: 'ready-exists' }
+        : { kind: 'empty' },
+    savedTab: deps.storage.getPreference('mw_last_tab'),
+    deepLink: { kind: 'none' } as DeepLinkIntent,
+    downloadsTabAvailable: inventory.available,
+  });
+  return {
+    surface: decision.surface,
+    tab: decision.surface === 'shell' ? decision.tab : decision.surface === 'downloads' ? 'downloads' : undefined,
+    downloadsAvailable: inventory.available,
+  };
+}
+
+function useHashRouter(initialTab: string) {
+  const [route, setRoute] = useState(() => parseHash(window.location.hash, initialTab));
   useEffect(() => {
     initializeHashNavigation(window);
-    const onHashChange = () => setRoute(parseHash(window.location.hash));
+    const onHashChange = () => setRoute(parseHash(window.location.hash, initialTab));
     window.addEventListener('hashchange', onHashChange);
     window.addEventListener('popstate', onHashChange);
     return () => {
       window.removeEventListener('hashchange', onHashChange);
       window.removeEventListener('popstate', onHashChange);
     };
-  }, []);
+  }, [initialTab]);
   const navigate = useCallback((path: string, params: Record<string, string> = {}, options?: { replace?: boolean }) => navigateHash(window, path, params, options?.replace ?? false), []);
   const goBack = useCallback(() => goBackHash(window), []);
   return { route, navigate, goBack };
 }
 
-function parseHash(hash: string): { path: string; params: URLSearchParams } {
-  const value = (hash.slice(1) || 'home').replace(/^\//, '');
+function parseHash(hash: string, fallback = 'home'): { path: string; params: URLSearchParams } {
+  const value = (hash.slice(1) || fallback).replace(/^\//, '');
   const [path, query] = value.split('?');
   return { path, params: new URLSearchParams(query || '') };
 }
@@ -184,29 +269,61 @@ function BrowserApp({
   libraryProvider,
   libraryController,
   recsFetch,
+  launch,
 }: {
   libraryProvider: import('../lib/services/library-service').LibraryProvider | null;
   libraryController: import('../lib/library-store').LibraryController | null;
   recsFetch?: typeof fetch;
+  launch: LaunchComposition;
 }) {
-  const { route, navigate, goBack } = useHashRouter();
-  const { showGate, reconnecting, compat } = useConnectionGate();
-  const { connection } = usePlatform();
+  const { route, navigate, goBack } = useHashRouter(launch.tab ?? 'home');
+  const compat = useConnectionStatus();
+  const { connection, storage } = usePlatform();
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
+  // First-run connect transition: after a successful setup save the shell
+  // mounts for the rest of the session (a reload resolves 'shell' from
+  // durable configuration).
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  const [retrying, setRetrying] = useState(false);
   // rerender-memo-with-default-value: stable deps object so the memoized
   // recommendation components don't re-render (or refetch) on every render.
   const recommendationDeps = useMemo(() => (recsFetch ? { fetchImpl: recsFetch } : undefined), [recsFetch]);
   useScrollRestoration(`${route.path}?${route.params.toString()}`);
 
-  // M1.4 repair (flash fix): the full-screen LaunchScreen renders ONLY during
-  // the first-connect phase for the current origin. Once connected, later
-  // re-checks never unmount the app - an unreachable server surfaces as a
-  // slim reconnecting banner while capability-gated surfaces show their own
-  // truthful offline states.
-  if (showGate) {
+  // C03: persist the last valid top-level destination so the next launch
+  // restores it (launch policy input; expired playback routes are never
+  // auto-resumed because only destinations are persisted).
+  useEffect(() => {
+    if (['home', 'library', 'search', 'downloads'].includes(route.path)) {
+      storage.setPreference('mw_last_tab', route.path);
+    }
+  }, [route.path, storage]);
+
+  const onOpenSettings = useCallback(() => window.dispatchEvent(new CustomEvent('torwatch:open-settings')), []);
+  const onRetry = useCallback(() => {
+    if (retrying) return;
+    setRetrying(true);
+    void connection.check().finally(() => setRetrying(false));
+  }, [connection, retrying]);
+
+  // WF01: the full-screen setup screen renders ONLY for first installation
+  // (no saved configuration, no local downloads). A configured user ALWAYS
+  // gets the shell; outages surface contextually (WF02 on Home, slim banner
+  // elsewhere) and never unmount the app back to setup.
+  if (launch.surface === 'config-error' && connectedAt === null) {
+    return <ConfigErrorScreen />;
+  }
+  if (launch.surface === 'setup' && connectedAt === null) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
-        <LaunchScreen compat={compat} onConnect={(origin) => connection.saveOrigin(origin)} />
+        <LaunchScreen
+          compat={compat}
+          onConnect={async (origin) => {
+            const saved = await connection.saveOrigin(origin);
+            setConnectedAt(Date.now());
+            return saved;
+          }}
+        />
       </div>
     );
   }
@@ -251,12 +368,17 @@ function BrowserApp({
       routePath={route.path}
       navigate={navigate}
       onBack={goBack}
-      onOpenSettings={() => window.dispatchEvent(new CustomEvent('torwatch:open-settings'))}
+      onOpenSettings={onOpenSettings}
+      downloadsAvailable={launch.downloadsAvailable}
     >
-      {/* M1.4 repair (flash fix): once connected, a lost server surfaces as a
-          slim non-blocking banner - the app NEVER unmounts back to the launch
-          screen on background re-checks. */}
-      {reconnecting ? (
+      {/* WF02: on Home a server failure collapses the whole page into ONE
+          recovery block (Server unavailable / Retry / Go to settings) instead
+          of repeating errors per rail. Other routes keep the slim banner
+          (WF07: stay on the current route; local media stays playable). */}
+      {route.path === 'home' && compat.status === 'unreachable' ? (
+        <HomeRecovery retrying={retrying} onRetry={onRetry} onOpenSettings={onOpenSettings} />
+      ) : null}
+      {route.path !== 'home' && (compat.status === 'unreachable' || compat.status === 'incompatible') ? (
         <div className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-[#ffc285]/10 px-4 py-2 text-sm text-[#ffc285]" role="status">
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#ffc285]" aria-hidden="true" />
           Reconnecting to the TorWatch server-
@@ -277,7 +399,7 @@ function BrowserApp({
       ) : null}
 
       <Suspense fallback={<RouteFallback />}>
-        {route.path === 'home' && (
+        {route.path === 'home' && compat.status !== 'unreachable' && (
           <>
             <HomePage
               navigate={navigate}
@@ -329,6 +451,8 @@ function BrowserApp({
           />
         )}
         {route.path === 'search' && <SearchPage navigate={navigate} />}
+        {/* WF06: the direct route to local media — works without a server. */}
+        {route.path === 'downloads' && <DownloadsPage navigate={navigate} />}
         {/* Dev-only (fixture entry): the REAL recommendations surfaces driven
             by the deterministic fixture fetch (?recs=<scenario>), so the
             M4.2 states are capturable without a backend. */}
@@ -343,7 +467,7 @@ function BrowserApp({
             <SharedRecommendationsAllPage navigate={navigate} deps={recommendationDeps} />
           </div>
         ) : null}
-        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations', 'search'].includes(route.path) && (
+        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations', 'search', 'downloads'].includes(route.path) && (
           <section className="mx-auto flex min-h-[70vh] max-w-xl flex-col items-center justify-center px-6 text-center">
             <p className="text-sm text-white/60">This page is not available.</p>
             <h1 className="type-section-title mt-3 text-white">Return to your library</h1>
@@ -418,6 +542,64 @@ function RouteFallback() {
   );
 }
 
+// WF02: Home under a server failure is exactly this block — no explanatory
+// paragraphs, no rail repetition. The header, destinations and Settings stay
+// reachable (spec C4/C6).
+function HomeRecovery({ retrying, onRetry, onOpenSettings }: {
+  retrying: boolean;
+  onRetry: () => void;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <section
+      className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-6 text-center"
+      aria-live="polite"
+    >
+      <p className="text-sm text-white/60">Server unavailable</p>
+      <div className="mt-7 flex flex-col gap-3">
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+        >
+          {retrying ? 'Checking…' : 'Retry'}
+        </button>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+        >
+          Go to settings
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// Configuration read error (spec C1): a recovery state, never first
+// installation — this screen never asks the user to set up again and never
+// clears the saved address.
+function ConfigErrorScreen() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white" role="alert">
+      <div className="w-full max-w-md">
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">Storage problem</p>
+        <h1 className="type-section-title mt-3">TorWatch couldn-t read its saved settings</h1>
+        <div className="mt-7">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 // Dev-only toggle-state capture composition (fixture entry): the REAL
 // LibraryToggle components in the title-action toolbar arrangement. The
 // scenario comes from the ?library= fixture parameter.
@@ -450,6 +632,7 @@ export function sharedAppElement(composed: {
   libraryController: import('../lib/library-store').LibraryController | null;
   librarySync?: LibrarySync;
   recsFetch?: typeof fetch;
+  launch: LaunchComposition;
 }): ReactElement {
   // The sync controller lives for the page lifetime; the store itself clears
   // origin-scoped state on switch through its own subscription.
@@ -461,6 +644,7 @@ export function sharedAppElement(composed: {
           libraryProvider={composed.libraryProvider}
           libraryController={composed.libraryController}
           recsFetch={composed.recsFetch}
+          launch={composed.launch}
         />
       </AppErrorBoundary>
     </PlatformProvider>

@@ -20,7 +20,7 @@
 //     reported where the capability is used.
 //   - A missing optional capability is NEVER a universal incompatibility.
 
-import type { ServerCompatibility } from '../platform/contracts.ts';
+import type { ConnectionState } from '../platform/contracts.ts';
 import { connectionFailureMessage, fetchWithTimeout } from './connection-diagnostics.ts';
 import { CLIENT_SUPPORTED_PROTOCOL_RANGE, rangesOverlap } from './version-check.ts';
 
@@ -90,14 +90,7 @@ export async function probeServer(
 }
 
 /** Coordinator state: ServerCompatibility plus the C1/C2 distinctions. */
-export type ConnectionState = ServerCompatibility & {
-  /** True when the origin came from durable saved configuration. A
-   *  `?server=` preview parameter or a build-time default is NOT evidence of
-   *  completed setup and must not flip this on. */
-  configured: boolean;
-  capabilities: string[];
-  protocolCompatible: boolean;
-};
+export type { ConnectionState };
 
 export type SaveDeps = {
   /** Persist the validated origin durably. Must throw on failure. */
@@ -262,9 +255,13 @@ export class ConnectionCoordinator {
   }
 
   private blockedOutcome(probed: ProbeResult): SaveOutcome {
-    return probed.kind === 'unreachable'
-      ? { result: 'blocked-unreachable', message: probed.message }
-      : { result: 'blocked-incompatible', message: probed.message };
+    if (probed.kind === 'unreachable') {
+      return { result: 'blocked-unreachable', message: probed.message };
+    }
+    if (probed.kind === 'incompatible') {
+      return { result: 'blocked-incompatible', message: probed.message };
+    }
+    return { result: 'blocked-incompatible', message: 'This server is not compatible. Update the TorWatch server.' };
   }
 }
 

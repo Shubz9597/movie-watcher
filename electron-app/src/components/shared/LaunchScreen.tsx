@@ -99,10 +99,10 @@ export function LaunchScreen({ compat, onConnect }: LaunchScreenProps) {
           >
             {compat.status === 'incompatible' ? 'This server is not compatible' : 'Connect to your server'}
           </h1>
-          <p className="tw-launch-fade tw-launch-delay-2 mx-auto mt-3 max-w-sm text-sm leading-6 text-white/60">
-            {compat.message || 'Enter the address of your private TorWatch server to sync your library and start watching.'}
-          </p>
 
+          {/* WF01 (2026-09-28 revision): no descriptive onboarding paragraphs —
+              the field and Connect action speak for themselves. Errors are one
+              short line in the field's error panel, with the input preserved. */}
           <div className="tw-launch-fade tw-launch-delay-3 mt-8">
             <LaunchOriginField compat={compat} onConnect={onConnect} />
           </div>

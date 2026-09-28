@@ -132,7 +132,11 @@ async function start(): Promise<void> {
       import('../browser/main'),
       import('../platform/native-player'),
     ]);
-    const composed = await browser.composePlatform();
+    // C03: the native downloads port is attached BEFORE launch resolution so
+    // the policy sees the local inventory without network. The C-stage
+    // adapter reports unavailable; D03/D05 make it real.
+    const [{ NativeDownloadsAdapter }] = await Promise.all([import('./downloads-adapter')]);
+    const composed = await browser.composePlatform({ downloads: new NativeDownloadsAdapter() });
     const nativeActive = native.isNativeCapacitor();
     if (nativeActive) {
       // Production mobile playback: native AVPlayer/Media3 through the shared

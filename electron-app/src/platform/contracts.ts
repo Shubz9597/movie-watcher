@@ -91,4 +91,45 @@ export interface Platform {
   storage: DeviceStorage;
   desktop?: DesktopChrome;
   player?: PlayerPort;
+  // Local downloads (offline-downloads C/D): present only on clients with the
+  // native downloads capability. Absence is normal for browser/desktop and
+  // keeps the current three-tab navigation. C-stage adapters report
+  // available: false; the native D implementation fills the port.
+  downloads?: DownloadsPort;
+}
+
+// Connection state (C02): ServerCompatibility plus the configuration and
+// protocol/capability distinctions the launch policy and availability UI need.
+export type ConnectionState = ServerCompatibility & {
+  /** Durable saved configuration. A `?server=` preview parameter or
+   *  build-time default is NOT evidence of completed setup. */
+  configured?: boolean;
+  capabilities?: string[];
+  protocolCompatible?: boolean;
+};
+
+// Local download inventory (offline-downloads WF05/WF06). Snapshot read
+// WITHOUT network: ready files must be reachable independently of the server.
+export type DownloadItemState = 'ready' | 'needs-repair';
+
+export type DownloadItemSnapshot = {
+  downloadId: string;
+  title: string;
+  subtitle?: string;
+  state: DownloadItemState;
+  sizeBytes?: number;
+  /** Interrupted/partial transfer: shows Waiting for server, never Play (WF06). */
+  waitingForServer?: boolean;
+};
+
+export type DownloadsInventory = {
+  /** Whether this client exposes local downloads at all (native capability). */
+  available: boolean;
+  /** Inventory read failed — surfaces a storage error, never "zero downloads". */
+  unreadable: boolean;
+  items: DownloadItemSnapshot[];
+};
+
+export interface DownloadsPort {
+  inventory(): Promise<DownloadsInventory>;
 }

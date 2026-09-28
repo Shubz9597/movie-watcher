@@ -2,8 +2,8 @@
 // usePlatform(); the runtime choice happens once at each entry's
 // composition root. No global fallback exists --- a missing provider is a
 // composition error, not a silent Electron assumption.
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Platform, ServerCompatibility } from './contracts.ts'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { ConnectionState, Platform } from './contracts.ts'
 
 const PlatformContext = createContext<Platform | null>(null);
 
@@ -20,11 +20,15 @@ export function usePlatform(): Platform {
 }
 
 // useConnectionStatus subscribes to the connection port and re-checks on
-// mount. Checking/ready/unreachable/incompatible states drive the entry's
-// gate UI; the catalog journey only starts when ready.
-export function useConnectionStatus(): ServerCompatibility {
+// mount. The returned ConnectionState carries the C1/C2 distinctions
+// (configured, capabilities, protocolCompatible) for contextual availability.
+// It NEVER gates the shell: the launch policy (src/lib/launch-policy.ts)
+// decides the initial surface from configuration/inventory/deep-link intent,
+// and reachability only drives per-surface recovery UI (WF02 on Home, the
+// slim banner elsewhere, per-item states on Downloads).
+export function useConnectionStatus(): ConnectionState {
   const { connection } = usePlatform();
-  const [status, setStatus] = useState<ServerCompatibility>(() => ({ status: 'checking', origin: '' }));
+  const [status, setStatus] = useState<ConnectionState>(() => ({ status: 'checking', origin: '' }));
   useEffect(() => {
     let active = true;
     const unsubscribe = connection.subscribe((compat) => {
@@ -50,43 +54,4 @@ export function useConnectionStatus(): ServerCompatibility {
     };
   }, [connection]);
   return status;
-}
-
-/**
- * useConnectionGate (M1.4 repair --- flash fix): derives the launch-screen
- * visibility with "already connected" memory.
- *
- *   - The full-screen gate renders ONLY while the FIRST probe for the
- *     current origin is incomplete (first launch / explicit origin change).
- *   - Once a probe returns ready, later re-checks NEVER unmount the app to
- *     the gate: a transient 'checking' is invisible, and an
- *     'unreachable'/'incompatible' surfaces as a reconnecting banner while
- *     the app stays usable (capability-gated surfaces show their own
- *     truthful offline states).
- *   - Changing the server origin resets the memory --- the gate legitimately
- *     shows again.
- */
-export function useConnectionGate(): {
-  showGate: boolean;
-  reconnecting: boolean;
-  compat: ServerCompatibility;
-} {
-  const compat = useConnectionStatus();
-  const everReady = useRef(false);
-  const connectedOrigin = useRef('');
-
-  if (compat.status === 'ready') {
-    everReady.current = true;
-    connectedOrigin.current = compat.origin;
-  }
-  // Origin changes through saveOrigin --- the stored origin differs --- the
-  // first-connect phase legitimately restarts.
-  if (compat.origin && connectedOrigin.current && compat.origin !== connectedOrigin.current) {
-    everReady.current = false;
-    connectedOrigin.current = compat.origin;
-  }
-
-  const showGate = !everReady.current && compat.status !== 'ready';
-  const reconnecting = everReady.current && compat.status !== 'ready';
-  return { showGate, reconnecting, compat };
 }

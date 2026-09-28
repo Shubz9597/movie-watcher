@@ -277,7 +277,13 @@ export class BrowserConnection implements ConnectionConfig {
   constructor(private readonly storage: DeviceStorage, initialOrigin: string, initialConfigured = false) {
     this.configured = initialConfigured;
     this.coordinator = new ConnectionCoordinator({ origin: initialOrigin, configured: initialConfigured });
-    this.current = { status: 'checking', origin: initialOrigin };
+    // Bridge: coordinator commits (check/save) re-emit through the adapter's
+    // listeners so useConnectionStatus subscribers stay current.
+    this.current = this.coordinator.getState();
+    this.coordinator.subscribe((state) => {
+      this.current = state;
+      this.emit();
+    });
     // M1.4 repair: initialize the connection service's backend origin ONCE at
     // construction. Without this, getBackendOrigin() (used by ALL API calls)
     // returns the default — and my check() fix (which no longer calls

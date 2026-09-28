@@ -5,7 +5,7 @@
 // M1.4 UI pass: shell-level back chevrons (top bar + bottom nav) are REMOVED
 // — pages own their back affordance ("‹ Label" row, e.g. "‹ Library"), the
 // pattern users expect; hardware/gesture back still works everywhere.
-import { Home, Library, Search, Settings2 } from 'lucide-react';
+import { Download, Home, Library, Search, Settings2 } from 'lucide-react';
 import AppHeader from '../AppHeader';
 import { ConnectionChip } from './ConnectionChip';
 import torWatchLogo from '../../assets/torwatch-app-icon.png';
@@ -17,6 +17,10 @@ type AppShellProps = {
   navigate: (path: string, params?: Record<string, string>) => void;
   onOpenSettings: () => void;
   onBack: () => void;
+  /** Offline-downloads C03/C04: show the Downloads destination only on
+   *  clients with the native downloads capability. Absence keeps the
+   *  existing Home/Library/Search navigation for unaffected clients. */
+  downloadsAvailable?: boolean;
   children: React.ReactNode;
 };
 
@@ -25,7 +29,7 @@ const DESTINATIONS = [
   { path: 'library', label: 'Library', icon: Library },
 ] as const;
 
-export function AppShell({ routePath, navigate, onOpenSettings, onBack, children }: AppShellProps) {
+export function AppShell({ routePath, navigate, onOpenSettings, onBack, downloadsAvailable, children }: AppShellProps) {
   void onBack; // pages own back affordances now; kept for interface stability
   const search = routePath === 'search';
   const frame = useSearchViewport(search);
@@ -121,6 +125,19 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, children
             <Search className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
             <span>Search</span>
           </button>
+          {downloadsAvailable ? (
+            <button
+              type="button"
+              onClick={() => navigate('downloads')}
+              aria-current={routePath === 'downloads' ? 'page' : undefined}
+              className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] transition ${FOCUS_RING_CLASS} ${
+                routePath === 'downloads' ? 'text-white' : 'text-white/55 hover:text-white/85'
+              }`}
+            >
+              <Download className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
+              <span>Downloads</span>
+            </button>
+          ) : null}
         </div>
       </nav>
     </div>
