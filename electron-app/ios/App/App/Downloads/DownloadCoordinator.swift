@@ -141,7 +141,9 @@ final class DownloadCoordinator: NSObject {
             let done = try isAssetDone(record.downloadId, asset)
             if done { continue }
             guard let url = Self.assetURL(origin: record.origin, urlPath: asset.urlPath, clientId: record.clientId) else {
-                throw StoreError.database("invalid asset path")
+                // StoreError is store-internal; a malformed asset path is a
+                // generic failure here (the asset path was validated upstream).
+                throw URLError(.badURL)
             }
             let task = session.downloadTask(with: url)
             try store.recordTask(Int(task.taskIdentifier), downloadId: record.downloadId, urlPath: asset.urlPath)
