@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS download_jobs (
   state TEXT NOT NULL CHECK (state IN ('preparing','ready','failed','cancelled','expired')),
   reason_code TEXT NOT NULL DEFAULT '',
   manifest JSONB NULL,
+  requested_subtitles TEXT NOT NULL DEFAULT '',
+  claimed_by TEXT NOT NULL DEFAULT '',
+  claimed_at TIMESTAMPTZ NULL,
   ready_at TIMESTAMPTZ NULL,
   expires_at TIMESTAMPTZ NULL,
   claimed_by TEXT NOT NULL DEFAULT '',
@@ -48,17 +51,21 @@ FOR EACH ROW EXECUTE PROCEDURE set_updated_at();
 CREATE INDEX IF NOT EXISTS idx_download_jobs_state ON download_jobs(state);
 CREATE INDEX IF NOT EXISTS idx_download_jobs_expiry ON download_jobs(expires_at) WHERE state = 'ready';
 
--- Immutable per-job assets (contracts §4). Paths are server-relative under
--- the download root; no credentials, magnets, or provider data are stored.
+-- Immutable per-job assets (contracts §4). url_path is the public,
+-- origin-relative URL owned by the job; asset_path is the server-relative
+-- disk location under the downloads root. No credentials, magnets, or
+-- provider data are stored.
 CREATE TABLE IF NOT EXISTS download_assets (
   job_id UUID NOT NULL REFERENCES download_jobs(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('video','subtitle')),
   lang TEXT NOT NULL DEFAULT '',
+  url_path TEXT NOT NULL,
   asset_path TEXT NOT NULL,
   size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
   sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (job_id, kind, lang, asset_path)
+  PRIMARY KEY (job_id, url_path),
+  UNIQUE (url_path)
 );
 
 -- Idempotency ledger for offline progress import (contracts §6).

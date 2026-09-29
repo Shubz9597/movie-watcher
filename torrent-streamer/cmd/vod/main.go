@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -196,6 +197,26 @@ func main() {
 	if libraryStore != nil {
 		capabilities = append(capabilities, library.Capability)
 	}
+	// Offline downloads (D02b): the prepper claims preparing jobs through the
+	// torrent engine into a SEPARATE downloads root the cache janitor never
+	// evicts. The downloads.offline.v1 capability is advertised only when the
+	// preparation pipeline is functional (storage root writable) — never as a
+	// promise (contracts.md §2).
+	var downloadPrepper *downloads.Prepper
+	if downloadRootAbs, rootErr := filepath.Abs(config.DownloadsRoot()); rootErr == nil &&
+		os.MkdirAll(filepath.Join(downloadRootAbs, "ready"), 0o755) == nil &&
+		os.MkdirAll(filepath.Join(downloadRootAbs, "staging"), 0o755) == nil {
+		downloadPrepper = downloads.NewPrepper(downloads.NewStore(db), pickRepo, downloadRootAbs, config.DownloadMaxConcurrent())
+		if released, err := downloadPrepper.ReconcileStartup(context.Background()); err != nil {
+			log.Printf("[boot] download job reconciliation: %v", err)
+		} else if released > 0 {
+			log.Printf("[boot] reconciled %d preparing download jobs from a previous run", released)
+		}
+		capabilities = append(capabilities, "downloads.offline.v1")
+		log.Printf("[boot] downloads.offline.v1 ready (root=%s maxConcurrent=%d)", downloadRootAbs, config.DownloadMaxConcurrent())
+	} else {
+		log.Printf("[boot] downloads.offline.v1 unavailable: the download storage root is not writable")
+	}
 	// Recommendations (M4.1): wired ONLY when the household library and a
 	// catalog candidate provider both exist; the capability is advertised only
 	// then (contracts/recommendations-api.md §Negotiation). The v2 taste
@@ -326,14 +347,17 @@ func main() {
 		PlaybackRoot:   config.PlaybackDataRoot(),
 	}.Register(mux)
 	// Offline downloads (D02a): durable job surface behind the finalized
-	// contract. The downloads.offline.v1 capability stays UNADVERTISED until
-	// the prep pipeline is functional (D02b) — these routes are safely
-	// inactive until then (contracts.md §2).
+	// contract. With D02b the prep pipeline runs and the capability is
+	// advertised; the surface stays inert when the pipeline is unavailable.
 	httpapi.DownloadsHandlers{
 		Store:          downloads.NewStore(db),
 		Build:          build,
 		AllowedOrigins: allowedOrigins,
+		AssetRoot:      config.DownloadsRoot(),
 	}.Register(mux)
+	if downloadPrepper != nil {
+		go downloadPrepper.Run(context.Background())
+	}
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
 		Picks: torrentx.EnsureDeps{

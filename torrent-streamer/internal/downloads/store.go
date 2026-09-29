@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,9 +23,14 @@ type Service interface {
 	Renew(ctx context.Context, clientID, jobID string, now time.Time) (Job, error)
 	// Manifest returns the validated ready-package manifest of a ready job.
 	Manifest(ctx context.Context, clientID, jobID string) (Manifest, error)
-	// MarkReady drives the worker-side transition preparing -> ready with the
-	// complete manifest (retention clock starts here).
-	MarkReady(ctx context.Context, jobID string, manifest Manifest, now time.Time) error
+	// AssetFile resolves one asset URL path of a ready, client-owned job to
+	// its download-root-relative disk path for serving (contracts.md §4.1).
+	AssetFile(ctx context.Context, clientID, jobID, urlPath string) (diskPath string, size int64, sha string, err error)
+	// MarkReady atomically attaches the finalized assets AND flips the job
+	// preparing -> ready with the complete validated manifest — the staging
+	// to ready move is one transaction (contracts.md §4). The retention
+	// clock starts here.
+	MarkReady(ctx context.Context, jobID string, manifest Manifest, assets []AssetRow, now time.Time) error
 	// ExpireDue flips ready jobs whose expiry has passed to expired
 	// (retention_expired) and returns their ids for bounded asset cleanup.
 	ExpireDue(ctx context.Context, now time.Time, limit int) ([]string, error)
@@ -42,6 +48,8 @@ var (
 
 // CreateRequest is the validated payload of POST /v1/downloads/jobs
 // (contracts.md §3). Identity fields are opaque server references.
+// Subtitles lists requested sidecar languages (lowercase ISO 639-1, optional
+// — D02b); the job is ready only with every requested language present.
 type CreateRequest struct {
 	ClientID       string
 	IdempotencyKey string
@@ -49,6 +57,7 @@ type CreateRequest struct {
 	Season         int
 	Episode        int
 	PickID         int64
+	Subtitles      []string
 }
 
 // Job is the durable preparation job as exposed to clients and workers.
@@ -62,10 +71,12 @@ type Job struct {
 	PickID         int64
 	State          string
 	ReasonCode     string
-	ReadyAt        *time.Time
-	ExpiresAt      *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// RequestedSubtitles are the requested sidecar languages (may be empty).
+	RequestedSubtitles []string
+	ReadyAt            *time.Time
+	ExpiresAt          *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Store is the PostgreSQL-backed Service.
@@ -76,15 +87,19 @@ type Store struct {
 func NewStore(db *sql.DB) *Store { return &Store{DB: db} }
 
 const jobColumns = `id, idempotency_key, client_id, series_id, season, episode, pick_id,
-state, reason_code, ready_at, expires_at, created_at, updated_at`
+state, reason_code, requested_subtitles, ready_at, expires_at, created_at, updated_at`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var readyAt, expiresAt sql.NullTime
+	var requested string
 	err := row.Scan(&j.ID, &j.IdempotencyKey, &j.ClientID, &j.SeriesID, &j.Season, &j.Episode,
-		&j.PickID, &j.State, &j.ReasonCode, &readyAt, &expiresAt, &j.CreatedAt, &j.UpdatedAt)
+		&j.PickID, &j.State, &j.ReasonCode, &requested, &readyAt, &expiresAt, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		return Job{}, err
+	}
+	if requested != "" {
+		j.RequestedSubtitles = strings.Split(requested, ",")
 	}
 	if readyAt.Valid {
 		t := readyAt.Time
@@ -107,6 +122,12 @@ func (s *Store) Create(ctx context.Context, req CreateRequest) (Job, bool, error
 	if req.Season < 0 || req.Episode < 0 {
 		return Job{}, false, ErrInvalidRequest
 	}
+	for _, lang := range req.Subtitles {
+		if !validSubtitleLang(lang) {
+			return Job{}, false, ErrInvalidRequest
+		}
+	}
+	requested := strings.Join(req.Subtitles, ",")
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, false, fmt.Errorf("begin create: %w", err)
@@ -114,10 +135,10 @@ func (s *Store) Create(ctx context.Context, req CreateRequest) (Job, bool, error
 	defer tx.Rollback()
 	var created bool
 	err = tx.QueryRowContext(ctx, `
-INSERT INTO download_jobs (idempotency_key, client_id, series_id, season, episode, pick_id, state)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO download_jobs (idempotency_key, client_id, series_id, season, episode, pick_id, state, requested_subtitles)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (client_id, idempotency_key) DO NOTHING
-RETURNING TRUE`, req.IdempotencyKey, req.ClientID, req.SeriesID, req.Season, req.Episode, req.PickID, StatePreparing).Scan(&created)
+RETURNING TRUE`, req.IdempotencyKey, req.ClientID, req.SeriesID, req.Season, req.Episode, req.PickID, StatePreparing, requested).Scan(&created)
 	if errors.Is(err, sql.ErrNoRows) {
 		created = false
 	} else if err != nil {
@@ -133,6 +154,20 @@ SELECT `+jobColumns+` FROM download_jobs WHERE client_id=$1 AND idempotency_key=
 		return Job{}, false, fmt.Errorf("commit create: %w", err)
 	}
 	return j, created, nil
+}
+
+// validSubtitleLang enforces the lowercase ISO 639-1 shape of requested
+// sidecar languages (contracts.md §3).
+func validSubtitleLang(lang string) bool {
+	if len(lang) != 2 {
+		return false
+	}
+	for _, r := range lang {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) Get(ctx context.Context, clientID, jobID string) (Job, error) {
@@ -198,10 +233,12 @@ UPDATE download_jobs SET state=$1, reason_code=$2 WHERE id=$3 AND state=$4`,
 	return s.Get(ctx, j.ClientID, j.ID)
 }
 
-// MarkReady attaches the complete validated manifest and starts the retention
-// clock (contracts.md §4). The manifest is validated here so an invalid
-// package can NEVER become ready (acceptance D7).
-func (s *Store) MarkReady(ctx context.Context, jobID string, manifest Manifest, now time.Time) error {
+// MarkReady atomically attaches the validated complete asset set and flips
+// the job to ready (contracts.md §4). The manifest is validated here so an
+// invalid package can NEVER become ready (acceptance D7); if the job is no
+// longer preparing (concurrent cancel), the transaction does nothing and
+// ErrNotCancellable is returned so the worker discards the staged bytes.
+func (s *Store) MarkReady(ctx context.Context, jobID string, manifest Manifest, assets []AssetRow, now time.Time) error {
 	if err := ValidateManifest(manifest, now); err != nil {
 		return fmt.Errorf("manifest rejected: %w", err)
 	}
@@ -216,7 +253,30 @@ func (s *Store) MarkReady(ctx context.Context, jobID string, manifest Manifest, 
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
 	}
-	tag, err := s.DB.ExecContext(ctx, `
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin mark ready: %w", err)
+	}
+	defer tx.Rollback()
+	for _, a := range assets {
+		if a.Kind != AssetKindVideo && a.Kind != AssetKindSubtitle {
+			return fmt.Errorf("invalid asset kind %q", a.Kind)
+		}
+		if !strings.HasPrefix(a.URLPath, "/v1/downloads/jobs/"+jobID+"/assets/") {
+			return fmt.Errorf("asset URL path %q is not owned by job %s", a.URLPath, jobID)
+		}
+		if !isRelativeDownloadPath(a.DiskPath) {
+			return fmt.Errorf("asset disk path %q must be download-root relative", a.DiskPath)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO download_assets (job_id, kind, lang, url_path, asset_path, size_bytes, sha256)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+ON CONFLICT (job_id, url_path) DO NOTHING`,
+			jobID, a.Kind, a.Lang, a.URLPath, a.DiskPath, a.SizeBytes, a.SHA256); err != nil {
+			return fmt.Errorf("insert asset: %w", err)
+		}
+	}
+	tag, err := tx.ExecContext(ctx, `
 UPDATE download_jobs
 SET state=$1, reason_code='', manifest=$2, ready_at=$3, expires_at=$4
 WHERE id=$5 AND state=$6`, StateReady, raw, now, expiresAt, jobID, StatePreparing)
@@ -226,7 +286,7 @@ WHERE id=$5 AND state=$6`, StateReady, raw, now, expiresAt, jobID, StatePreparin
 	if n, _ := tag.RowsAffected(); n != 1 {
 		return ErrNotCancellable
 	}
-	return nil
+	return tx.Commit()
 }
 
 // Manifest returns the validated manifest of a ready job owned by the client.

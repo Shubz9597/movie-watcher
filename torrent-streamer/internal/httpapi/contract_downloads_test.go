@@ -26,6 +26,10 @@ type fakeDownloadService struct {
 	renewErr     error
 	manifest     downloads.Manifest
 	manifestErr  error
+	assetDisk    string
+	assetSize    int64
+	assetSHA     string
+	assetErr     error
 	lastCreate   downloads.CreateRequest
 	lastGetScope [2]string
 }
@@ -62,11 +66,17 @@ func (f *fakeDownloadService) Manifest(ctx context.Context, clientID, jobID stri
 	}
 	return f.manifest, nil
 }
-func (f *fakeDownloadService) MarkReady(ctx context.Context, jobID string, manifest downloads.Manifest, now time.Time) error {
+func (f *fakeDownloadService) MarkReady(ctx context.Context, jobID string, manifest downloads.Manifest, assets []downloads.AssetRow, now time.Time) error {
 	return nil
 }
 func (f *fakeDownloadService) ExpireDue(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	return nil, nil
+}
+func (f *fakeDownloadService) AssetFile(ctx context.Context, clientID, jobID, urlPath string) (string, int64, string, error) {
+	if f.assetErr != nil {
+		return "", 0, "", f.assetErr
+	}
+	return f.assetDisk, f.assetSize, f.assetSHA, nil
 }
 
 func newDownloadsTestHandlers(svc downloads.Service) DownloadsHandlers {

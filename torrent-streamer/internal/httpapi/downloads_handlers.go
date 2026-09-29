@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +27,9 @@ type DownloadsHandlers struct {
 	// AllowedOrigins is the explicit CORS origin allowlist for the versioned
 	// browser/mobile surfaces (same policy as CatalogHandlers).
 	AllowedOrigins []string
+	// AssetRoot is the resolved downloads root the prepared files live under
+	// (D02b). Empty disables the asset routes.
+	AssetRoot string
 	// Now is overridable for tests; UTC time is the default.
 	Now func() time.Time
 }
@@ -52,6 +57,13 @@ func (h DownloadsHandlers) Register(mux *http.ServeMux) {
 		{"POST", "/v1/downloads/jobs/{id}/cancel", h.handleCancel},
 		{"POST", "/v1/downloads/jobs/{id}/renew", h.handleRenew},
 		{"GET", "/v1/downloads/jobs/{id}/manifest", h.handleManifest},
+	}
+	if h.AssetRoot != "" {
+		routes = append(routes, struct {
+			method  string
+			path    string
+			handler http.HandlerFunc
+		}{"GET", "/v1/downloads/jobs/{id}/assets/{rest...}", h.handleAsset})
 	}
 	for _, route := range routes {
 		mux.HandleFunc(route.method+" "+route.path, allowlistCORS(allow, route.handler))
@@ -149,6 +161,55 @@ func (h DownloadsHandlers) handleManifest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, manifest)
+}
+
+// handleAsset serves one prepared asset file (contracts.md §4.1): exact
+// Content-Length, stable ETag derived from the recorded SHA-256, and
+// net/http's Range/If-Range handling for correct 200/206/416 semantics. Only
+// files inside the resolved asset root are ever opened.
+func (h DownloadsHandlers) handleAsset(w http.ResponseWriter, r *http.Request) {
+	if !negotiationContext(w, r, h.Build) {
+		return
+	}
+	clientID := h.clientID(r)
+	jobID := r.PathValue("id")
+	rest := r.PathValue("rest")
+	if rest == "" || strings.Contains(rest, "..") {
+		writeSystemError(w, http.StatusNotFound, ErrorDetail{Code: "not_found", Message: "That download does not exist."})
+		return
+	}
+	urlPath := "/v1/downloads/jobs/" + jobID + "/assets/" + rest
+	rel, _, sha, err := h.Store.AssetFile(r.Context(), clientID, jobID, urlPath)
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	disk := filepath.Join(h.AssetRoot, filepath.FromSlash(rel))
+	rootAbs, err := filepath.Abs(h.AssetRoot)
+	if err != nil {
+		h.writeStoreError(w, err)
+		return
+	}
+	diskAbs, err := filepath.Abs(disk)
+	if err != nil || !strings.HasPrefix(diskAbs, rootAbs+string(filepath.Separator)) {
+		writeSystemError(w, http.StatusNotFound, ErrorDetail{Code: "not_found", Message: "That download does not exist."})
+		return
+	}
+	file, err := os.Open(diskAbs)
+	if err != nil {
+		writeSystemError(w, http.StatusNotFound, ErrorDetail{Code: "not_found", Message: "That download does not exist."})
+		return
+	}
+	defer file.Close()
+	// ETag from the exact recorded content hash: If-Range with a stale or
+	// foreign validator downgrades to a full 200 (never mixed-revision
+	// bytes, contracts.md §4.1).
+	if len(sha) >= 32 {
+		w.Header().Set("ETag", `"`+sha[:32]+`"`)
+	}
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	http.ServeContent(w, r, filepath.Base(diskAbs), time.Time{}, file)
 }
 
 // jobBody is the client-facing job representation (contracts.md §3): safe

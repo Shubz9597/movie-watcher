@@ -64,7 +64,12 @@ func TestStoreLifecycle(t *testing.T) {
 			SizeBytes: 1024, SHA256: strings.Repeat("a", 64),
 		},
 	}
-	if err := store.MarkReady(ctx, job.ID, manifest, now); err != nil {
+	// MarkReady atomically attaches the assets and starts the retention clock.
+	assets := []AssetRow{{
+		Kind: AssetKindVideo, URLPath: "/v1/downloads/jobs/" + job.ID + "/assets/video",
+		DiskPath: "ready/" + job.ID + "/video.mkv", SizeBytes: 1024, SHA256: strings.Repeat("a", 64),
+	}}
+	if err := store.MarkReady(ctx, job.ID, manifest, assets, now); err != nil {
 		t.Fatalf("mark ready: %v", err)
 	}
 	got, err := store.Manifest(ctx, req.ClientID, job.ID)

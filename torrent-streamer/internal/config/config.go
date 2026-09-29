@@ -44,6 +44,8 @@ var (
 	ffmpegPath            = ""
 	ffprobePath           = ""
 	playbackDataRoot      = "" // default: <dataRoot>/playback-sessions
+	downloadsRoot         = "" // default: <dataRoot>/downloads (offline-download assets)
+	downloadMaxConcurrent = 1
 	playbackMaxTranscodes = 1
 	playbackSessionTTL    = 2 * time.Hour
 	playbackProbeTimeout  = 20 * time.Second
@@ -123,6 +125,10 @@ func Load() {
 	// ffprobe inspection and the stream-copy remux fallback stay active.
 	playbackTranscodeMode = getenv("PLAYBACK_TRANSCODE_MODE", "auto")
 
+	// Offline-download preparation (offline-downloads D02b).
+	downloadsRoot = getenv("TORWATCH_DOWNLOAD_ROOT", downloadsRoot)
+	downloadMaxConcurrent = int(getenvInt64("TORWATCH_DOWNLOAD_MAX_CONCURRENT", int64(downloadMaxConcurrent)))
+
 	logFilePath = getenv("LOG_FILE", logFilePath)
 	errorLogPath = getenv("ERROR_LOG_FILE", errorLogPath)
 	logConsole = strings.ToLower(getenv("LOG_CONSOLE", strconv.FormatBool(logConsole))) != "false"
@@ -158,6 +164,22 @@ func LogConsole() bool                   { return logConsole }
 func LogAllowRegex() string              { return logAllowRegex }
 func LogDenyRegex() string               { return logDenyRegex }
 func LogDedupWindow() time.Duration      { return logDedupWin }
+
+// Offline-download preparation configuration (offline-downloads D02b).
+// DownloadsRoot defaults to <dataRoot>/downloads — a root the cache janitor
+// NEVER touches (prepared bytes must survive cache eviction; contracts §5).
+func DownloadsRoot() string {
+	if downloadsRoot != "" {
+		return downloadsRoot
+	}
+	return filepath.Join(dataRoot, "downloads")
+}
+func DownloadMaxConcurrent() int {
+	if downloadMaxConcurrent < 1 {
+		return 1
+	}
+	return downloadMaxConcurrent
+}
 
 // Playback service configuration getters.
 func FFmpegPath() string  { return ffmpegPath }

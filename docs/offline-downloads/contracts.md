@@ -56,7 +56,8 @@ Request:
   "seriesId": "tmdb:movie:693134",
   "season": 0,
   "episode": 0,
-  "pickId": 12345
+  "pickId": 12345,
+  "subtitles": ["en"]
 }
 ```
 
@@ -66,6 +67,11 @@ Request:
 - `pickId` MUST reference a validated internal pick for the given canonical
   identity. Unresolved/foreign identities → `400 invalid_source`.
 - `season`/`episode` are 0 for movies.
+- `subtitles` is the OPTIONAL list of requested sidecar languages (lowercase
+  ISO 639-1). The job is ready only with EVERY requested language present in
+  the manifest; a requested language the source cannot provide keeps the job
+  from becoming ready — the client then retries or re-enqueues without it
+  (the "Continue without subtitles" choice).
 - Response `201` (or `200` on idempotent replay):
 
 ```json

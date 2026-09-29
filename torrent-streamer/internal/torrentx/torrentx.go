@@ -74,6 +74,24 @@ func validCat(c string) string {
 	}
 }
 
+// Category maps a source kind (movie|tv|anime) onto the valid torrent
+// client category, exposed for the offline-download prep worker.
+func Category(kind string) string { return validCat(kind) }
+
+// InfoHashFromSrc parses the infohash of a literal magnet URI without adding
+// the torrent (used to hold active-reference protection before addition).
+func InfoHashFromSrc(src string) (metainfo.Hash, error) {
+	src = strings.TrimSpace(src)
+	if !strings.HasPrefix(strings.ToLower(src), "magnet:") {
+		return metainfo.Hash{}, errors.New("only literal magnet URIs are accepted")
+	}
+	ih := mustParseMagnet(src)
+	if ih == (metainfo.Hash{}) {
+		return metainfo.Hash{}, errors.New("invalid magnet URI")
+	}
+	return ih, nil
+}
+
 func key(cat string, ih metainfo.Hash) string { return validCat(cat) + ":" + ih.HexString() }
 
 func IncActive(cat string, ih metainfo.Hash) {

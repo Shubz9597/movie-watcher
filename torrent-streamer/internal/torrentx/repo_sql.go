@@ -50,6 +50,23 @@ WHERE series_id=$1 AND season=$2 AND episode=$3 AND profile_hash=$4`,
 	return p, true, nil
 }
 
+func (r *Repo) GetPickByID(ctx context.Context, id int64) (PickRow, bool, error) {
+	var p PickRow
+	err := r.DB.QueryRowContext(ctx, `
+SELECT id, series_id, season, episode, profile_hash, infohash, magnet, release_group, resolution, codec, file_index,
+       source_kind, size_bytes, score, picked_at, replaces_pick_id
+FROM picks WHERE id=$1`, id).
+		Scan(&p.ID, &p.SeriesID, &p.Season, &p.Episode, &p.ProfileHash, &p.InfoHash, &p.Magnet, &p.ReleaseGroup,
+			&p.Resolution, &p.Codec, &p.FileIndex, &p.SourceKind, &p.SizeBytes, &p.ScoreJSON, &p.PickedAt, &p.ReplacesPick)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return PickRow{}, false, nil
+		}
+		return PickRow{}, false, err
+	}
+	return p, true, nil
+}
+
 func (r *Repo) InsertPick(ctx context.Context, p PickRow) (int64, error) {
 	var id int64
 	err := r.DB.QueryRowContext(ctx, `
