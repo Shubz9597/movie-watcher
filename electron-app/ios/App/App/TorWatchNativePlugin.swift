@@ -58,6 +58,21 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var surfaceView: UIView?
     private var playId = ""
     private var terminalSent = false
+
+    /// Capacitor calls load() when the webview boots the bridge: register the
+    /// local-playback stop hook here (removal-while-playing safety).
+    override public func load() {
+        super.load()
+        localStopObserver = NotificationCenter.default.addObserver(
+            forName: .torwatchStopLocalPlayback, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let downloadId = notification.object as? String,
+                  self.localDownloadId == downloadId else { return }
+            self.persistLocalProgress(state: "stopped")
+            self.teardown()
+        }
+    }
     // Video scale preference: "fit" letterboxes the full picture inside the
     // drawable; "fill" center-crops the source to the drawable's aspect so the
     // video covers the display (never stretched).
@@ -71,6 +86,92 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var rotationObserver: NSObjectProtocol?
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
+    // Offline-downloads D04: when set, the current playback is a LOCAL
+    // download — no server session, no metadata fetch, no heartbeat; progress
+    // persists in the device store (pause/seek/checkpoint/exit).
+    private var localDownloadId: String?
+    private var localProgressSaveDue = false
+    private var localStopObserver: NSObjectProtocol?
+
+    // MARK: - Local download playback (offline-downloads D04)
+
+    /// Plays a VERIFIED local download: the file URL comes from the device
+    /// store via TorWatchDownloads.localPlayablePath — never from web-supplied
+    /// filesystem paths. Local start issues ZERO server/provider requests.
+    @objc func playLocal(_ call: CAPPluginCall) {
+        guard let downloadId = call.getString("downloadId"), !downloadId.isEmpty else {
+            call.reject("The download identifier is missing.")
+            return
+        }
+        guard let files = try? DownloadCoordinator.shared.store.readyFileURLs(downloadId) else {
+            call.reject("That download is not ready for offline playback.")
+            return
+        }
+        guard let newPlayId = call.getString("playId"), !newPlayId.isEmpty else {
+            call.reject("The playback identifier is missing.")
+            return
+        }
+        // Durable local progress: resume where the device left off.
+        let saved = DownloadCoordinator.shared.store.loadProgress(downloadId)
+        let seekTo = call.getDouble("seekTo") ?? saved?.positionS
+        let subtitleLang = call.getString("subtitleLang") ?? saved?.subtitleLang ?? ""
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let bridge = self.bridge, let rootVC = bridge.viewController else {
+                call.reject("The player surface is unavailable.")
+                return
+            }
+            self.localDownloadId = downloadId
+            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId)
+            // Attach the download's own sidecar files as playback slaves.
+            for sidecar in files.subtitles {
+                if subtitleLang.isEmpty || sidecar.lang == subtitleLang {
+                    _ = self.mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: false)
+                }
+            }
+            call.resolve(["resumedPositionS": seekTo ?? 0])
+        }
+    }
+
+    /// Removal while playing: the surface must close BEFORE the files go
+    /// (contracts.md §native: stop active local playback before deleting).
+    /// The notification is observed by the plugin instance below.
+    @objc static func stopLocalPlaybackIfActive(downloadId: String) {
+        NotificationCenter.default.post(
+            name: .torwatchStopLocalPlayback, object: downloadId)
+    }
+
+    private func persistLocalProgress(state: String) {
+        guard let downloadId = localDownloadId, let player = mediaPlayer else { return }
+        let position = Double(player.time.intValue) / 1000.0
+        let duration = Double(player.media?.length.intValue ?? 0) / 1000.0
+        try? DownloadCoordinator.shared.store.saveProgress(
+            downloadId, positionS: position, durationS: duration,
+            subtitleLang: currentLocalSubtitleLang(player))
+        if !terminalSent {
+            notifyListeners("localProgress", data: [
+                "downloadId": downloadId,
+                "positionS": position,
+                "durationS": duration,
+                "state": state,
+                "playId": playId,
+            ])
+        }
+    }
+
+    private func currentLocalSubtitleLang(_ player: VLCMediaPlayer) -> String {
+        // Track selection persistence: map the selected external slave back
+        // to its language by matching the sidecar list (embedded tracks keep
+        // selection inside the container itself).
+        guard let localDownloadId = localDownloadId,
+              let files = try? DownloadCoordinator.shared.store.readyFileURLs(localDownloadId),
+              !files.subtitles.isEmpty else { return "" }
+        let selected = player.currentVideoSubTitleIndex
+        guard selected > 0 else { return "" }
+        let externalIndex = Int(player.numberOfSubtitlesTracks) - files.subtitles.count
+        let position = Int(selected) - externalIndex
+        return position >= 0 && position < files.subtitles.count ? files.subtitles[position].lang : ""
+    }
 
     // MARK: - Bridge API
 
@@ -89,6 +190,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let requestedScale = Int(call.getDouble("subTextScale") ?? Double(currentSubTextScale))
         currentSubTextScale = max(25, min(200, requestedScale))
         currentMediaURL = url
+        localDownloadId = nil // remote session playback: local progress N/A
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let bridge = self.bridge, let rootVC = bridge.viewController else {
@@ -419,6 +521,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         guard !terminalSent, let player = notification.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
         applyPendingSeek(player)
+        // D04: periodic local-progress checkpoints (~10s cadence).
+        if localDownloadId != nil {
+            localProgressSaveDue.toggle()
+            if localProgressSaveDue { persistLocalProgress(state: "checkpoint") }
+        }
         let duration = player.media?.length.intValue ?? 0
         notifyListeners("timeUpdate", data: [
             "currentTime": Double(player.time.intValue) / 1000.0,
@@ -439,11 +546,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             notifyListeners("playbackState", data: ["state": "playing", "playId": playId])
             emitTracks()
         case .paused:
+            if localDownloadId != nil { persistLocalProgress(state: "paused") }
             notifyListeners("playbackState", data: ["state": "paused", "playId": playId])
         case .ended:
+            if localDownloadId != nil { persistLocalProgress(state: "ended") }
             terminalSent = true
             notifyListeners("playbackState", data: ["state": "ended", "playId": playId])
         case .error:
+            if localDownloadId != nil { persistLocalProgress(state: "error") }
             terminalSent = true
             // Generic message ONLY: VLC internals never cross the bridge.
             notifyListeners("playbackState", data: [
@@ -517,6 +627,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     /** Full teardown: bounded, idempotent, surface + background restored. */
     private func teardown() {
+        if localDownloadId != nil { persistLocalProgress(state: "stopped") }
+        localDownloadId = nil
         terminalSent = true
         playId = ""
         pendingSeek = nil
@@ -548,4 +660,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 enum TorWatchPlaybackState {
     // When true, MainViewController permits landscape (video attached).
     static var videoAttached = false
+}
+
+extension Notification.Name {
+    static let torwatchStopLocalPlayback = Notification.Name("torwatch.stop-local-playback")
 }

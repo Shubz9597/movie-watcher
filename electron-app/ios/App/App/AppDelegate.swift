@@ -11,6 +11,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return true
     }
 
+    // Offline-downloads D03: the OS wakes the app (or relaunches it) when
+    // background download events arrive. The coordinator stores the handler
+    // and releases it in urlSessionDidFinishEvents(forBackgroundURLSession:).
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        // The completion handler MUST always be invoked (Apple contract) —
+        // only OUR session stores it for the coordinator to release after
+        // the redelivered delegate events finish.
+        guard identifier == DownloadCoordinator.sessionIdentifier else {
+            completionHandler()
+            return
+        }
+        DownloadCoordinator.shared.handleBackgroundEvents(completionHandler: completionHandler)
+    }
+
     func applicationWillResignActive(_ application: UIApplication) {
         // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
         // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
