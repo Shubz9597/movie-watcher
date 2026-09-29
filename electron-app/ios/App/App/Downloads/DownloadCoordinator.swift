@@ -151,37 +151,54 @@ final class DownloadCoordinator: NSObject {
         }
     }
 
-    func pause(_ downloadId: String) throws {
-        for task in liveTasks(downloadId: downloadId) { task.suspend() }
-        try store.setState(downloadId, .paused)
-        emitChange()
-    }
-
-    func resume(_ downloadId: String) throws {
-        // Suspended live tasks continue; tasks the OS lost after a process
-        // death are re-created (a disclosed restart-from-zero, contracts §3).
-        if let record = try store.get(downloadId) {
-            let live = Set(liveTasks(downloadId: downloadId).map { Int($0.taskIdentifier) })
-            let mapped = Set(store.allTaskMappings().filter { $0.downloadId == downloadId }.map { $0.taskId })
-            if live.isEmpty && mapped.isEmpty {
-                try startTasks(for: record)
-            } else {
-                for task in liveTasks(downloadId: downloadId) { task.resume() }
-                try store.setState(downloadId, .downloading)
+    func pause(_ downloadId: String, completion: @escaping (Error?) -> Void) {
+        liveTasks(downloadId: downloadId) { tasks in
+            for task in tasks { task.suspend() }
+            do {
+                try self.store.setState(downloadId, .paused)
+                self.emitChange()
+                completion(nil)
+            } catch {
+                completion(error)
             }
         }
-        emitChange()
+    }
+
+    func resume(_ downloadId: String, completion: @escaping (Error?) -> Void) {
+        // Suspended live tasks continue; tasks the OS lost after a process
+        // death are re-created (a disclosed restart-from-zero, contracts §3).
+        liveTasks(downloadId: downloadId) { tasks in
+            do {
+                if tasks.isEmpty {
+                    guard let record = try self.store.get(downloadId) else {
+                        completion(nil)
+                        return
+                    }
+                    try self.startTasks(for: record)
+                } else {
+                    for task in tasks { task.resume() }
+                    try self.store.setState(downloadId, .downloading)
+                }
+                self.emitChange()
+                completion(nil)
+            } catch {
+                completion(error)
+            }
+        }
     }
 
     /// Cancels and FORGETS a download: tasks are cancelled, staged/ready
     /// files are deleted, all rows removed. Only owned directories are ever
     /// touched.
-    func remove(_ downloadId: String) throws {
-        for task in liveTasks(downloadId: downloadId) { task.cancel() }
-        _ = try? store.deleteDownload(downloadId)
-        try? FileManager.default.removeItem(at: try DownloadStore.stagingDirectory(downloadId: downloadId))
-        try? FileManager.default.removeItem(at: try DownloadStore.readyDirectory(downloadId: downloadId))
-        emitChange()
+    func remove(_ downloadId: String, completion: @escaping (Error?) -> Void) {
+        liveTasks(downloadId: downloadId) { tasks in
+            for task in tasks { task.cancel() }
+            _ = try? self.store.deleteDownload(downloadId)
+            try? FileManager.default.removeItem(at: try DownloadStore.stagingDirectory(downloadId: downloadId))
+            try? FileManager.default.removeItem(at: try DownloadStore.readyDirectory(downloadId: downloadId))
+            self.emitChange()
+            completion(nil)
+        }
     }
 
     func storageInfo() -> (free: Int64, used: Int64) {
@@ -189,7 +206,10 @@ final class DownloadCoordinator: NSObject {
         var used: Int64 = 0
         if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey]) {
             for case let url as URL in enumerator {
-                used += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0
+                // .fileSize is Int; the running total is Int64 — convert
+                // explicitly.
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0
+                used += Int64(size)
             }
         }
         let values = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
@@ -204,31 +224,39 @@ final class DownloadCoordinator: NSObject {
     /// tasks re-created (disclosed restart-from-zero). Live tasks keep
     /// delivering through the delegate.
     func reconcile() {
-        guard let liveTasks = session.allTasks as? [URLSessionTask] else { return }
-        let liveIds = Set(liveTasks.map { Int($0.taskIdentifier) })
-        let mappings = store.allTaskMappings()
-        let orphaned = mappings.filter { !liveIds.contains($0.taskId) }
-        var affected = Set<String>()
-        for mapping in orphaned {
-            try? store.removeTask(mapping.taskId)
-            affected.insert(mapping.downloadId)
-        }
-        for downloadId in affected {
-            guard let record = try? store.get(downloadId), record.state == .downloading || record.state == .queued else { continue }
-            try? store.setState(downloadId, .queued)
-            if let record = try? store.get(downloadId) {
-                try? startTasks(for: record)
+        // allTasks is an async-only property in current SDKs — use the
+        // completion-based getAllTasks instead.
+        session.getAllTasks { [weak self] allTasks in
+            guard let self = self else { return }
+            let liveIds = Set(allTasks.map { Int($0.taskIdentifier) })
+            let mappings = self.store.allTaskMappings()
+            let orphaned = mappings.filter { !liveIds.contains($0.taskId) }
+            var affected = Set<String>()
+            for mapping in orphaned {
+                try? self.store.removeTask(mapping.taskId)
+                affected.insert(mapping.downloadId)
             }
+            for downloadId in affected {
+                guard let record = try? self.store.get(downloadId), record.state == .downloading || record.state == .queued else { continue }
+                try? self.store.setState(downloadId, .queued)
+                if let record = try? self.store.get(downloadId) {
+                    try? self.startTasks(for: record)
+                }
+            }
+            self.emitChange()
         }
-        emitChange()
     }
 
     // MARK: - Internals
 
-    private func liveTasks(downloadId: String) -> [URLSessionTask] {
-        guard let all = session.allTasks as? [URLSessionTask] else { return [] }
-        let mapped = Set(store.allTaskMappings().filter { $0.downloadId == downloadId }.map { $0.taskId })
-        return all.filter { mapped.contains(Int($0.taskIdentifier)) }
+    private func liveTasks(downloadId: String, completion: @escaping ([URLSessionTask]) -> Void) {
+        // allTasks is an async-only property in current SDKs — use the
+        // completion-based getAllTasks instead.
+        session.getAllTasks { [weak self] allTasks in
+            guard let self = self else { completion([]); return }
+            let mapped = Set(self.store.allTaskMappings().filter { $0.downloadId == downloadId }.map { $0.taskId })
+            completion(allTasks.filter { mapped.contains(Int($0.taskIdentifier)) })
+        }
     }
 
     private func isAssetDone(_ downloadId: String, _ asset: DownloadStore.Asset) throws -> Bool {

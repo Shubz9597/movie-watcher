@@ -136,8 +136,13 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("The download identifier is missing.")
             return
         }
-        do { try coordinator.pause(id); call.resolve() }
-        catch { call.reject("The download could not be paused.") }
+        coordinator.pause(id) { error in
+            if error != nil {
+                call.reject("The download could not be paused.")
+            } else {
+                call.resolve()
+            }
+        }
     }
 
     @objc func resume(_ call: CAPPluginCall) {
@@ -145,8 +150,13 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("The download identifier is missing.")
             return
         }
-        do { try coordinator.resume(id); call.resolve() }
-        catch { call.reject("The download could not be resumed.") }
+        coordinator.resume(id) { error in
+            if error != nil {
+                call.reject("The download could not be resumed.")
+            } else {
+                call.resolve()
+            }
+        }
     }
 
     /// Abandons in-flight work: tasks are cancelled and this download's
@@ -162,10 +172,16 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject("A ready download cannot be cancelled. Remove it instead.")
                 return
             }
-            try coordinator.remove(id)
-            call.resolve()
         } catch {
             call.reject("The download could not be cancelled.")
+            return
+        }
+        coordinator.remove(id) { error in
+            if error != nil {
+                call.reject("The download could not be cancelled.")
+            } else {
+                call.resolve()
+            }
         }
     }
 
@@ -178,8 +194,13 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         TorWatchNativePlugin.stopLocalPlaybackIfActive(downloadId: id)
-        do { try coordinator.remove(id); call.resolve() }
-        catch { call.reject("The download could not be removed.") }
+        coordinator.remove(id) { error in
+            if error != nil {
+                call.reject("The download could not be removed.")
+            } else {
+                call.resolve()
+            }
+        }
     }
 
     @objc func storage(_ call: CAPPluginCall) {
