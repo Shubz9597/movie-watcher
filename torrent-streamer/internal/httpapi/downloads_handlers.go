@@ -213,9 +213,13 @@ func (h DownloadsHandlers) handleAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 // jobBody is the client-facing job representation (contracts.md §3): safe
-// fields only — no pick internals, no provider data.
+// fields only — no pick internals, no provider data. seriesId/season/episode
+// let the client resolve display identity for its own inventory.
 type jobBody struct {
 	JobID      string     `json:"jobId"`
+	SeriesID   string     `json:"seriesId"`
+	Season     int        `json:"season"`
+	Episode    int        `json:"episode"`
 	State      string     `json:"state"`
 	ReasonCode string     `json:"reasonCode"`
 	ReadyAt    *time.Time `json:"readyAt,omitempty"`
@@ -225,6 +229,9 @@ type jobBody struct {
 func (h DownloadsHandlers) jobBody(job downloads.Job) jobBody {
 	return jobBody{
 		JobID:      job.ID,
+		SeriesID:   job.SeriesID,
+		Season:     job.Season,
+		Episode:    job.Episode,
 		State:      job.State,
 		ReasonCode: job.ReasonCode,
 		ReadyAt:    job.ReadyAt,

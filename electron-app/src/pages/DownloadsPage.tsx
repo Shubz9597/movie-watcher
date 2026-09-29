@@ -10,6 +10,8 @@ import { useEffect, useState } from 'react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadsInventory } from '../platform/contracts';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
+import { getNativeDownloads } from '../mobile/downloads-adapter';
+import { getDeviceId } from '../lib/device-id';
 type DownloadsPageProps = {
   navigate: (path: string, params?: Record<string, string>) => void;
 };
@@ -29,6 +31,11 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   const [inventory, setInventory] = useState<DownloadsInventory | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  // D03 device-test hook: explicitly activated with ?downloads=native — a
+  // labelled preview surface, never part of the production flow (the real
+  // enqueue sheet is D05/WF04).
+  const nativeHookActive = new URLSearchParams(window.location.search).get('downloads') === 'native'
+    && getNativeDownloads() != null;
 
   useEffect(() => {
     let active = true;
@@ -46,8 +53,20 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
       }
     };
     void load();
+    // Native (D03 test pass): refresh whenever durable download state changes.
+    const native = getNativeDownloads();
+    let handle: { remove: () => Promise<void> } | null = null;
+    if (native) {
+      void native.addListener('downloadsChanged', () => {
+        void load();
+      }).then((listener) => {
+        handle = listener;
+        if (!active) void listener.remove();
+      });
+    }
     return () => {
       active = false;
+      void handle?.remove();
     };
   }, [downloads, reloadKey]);
 
@@ -139,6 +158,115 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
           })}
         </ul>
       )}
+      {nativeHookActive ? <NativeTestHook onDone={() => setReloadKey((key) => key + 1)} /> : null}
     </section>
+  );
+}
+
+/**
+ * D03 DEVICE-TEST HOOK — explicitly activated with ?downloads=native and
+ * labelled. Fetches a prepared job's manifest from the configured server and
+ * hands it to the native coordinator, so the whole native pipeline
+ * (background transfer → verification → ready → local playback) is
+ * exercisable before the D05 enqueue sheet exists. NEVER reachable without
+ * the explicit parameter.
+ */
+function NativeTestHook({ onDone }: { onDone: () => void }) {
+  const [jobId, setJobId] = useState('');
+  const [status, setStatus] = useState<string | null>(null);
+  const { connection } = usePlatform();
+  const native = getNativeDownloads();
+
+  const enqueue = async (): Promise<void> => {
+    if (!native) return;
+    const id = jobId.trim();
+    if (!id) return;
+    setStatus('Fetching job…');
+    try {
+      const origin = await connection.loadOrigin();
+      const clientId = getDeviceId();
+      const jobResponse = await fetch(`${origin}/v1/downloads/jobs/${encodeURIComponent(id)}?clientId=${encodeURIComponent(clientId)}`);
+      if (!jobResponse.ok) {
+        setStatus(`Job fetch failed (HTTP ${jobResponse.status}).`);
+        return;
+      }
+      const job = (await jobResponse.json()) as { seriesId?: string; season?: number; episode?: number };
+      const manifestResponse = await fetch(`${origin}/v1/downloads/jobs/${encodeURIComponent(id)}/manifest?clientId=${encodeURIComponent(clientId)}`);
+      if (!manifestResponse.ok) {
+        setStatus(`Manifest fetch failed (HTTP ${manifestResponse.status}).`);
+        return;
+      }
+      const manifest = (await manifestResponse.json()) as {
+        video: { path: string; sizeBytes: number; sha256: string };
+        subtitles?: Array<{ lang: string; path: string; sizeBytes: number; sha256: string }>;
+      };
+      // Instance scope: the version endpoint's instanceId scopes the local
+      // progress record (contracts.md §1). Fetched once per enqueue.
+      let instanceId = 'unknown';
+      try {
+        const versionResponse = await fetch(`${origin}/v1/version`);
+        if (versionResponse.ok) {
+          const version = (await versionResponse.json()) as { instanceId?: string };
+          instanceId = version.instanceId || 'unknown';
+        }
+      } catch {
+        // Version discovery is best-effort for the hook.
+      }
+      await native.enqueue({
+        downloadId: id,
+        instanceId,
+        origin,
+        clientId,
+        seriesId: job.seriesId || 'unknown',
+        season: job.season || 0,
+        episode: job.episode || 0,
+        title: job.seriesId || id,
+        video: manifest.video,
+        subtitles: manifest.subtitles || [],
+      });
+      setStatus('Enqueued — transferring in the background.');
+      onDone();
+    } catch (error) {
+      setStatus(`Enqueue failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const playLocal = async (): Promise<void> => {
+    if (!native) return;
+    const id = jobId.trim();
+    if (!id) return;
+    try {
+      const { getTorWatchNativePlugin } = await import('../platform/native-player');
+      await getTorWatchNativePlugin().playLocal?.({ downloadId: id, playId: `local-${Date.now()}` });
+      setStatus('Local playback started.');
+    } catch (error) {
+      setStatus(`Local playback failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  return (
+    <div className="mt-8 rounded-xl border border-[#ffc285]/30 bg-[#ffc285]/[0.04] p-4" data-testid="native-test-hook">
+      <p className="text-xs font-medium uppercase tracking-[0.16em] text-[#ffc285]">Device test hook (preview)</p>
+      <p className="mt-1 text-xs text-white/55">Create a preparation job on the server first (idempotency key + pick id via the API), then paste its job id here.</p>
+      <input
+        value={jobId}
+        onChange={(event) => setJobId(event.target.value)}
+        placeholder="job id"
+        inputMode="text"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        className="mt-3 min-h-12 w-full rounded-xl border border-white/15 bg-white/[0.06] px-3.5 text-base text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+      />
+      <div className="mt-3 flex flex-wrap gap-3">
+        <button type="button" onClick={() => void enqueue()} className={`min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}>
+          Enqueue download
+        </button>
+        <button type="button" onClick={() => void playLocal()} className={`min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 ${FOCUS_RING_CLASS}`}>
+          Play local
+        </button>
+      </div>
+      {status ? <p className="mt-3 text-xs text-white/70" role="status">{status}</p> : null}
+    </div>
   );
 }

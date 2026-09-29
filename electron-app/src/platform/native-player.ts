@@ -51,6 +51,9 @@ export interface TorWatchNativePlugin {
   setPlaybackOrientation?(options: { landscape: boolean }): Promise<void>;
   loadSubtitle?(options: { url: string; label?: string; language?: string; playId: string }): Promise<{ trackId?: number | null }>;
   dismiss(options: { playId: string }): Promise<void>;
+  // Offline-downloads D04: plays a VERIFIED local download (device-store
+  // resolved; zero server requests). Optional so web-only builds typecheck.
+  playLocal?(options: { downloadId: string; playId: string; seekTo?: number; subtitleLang?: string }): Promise<{ resumedPositionS?: number }>;
   addListener(eventName: 'timeUpdate', callback: (event: { currentTime: number; duration: number; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'playbackState', callback: (event: { state: string; message?: string; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'tracksUpdate', callback: (event: { audio: Array<{ id: number; label?: string; language?: string }>; subtitles: Array<{ id: number; label?: string; language?: string }>; selectedAudioTrackId?: number | null; selectedSubtitleTrackId?: number | null; playId: string }) => void): Promise<PluginListenerHandle>;
@@ -72,6 +75,12 @@ export function readEmbeddedScalePref(): number {
 export function isNativeCapacitor(): boolean {
   const capacitor = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
   return typeof capacitor?.isNativePlatform === 'function' && capacitor.isNativePlatform() === true;
+}
+
+/** Direct plugin access for device-test surfaces (the production playback
+ *  path goes through the bridge). Safe to call repeatedly. */
+export function getTorWatchNativePlugin(): TorWatchNativePlugin {
+  return registerPlugin<TorWatchNativePlugin>('TorWatchNative');
 }
 
 /**

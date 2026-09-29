@@ -61,3 +61,9 @@ export class NativeDownloadsAdapter implements DownloadsPort {
     }
   }
 }
+
+/** D03 device-test access to the raw native bridge (test hooks only; the
+ *  production enqueue UI arrives with D05). Null outside native Capacitor. */
+export function getNativeDownloads(): TorWatchDownloadsPluginInterface | null {
+  return getPlugin();
+}

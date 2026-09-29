@@ -81,7 +81,8 @@ Request:
 ### Read — `GET /v1/downloads/jobs/{id}`
 
 ```json
-{ "jobId": "uuid", "state": "ready", "reasonCode": "",
+{ "jobId": "uuid", "seriesId": "tmdb:movie:693134", "season": 0, "episode": 0,
+  "state": "ready", "reasonCode": "",
   "readyAt": "2026-09-28T10:00:00Z", "expiresAt": "2026-09-30T10:00:00Z" }
 ```
 
