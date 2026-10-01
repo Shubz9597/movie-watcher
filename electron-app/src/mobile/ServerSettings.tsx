@@ -34,7 +34,7 @@ export function ServerSettings(props: {
   const probe = async (): Promise<ProbeState | null> => {
     setError(null);
     if (!normalized) {
-      setState({ kind: 'unreachable', message: 'Enter a valid http(s) origin, for example https://your-node.ts.net.' });
+      setState({ kind: 'unreachable', message: 'Enter a valid server address.' });
       return null;
     }
     setState({ kind: 'probing' });
@@ -66,25 +66,20 @@ export function ServerSettings(props: {
           setState(await probeOrigin(fetchImpl, normalized));
           return;
         case 'blocked-unreachable':
-          setState({
-            kind: 'unreachable',
-            message: 'Connection failed. Check your server and try again.',
-          });
-          setError('Nothing was saved. Correct the address or server connection, then retry.');
+          setState({ kind: 'unreachable', message: 'Could not connect. Check the address.' });
           return;
         case 'blocked-incompatible':
-          setState({ kind: 'incompatible', message: 'The server is incompatible with TorWatch.' });
-          setError('The server is incompatible — nothing was saved.');
+          setState({ kind: 'incompatible', message: 'Server update needed.' });
           return;
         case 'blocked-persist-failed':
-          setError('The server address could not be stored on this device. Retry or free up storage.');
+          setError('Could not save the address.');
           return;
         default:
           setError(outcome.message);
       }
     } catch (saveError) {
       console.error('[Settings] Server address could not be applied:', saveError);
-      setError('The server address could not be applied. Check the connection and retry.');
+      setError('Could not save the address.');
     } finally {
       setSaving(false);
     }
@@ -106,12 +101,7 @@ export function ServerSettings(props: {
       </header>
 
       <section className="mx-auto w-full max-w-md px-5 pb-[max(32px,env(safe-area-inset-bottom))] pt-6">
-        <p className="text-sm leading-6 text-white/60">
-          Enter the HTTP or HTTPS address of your private TorWatch server.
-          Only this address is stored on the device.
-        </p>
-
-        <label className="mt-7 block text-left text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="mobile-origin">
+        <label className="block text-left text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="mobile-origin">
           Server address
         </label>
         <input
@@ -132,23 +122,19 @@ export function ServerSettings(props: {
 
         {(state.kind !== 'idle' || savedOrigin || error) ? (
           <div className="mt-4 space-y-2 rounded-lg border border-white/[0.08] bg-white/[0.03] p-3.5 text-left text-sm" role="status">
-            {state.kind === 'probing' ? <p className="text-white/60">Checking the server…</p> : null}
+            {state.kind === 'probing' ? <p className="text-white/60">Checking…</p> : null}
             {state.kind === 'unreachable' ? <p className="text-red-400">{state.message}</p> : null}
             {state.kind === 'incompatible' ? <p className="text-[#ffc285]">{state.message}</p> : null}
             {state.kind === 'reachable' ? (
               <p className={state.nativePlayback ? 'text-emerald-300' : 'text-[#ffc285]'}>
-                Reachable ·{' '}
-                {state.nativePlayback
-                  ? 'native playback ready'
-                  : 'no native playback on this server (FFmpeg not configured server-side) — browsing and Library work'}
+                {state.nativePlayback ? 'Connected' : savedOrigin ? 'Saved · Browsing only' : 'Connected · Browsing only'}
               </p>
             ) : null}
-            {savedOrigin ? <p className="text-emerald-300">Saved — using {savedOrigin}</p> : null}
             {error ? <p className="text-red-400">{error}</p> : null}
           </div>
         ) : null}
 
-        <div className="mt-8 flex flex-col gap-3">
+        <div className="mt-6 flex flex-col gap-3">
           <button
             type="button"
             onClick={() => void save()}
@@ -163,7 +149,7 @@ export function ServerSettings(props: {
             disabled={!normalized || saving || state.kind === 'probing'}
             className="flex min-h-12 w-full items-center justify-center rounded-full border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {state.kind === 'probing' ? 'Testing…' : 'Test connection'}
+            {state.kind === 'probing' ? 'Testing…' : 'Test'}
           </button>
         </div>
       </section>

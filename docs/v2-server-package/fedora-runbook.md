@@ -11,7 +11,16 @@ equivalent is `radxa-runbook.md`; the steps are the same except where noted.
 - **This package is for a trusted LAN or private overlay only.** Do not
   forward the gateway port to the public internet; application
   authentication is a later milestone.
-- Docker Engine with the Compose plugin:
+- Docker Engine with Compose and Buildx. Fedora's Moby packages are the
+  shortest path when `moby-engine` is already installed:
+
+  ```bash
+  sudo dnf -y install moby-engine docker-compose docker-buildx
+  sudo systemctl enable --now docker
+  docker version && docker compose version && docker buildx version
+  ```
+
+  For a new Docker CE installation instead:
 
   ```bash
   sudo dnf -y install dnf-plugins-core
@@ -22,9 +31,8 @@ equivalent is `radxa-runbook.md`; the steps are the same except where noted.
   docker run --rm hello-world
   ```
 
-  (Fedora's packaged `moby` also works; the Compose plugin must be >= 2.24
-  if you plan to use the VPN overlay — `preflight.sh --mode embedded-vpn`
-  enforces this.)
+  Compose must be >= 2.24 for the shared database or VPN overlay. The
+  preflight script enforces this.
 
 - On a laptop target: disable automatic suspend on AC, and keep the storage
   device awake as your normal power policy dictates.
@@ -50,8 +58,11 @@ Ownership model (documented UIDs):
         /srv/torwatch-data/subtitles /srv/torwatch-data/logs \
         /srv/torwatch-data/prowlarr /srv/torwatch-data/flaresolverr
   ```
-- PostgreSQL uses its own internal uid; leave `postgres/` owned by root and
-  let the image initialize it on first start.
+- In bundled database mode, PostgreSQL uses its own internal uid; leave
+  `postgres/` owned by root and let the image initialize it on first start.
+- In shared database mode, PostgreSQL uses the Docker named volume
+  `homelab-postgres-data`; the `postgres/` directory under this data root is
+  unused.
 
 ## 3. SELinux (Fedora enforcing)
 
@@ -87,6 +98,55 @@ ports, so:
 
 ## 5. Install the release bundle
 
+### Source checkout on the server
+
+When the Git checkout is already at `/srv/movie-watcher`, do not extract a
+second nested release directory. Update and build from that checkout:
+
+```bash
+cd /srv/movie-watcher
+git status
+git pull --ff-only
+./deploy/torwatch-server/scripts/build-images.sh 2.0.0-rc.1
+```
+
+The working tree is a normal writable Git checkout. Runtime data belongs
+outside Git, such as `/mnt/workspace/app-data/movie-watcher`; containers are
+updated by rebuilding or pulling an immutable image and recreating them.
+
+For one PostgreSQL service shared by several homelab applications, initialize
+it once before starting Movie Watcher:
+
+```bash
+cd /srv/movie-watcher/deploy/homelab-postgres
+cp .env.example .env
+chmod 600 .env
+vi .env
+docker compose --env-file .env up -d
+docker compose --env-file .env ps
+```
+
+Then configure Movie Watcher:
+
+```bash
+cd /srv/movie-watcher/deploy/torwatch-server
+cp .env.example .env
+chmod 600 .env
+vi .env
+```
+
+Set `TORWATCH_DATA_DIR=/mnt/workspace/app-data/movie-watcher`,
+`TORWATCH_DB_MODE=shared`, `TORWATCH_MODE=direct`, and
+`TZ=Asia/Kolkata`. `POSTGRES_PASSWORD` must exactly match
+`MOVIE_WATCHER_POSTGRES_PASSWORD` in the shared database environment. Use an
+alphanumeric password because it is embedded in a PostgreSQL connection URL.
+On SELinux-enforcing Fedora, set `SELINUX_MOUNT_OPTS=,z`.
+
+Continue with section 6. The operator scripts read `TORWATCH_DB_MODE` and
+automatically include the shared database overlay.
+
+### Prebuilt release bundle
+
 Copy the tested release bundle (e.g. `torwatch-server-2.0.0-rc.1-bundle.tar.gz`,
 checksum published with the release) to the server and verify the checksum:
 
@@ -118,9 +178,13 @@ vi .env   # TORWATCH_DATA_DIR, TORWATCH_IMAGE, POSTGRES_PASSWORD, ports,
 
 ```bash
 ./scripts/preflight.sh --mode direct
-docker compose --env-file .env -f compose.yaml up -d
+docker compose --env-file .env -f compose.yaml -f compose.shared-db.yaml up -d
 ./scripts/verify.sh
 ```
+
+Omit `-f compose.shared-db.yaml` when using the bundled database. The
+preflight, verify, backup, restore, and update scripts select the correct
+files from `TORWATCH_DB_MODE`.
 
 Expected: `PREFLIGHT OK`, all containers healthy, gateway `/healthz`
 byte-exact, `/readyz` ok, `/v1/version` reports `2.0.0-rc.1`,
@@ -152,7 +216,7 @@ ssh -L 9696:127.0.0.1:9696 <user>@<torwatch-host>
 ## 8. Operations, backup, update, rollback
 
 ```bash
-./scripts/backup.sh /srv/torwatch-data/backups        # scheduled via cron/systemd timer recommended
+./scripts/backup.sh "$TORWATCH_DATA_DIR/backups"       # scheduled via a systemd timer recommended
 ./scripts/restore.sh <backup-dir-or-timestamp> --yes  # emergency only
 ./scripts/update.sh <repo:new-tag>                    # pre-backup + verify + auto-rollback
 docker compose --env-file .env -f compose.yaml ps
@@ -169,7 +233,8 @@ After a controlled reboot:
 
 ```bash
 findmnt /srv/torwatch-data || sudo mount /srv/torwatch-data   # mount first, always
-cd /opt/torwatch-server && docker compose --env-file .env -f compose.yaml up -d
+cd /srv/movie-watcher/deploy/torwatch-server
+docker compose --env-file .env -f compose.yaml -f compose.shared-db.yaml up -d
 ./scripts/verify.sh
 ```
 

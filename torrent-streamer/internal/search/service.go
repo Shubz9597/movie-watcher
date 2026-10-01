@@ -92,7 +92,7 @@ var (
 	// episodeRange matches multi-episode spans in both "01-12" and
 	// "E01-E12" forms: the E/EP/Episode prefix is optional on EACH number
 	// ("E01-E12" previously never matched — the second E broke the pattern).
-	episodeRange      = regexp.MustCompile(`(?i)\b(?:EP?|Episodes?)?[ ._-]*(\d{1,3})[ ._-]*(?:-|to)[ ._-]*(?:EP?|Episodes?)?[ ._-]*(\d{1,3})\b`)
+	episodeRange = regexp.MustCompile(`(?i)\b(?:EP?|Episodes?)?[ ._-]*(\d{1,3})[ ._-]*(?:-|to)[ ._-]*(?:EP?|Episodes?)?[ ._-]*(\d{1,3})\b`)
 )
 
 type cacheEntry struct {
@@ -595,7 +595,13 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 			magnet = magnetFromHash(hash)
 		}
 		sourceID := ""
-		if magnet == "" {
+		if magnet != "" {
+			// Every rendered source gets a short-lived opaque id. Playback keeps
+			// the existing magnet/info-hash fields for backwards compatibility,
+			// while downloads can refer to the exact user-selected result without
+			// sending a magnet or an indexer URL back across the API boundary.
+			sourceID = s.rememberResolvedSource(ResolveResult{MagnetURI: magnet, InfoHash: hash})
+		} else {
 			downloadURL, ok := s.safeDownloadURL(release.DownloadURL)
 			if !ok {
 				continue
@@ -768,6 +774,16 @@ func (s *Service) rememberSource(downloadURL string) string {
 	s.mu.Lock()
 	s.pruneExpiredLocked()
 	s.sources[id] = sourceEntry{expires: s.now().Add(s.sourceTTL), downloadURL: downloadURL}
+	s.mu.Unlock()
+	return id
+}
+
+func (s *Service) rememberResolvedSource(resolved ResolveResult) string {
+	digest := sha256.Sum256([]byte(resolved.MagnetURI))
+	id := hex.EncodeToString(digest[:16])
+	s.mu.Lock()
+	s.pruneExpiredLocked()
+	s.sources[id] = sourceEntry{expires: s.now().Add(s.sourceTTL), resolved: &resolved}
 	s.mu.Unlock()
 	return id
 }

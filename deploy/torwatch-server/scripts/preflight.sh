@@ -38,6 +38,8 @@ fi
 
 # shellcheck disable=SC1090
 set -a; . "$ENV_FILE"; set +a
+# shellcheck source=compose-common.sh
+. "$(dirname "$0")/compose-common.sh"
 
 # --- required values -------------------------------------------------------
 [ -n "${TORWATCH_DATA_DIR:-}" ] || fail "TORWATCH_DATA_DIR required (persistent data root)"
@@ -54,6 +56,10 @@ case "${TORWATCH_IMAGE}" in
 esac
 
 [ -n "${POSTGRES_PASSWORD:-}" ] || fail "POSTGRES_PASSWORD required"
+case "${TORWATCH_DB_MODE:-bundled}" in
+  bundled|shared) ;;
+  *) fail "TORWATCH_DB_MODE must be bundled or shared" ;;
+esac
 for VAR in POSTGRES_PASSWORD TORWATCH_IMAGE TORWATCH_DATA_DIR; do
   VALUE="$(printenv "$VAR" || true)"
   case "$VALUE" in
@@ -67,7 +73,9 @@ esac
 # --- data root -------------------------------------------------------------
 [ -d "$TORWATCH_DATA_DIR" ] || fail "data root $TORWATCH_DATA_DIR does not exist — create it per the runbook"
 [ -w "$TORWATCH_DATA_DIR" ] || fail "data root $TORWATCH_DATA_DIR is not writable by the current user"
-for SUB in postgres prowlarr flaresolverr downloads subtitles logs backups; do
+DATA_SUBDIRS=(prowlarr flaresolverr downloads subtitles logs backups)
+[ "${TORWATCH_DB_MODE:-bundled}" = "bundled" ] && DATA_SUBDIRS=(postgres "${DATA_SUBDIRS[@]}")
+for SUB in "${DATA_SUBDIRS[@]}"; do
   if [ -d "$TORWATCH_DATA_DIR/$SUB" ]; then
     # WARN, not fail: on Linux hosts some of these directories are written by
     # container UIDs (e.g. the postgres image user), not by the invoking
@@ -97,20 +105,34 @@ fi
 command -v docker >/dev/null || fail "docker CLI not found"
 docker compose version >/dev/null 2>&1 || fail "docker compose plugin not found"
 COMPOSE_VERSION="$(docker compose version --short 2>/dev/null || echo 0)"
-if [ "$MODE" = "embedded-vpn" ]; then
+if [ "$MODE" = "embedded-vpn" ] || [ "${TORWATCH_DB_MODE:-bundled}" = "shared" ]; then
   MIN_MAJOR="${COMPOSE_VERSION%%.*}"
   case "$COMPOSE_VERSION" in
     [2-9].*|v[2-9].*) ;;
-    *) fail "compose version '$COMPOSE_VERSION' not parseable; >= 2.24 required for the VPN overlay" ;;
+    *) fail "compose version '$COMPOSE_VERSION' not parseable; >= 2.24 required for the selected overlays" ;;
   esac
   if [ "${MIN_MAJOR:-0}" -lt 2 ]; then
-    fail "compose >= 2.24 required for the VPN overlay (!override); found $COMPOSE_VERSION"
+    fail "compose >= 2.24 required for the selected overlays; found $COMPOSE_VERSION"
   fi
   case "$COMPOSE_VERSION" in
     v2.[0-9].*|v2.1[0-9].*|v2.2[0-3]*|2.[0-9].*|2.1[0-9].*|2.2[0-3]*)
-      fail "compose >= 2.24 required for the VPN overlay (!override); found $COMPOSE_VERSION" ;;
+      fail "compose >= 2.24 required for the selected overlays; found $COMPOSE_VERSION" ;;
   esac
+fi
+if [ "$MODE" = "embedded-vpn" ]; then
   [ -e /dev/net/tun ] || fail "/dev/net/tun missing — embedded-VPN mode requires TUN support"
+fi
+
+if [ "${TORWATCH_DB_MODE:-bundled}" = "shared" ]; then
+  POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-homelab-postgres}"
+  docker network inspect homelab-db >/dev/null 2>&1 \
+    || fail "shared database network homelab-db is missing — start deploy/homelab-postgres first"
+  DB_STATUS="$(docker inspect --format '{{.State.Status}}' "$POSTGRES_CONTAINER" 2>/dev/null || true)"
+  [ "$DB_STATUS" = "running" ] \
+    || fail "shared database container $POSTGRES_CONTAINER is not running"
+  DB_HEALTH="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$POSTGRES_CONTAINER" 2>/dev/null || true)"
+  [ "$DB_HEALTH" = "healthy" ] \
+    || fail "shared database container $POSTGRES_CONTAINER is not healthy (status=$DB_HEALTH)"
 fi
 
 # --- ports -----------------------------------------------------------------
@@ -129,12 +151,9 @@ check_port "${GATEWAY_PORT:-8080}" "GATEWAY_PORT"
 check_port "${PROWLARR_ADMIN_PORT:-9696}" "PROWLARR_ADMIN_PORT"
 
 # --- effective compose configuration --------------------------------------
-if [ "$MODE" = "embedded-vpn" ]; then
-  docker compose --env-file "$ENV_FILE" -f compose.yaml -f compose.vpn.yaml config --quiet \
-    || fail "compose.yaml + compose.vpn.yaml does not validate (check VPN settings)"
-else
-  docker compose --env-file "$ENV_FILE" -f compose.yaml config --quiet \
-    || fail "compose.yaml does not validate"
-fi
+TORWATCH_MODE="$MODE"
+torwatch_compose_files
+docker compose --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}" config --quiet \
+  || fail "effective Compose configuration does not validate (mode=$MODE db=${TORWATCH_DB_MODE:-bundled})"
 
-echo "PREFLIGHT OK (mode=$MODE)"
+echo "PREFLIGHT OK (mode=$MODE db=${TORWATCH_DB_MODE:-bundled})"

@@ -29,6 +29,8 @@ done
 [ -f "$ENV_FILE" ] || { echo "restore: $ENV_FILE missing" >&2; exit 1; }
 # shellcheck disable=SC1090
 set -a; . "$ENV_FILE"; set +a
+# shellcheck source=compose-common.sh
+. "$(dirname "$0")/compose-common.sh"
 
 # --- resolve the backup directory ------------------------------------------
 BACKUP_DIR=""
@@ -57,8 +59,7 @@ if [ "$CONFIRM" != "yes" ]; then
   [ "$ANSWER" = "RESTORE" ] || { echo "restore: aborted by operator" >&2; exit 1; }
 fi
 
-COMPOSE_FILES=(-f compose.yaml)
-[ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ] && COMPOSE_FILES+=(-f compose.vpn.yaml)
+torwatch_compose_files
 
 # --- stop application writers ------------------------------------------------
 echo "[restore] stopping vod and prowlarr"
@@ -70,15 +71,15 @@ mkdir -p "$PRE_RESTORE"
 DB_FAIL=""
 # --- database restore --------------------------------------------------------
 echo "[restore] dropping and recreating ${POSTGRES_DB:-torwatch}"
-docker compose "${COMPOSE_FILES[@]}" exec -T postgres \
-  psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-torwatch}" -d postgres \
+torwatch_db_admin_psql \
+  -v ON_ERROR_STOP=1 -d postgres \
   -c "DROP DATABASE IF EXISTS \"${POSTGRES_DB:-torwatch}\";" \
   -c "CREATE DATABASE \"${POSTGRES_DB:-torwatch}\" OWNER \"${POSTGRES_USER:-torwatch}\";" \
   || DB_FAIL="psql drop/create failed"
 
 if [ -z "$DB_FAIL" ]; then
   echo "[restore] restoring $(basename "$DB_DUMP")"
-  gunzip -c "$DB_DUMP" | docker compose "${COMPOSE_FILES[@]}" exec -T postgres \
+  gunzip -c "$DB_DUMP" | torwatch_db_exec \
     psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-torwatch}" -d "${POSTGRES_DB:-torwatch}" \
     || DB_FAIL="psql restore failed"
 fi

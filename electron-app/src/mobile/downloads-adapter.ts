@@ -2,17 +2,13 @@
 // reported unavailable; this version speaks to TorWatchDownloadsPlugin when
 // the native bridge exists.
 //
-// PRODUCTION GATE (D05): the Downloads destination and the enqueue flow
-// connect in D05. Until then DOWNLOADS_UI_ENABLED stays false — the adapter
-// resolves truthful data but reports `available: false`, so production
-// clients keep the three-tab navigation and no empty scaffolding ships
-// (constitution: partial implementations stay isolated). D05 flips this one
-// constant and adds the WF04 enqueue sheet.
+// D05 production gate: the Downloads destination is exposed only when the
+// native bridge exists. Source actions enqueue through download-queue.ts.
 import { registerPlugin } from '@capacitor/core';
 import type { DownloadsInventory, DownloadsPort } from '../platform/contracts.ts';
 import type { TorWatchDownloadsPluginInterface } from '../platform/native-downloads.ts';
 
-export const DOWNLOADS_UI_ENABLED = false;
+export const DOWNLOADS_UI_ENABLED = true;
 
 let plugin: TorWatchDownloadsPluginInterface | null = null;
 
@@ -39,7 +35,6 @@ export class NativeDownloadsAdapter implements DownloadsPort {
     try {
       const { items } = await native.list();
       return {
-        // D05 flips DOWNLOADS_UI_ENABLED together with the enqueue sheet.
         available: DOWNLOADS_UI_ENABLED,
         unreadable: false,
         items: items.map((item) => ({
@@ -62,8 +57,7 @@ export class NativeDownloadsAdapter implements DownloadsPort {
   }
 }
 
-/** D03 device-test access to the raw native bridge (test hooks only; the
- *  production enqueue UI arrives with D05). Null outside native Capacitor. */
+/** Access to the raw native bridge. Null outside native Capacitor. */
 export function getNativeDownloads(): TorWatchDownloadsPluginInterface | null {
   return getPlugin();
 }

@@ -45,7 +45,7 @@ const SHELF_META: Record<LibraryMediaKind, { label: string; icon: React.ReactNod
   anime: { label: 'Anime', icon: <Ghost className="h-4 w-4" aria-hidden="true" /> },
 };
 
-const UNAVAILABLE_COPY = 'The library is not available on this server. Update the TorWatch server to sync your collection.';
+const UNAVAILABLE_COPY = 'Library unavailable on this server.';
 
 type Navigate = (path: string, params?: Record<string, string>, options?: { replace?: boolean }) => void;
 
@@ -155,9 +155,6 @@ function UnavailableState({ onRetry }: { onRetry?: () => void }) {
   return (
     <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-6 text-center" role="status">
       <p className="type-body text-white/75">{UNAVAILABLE_COPY}</p>
-      <p className="type-secondary mt-2 text-white/50">
-        Your collection is kept on the TorWatch server — nothing is stored on this device.
-      </p>
       {onRetry ? (
         <button
           type="button"
@@ -215,7 +212,7 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
     return <UnavailableState onRetry={() => void library.refreshCapability()} />;
   }
   if (availability === 'unreachable') {
-    return <ErrorState message="The TorWatch server could not be reached. The library is stored on the server." onRetry={() => void library.refreshCapability()} label="library availability" />;
+    return <ErrorState message="Could not load Library." onRetry={() => void library.refreshCapability()} label="library availability" />;
   }
 
   if (!overview || overview.status === 'loading') {
@@ -225,14 +222,18 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
     return <ErrorState message={overview.error ?? 'The library could not be loaded.'} onRetry={() => void library.loadOverview(collection, sort)} label="library overview" />;
   }
 
+  const empty = overview.shelves.every((shelf) => shelf.count === 0);
+
   return (
     <div className="mt-4 space-y-8">
       {overview.stale ? (
         <p className="text-xs text-white/45" role="note">
-          Offline — showing the last data this server sent you. It refreshes automatically on reconnect.
+          Offline · Last synced
         </p>
       ) : null}
-      {overview.shelves.map((shelf) => (
+      {empty ? (
+        <p className="pt-3 text-xs text-white/45">No saved titles.</p>
+      ) : overview.shelves.map((shelf) => (
         <ServerShelfRow
           key={shelf.kind}
           kind={shelf.kind}
@@ -265,20 +266,20 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
           {/* Full-scope count from the server ” independent of preview length. */}
           <span className="text-numeric text-sm font-normal text-white/50">{count}</span>
         </h2>
-        <button
-          type="button"
-          onClick={() => navigate('library-category', { collection, kind, sort })}
-          className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
-          aria-label={`View all ${meta.label} (${count})`}
-        >
-          View all
-          <ChevronRight className="h-4 w-4" aria-hidden="true" />
-        </button>
+        {count > 0 ? (
+          <button
+            type="button"
+            onClick={() => navigate('library-category', { collection, kind, sort })}
+            className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
+            aria-label={`View all ${meta.label} (${count})`}
+          >
+            View all
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       {count === 0 ? (
-        <p className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/55">
-          Nothing here yet. Save a title with the bookmark or heart control on its page.
-        </p>
+        <p className="text-xs text-white/40">No titles</p>
       ) : (
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
           {previews.map((row) => (
@@ -373,10 +374,13 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
   if (!overview) {
     return <ShelfSkeleton />;
   }
+  const empty = overview.shelves.every((shelf) => shelf.count === 0);
   return (
     <div className="mt-4 space-y-8">
       <p className="text-xs text-white/45" role="note">{overview.sourceLabel}</p>
-      {overview.shelves.map((shelf) => (
+      {empty ? (
+        <p className="text-xs text-white/45">No saved titles.</p>
+      ) : overview.shelves.map((shelf) => (
         <section key={shelf.kind} aria-label={`${SHELF_META[shelf.kind].label} shelf`}>
           <div className="shelf-heading mb-3">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
@@ -384,7 +388,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
               {SHELF_META[shelf.kind].label}
               <span className="text-numeric text-sm font-normal text-white/50">{shelf.count}</span>
             </h2>
-            <button
+            {shelf.count > 0 ? <button
               type="button"
               onClick={() => navigate('library-category', { collection, kind: shelf.kind })}
               className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
@@ -392,12 +396,10 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
             >
               View all
               <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </button>
+            </button> : null}
           </div>
           {shelf.count === 0 ? (
-            <p className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/55">
-              Nothing here yet. Saving arrives with library sync.
-            </p>
+            <p className="text-xs text-white/40">No titles</p>
           ) : (
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
               {shelf.previews.map((card) => (
@@ -514,7 +516,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
     return <UnavailableState onRetry={() => void library.refreshCapability()} />;
   }
   if (availability === 'unreachable') {
-    return <ErrorState message="The TorWatch server could not be reached. The library is stored on the server." onRetry={() => void library.refreshCapability()} label="library availability" />;
+    return <ErrorState message="Could not load Library." onRetry={() => void library.refreshCapability()} label="library availability" />;
   }
 
   if (!page || page.status === 'loading') {
@@ -528,7 +530,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
     <>
       {page.stale ? (
         <p className="mt-2 text-xs text-white/45" role="note">
-          Offline — showing the last synced data · {page.total} {page.total === 1 ? 'title' : 'titles'}
+          Offline · {page.total} {page.total === 1 ? 'title' : 'titles'}
         </p>
       ) : null}
       <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
@@ -537,9 +539,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
         ))}
       </div>
       {page.items.length === 0 ? (
-        <p className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/55">
-          Nothing here yet. Save a title with the bookmark or heart control on its page.
-        </p>
+        <p className="mt-6 text-xs text-white/40">No titles</p>
       ) : null}
       {page.error ? (
         <div className="mt-4 rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3" role="alert">
@@ -549,7 +549,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
             onClick={() => (page.cursor ? void library.loadMore(collection, kind, sort) : void library.loadPage(collection, kind, sort))}
             className={`mt-3 min-h-11 rounded-full border border-white/15 px-5 text-sm text-white/85 hover:border-white/35 ${FOCUS_RING_CLASS}`}
           >
-            {page.cursor ? 'Retry' : 'Reload from the first page'}
+            Retry
           </button>
         </div>
       ) : null}

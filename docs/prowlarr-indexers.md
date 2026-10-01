@@ -9,7 +9,19 @@ During startup, TorWatch checks whether Prowlarr has any indexers. If it is comp
 - Movies and series: YTS, Knaben, TorrentDownload, The Pirate Bay, and LimeTorrents.
 - Anime: Nyaa.si and SubsPlease.
 
-If one or more indexers already exist, TorWatch leaves all of them unchanged.
+If the first pass installs only part of this starter set, later starts retry
+only the missing starter names. Existing indexers are never edited or removed.
+When a populated Prowlarr has none of the recognized starter names, TorWatch
+treats it as operator-managed and does not add the starter set.
+
+TorWatch uses Prowlarr's `forceSave` option for this initial public starter
+set, so a slow or temporarily unreachable source cannot block first boot or
+require manual creation. Prowlarr's health checks still report an unavailable
+source until its DNS or network route recovers.
+
+Knaben is initially saved disabled because its native Prowlarr setup can block
+startup while the Knaben endpoint is unavailable. It remains visible in
+Prowlarr and can be enabled once its built-in **Test** succeeds.
 
 The starter sources use a grab limit of 15 where the indexer exposes that setting. Where supported, the minimum is one seeder for anime specialists, two for broad sources, and three for YTS. Magnet links are preferred where the source supports them. YTS, Nyaa.si, and SubsPlease have higher search priority for their specialties. These are only initial values; change them at any time in Prowlarr.
 

@@ -11,7 +11,31 @@ import (
 
 	"torrent-streamer/internal/buildinfo"
 	"torrent-streamer/internal/downloads"
+	"torrent-streamer/internal/search"
+	"torrent-streamer/internal/torrentx"
 )
+
+type fakeDownloadSourceResolver struct {
+	result search.ResolveResult
+	err    error
+	last   search.ResolveRequest
+}
+
+func (f *fakeDownloadSourceResolver) Resolve(_ context.Context, request search.ResolveRequest) (search.ResolveResult, error) {
+	f.last = request
+	return f.result, f.err
+}
+
+type fakeDownloadPickStore struct {
+	id   int64
+	err  error
+	last torrentx.PickRow
+}
+
+func (f *fakeDownloadPickStore) InsertPick(_ context.Context, pick torrentx.PickRow) (int64, error) {
+	f.last = pick
+	return f.id, f.err
+}
 
 // fakeDownloadService scripts the Service so the HTTP contract (status codes,
 // envelope shapes, client scoping, safe errors) is pinned independently of
@@ -148,6 +172,38 @@ func TestDownloadsCreateContract(t *testing.T) {
 	}
 }
 
+func TestDownloadsCreateRegistersOpaqueSelectedSource(t *testing.T) {
+	svc := &fakeDownloadService{createJob: readyTestJob(), createNew: true}
+	resolver := &fakeDownloadSourceResolver{result: search.ResolveResult{
+		MagnetURI: "magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567",
+		InfoHash:  "0123456789ABCDEF0123456789ABCDEF01234567",
+	}}
+	picks := &fakeDownloadPickStore{id: 77}
+	handlers := newDownloadsTestHandlers(svc)
+	handlers.SourceResolver = resolver
+	handlers.Picks = picks
+	mux := http.NewServeMux()
+	handlers.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/downloads/jobs", strings.NewReader(
+		`{"clientId":"device-1","idempotencyKey":"attempt-1","seriesId":"tmdb:tv:1396","season":1,"episode":4,"sourceId":"opaque-source","sourceKind":"tv","fileIndex":6}`,
+	)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create from selected source = %d %s", rec.Code, rec.Body.String())
+	}
+	if resolver.last.SourceID != "opaque-source" {
+		t.Fatalf("resolved source = %#v", resolver.last)
+	}
+	if svc.lastCreate.PickID != 77 {
+		t.Fatalf("job pick id = %d, want registered pick 77", svc.lastCreate.PickID)
+	}
+	if picks.last.SeriesID != "tmdb:tv:1396" || picks.last.Season != 1 || picks.last.Episode != 4 ||
+		picks.last.SourceKind != "tv" || picks.last.FileIndex == nil || *picks.last.FileIndex != 6 {
+		t.Fatalf("registered pick = %#v", picks.last)
+	}
+}
+
 func TestDownloadsGetScopesByClient(t *testing.T) {
 	svc := &fakeDownloadService{getJob: readyTestJob()}
 	mux := newDownloadsTestMux(svc)
@@ -210,8 +266,8 @@ func TestDownloadsManifestContract(t *testing.T) {
 		ManifestVersion: 1, JobID: "job-1", Revision: 7,
 		ExpiresAt: "2026-10-01T11:00:00Z",
 		Video: downloads.Asset{
-			Kind: downloads.AssetKindVideo,
-			Path: "/v1/downloads/jobs/job-1/assets/video",
+			Kind:      downloads.AssetKindVideo,
+			Path:      "/v1/downloads/jobs/job-1/assets/video",
 			SizeBytes: 2147483648, SHA256: strings.Repeat("a", 64),
 		},
 	}}

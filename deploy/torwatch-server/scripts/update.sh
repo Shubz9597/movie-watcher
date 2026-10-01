@@ -24,6 +24,8 @@ esac
 [ -f "$ENV_FILE" ] || { echo "update: $ENV_FILE missing" >&2; exit 1; }
 # shellcheck disable=SC1090
 set -a; . "$ENV_FILE"; set +a
+# shellcheck source=compose-common.sh
+. "$(dirname "$0")/compose-common.sh"
 
 OLD_IMAGE="${TORWATCH_IMAGE:?TORWATCH_IMAGE missing}"
 OLD_VERSION="${TORWATCH_VERSION:-unknown}"
@@ -55,8 +57,7 @@ set_image() {
   set -a; . "$ENV_FILE"; set +a
 }
 
-COMPOSE_FILES=(-f compose.yaml)
-[ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ] && COMPOSE_FILES+=(-f compose.vpn.yaml)
+torwatch_compose_files
 
 set_image "$NEW_TAG" "${NEW_TAG##*:}"
 if ! docker compose "${COMPOSE_FILES[@]}" pull vod; then

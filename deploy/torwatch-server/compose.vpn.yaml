@@ -37,7 +37,7 @@ services:
       SERVER_CITIES: ${VPN_SERVER_CITIES:-}
       TZ: ${TZ:-UTC}
     volumes:
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/gluetun:/gluetun${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/gluetun:/gluetun:rw${SELINUX_MOUNT_OPTS:-}
     networks:
       # gluetun needs a non-internal attachment so the WireGuard/OpenVPN
       # endpoint can route out; vod reaches gluetun:9696 over this network.
@@ -75,7 +75,7 @@ services:
       PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
     volumes:
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config:rw${SELINUX_MOUNT_OPTS:-}
     stop_grace_period: 30s
     logging:
       driver: json-file

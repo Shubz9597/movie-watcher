@@ -44,6 +44,7 @@ POSTGRES_PASSWORD=test-password-only
 POSTGRES_DB=torwatch
 GATEWAY_PORT=18080
 PROWLARR_ADMIN_PORT=19696
+SELINUX_MOUNT_OPTS=,z
 EOF
   chmod 600 "$WORKSPACE/.env"
   export STUB_DIR="$WORKSPACE/stubs"
@@ -53,6 +54,7 @@ EOF
 #!/usr/bin/env bash
 echo "docker $*" >> "$DOCKER_STUB_LOG"
 case " $* " in
+  *" compose version --short "*|*" compose version --short"*) echo "2.39.1"; exit 0 ;;
   *" compose version "*|" compose version"*) echo "Docker Compose version v2.39.1"; exit 0 ;;
   *" config"*) echo "config-render-ok"; exit 0 ;;
 esac
@@ -62,7 +64,13 @@ case "$*" in
     if [ "${STUB_PG_DUMP_EMPTY:-0}" = "1" ]; then exit 0; fi
     echo "CREATE TABLE stub (id int); INSERT INTO stub VALUES (1);"
     exit 0 ;;
+  *"exec -i homelab-postgres pg_dump"*)
+    echo "CREATE TABLE stub (id int); INSERT INTO stub VALUES (1);"
+    exit 0 ;;
   *"exec -T postgres psql"*) echo "psql-ok"; exit 0 ;;
+  *"network inspect homelab-db"*) exit 0 ;;
+  *"inspect --format {{.State.Status}} homelab-postgres"*) echo "running"; exit 0 ;;
+  *"inspect --format {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} homelab-postgres"*) echo "healthy"; exit 0 ;;
   *"image inspect"*) echo '["stub-registry/torwatch-server@sha256:deadbeefcafe"]'; exit 0 ;;
   *"ps"*) printf 'torwatch-server-gateway-1   0.0.0.0:%s->8080/tcp\n' "${STUB_GATEWAY_PORT:-18080}"; exit 0 ;;
 esac
@@ -175,6 +183,20 @@ expect_exit 1 "backup.sh rejects an empty pg_dump output" \
   env STUB_PG_DUMP_EMPTY=1 bash "$PKG_ROOT/scripts/backup.sh" "$WORKSPACE/backups" --env-file "$WORKSPACE/.env"
 finish_test
 
+new_workspace
+cat >> "$WORKSPACE/.env" <<EOF
+TORWATCH_DB_MODE=shared
+POSTGRES_CONTAINER=homelab-postgres
+EOF
+expect_exit 0 "backup.sh dumps the shared PostgreSQL container" \
+  bash "$PKG_ROOT/scripts/backup.sh" "$WORKSPACE/backups" --env-file "$WORKSPACE/.env"
+if grep -q "exec -i homelab-postgres pg_dump" "$DOCKER_STUB_LOG"; then
+  ok "shared backup uses the independent database container"
+else
+  not_ok "shared backup uses the independent database container"
+fi
+finish_test
+
 # ---------------------------------------------------------------------------
 log "== restore =="
 new_workspace
@@ -278,6 +300,16 @@ expect_exit 1 "preflight rejects unchanged placeholders" \
 sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=test-password-only/' "$WORKSPACE/.env"
 sed -i 's|^TORWATCH_DATA_DIR=.*|TORWATCH_DATA_DIR='$WORKSPACE'/missing-data|' "$WORKSPACE/.env"
 expect_exit 1 "preflight rejects a missing data root" \
+  bash "$PKG_ROOT/scripts/preflight.sh" --mode direct --env-file "$WORKSPACE/.env"
+finish_test
+
+
+new_workspace
+cat >> "$WORKSPACE/.env" <<EOF
+TORWATCH_DB_MODE=shared
+POSTGRES_CONTAINER=homelab-postgres
+EOF
+expect_exit 0 "preflight accepts a healthy shared PostgreSQL service" \
   bash "$PKG_ROOT/scripts/preflight.sh" --mode direct --env-file "$WORKSPACE/.env"
 finish_test
 

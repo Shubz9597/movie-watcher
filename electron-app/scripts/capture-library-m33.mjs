@@ -51,7 +51,7 @@ function serveStatic(port) {
 
 const CAPTURES = [
   { name: "desktop-library-populated-shelves", url: "fixtures=ok&library=populated#library?collection=watch-later", waitFor: "Synced with your TorWatch server" },
-  { name: "desktop-library-empty", url: "fixtures=ok&library=empty#library?collection=watch-later", waitFor: "Nothing here yet" },
+  { name: "desktop-library-empty", url: "fixtures=ok&library=empty#library?collection=watch-later", waitFor: "No saved titles" },
   { name: "desktop-library-scoped-grid", url: "fixtures=ok&library=populated#library-category?collection=watch-later&kind=movie&sort=recent", waitFor: "Load more" },
   { name: "desktop-library-unavailable-server", url: "fixtures=ok&library=unavailable#library?collection=watch-later", waitFor: "not available on this server" },
   { name: "desktop-library-failure-retry", url: "fixtures=ok&library=error#library?collection=watch-later", waitFor: "Retry" },

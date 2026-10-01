@@ -147,7 +147,7 @@ func main() {
 		bootstrapLog := slog.New(slog.NewTextHandler(os.Stderr, nil))
 		res, err := bootstrap.Run(context.Background(), bootstrap.Options{
 			BaseURL:     prowlarrURL,
-			HTTPClient:  prowlarrHTTP,
+			HTTPClient:  &http.Client{Timeout: 60 * time.Second},
 			ExplicitKey: prowlarrAPIKey,
 			ConfigFile:  configFile,
 			Timeout:     2 * time.Minute,
@@ -351,6 +351,8 @@ func main() {
 	// advertised; the surface stays inert when the pipeline is unavailable.
 	httpapi.DownloadsHandlers{
 		Store:          downloads.NewStore(db),
+		SourceResolver: torrentSearch,
+		Picks:          pickRepo,
 		Build:          build,
 		AllowedOrigins: allowedOrigins,
 		AssetRoot:      config.DownloadsRoot(),

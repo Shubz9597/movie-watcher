@@ -79,8 +79,12 @@ func TestSearchRunsVariantsConcurrentlyWithoutGrabbing(t *testing.T) {
 		t.Fatalf("len(results) = %d, want 1 deduplicated result", len(response.Results))
 	}
 	result := response.Results[0]
-	if result.MagnetURI == "" || result.SourceID != "" {
-		t.Fatalf("result source = %#v, want synthesized magnet without source ID", result)
+	if result.MagnetURI == "" || result.SourceID == "" {
+		t.Fatalf("result source = %#v, want synthesized magnet plus opaque source ID", result)
+	}
+	resolved, err := service.Resolve(context.Background(), ResolveRequest{SourceID: result.SourceID})
+	if err != nil || resolved.MagnetURI != result.MagnetURI {
+		t.Fatalf("Resolve(opaque source) = %#v, %v; want selected magnet", resolved, err)
 	}
 	if result.EpisodeMatch == nil || !*result.EpisodeMatch {
 		t.Fatalf("episodeMatch = %v, want true for loose anime episode title", result.EpisodeMatch)

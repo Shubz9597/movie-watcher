@@ -24,8 +24,9 @@ if [ -f "$ENV_FILE" ]; then
 fi
 GATEWAY="http://127.0.0.1:${GATEWAY_PORT:-8080}"
 
-COMPOSE_FILES=(-f compose.yaml)
-[ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ] && COMPOSE_FILES+=(-f compose.vpn.yaml)
+# shellcheck source=compose-common.sh
+. "$(dirname "$0")/compose-common.sh"
+torwatch_compose_files
 
 echo "[verify] /healthz (retrying up to ${TORWATCH_VERIFY_TRIES:-90}x2s for startup/rolling restarts)"
 BODY=""

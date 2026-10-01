@@ -106,7 +106,7 @@ function CarouselRow({
   };
 
   return (
-    <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
+    <section className="tw-cull py-8 md:py-10">
       <div className="shelf-heading mb-5">
         <div className="min-w-0">
           <h2 className="type-section-title text-white">{title}</h2>

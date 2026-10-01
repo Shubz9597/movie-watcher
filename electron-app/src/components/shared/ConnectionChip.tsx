@@ -45,7 +45,7 @@ export function ConnectionChip({ onOpenSettings }: { onOpenSettings: () => void 
         onClick={() => setPanelOpen((open) => !open)}
         aria-expanded={panelOpen}
         aria-label={`Connection: ${STATUS_LABEL[status]} ${host}. Tap for details`}
-        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
+        className={`inline-flex h-9 w-8 items-center justify-center rounded-full transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
       >
         {/* Dot-only (M1.4 UI pass): green = connected, red = not connected.
             Server details are in the tap-through panel. */}
@@ -76,17 +76,7 @@ export function ConnectionChip({ onOpenSettings }: { onOpenSettings: () => void 
             <p className="mt-2 break-all text-xs leading-5 text-white/60">
               {compat.origin ? compat.origin : 'No server address configured yet.'}
             </p>
-            {status === 'incompatible' ? (
-              <p className="mt-2 text-xs leading-5 text-[#ffc285]">
-                This server runs an incompatible TorWatch version. Update the server.
-              </p>
-            ) : null}
-            {status === 'unreachable' ? (
-              <p className="mt-2 text-xs leading-5 text-white/50">
-                Check that the server is running, the address is correct, and both
-                devices are on the same network.
-              </p>
-            ) : null}
+            {status === 'incompatible' ? <p className="mt-2 text-xs text-[#ffc285]">Server update needed.</p> : null}
             <button
               type="button"
               onClick={() => {

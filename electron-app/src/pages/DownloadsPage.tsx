@@ -3,15 +3,23 @@
 // server-warning banner here: ready files show ordinary local actions,
 // interrupted items show their own short "Waiting for server" state, and a
 // failed inventory read surfaces a storage error — never a false "no
-// downloads". Local playback actions arrive with milestone D; the C release
-// keeps unfinished paths disabled (production adapters report unavailable),
-// so this page is reachable with items only via explicit fixture previews.
+// downloads". Ready items play locally; server preparation and native
+// transfer states are merged into one concise queue.
 import { useEffect, useState } from 'react';
+import { Play } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadsInventory } from '../platform/contracts';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { getNativeDownloads } from '../mobile/downloads-adapter';
 import { getDeviceId } from '../lib/device-id';
+import {
+  pendingDownloads,
+  removePendingDownload,
+  resumePendingDownloads,
+  retryPendingDownload,
+  subscribePendingDownloads,
+  type PendingDownload,
+} from '../mobile/download-queue';
 type DownloadsPageProps = {
   navigate: (path: string, params?: Record<string, string>) => void;
 };
@@ -31,9 +39,8 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   const [inventory, setInventory] = useState<DownloadsInventory | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
-  // D03 device-test hook: explicitly activated with ?downloads=native — a
-  // labelled preview surface, never part of the production flow (the real
-  // enqueue sheet is D05/WF04).
+  const [pending, setPending] = useState<PendingDownload[]>(() => pendingDownloads());
+  // D03 device-test hook: explicitly activated with ?downloads=native.
   const nativeHookActive = new URLSearchParams(window.location.search).get('downloads') === 'native'
     && getNativeDownloads() != null;
 
@@ -70,6 +77,20 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
     };
   }, [downloads, reloadKey]);
 
+  useEffect(() => {
+    const refreshPending = () => setPending(pendingDownloads());
+    const unsubscribe = subscribePendingDownloads(refreshPending);
+    resumePendingDownloads();
+    return unsubscribe;
+  }, []);
+
+  const playLocal = async (downloadId: string): Promise<void> => {
+    const native = getNativeDownloads();
+    if (!native) return;
+    const { getTorWatchNativePlugin } = await import('../platform/native-player');
+    await getTorWatchNativePlugin().playLocal?.({ downloadId, playId: `local-${Date.now()}` });
+  };
+
   const online = compat.status === 'ready';
 
   return (
@@ -86,7 +107,7 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
         // Storage failure: repair/retry, never an empty state (wireframes
         // "Downloads storage failure").
         <div className="mt-6 rounded-xl border border-white/10 bg-[#151619] p-5">
-          <p className="text-sm text-white">Couldn-t read your downloads</p>
+          <p className="text-sm text-white">Couldn't read your downloads</p>
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
@@ -104,7 +125,7 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
             </button>
           </div>
         </div>
-      ) : !inventory || inventory.items.length === 0 ? (
+      ) : (!inventory || inventory.items.length === 0) && pending.length === 0 ? (
         // Empty: concise, no travel/setup explanation paragraph. The online
         // action finds something; the offline action goes to settings.
         <div className="mt-6 rounded-xl border border-white/10 bg-[#151619] p-5">
@@ -130,7 +151,38 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
         </div>
       ) : (
         <ul className="mt-6 space-y-3">
-          {inventory.items.map((item) => {
+          {pending.map((item) => (
+            <li
+              key={`pending-${item.jobId}`}
+              className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 bg-[#151619] px-4 py-3"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm text-white">{item.title}</p>
+                <p className={`mt-0.5 truncate text-xs ${item.state === 'failed' ? 'text-red-300' : 'text-white/55'}`}>
+                  {item.state === 'failed' ? item.reason || 'Download failed' : 'Preparing'}
+                </p>
+              </div>
+              {item.state === 'failed' ? (
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => retryPendingDownload(item)}
+                    className={`min-h-11 rounded-full border border-white/20 px-4 text-xs text-white ${FOCUS_RING_CLASS}`}
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removePendingDownload(item.jobId)}
+                    className={`min-h-11 rounded-full px-3 text-xs text-white/55 ${FOCUS_RING_CLASS}`}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+          {(inventory?.items ?? []).map((item) => {
             const size = formatSize(item.sizeBytes);
             return (
               <li
@@ -144,15 +196,24 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
                     {item.state === 'needs-repair' ? ' · Needs repair' : ''}
                   </p>
                 </div>
-                {item.state === 'needs-repair' ? (
+                {item.waitingForServer ? (
+                  <span className="min-h-11 shrink-0 rounded-full border border-white/15 px-4 py-2.5 text-xs text-white/60">
+                    In progress
+                  </span>
+                ) : item.state === 'needs-repair' ? (
                   <span className="min-h-11 shrink-0 rounded-full border border-white/15 px-4 py-2.5 text-xs text-white/60">
                     Needs repair
                   </span>
-                ) : item.waitingForServer ? (
-                  <span className="min-h-11 shrink-0 rounded-full border border-white/15 px-4 py-2.5 text-xs text-white/60">
-                    Waiting for server
-                  </span>
-                ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void playLocal(item.downloadId)}
+                    className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-white px-4 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}
+                  >
+                    <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+                    Play
+                  </button>
+                )}
               </li>
             );
           })}

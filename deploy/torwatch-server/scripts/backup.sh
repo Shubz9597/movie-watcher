@@ -24,6 +24,8 @@ mkdir -p "$BACKUP_DIR"
 [ -f "$ENV_FILE" ] || { echo "backup: $ENV_FILE missing" >&2; exit 1; }
 # shellcheck disable=SC1090
 set -a; . "$ENV_FILE"; set +a
+# shellcheck source=compose-common.sh
+. "$(dirname "$0")/compose-common.sh"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGING="$BACKUP_DIR/.staging-$STAMP"
@@ -47,12 +49,11 @@ date -u +%s > "$LOCK/stamp"
 
 mkdir -p "$STAGING"
 
-COMPOSE_FILES=(-f compose.yaml)
-[ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ] && COMPOSE_FILES+=(-f compose.vpn.yaml)
+torwatch_compose_files
 
 # --- database (consistent dump; exit status is propagated via pipefail) ----
 echo "[backup] pg_dump -> db-$STAMP.sql.gz"
-docker compose "${COMPOSE_FILES[@]}" exec -T postgres \
+torwatch_db_exec \
   pg_dump -U "${POSTGRES_USER:-torwatch}" "${POSTGRES_DB:-torwatch}" \
   | gzip > "$STAGING/db-$STAMP.sql.gz"
 [ -s "$STAGING/db-$STAMP.sql.gz" ] || { echo "backup: pg_dump produced an empty archive" >&2; exit 1; }

@@ -1,0 +1,21 @@
+# Use the separately managed homelab-postgres stack instead of this package's
+# bundled PostgreSQL service. Requires Docker Compose 2.24+ and the external
+# homelab-db network created by deploy/homelab-postgres/compose.yaml.
+
+networks:
+  homelab-db:
+    external: true
+    name: homelab-db
+
+services:
+  postgres:
+    profiles: ["bundled-db-disabled"]
+
+  vod:
+    depends_on: !reset {}
+    environment:
+      PG_DSN: postgres://${POSTGRES_USER:-torwatch}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-homelab-postgres}:5432/${POSTGRES_DB:-torwatch}?sslmode=disable
+    networks:
+      - gateway
+      - internal
+      - homelab-db

@@ -51,7 +51,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
             type="button"
             onClick={() => navigate('home')}
             aria-label="TorWatch home"
-            className={`inline-flex h-12 w-16 items-center justify-center rounded-xl ${FOCUS_RING_CLASS}`}
+            className={`inline-flex h-12 w-12 items-center justify-center rounded-xl ${FOCUS_RING_CLASS}`}
           >
             {/* -translate-y-1: the icon artwork sits low inside its PNG;
                 optically centered against the row of 44px action buttons. */}
@@ -93,7 +93,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
           back button is removed (M1.4 UI pass). */}
       <nav
         aria-label="Main destinations"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
       >
         <div className="flex items-stretch justify-around">
           {DESTINATIONS.map((destination) => {

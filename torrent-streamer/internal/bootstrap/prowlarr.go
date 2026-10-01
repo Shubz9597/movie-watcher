@@ -34,6 +34,7 @@ type Starter struct {
 	Name           string         // display name in Prowlarr
 	Priority       int            // Prowlarr indexer priority
 	MinimumSeeders int            // torrentBaseSettings.appMinimumSeeders
+	Enabled        *bool          // nil defaults to enabled
 	PreferMagnet   *bool          // nil keeps the V1 default (true)
 	Fields         map[string]any // extra provider fields set on the schema
 }
@@ -90,7 +91,7 @@ func DefaultStarters() []Starter {
 			},
 		},
 		{Implementation: "SubsPlease", Name: "SubsPlease", Priority: 10, MinimumSeeders: 1},
-		{Implementation: "Knaben", Name: "Knaben", Priority: 20, MinimumSeeders: 2},
+		{Implementation: "Knaben", Name: "Knaben", Priority: 20, MinimumSeeders: 2, Enabled: &preferFalse},
 		{Definition: "torrentdownload", Name: "TorrentDownload", Priority: 20, MinimumSeeders: 2},
 		{Definition: "thepiratebay", Name: "The Pirate Bay", Priority: 25, MinimumSeeders: 2},
 		{Definition: "limetorrents", Name: "LimeTorrents", Priority: 25, MinimumSeeders: 2, PreferMagnet: &preferFalse},
@@ -245,16 +246,42 @@ type indexerField struct {
 	Value any    `json:"value"`
 }
 
-// installStarters adds the starter set to an EMPTY instance. A populated
-// instance is preserved untouched (idempotent re-runs land here too, matching
-// the V1 Electron semantics). The returned preserved value is the count of
-// existing indexers kept.
+// installStarters adds the starter set to an empty instance and completes a
+// partially installed starter set on later runs. A populated instance with no
+// recognized starter names is treated as operator-owned and preserved. Every
+// existing indexer is left unchanged; retries only POST missing starter names.
 func installStarters(ctx context.Context, opts Options, apiKey string) (added []string, preserved int, failed []string, err error) {
 	existing, err := prowlarrGet(ctx, opts, apiKey, "indexer")
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("bootstrap: list indexers: %w", err)
 	}
-	if list, ok := existing.([]any); ok && len(list) > 0 {
+	list, ok := existing.([]any)
+	if existing == nil {
+		list = []any{}
+	} else if !ok {
+		return nil, 0, nil, errors.New("bootstrap: indexer list returned an unexpected shape")
+	}
+	existingNames := make(map[string]struct{}, len(list))
+	for _, entry := range list {
+		indexer, _ := entry.(map[string]any)
+		name, _ := indexer["name"].(string)
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			existingNames[name] = struct{}{}
+		}
+	}
+	hasStarter := false
+	missingStarters := 0
+	for _, starter := range opts.Starters {
+		if _, exists := existingNames[strings.ToLower(strings.TrimSpace(starter.Name))]; exists {
+			hasStarter = true
+		} else {
+			missingStarters++
+		}
+	}
+	if len(list) > 0 && !hasStarter {
+		return nil, len(list), nil, nil
+	}
+	if missingStarters == 0 {
 		return nil, len(list), nil, nil
 	}
 
@@ -275,6 +302,9 @@ func installStarters(ctx context.Context, opts Options, apiKey string) (added []
 	added = []string{}
 	failed = []string{}
 	for _, starter := range opts.Starters {
+		if _, exists := existingNames[strings.ToLower(strings.TrimSpace(starter.Name))]; exists {
+			continue
+		}
 		schema, ok := findSchema(schemas, starter)
 		if !ok {
 			opts.Log.Warn("[bootstrap] starter source not available in this prowlarr build",
@@ -293,7 +323,7 @@ func installStarters(ctx context.Context, opts Options, apiKey string) (added []
 		}
 		delete(payload, "id")
 		payload["name"] = starter.Name
-		payload["enable"] = true
+		payload["enable"] = starterEnabled(starter)
 		payload["priority"] = starter.Priority
 		payload["appProfileId"] = appProfileID
 		payload["tags"] = []any{}
@@ -310,7 +340,7 @@ func installStarters(ctx context.Context, opts Options, apiKey string) (added []
 			failed = append(failed, starter.Name)
 			continue
 		}
-		if err := prowlarrPost(ctx, opts, apiKey, "indexer", body); err != nil {
+		if err := prowlarrPost(ctx, opts, apiKey, "indexer?forceSave=true", body); err != nil {
 			opts.Log.Warn("[bootstrap] could not add starter source",
 				"name", starter.Name, "err", err)
 			failed = append(failed, starter.Name)
@@ -318,12 +348,19 @@ func installStarters(ctx context.Context, opts Options, apiKey string) (added []
 		}
 		added = append(added, starter.Name)
 	}
-	return added, 0, failed, nil
+	return added, len(list), failed, nil
 }
 
 func preferMagnet(s Starter) bool {
 	if s.PreferMagnet != nil {
 		return *s.PreferMagnet
+	}
+	return true
+}
+
+func starterEnabled(s Starter) bool {
+	if s.Enabled != nil {
+		return *s.Enabled
 	}
 	return true
 }
@@ -458,9 +495,30 @@ func prowlarrPost(ctx context.Context, opts Options, apiKey, route string, body 
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		var validation []struct {
+			PropertyName string `json:"propertyName"`
+			ErrorMessage string `json:"errorMessage"`
+		}
+		if json.Unmarshal(data, &validation) == nil {
+			messages := make([]string, 0, len(validation))
+			for _, problem := range validation {
+				if problem.ErrorMessage == "" {
+					continue
+				}
+				if problem.PropertyName != "" {
+					messages = append(messages, problem.PropertyName+": "+problem.ErrorMessage)
+				} else {
+					messages = append(messages, problem.ErrorMessage)
+				}
+			}
+			if len(messages) > 0 {
+				return fmt.Errorf("prowlarr %s returned HTTP %d (%s)", route, resp.StatusCode, strings.Join(messages, "; "))
+			}
+		}
 		return fmt.Errorf("prowlarr %s returned HTTP %d", route, resp.StatusCode)
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }

@@ -50,6 +50,7 @@ debug.log
 .env.*.local
 **/.env*
 !deploy/desktop-staging/.env.example
+!deploy/homelab-postgres/.env.example
 
 # IDE and editor files
 .vscode/

@@ -42,7 +42,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-torwatch}
       TZ: ${TZ:-UTC}
     volumes:
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/postgres:/var/lib/postgresql/data${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/postgres:/var/lib/postgresql/data:rw${SELINUX_MOUNT_OPTS:-}
     networks:
       - internal
     stop_grace_period: 30s
@@ -66,7 +66,7 @@ services:
       PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
     volumes:
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/config:rw${SELINUX_MOUNT_OPTS:-}
     networks:
       # Outbound indexer traffic uses the host's normal route in direct mode.
       - gateway
@@ -136,11 +136,12 @@ services:
       OPENSUB_API_KEY: ${OPENSUB_API_KEY:-}
       OPENSUB_USER_TOKEN: ${OPENSUB_USER_TOKEN:-}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TORWATCH_ALLOWED_CLIENT_ORIGINS: ${TORWATCH_ALLOWED_CLIENT_ORIGINS:-null,http://localhost:5173}
       TORWATCH_APP_VERSION: ${TORWATCH_VERSION:-dev}
     volumes:
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/downloads:/data/torrents${SELINUX_MOUNT_OPTS:-}
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/subtitles:/data/subcache${SELINUX_MOUNT_OPTS:-}
-      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/logs:/data/logs${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/downloads:/data/torrents:rw${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/subtitles:/data/subcache:rw${SELINUX_MOUNT_OPTS:-}
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/logs:/data/logs:rw${SELINUX_MOUNT_OPTS:-}
       # Read-only view of Prowlarr's generated configuration for bootstrap.
       - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/prowlarr:/prowlarr-config:ro${SELINUX_MOUNT_OPTS:-}
     networks:
@@ -162,7 +163,7 @@ services:
       # The ONLY LAN-published service (FR-008).
       - "${GATEWAY_PORT:-8080}:8080"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro${SELINUX_MOUNT_OPTS:-}
     networks:
       - gateway
     stop_grace_period: 30s

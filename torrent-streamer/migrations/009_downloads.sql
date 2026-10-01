@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS download_jobs (
   claimed_at TIMESTAMPTZ NULL,
   ready_at TIMESTAMPTZ NULL,
   expires_at TIMESTAMPTZ NULL,
-  claimed_by TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (client_id, idempotency_key),

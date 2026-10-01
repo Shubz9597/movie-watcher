@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bookmark, ExternalLink, Heart, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { Bookmark, Download, ExternalLink, Heart, Play, SlidersHorizontal, Youtube } from 'lucide-react';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
@@ -27,6 +27,7 @@ import { useLibrary, useLibrarySelector } from '../lib/library-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type { ResumeSourceContext, SavedResumeSource } from '../lib/types';
+import { nativeDownloadsSupported } from '../mobile/download-queue';
 
 // rerender-memo-with-default-value: stable fallback so EpisodePanel's props
 // keep their identity while seasons load or a season list is unavailable.
@@ -762,14 +763,25 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                 </button>
               </>
             )}
-            <button
-              type="button"
-              onClick={scrollToSources}
-              aria-label="Find sources"
-              className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-            >
-              <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
-            </button>
+            {nativeDownloadsSupported() ? (
+              <button
+                type="button"
+                onClick={scrollToSources}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/15 px-4 text-sm text-white/90 transition hover:border-white/35 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              >
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Download
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={scrollToSources}
+                aria-label="Find sources"
+                className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              >
+                <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -957,6 +969,5 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
     </div>
   );
 }
-
 
 

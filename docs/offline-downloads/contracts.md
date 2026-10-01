@@ -56,7 +56,9 @@ Request:
   "seriesId": "tmdb:movie:693134",
   "season": 0,
   "episode": 0,
-  "pickId": 12345,
+  "sourceId": "opaque id returned by torrent search",
+  "sourceKind": "movie",
+  "fileIndex": 0,
   "subtitles": ["en"]
 }
 ```
@@ -64,8 +66,13 @@ Request:
 - `idempotencyKey` is per client (`client_id` derives from the existing
   client identity header/param used by the session APIs). Retrying the same
   key returns the same job with `200`; a new attempt uses a new key.
-- `pickId` MUST reference a validated internal pick for the given canonical
-  identity. Unresolved/foreign identities → `400 invalid_source`.
+- `sourceId` MUST be the unexpired opaque id returned with the exact search
+  result the user selected. The server resolves it and records the internal
+  pick; magnets and indexer URLs never cross this boundary. `sourceKind` is
+  `movie`, `tv`, or `anime`; `fileIndex` is optional except when a selected
+  season pack needs a specific episode. Unresolved/foreign identities →
+  `400 invalid_source`. The legacy internal `pickId` form remains accepted by
+  server-side contract fixtures, not product clients.
 - `season`/`episode` are 0 for movies.
 - `subtitles` is the OPTIONAL list of requested sidecar languages (lowercase
   ISO 639-1). The job is ready only with EVERY requested language present in

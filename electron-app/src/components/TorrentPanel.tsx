@@ -13,6 +13,7 @@ import { prioritizePreviouslyUsedTorrent, torrentInfoHash } from '../lib/torrent
 import { getDeviceId } from '../lib/device-id';
 import { usePlatform } from '../platform/PlatformProvider';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
+import { NativeDownloadButton } from './NativeDownloadButton';
 
 type Props = {
   title: string;
@@ -467,7 +468,7 @@ export default function TorrentPanel({
                             </div>
                         </div>
                       </button>
-                      <div className="hidden shrink-0 sm:flex">
+                      <div className="hidden shrink-0 gap-2 sm:flex">
                             {isElectron ? (
                               <PlaybackSplitButton
                                 onPlay={() => {
@@ -496,8 +497,38 @@ export default function TorrentPanel({
                                 {busyActionId === playActionId ? 'Opening…' : 'Play'}
                               </Button>
                             )}
+                            <NativeDownloadButton
+                              selection={{
+                                seriesId: defaultSeriesId,
+                                sourceId: t.sourceId || '',
+                                sourceKind: kind,
+                                fileIndex: t.fileIndex,
+                                season: 0,
+                                episode: 0,
+                                title,
+                                subtitleLabel: quality || undefined,
+                                sizeBytes: t.size,
+                              }}
+                              onError={setError}
+                            />
                           </div>
                         </div>
+
+                    <NativeDownloadButton
+                      className="mt-3 w-full sm:hidden"
+                      selection={{
+                        seriesId: defaultSeriesId,
+                        sourceId: t.sourceId || '',
+                        sourceKind: kind,
+                        fileIndex: t.fileIndex,
+                        season: 0,
+                        episode: 0,
+                        title,
+                        subtitleLabel: quality || undefined,
+                        sizeBytes: t.size,
+                      }}
+                      onError={setError}
+                    />
 
                     {/* WF06a: source-details disclosure --- technical/source
                         metadata with explicit unknowns; "Use this torrent"
@@ -571,6 +602,5 @@ export default function TorrentPanel({
     </aside>
   );
 }
-
 
 

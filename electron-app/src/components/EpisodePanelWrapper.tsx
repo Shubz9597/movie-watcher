@@ -22,6 +22,8 @@ import {
 } from '../lib/season-pack-cache';
 import type { EpisodeSummary, SeasonSummary } from '../lib/title-types';
 import { getDeviceId } from '../lib/device-id';
+import { NativeDownloadButton } from './NativeDownloadButton';
+import type { DownloadSelection } from '../mobile/download-queue';
 
 type Props = {
   kind: 'tv' | 'anime';
@@ -768,6 +770,43 @@ export default function EpisodePanel({
     }
   };
 
+  const downloadSelectionFor = async (torrent: TorrentRow): Promise<DownloadSelection> => {
+    if (!activeEpisode) throw new Error('Choose an episode first.');
+    let fileIndex = torrent.fileIndex;
+    if (fileIndex == null && torrent.seasonPack) {
+      const magnet = await resolveTorrentSource(torrent);
+      const resolved = await resolveTorrentFile({
+        magnetUri: magnet,
+        torrentUrl: torrent.torrentUrl,
+        downloadUrl: torrent.downloadUrl,
+        infoHash: torrent.infoHash,
+        cat: kind,
+        season: activeEpisode.seasonNumber ?? selectedSeason,
+        episode: activeEpisode.episodeNumber,
+        absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
+      });
+      fileIndex = resolved.fileIndex;
+    }
+    const season = activeEpisode.seasonNumber || selectedSeason;
+    const episode = activeEpisode.episodeNumber;
+    const seriesId = kind === 'anime' && anilistId
+      ? `anilist:${anilistId}`
+      : tmdbId
+        ? `tmdb:tv:${tmdbId}`
+        : '';
+    return {
+      seriesId,
+      sourceId: torrent.sourceId || '',
+      sourceKind: kind,
+      fileIndex,
+      season,
+      episode,
+      title,
+      subtitleLabel: `S${season} E${episode}`,
+      sizeBytes: torrent.size,
+    };
+  };
+
   const resumeAppliesToActiveEpisode = Boolean(
     resumeContext && activeEpisode &&
     resumeContext.season === (activeEpisode.seasonNumber || selectedSeason) &&
@@ -1012,15 +1051,25 @@ export default function EpisodePanel({
                           {torrent.size ? <span> · {formatBytes(torrent.size)}</span> : null}
                         </div>
                       </div>
-                      <PlaybackSplitButton
-                        className="hidden shrink-0 sm:inline-flex"
-                        onPlay={() => void playTorrent(torrent)}
-                        onOpenExternal={() => void downloadTorrentM3U(torrent)}
-                        disabled={Boolean(playBusyId || externalBusyId)}
-                        playBusy={playBusyId === torrentRowKey}
-                        externalBusy={externalBusyId === torrentRowKey}
-                      />
+                      <div className="hidden shrink-0 gap-2 sm:flex">
+                        <PlaybackSplitButton
+                          onPlay={() => void playTorrent(torrent)}
+                          onOpenExternal={() => void downloadTorrentM3U(torrent)}
+                          disabled={Boolean(playBusyId || externalBusyId)}
+                          playBusy={playBusyId === torrentRowKey}
+                          externalBusy={externalBusyId === torrentRowKey}
+                        />
+                        <NativeDownloadButton
+                          selection={() => downloadSelectionFor(torrent)}
+                          onError={setTorrentError}
+                        />
+                      </div>
                     </div>
+                    <NativeDownloadButton
+                      className="mt-3 w-full sm:hidden"
+                      selection={() => downloadSelectionFor(torrent)}
+                      onError={setTorrentError}
+                    />
                   </div>
                 );
               })}
@@ -1031,6 +1080,5 @@ export default function EpisodePanel({
     </aside>
   );
 }
-
 
 

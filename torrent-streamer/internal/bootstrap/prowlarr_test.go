@@ -18,13 +18,14 @@ import (
 // fakeProwlarr is a minimal Prowlarr stand-in covering the endpoints the
 // bootstrap touches (architecture.md §8 test matrix).
 type fakeProwlarr struct {
-	mu        sync.Mutex
-	indexers  []map[string]any
-	addErrors map[string]bool // starter names that fail on POST
-	statusUp  atomic.Bool
-	started   chan struct{}
-	listCalls atomic.Int64
-	postCalls atomic.Int64
+	mu         sync.Mutex
+	indexers   []map[string]any
+	addErrors  map[string]bool // starter names that fail on POST
+	forceCalls atomic.Int64
+	statusUp   atomic.Bool
+	started    chan struct{}
+	listCalls  atomic.Int64
+	postCalls  atomic.Int64
 }
 
 func newFakeProwlarr() *fakeProwlarr {
@@ -64,6 +65,9 @@ func (f *fakeProwlarr) handler(t *testing.T, apiKey string) http.Handler {
 			_ = json.NewEncoder(w).Encode(f.indexers)
 		case http.MethodPost:
 			f.postCalls.Add(1)
+			if r.URL.Query().Get("forceSave") == "true" {
+				f.forceCalls.Add(1)
+			}
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
@@ -255,6 +259,52 @@ func TestStartersOnceAndIdempotent(t *testing.T) {
 	}
 	if f.postCalls.Load() != 1 {
 		t.Fatalf("total POSTs = %d, want 1", f.postCalls.Load())
+	}
+}
+
+func TestPartialStarterSetRetriesOnlyMissingStarters(t *testing.T) {
+	f := newFakeProwlarr()
+	f.statusUp.Store(true)
+	f.setIndexers([]map[string]any{{"name": "YTS"}, {"name": "My Private Indexer"}})
+	srv := startFake(t, "k", f)
+
+	opts := testOpts(srv, []Starter{starterFor("yts"), {
+		Implementation: "SubsPlease", Name: "SubsPlease", Priority: 10, MinimumSeeders: 1,
+	}})
+	opts.ExplicitKey = "k"
+
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.IndexersAdded) != 1 || res.IndexersAdded[0] != "SubsPlease" {
+		t.Fatalf("added = %v, want SubsPlease", res.IndexersAdded)
+	}
+	if res.IndexersPreserved != 2 {
+		t.Fatalf("preserved = %d, want 2", res.IndexersPreserved)
+	}
+	if f.postCalls.Load() != 1 {
+		t.Fatalf("POST calls = %d, want 1", f.postCalls.Load())
+	}
+}
+
+func TestStartersUseForceSaveToAvoidBlockingOnConnectivity(t *testing.T) {
+	f := newFakeProwlarr()
+	f.statusUp.Store(true)
+	srv := startFake(t, "k", f)
+
+	opts := testOpts(srv, []Starter{starterFor("yts")})
+	opts.ExplicitKey = "k"
+
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.IndexersAdded) != 1 || len(res.IndexersFailed) != 0 {
+		t.Fatalf("added = %v failed = %v, want YTS success", res.IndexersAdded, res.IndexersFailed)
+	}
+	if f.postCalls.Load() != 1 || f.forceCalls.Load() != 1 {
+		t.Fatalf("POST calls = %d force calls = %d, want one forced save", f.postCalls.Load(), f.forceCalls.Load())
 	}
 }
 

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,7 +12,17 @@ import (
 
 	"torrent-streamer/internal/buildinfo"
 	"torrent-streamer/internal/downloads"
+	"torrent-streamer/internal/search"
+	"torrent-streamer/internal/torrentx"
 )
+
+type downloadSourceResolver interface {
+	Resolve(context.Context, search.ResolveRequest) (search.ResolveResult, error)
+}
+
+type downloadPickStore interface {
+	InsertPick(context.Context, torrentx.PickRow) (int64, error)
+}
 
 // DownloadsHandlers serves the offline-download preparation contract
 // finalized in docs/offline-downloads/contracts.md (D01, implemented D02a).
@@ -23,7 +34,12 @@ import (
 type DownloadsHandlers struct {
 	// Store is the storage-backed service; nil disables the surface.
 	Store downloads.Service
-	Build buildinfo.Info
+	// SourceResolver + Picks turn the renderer's opaque, short-lived source
+	// selection into the durable internal pick required by the preparation
+	// pipeline. Magnets and indexer URLs never enter the client request.
+	SourceResolver downloadSourceResolver
+	Picks          downloadPickStore
+	Build          buildinfo.Info
 	// AllowedOrigins is the explicit CORS origin allowlist for the versioned
 	// browser/mobile surfaces (same policy as CatalogHandlers).
 	AllowedOrigins []string
@@ -88,10 +104,25 @@ func (h DownloadsHandlers) handleCreate(w http.ResponseWriter, r *http.Request) 
 		Season         int    `json:"season"`
 		Episode        int    `json:"episode"`
 		PickID         int64  `json:"pickId"`
+		SourceID       string `json:"sourceId"`
+		SourceKind     string `json:"sourceKind"`
+		FileIndex      *int   `json:"fileIndex"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeSystemError(w, http.StatusBadRequest, ErrorDetail{Code: "bad_json", Message: "The request body is not valid JSON."})
 		return
+	}
+	pickID := body.PickID
+	if pickID <= 0 && strings.TrimSpace(body.SourceID) != "" {
+		var err error
+		pickID, err = h.registerSelectedSource(
+			r.Context(), body.SeriesID, body.SourceKind, body.SourceID,
+			body.Season, body.Episode, body.FileIndex,
+		)
+		if err != nil {
+			h.writeStoreError(w, err)
+			return
+		}
 	}
 	job, created, err := h.Store.Create(r.Context(), downloads.CreateRequest{
 		ClientID:       body.ClientID,
@@ -99,7 +130,7 @@ func (h DownloadsHandlers) handleCreate(w http.ResponseWriter, r *http.Request) 
 		SeriesID:       body.SeriesID,
 		Season:         body.Season,
 		Episode:        body.Episode,
-		PickID:         body.PickID,
+		PickID:         pickID,
 	})
 	if err != nil {
 		h.writeStoreError(w, err)
@@ -111,6 +142,40 @@ func (h DownloadsHandlers) handleCreate(w http.ResponseWriter, r *http.Request) 
 		status = http.StatusOK
 	}
 	writeJSON(w, status, h.jobBody(job))
+}
+
+func (h DownloadsHandlers) registerSelectedSource(
+	ctx context.Context,
+	seriesID string,
+	sourceKind string,
+	sourceID string,
+	season int,
+	episode int,
+	fileIndex *int,
+) (int64, error) {
+	if h.SourceResolver == nil || h.Picks == nil || strings.TrimSpace(seriesID) == "" {
+		return 0, downloads.ErrInvalidSource
+	}
+	switch sourceKind {
+	case "movie", "tv", "anime":
+	default:
+		return 0, downloads.ErrInvalidSource
+	}
+	resolved, err := h.SourceResolver.Resolve(ctx, search.ResolveRequest{SourceID: strings.TrimSpace(sourceID)})
+	if err != nil || resolved.MagnetURI == "" || resolved.InfoHash == "" {
+		return 0, downloads.ErrInvalidSource
+	}
+	return h.Picks.InsertPick(ctx, torrentx.PickRow{
+		SeriesID:    seriesID,
+		Season:      season,
+		Episode:     episode,
+		ProfileHash: "download:" + strings.TrimSpace(sourceID),
+		InfoHash:    resolved.InfoHash,
+		Magnet:      resolved.MagnetURI,
+		FileIndex:   fileIndex,
+		SourceKind:  sourceKind,
+		PickedAt:    time.Now().UTC(),
+	})
 }
 
 func (h DownloadsHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
