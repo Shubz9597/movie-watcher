@@ -199,7 +199,8 @@ func TestDownloadsCreateRegistersOpaqueSelectedSource(t *testing.T) {
 		t.Fatalf("job pick id = %d, want registered pick 77", svc.lastCreate.PickID)
 	}
 	if picks.last.SeriesID != "tmdb:tv:1396" || picks.last.Season != 1 || picks.last.Episode != 4 ||
-		picks.last.SourceKind != "tv" || picks.last.FileIndex == nil || *picks.last.FileIndex != 6 {
+		picks.last.SourceKind != "tv" || picks.last.FileIndex == nil || *picks.last.FileIndex != 6 ||
+		string(picks.last.ScoreJSON) != "{}" {
 		t.Fatalf("registered pick = %#v", picks.last)
 	}
 }

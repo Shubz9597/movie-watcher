@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -174,7 +175,11 @@ func (h DownloadsHandlers) registerSelectedSource(
 		Magnet:      resolved.MagnetURI,
 		FileIndex:   fileIndex,
 		SourceKind:  sourceKind,
-		PickedAt:    time.Now().UTC(),
+		// picks.score is JSONB NOT NULL. This selected-source path does not run
+		// the ranking engine, so persist its neutral, valid JSON value instead
+		// of passing a nil []byte (which database/sql sends as SQL NULL).
+		ScoreJSON: []byte("{}"),
+		PickedAt:  time.Now().UTC(),
 	})
 }
 
@@ -321,6 +326,7 @@ func (h DownloadsHandlers) writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, downloads.ErrInvalidRequest):
 		writeSystemError(w, http.StatusBadRequest, ErrorDetail{Code: "bad_request", Message: "The download request is incomplete."})
 	default:
+		log.Printf("[downloads] request failed: %v", err)
 		writeSystemError(w, http.StatusInternalServerError, ErrorDetail{Code: "download_failed", Message: "The download request could not be processed."})
 	}
 }
