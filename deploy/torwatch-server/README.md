@@ -97,6 +97,32 @@ clients (trusted LAN) ──> gateway (Caddy, only LAN port) ──> vod :4001
    `torrent-streamer/`; the version/revision/build-time are embedded and
    visible at `/v1/version`.
 
+## Automatic deployment from Git
+
+The Fedora deployment can poll one pushed branch every two minutes without a
+public webhook or GitHub deployment secret. Install it once from the normal
+deployment account:
+
+```bash
+./deploy/torwatch-server/scripts/install-git-deploy-service.sh 001-build-torwatch-version
+```
+
+Each new fast-forward commit is fetched into the clean checkout. Changes under
+`torrent-streamer/` build an immutable `torwatch-server:git-<commit>` image,
+then use the normal backup, update, health verification, and rollback path.
+Compose or Caddy changes reconcile the application stack. Shared PostgreSQL is
+owned by `deploy/homelab-postgres` and is not restarted by this service.
+
+`electron-app/` is client code. A Git push can record those changes, but Docker
+cannot update an installed iOS, Android, or desktop app; produce and install a
+new client build separately.
+
+```bash
+sudo systemctl status torwatch-git-deploy.timer
+sudo journalctl -u torwatch-git-deploy.service -n 100 --no-pager
+sudo systemctl start torwatch-git-deploy.service  # run immediately
+```
+
 ## Rollback
 
 - Update failure: automatic (tag reverts, containers recreated, re-verified;

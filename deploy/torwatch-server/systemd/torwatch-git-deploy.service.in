@@ -1,0 +1,18 @@
+[Unit]
+Description=Deploy TorWatch from its configured Git branch
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@GROUP@
+SupplementaryGroups=docker
+WorkingDirectory=@REPO@
+EnvironmentFile=/etc/torwatch-git-deploy.env
+ExecStart=@REPO@/deploy/torwatch-server/scripts/deploy-from-git.sh
+UMask=0077
+
+# A bad push must terminate rather than running forever. The existing update
+# script performs health verification and rolls the application image back.
+TimeoutStartSec=30min

@@ -26,6 +26,7 @@ native/**/index.d.ts # Generated TypeScript definitions for native addons
 # Electron build outputs
 electron-app/dist/
 electron-app/dist-browser/
+electron-app/dist-mobile/
 electron-app/out/
 
 # Native addon build artifacts
@@ -129,6 +130,7 @@ package
 # torWatch server package operator secrets
 deploy/torwatch-server/.env
 deploy/torwatch-server/backups/
+deploy/torwatch-server/.deploy-state/
 !deploy/torwatch-server/.env.example
 
 
