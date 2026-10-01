@@ -83,9 +83,9 @@ IMAGE="torwatch-server:$TAG"
 
 if [ "$NEED_IMAGE" -eq 1 ]; then
   log "building immutable backend image $IMAGE"
-  "$DEPLOY_DIR/scripts/build-images.sh" "$TAG"
+  bash "$DEPLOY_DIR/scripts/build-images.sh" "$TAG"
   log "backing up, updating the Go service, and verifying"
-  "$DEPLOY_DIR/scripts/update.sh" "$IMAGE" --env-file "$ENV_FILE"
+  bash "$DEPLOY_DIR/scripts/update.sh" "$IMAGE" --env-file "$ENV_FILE"
 fi
 
 if [ "$NEED_COMPOSE" -eq 1 ]; then
@@ -101,7 +101,7 @@ if [ "$NEED_COMPOSE" -eq 1 ]; then
     torwatch_compose_files
     docker compose "${COMPOSE_FILES[@]}" config --quiet
     docker compose "${COMPOSE_FILES[@]}" up -d
-    scripts/verify.sh --env-file "$ENV_FILE"
+    bash scripts/verify.sh --env-file "$ENV_FILE"
   )
 fi
 

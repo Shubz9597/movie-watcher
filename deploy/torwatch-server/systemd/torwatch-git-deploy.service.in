@@ -10,7 +10,10 @@ Group=@GROUP@
 SupplementaryGroups=docker
 WorkingDirectory=@REPO@
 EnvironmentFile=/etc/torwatch-git-deploy.env
-ExecStart=@REPO@/deploy/torwatch-server/scripts/deploy-from-git.sh
+# Fedora may block direct execution of untrusted files from writable /srv
+# checkouts (for example through fapolicyd). The trusted system shell reads
+# the reviewed script while the service still runs as the unprivileged user.
+ExecStart=/usr/bin/bash @REPO@/deploy/torwatch-server/scripts/deploy-from-git.sh
 UMask=0077
 
 # A bad push must terminate rather than running forever. The existing update

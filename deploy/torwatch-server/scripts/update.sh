@@ -35,7 +35,7 @@ echo "[update] $OLD_IMAGE -> $NEW_TAG"
 BACKUP_ROOT="${TORWATCH_DATA_DIR:-.}/backups"
 mkdir -p "$BACKUP_ROOT"
 BACKUP_PARENT="$BACKUP_ROOT/pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
-"$SCRIPT_DIR/backup.sh" "$BACKUP_PARENT" --env-file "$ENV_FILE"
+bash "$SCRIPT_DIR/backup.sh" "$BACKUP_PARENT" --env-file "$ENV_FILE"
 BACKUP_PATH="$(ls -1d "$BACKUP_PARENT"/backup-* 2>/dev/null | tail -n 1 || true)"
 [ -n "$BACKUP_PATH" ] || { echo "update: pre-update backup did not produce a backup directory" >&2; exit 1; }
 
@@ -72,14 +72,14 @@ if ! docker compose "${COMPOSE_FILES[@]}" pull vod; then
 fi
 docker compose "${COMPOSE_FILES[@]}" up -d vod
 
-if "$SCRIPT_DIR/verify.sh" --env-file "$ENV_FILE"; then
+if bash "$SCRIPT_DIR/verify.sh" --env-file "$ENV_FILE"; then
   echo "[update] new image digests: $(record_digest "$NEW_TAG")"
   echo "UPDATE OK ($OLD_IMAGE -> $NEW_TAG)"
 else
   echo "UPDATE FAILED — rolling back to $OLD_IMAGE" >&2
   set_image "$OLD_IMAGE" "$OLD_VERSION"
   docker compose "${COMPOSE_FILES[@]}" up -d vod
-  "$SCRIPT_DIR/verify.sh" --env-file "$ENV_FILE" || \
+  bash "$SCRIPT_DIR/verify.sh" --env-file "$ENV_FILE" || \
     echo "[update] WARNING: rollback verification also failed; inspect logs and restore from $BACKUP_PATH" >&2
   echo "UPDATE ROLLED BACK to $OLD_IMAGE" >&2
   echo "[update] rollback recovery options:" >&2
