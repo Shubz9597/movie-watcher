@@ -587,7 +587,11 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 			continue
 		}
 		hash := normalizeHash(release.InfoHash)
-		magnet := strings.TrimSpace(release.MagnetURL)
+		rawMagnet := strings.TrimSpace(release.MagnetURL)
+		magnet := ""
+		if strings.HasPrefix(strings.ToLower(rawMagnet), "magnet:?") {
+			magnet = rawMagnet
+		}
 		if hash == "" {
 			hash = hashFromMagnet(magnet)
 		}
@@ -602,7 +606,13 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 			// sending a magnet or an indexer URL back across the API boundary.
 			sourceID = s.rememberResolvedSource(ResolveResult{MagnetURI: magnet, InfoHash: hash})
 		} else {
-			downloadURL, ok := s.safeDownloadURL(release.DownloadURL)
+			downloadCandidate := strings.TrimSpace(release.DownloadURL)
+			// Some Prowlarr/indexer combinations put their HTTP grab endpoint in
+			// magnetUrl. It is not a magnet and must be resolved server-side.
+			if downloadCandidate == "" {
+				downloadCandidate = rawMagnet
+			}
+			downloadURL, ok := s.safeDownloadURL(downloadCandidate)
 			if !ok {
 				continue
 			}

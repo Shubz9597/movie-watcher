@@ -34,6 +34,19 @@ type JobBody = {
   reasonCode?: string;
 };
 
+function preparationFailure(reasonCode?: string): string {
+  switch (reasonCode) {
+    case 'source_unavailable':
+      return 'Source unavailable. Choose another source.';
+    case 'insufficient_server_storage':
+      return 'Not enough server storage.';
+    case 'retention_expired':
+      return 'Download expired. Start it again.';
+    default:
+      return 'Could not prepare this source.';
+  }
+}
+
 type ManifestBody = {
   manifestVersion: number;
   video: NativeManifestAsset;
@@ -176,7 +189,7 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
         await new Promise((resolve) => window.setTimeout(resolve, 3_000));
         continue;
       }
-      if (job.state !== 'ready') throw new Error('Download preparation failed.');
+      if (job.state !== 'ready') throw new Error(preparationFailure(job.reasonCode));
 
       const manifestResponse = await fetch(
         `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}/manifest?clientId=${encodeURIComponent(pending.clientId)}`,

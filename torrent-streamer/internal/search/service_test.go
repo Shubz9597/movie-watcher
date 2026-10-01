@@ -109,6 +109,32 @@ func TestNormalizeDeduplicatesMirrorsAndKeepsBestSource(t *testing.T) {
 	}
 }
 
+func TestNormalizeTreatsHTTPMagnetURLAsGrabURL(t *testing.T) {
+	t.Parallel()
+
+	const infoHash = "89599BF4DC369A3A8ECA26411C5CCF922D78B486"
+	service := &Service{sources: make(map[string]sourceEntry), now: time.Now, sourceTTL: time.Minute}
+	results := service.normalize(Request{Kind: KindMovie, Title: "Interstellar"}, []prowlarrRelease{{
+		Title: "Interstellar.2014.1080p", Indexer: "live-shape", Protocol: "torrent",
+		InfoHash: infoHash, MagnetURL: "http://prowlarr:9696/3/download?apikey=secret&link=opaque",
+		Size: 1000, Seeders: 20,
+	}})
+
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if !strings.HasPrefix(results[0].MagnetURI, "magnet:?xt=urn:btih:"+infoHash) {
+		t.Fatalf("magnetUri = %q, want a synthesized literal magnet", results[0].MagnetURI)
+	}
+	if strings.Contains(results[0].MagnetURI, "prowlarr") {
+		t.Fatalf("magnetUri leaked the Prowlarr grab URL: %q", results[0].MagnetURI)
+	}
+	resolved, err := service.Resolve(context.Background(), ResolveRequest{SourceID: results[0].SourceID})
+	if err != nil || resolved.MagnetURI != results[0].MagnetURI {
+		t.Fatalf("Resolve() = %#v, %v; want synthesized magnet", resolved, err)
+	}
+}
+
 func TestResolveGrabsOnlySelectedSourceAndCachesMagnet(t *testing.T) {
 	t.Parallel()
 
