@@ -67,6 +67,28 @@ test("source hygiene: mobile/shared sources and M1.4 docs contain no mojibake", 
   assert.deepEqual(failures, [], `mojibake found:\n${failures.join("\n")}`);
 });
 
+test("iOS target compiles and registers the native downloads plugin", () => {
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const appRoot = join(repoRoot, "electron-app", "ios", "App");
+  const project = readFileSync(join(appRoot, "App.xcodeproj", "project.pbxproj"), "utf8");
+  const controller = readFileSync(join(appRoot, "App", "MainViewController.swift"), "utf8");
+  const storyboard = readFileSync(join(appRoot, "App", "Base.lproj", "Main.storyboard"), "utf8");
+
+  for (const source of ["TorWatchDownloadsPlugin.swift", "DownloadStore.swift", "DownloadCoordinator.swift"]) {
+    assert.match(project, new RegExp(`${source.replace(".", "\\.")} in Sources`), `${source} must belong to the App target`);
+  }
+  assert.match(
+    controller,
+    /registerPluginInstance\(TorWatchDownloadsPlugin\(\)\)/u,
+    "TorWatchDownloads must be registered with the Capacitor bridge",
+  );
+  assert.match(
+    storyboard,
+    /customClass="MainViewController"[^>]+customModule="App"/u,
+    "the launch storyboard must instantiate the controller that registers app-local plugins",
+  );
+});
+
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }

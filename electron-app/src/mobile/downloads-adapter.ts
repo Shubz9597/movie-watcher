@@ -12,14 +12,24 @@ export const DOWNLOADS_UI_ENABLED = true;
 
 let plugin: TorWatchDownloadsPluginInterface | null = null;
 
-// Same explicit detection as native-player.ts — never guessed from user agents.
-function isNativeCapacitor(): boolean {
-  const capacitor = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
-  return typeof capacitor?.isNativePlatform === 'function' && capacitor.isNativePlatform() === true;
+// Same explicit detection as native-player.ts — never guessed from user
+// agents. The implementation check avoids offering downloads in an older
+// native shell that does not contain the plugin yet.
+function isNativeDownloadsAvailable(): boolean {
+  const capacitor = (window as unknown as {
+    Capacitor?: {
+      isNativePlatform?: () => boolean;
+      isPluginAvailable?: (name: string) => boolean;
+    };
+  }).Capacitor;
+  return typeof capacitor?.isNativePlatform === 'function'
+    && capacitor.isNativePlatform() === true
+    && typeof capacitor.isPluginAvailable === 'function'
+    && capacitor.isPluginAvailable('TorWatchDownloads') === true;
 }
 
 function getPlugin(): TorWatchDownloadsPluginInterface | null {
-  if (!isNativeCapacitor()) return null;
+  if (!isNativeDownloadsAvailable()) return null;
   if (!plugin) {
     plugin = registerPlugin<TorWatchDownloadsPluginInterface>('TorWatchDownloads');
   }

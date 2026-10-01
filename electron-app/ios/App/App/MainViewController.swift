@@ -3,8 +3,8 @@ import Capacitor
 import VLCSupport
 
 /**
- * App bridge view controller (M1.4.4): registers the app-local
- * TorWatchNativePlugin with the Capacitor bridge.
+ * App bridge view controller (M1.4.4): registers the app-local native
+ * plugins with the Capacitor bridge.
  *
  * M1.4.7: the app UI stays PORTRAIT; when VLC video is attached
  * (TorWatchPlaybackState.videoAttached) landscape is permitted so playback
@@ -24,6 +24,7 @@ class MainViewController: CAPBridgeViewController {
         // and the visible Back controls share its navigation history.
         webView?.allowsBackForwardNavigationGestures = true
         bridge?.registerPluginInstance(TorWatchNativePlugin())
+        bridge?.registerPluginInstance(TorWatchDownloadsPlugin())
         super.capacitorDidLoad()
     }
 }
