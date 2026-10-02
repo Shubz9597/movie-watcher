@@ -73,6 +73,17 @@ type CatalogSeedGenres struct {
 	Catalog *catalog.Service
 }
 
+// SeedTitle returns the catalog display title for a seed. Progress signals
+// otherwise carry the playback source name (a torrent release name), which
+// must never appear in a recommendation reason.
+func (a CatalogSeedGenres) SeedTitle(ctx context.Context, canonicalID string) (string, error) {
+	result := a.Catalog.Detail(ctx, canonicalID)
+	if !result.Found {
+		return "", catalog.ErrNotFound
+	}
+	return result.Title.Title, nil
+}
+
 // SeedGenres returns the merged catalog genres for the seed title.
 func (a CatalogSeedGenres) SeedGenres(ctx context.Context, canonicalID string) ([]string, error) {
 	result := a.Catalog.Detail(ctx, canonicalID)
@@ -497,6 +508,13 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		}
 		if len(keys) == 0 {
 			continue // no usable genre metadata: contributes nothing
+		}
+		if titled, ok := s.seedGenres.(interface {
+			SeedTitle(ctx context.Context, canonicalID string) (string, error)
+		}); ok {
+			if title, err := titled.SeedTitle(ctx, signal.id); err == nil && strings.TrimSpace(title) != "" {
+				signal.title = title
+			}
 		}
 		resolved = append(resolved, signalInfoWithKeys{signalInfo: signal, keys: keys})
 	}
