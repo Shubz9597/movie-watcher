@@ -12,6 +12,7 @@ package recommendations
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -241,6 +242,30 @@ type Service struct {
 	mu    sync.Mutex
 	cache *cacheEntry
 	stale *cacheEntry // last computed result, served degraded when providers fail
+
+	// Last successful "more like this" list per seed: a transient provider
+	// failure must not silently drop that title from recommendations.
+	similarMu   sync.Mutex
+	lastSimilar map[string][]catalog.Title
+}
+
+// similarFor returns the seed's similar titles, falling back to the last
+// successful list when the provider call fails.
+func (s *Service) similarFor(ctx context.Context, seedID string) ([]catalog.Title, error) {
+	similar, err := s.seedSimilar.SeedSimilar(ctx, seedID, seedSimilarLimit)
+	s.similarMu.Lock()
+	defer s.similarMu.Unlock()
+	if err != nil {
+		if last, ok := s.lastSimilar[seedID]; ok {
+			return last, nil
+		}
+		return nil, err
+	}
+	if s.lastSimilar == nil {
+		s.lastSimilar = map[string][]catalog.Title{}
+	}
+	s.lastSimilar[seedID] = similar
+	return similar, nil
 }
 
 // New wires the service; nil Candidates or Library keeps the capability
@@ -546,8 +571,9 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			if i >= seedSimilarSeeds {
 				break
 			}
-			similar, err := s.seedSimilar.SeedSimilar(ctx, ordered[i].id, seedSimilarLimit)
+			similar, err := s.similarFor(ctx, ordered[i].id)
 			if err != nil {
+				log.Printf("[recommendations] similar titles for %s unavailable: %v", ordered[i].id, err)
 				continue
 			}
 			for _, candidate := range similar {

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // TMDb catalog provider (server-side API key, FR-001/FR-003: the key never
@@ -15,6 +17,41 @@ type TMDb struct {
 	base   string
 	apiKey string
 	http   *http.Client
+
+	// Genre id → name for movie+tv, fetched once a day: SeedSimilar used to
+	// re-fetch both lists per call, tripling its exposure to flaky links.
+	genreMu      sync.Mutex
+	genreNames   map[int]string
+	genreFetched time.Time
+}
+
+const tmdbGenreTTL = 24 * time.Hour
+
+func (p *TMDb) genreNameMap(ctx context.Context) (map[int]string, error) {
+	p.genreMu.Lock()
+	defer p.genreMu.Unlock()
+	if p.genreNames != nil && time.Since(p.genreFetched) < tmdbGenreTTL {
+		return p.genreNames, nil
+	}
+	var movieGenres, tvGenres tmdbGenreListResponse
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/movie/list", nil), &movieGenres); err != nil {
+		if p.genreNames != nil {
+			return p.genreNames, nil // stale names beat no recommendations
+		}
+		return nil, err
+	}
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/tv/list", nil), &tvGenres); err != nil {
+		if p.genreNames != nil {
+			return p.genreNames, nil
+		}
+		return nil, err
+	}
+	names := map[int]string{}
+	for _, genre := range append(movieGenres.Genres, tvGenres.Genres...) {
+		names[genre.ID] = genre.Name
+	}
+	p.genreNames, p.genreFetched = names, time.Now()
+	return names, nil
 }
 
 type TMDbOptions struct {
@@ -535,16 +572,9 @@ func (p *TMDb) PopularCandidates(ctx context.Context, limit int) ([]Title, error
 	if p.apiKey == "" {
 		return nil, errProviderUnavailable
 	}
-	var movieGenres, tvGenres tmdbGenreListResponse
-	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/movie/list", nil), &movieGenres); err != nil {
+	genreName, err := p.genreNameMap(ctx)
+	if err != nil {
 		return nil, err
-	}
-	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/tv/list", nil), &tvGenres); err != nil {
-		return nil, err
-	}
-	genreName := map[int]string{}
-	for _, genre := range append(movieGenres.Genres, tvGenres.Genres...) {
-		genreName[genre.ID] = genre.Name
 	}
 
 	titles := make([]Title, 0, limit)
@@ -603,16 +633,9 @@ func (p *TMDb) SeedSimilar(ctx context.Context, canonicalID string, limit int) (
 	if mediaType == "tv" {
 		path = "/3/tv/" + externalID + "/recommendations"
 	}
-	var movieGenres, tvGenres tmdbGenreListResponse
-	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/movie/list", nil), &movieGenres); err != nil {
+	genreName, err := p.genreNameMap(ctx)
+	if err != nil {
 		return nil, err
-	}
-	if err := fetchJSON(ctx, p.http, p.endpoint("/3/genre/tv/list", nil), &tvGenres); err != nil {
-		return nil, err
-	}
-	genreName := map[int]string{}
-	for _, genre := range append(movieGenres.Genres, tvGenres.Genres...) {
-		genreName[genre.ID] = genre.Name
 	}
 	var payload tmdbSearchResponse
 	if err := fetchJSON(ctx, p.http, p.endpoint(path, map[string]string{"page": "1"}), &payload); err != nil {
