@@ -164,6 +164,7 @@ func main() {
 	if err != nil {
 		exitOnError("Prowlarr configuration failed", err)
 	}
+	torrentSearch.SetStore(search.SQLReleaseStore{DB: db})
 
 	// prepare torrentx (root dirs, initial state)
 	torrentx.Init()

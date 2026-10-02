@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func languageVerdict(request Request, release prowlarrRelease) (int, bool) {
+	decision := decideRelease(request, buildKnownTitles(request), release)
+	return decision.languageRank, !decision.reject
+}
+
+// Films and TV keep the original audio: untagged releases are assumed
+// original (2), an explicit original tag ranks highest (3), dual audio that
+// still carries the original is allowed below them (1), and dubs or other
+// languages are dropped.
 func TestReleaseLanguageRankMovieAndTV(t *testing.T) {
 	t.Parallel()
 
@@ -16,20 +25,21 @@ func TestReleaseLanguageRankMovieAndTV(t *testing.T) {
 		wantRank         int
 		wantAllowed      bool
 	}{
-		{name: "untagged english original", originalLanguage: "en", title: "Example 1080p", wantRank: 1, wantAllowed: true},
+		{name: "untagged english original", originalLanguage: "en", title: "Example 1080p", wantRank: 2, wantAllowed: true},
 		{name: "english original rejects Hindi", originalLanguage: "en", title: "Example [Hindi] 1080p", wantAllowed: false},
-		{name: "english subtitles are not audio", originalLanguage: "en", title: "Example ESubs 1080p", wantRank: 1, wantAllowed: true},
-		{name: "multiple subtitles are not multiple audio", originalLanguage: "en", title: "Example Multi Subs 1080p", wantRank: 1, wantAllowed: true},
-		{name: "hindi original accepts untagged native audio", originalLanguage: "hi", title: "Example 1080p", wantRank: 1, wantAllowed: true},
-		{name: "hindi original prefers explicit Hindi", originalLanguage: "hi", title: "Example [Hindi] 1080p", wantRank: 2, wantAllowed: true},
+		{name: "english original rejects Hindi dub", originalLanguage: "en", title: "Example 2024 Hindi Dubbed 1080p", wantAllowed: false},
+		{name: "english subtitles are not audio", originalLanguage: "en", title: "Example ESubs 1080p", wantRank: 2, wantAllowed: true},
+		{name: "multiple subtitles are not multiple audio", originalLanguage: "en", title: "Example Multi Subs 1080p", wantRank: 2, wantAllowed: true},
+		{name: "italian dual audio keeps english", originalLanguage: "en", title: "Example 2014 1080p ita-eng AC3 sub-ita-eng", wantRank: 1, wantAllowed: true},
+		{name: "hindi original accepts untagged native audio", originalLanguage: "hi", title: "Example 1080p", wantRank: 2, wantAllowed: true},
+		{name: "hindi original prefers explicit Hindi", originalLanguage: "hi", title: "Example [Hindi] 1080p", wantRank: 3, wantAllowed: true},
+		{name: "hindi with english subtitles", originalLanguage: "hi", title: "Example 2009 Pre Hindi Eng SuBs 1080p", wantRank: 3, wantAllowed: true},
 		{name: "hindi original rejects English", originalLanguage: "hi", title: "Example English Audio 1080p", wantAllowed: false},
-		{name: "hindi original rejects dubbed release", originalLanguage: "hi", title: "Example Hindi Dubbed 1080p", wantAllowed: false},
-		{name: "hindi original rejects dual audio", originalLanguage: "hi", title: "Example Hindi English Dual Audio", wantAllowed: false},
-		{name: "korean original accepts untagged native audio", originalLanguage: "ko", title: "Example 1080p", wantRank: 1, wantAllowed: true},
-		{name: "korean original prefers explicit Korean", originalLanguage: "ko", title: "Example Korean 1080p", wantRank: 2, wantAllowed: true},
+		{name: "hindi original rejects dubbed release", originalLanguage: "hi", title: "Example Tamil Dubbed 1080p", wantAllowed: false},
+		{name: "hindi original allows dual audio", originalLanguage: "hi", title: "Example Hindi English Dual Audio 1080p", wantRank: 1, wantAllowed: true},
+		{name: "korean original accepts untagged native audio", originalLanguage: "ko", title: "Example 1080p", wantRank: 2, wantAllowed: true},
+		{name: "korean original prefers explicit Korean", originalLanguage: "ko", title: "Example Korean 1080p", wantRank: 3, wantAllowed: true},
 		{name: "korean original rejects English dub", originalLanguage: "ko", title: "Example English Dubbed 1080p", wantAllowed: false},
-		{name: "spanish original accepts Spanish", originalLanguage: "es", title: "Example Spanish 1080p", wantRank: 2, wantAllowed: true},
-		{name: "spanish original rejects English", originalLanguage: "es", title: "Example English Audio 1080p", wantAllowed: false},
 		{name: "metadata language is honored", originalLanguage: "en", title: "Example 1080p", metadata: []prowlarrLanguage{{Name: "Hindi"}}, wantAllowed: false},
 	}
 
@@ -37,15 +47,17 @@ func TestReleaseLanguageRankMovieAndTV(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			request := Request{Kind: KindMovie, Title: "Example", OriginalLanguage: test.originalLanguage}
-			release := prowlarrRelease{Title: test.title, Languages: test.metadata}
-			gotRank, gotAllowed := releaseLanguageRank(request, release)
+			gotRank, gotAllowed := languageVerdict(request, prowlarrRelease{Title: test.title, Languages: test.metadata})
 			if gotRank != test.wantRank || gotAllowed != test.wantAllowed {
-				t.Errorf("releaseLanguageRank(%q, %q) = (%d, %t), want (%d, %t)", test.originalLanguage, test.title, gotRank, gotAllowed, test.wantRank, test.wantAllowed)
+				t.Errorf("language(%q, %q) = (%d, %t), want (%d, %t)", test.originalLanguage, test.title, gotRank, gotAllowed, test.wantRank, test.wantAllowed)
 			}
 		})
 	}
 }
 
+// Anime takes Japanese with subtitles first (3) and also accepts dual audio
+// and English dubs (1); raws, Chinese-subtitle and other-language releases
+// are dropped.
 func TestReleaseLanguageRankAnime(t *testing.T) {
 	t.Parallel()
 
@@ -55,26 +67,27 @@ func TestReleaseLanguageRankAnime(t *testing.T) {
 		wantRank    int
 		wantAllowed bool
 	}{
-		{name: "subsplease original audio", title: "[SubsPlease] Example - 02", wantRank: 2, wantAllowed: true},
-		{name: "erai raws is a subtitling group", title: "[Erai-raws] Example - 02", wantRank: 2, wantAllowed: true},
-		{name: "explicitly subbed", title: "Example - 02 Eng Subs", wantRank: 2, wantAllowed: true},
-		{name: "unmarked anime is allowed", title: "[Group] Example - 02", wantRank: 1, wantAllowed: true},
-		{name: "english dub is rejected", title: "Example - 02 English Dubbed", wantAllowed: false},
-		{name: "wrong explicit audio is rejected", title: "Example - 02 English Audio Eng Subs", wantAllowed: false},
-		{name: "japanese audio is accepted", title: "Example - 02 Japanese Audio Eng Subs", wantRank: 2, wantAllowed: true},
-		{name: "dual audio is rejected", title: "Example - 02 Dual Audio", wantAllowed: false},
-		{name: "bare multi tag is rejected", title: "Example - 02 [MULTi]", wantAllowed: false},
-		{name: "multiple subtitles are allowed", title: "Example - 02 Multi Subs", wantRank: 2, wantAllowed: true},
+		{name: "subsplease original audio", title: "[SubsPlease] Example - 02", wantRank: 3, wantAllowed: true},
+		{name: "erai raws is a subtitling group", title: "[Erai-raws] Example - 02", wantRank: 3, wantAllowed: true},
+		{name: "explicitly subbed", title: "Example - 02 Eng Subs", wantRank: 3, wantAllowed: true},
+		{name: "unmarked anime is allowed", title: "[Group] Example - 02", wantRank: 3, wantAllowed: true},
+		{name: "english dub is allowed", title: "Example - 02 English Dubbed", wantRank: 1, wantAllowed: true},
+		{name: "japanese audio is accepted", title: "Example - 02 Japanese Audio Eng Subs", wantRank: 3, wantAllowed: true},
+		{name: "dual audio is allowed", title: "Example - 02 Dual Audio", wantRank: 1, wantAllowed: true},
+		{name: "bare multi tag is allowed", title: "Example - 02 [MULTi]", wantRank: 1, wantAllowed: true},
+		{name: "multiple subtitles are allowed", title: "Example - 02 Multi Subs", wantRank: 3, wantAllowed: true},
 		{name: "raw release is rejected", title: "[Ohys-Raws] Example - 02", wantAllowed: false},
+		{name: "chinese subtitles are rejected", title: "[Group][Example][02][1080P][CHS JPN]", wantAllowed: false},
+		{name: "spanish dub is rejected", title: "Example - 02 Latino", wantAllowed: false},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			request := Request{Kind: KindAnime, Title: "Example", OriginalLanguage: "ja"}
-			gotRank, gotAllowed := releaseLanguageRank(request, prowlarrRelease{Title: test.title})
+			gotRank, gotAllowed := languageVerdict(request, prowlarrRelease{Title: test.title})
 			if gotRank != test.wantRank || gotAllowed != test.wantAllowed {
-				t.Errorf("releaseLanguageRank(anime, %q) = (%d, %t), want (%d, %t)", test.title, gotRank, gotAllowed, test.wantRank, test.wantAllowed)
+				t.Errorf("language(anime, %q) = (%d, %t), want (%d, %t)", test.title, gotRank, gotAllowed, test.wantRank, test.wantAllowed)
 			}
 		})
 	}
@@ -153,12 +166,12 @@ func TestNormalizeFiltersAndRanksAudioProfile(t *testing.T) {
 
 	// Dead swarms are dropped when enough known-alive alternatives exist.
 	dead := []prowlarrRelease{
-		{Title: "Example alive 1 1080p", Indexer: "test", InfoHash: "6666666666666666666666666666666666666666", Seeders: 30},
-		{Title: "Example alive 2 1080p", Indexer: "test", InfoHash: "7777777777777777777777777777777777777777", Seeders: 25},
-		{Title: "Example alive 3 1080p", Indexer: "test", InfoHash: "8888888888888888888888888888888888888888", Seeders: 20},
-		{Title: "Example alive 4 1080p", Indexer: "test", InfoHash: "9999999999999999999999999999999999999999", Seeders: 15},
-		{Title: "Example alive 5 1080p", Indexer: "test", InfoHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Seeders: 10},
-		{Title: "Example dead 1080p", Indexer: "test", InfoHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Seeders: 0},
+		{Title: "Example 1080p WEB-DL x264-GRP1", Indexer: "test", InfoHash: "6666666666666666666666666666666666666666", Seeders: 30},
+		{Title: "Example 1080p WEB-DL x264-GRP2", Indexer: "test", InfoHash: "7777777777777777777777777777777777777777", Seeders: 25},
+		{Title: "Example 1080p WEB-DL x264-GRP3", Indexer: "test", InfoHash: "8888888888888888888888888888888888888888", Seeders: 20},
+		{Title: "Example 1080p WEB-DL x264-GRP4", Indexer: "test", InfoHash: "9999999999999999999999999999999999999999", Seeders: 15},
+		{Title: "Example 1080p WEB-DL x264-GRP5", Indexer: "test", InfoHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Seeders: 10},
+		{Title: "Example 1080p WEB-DL x264-DEAD", Indexer: "test", InfoHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Seeders: 0},
 	}
 	swept := service.normalize(request, dead)
 	if len(swept) != 5 {

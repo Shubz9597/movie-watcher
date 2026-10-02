@@ -45,10 +45,20 @@ type Result struct {
 	PublishDate  string      `json:"publishDate,omitempty"`
 	EpisodeMatch *bool       `json:"episodeMatch,omitempty"`
 	SeasonPack   *SeasonPack `json:"seasonPack,omitempty"`
+	// Badges parsed from the release name: "1080p", "BluRay", "Hindi" /
+	// "Dual audio" / "English dub", and "episode" | "range" | "season" |
+	// "series" for what the torrent covers.
+	Quality string `json:"quality,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Audio   string `json:"audio,omitempty"`
+	Pack    string `json:"pack,omitempty"`
+
+	// Ranking inputs (unexported). verified: explicit release evidence
+	// (year/season/episode/pack coverage) confirmed the request.
 	languageRank int
-	// verified: explicit release evidence (year/season/episode/pack coverage)
-	// confirmed the request. Unexported: an internal ranking input only.
-	verified bool
+	verified     bool
+	packTier     int
+	qualityTier  int
 }
 
 // Response contains ranked search results.

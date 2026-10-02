@@ -67,6 +67,17 @@ type TorrentApiItem = {
     reason?: string | null;
     keywords?: string[];
   } | null;
+  quality?: string;
+  source?: string;
+  audio?: string;
+  pack?: TorrentRow['pack'];
+};
+
+const PACK_LABELS: Record<NonNullable<TorrentRow['pack']>, string> = {
+  episode: 'Exact episode',
+  range: 'Episode batch',
+  season: 'Season pack',
+  series: 'Complete series',
 };
 
 const formatAirDate = (iso?: string | null) => {
@@ -596,6 +607,10 @@ export default function EpisodePanel({
             publishDate: it.publishDate,
             episodeMatch: it.episodeMatch,
             seasonPack: it.seasonPack,
+            quality: it.quality,
+            source: it.source,
+            audio: it.audio,
+            pack: it.pack,
           }))
         : [];
       if (torrentRequestId.current === requestId) setTorrentRows(rows);
@@ -1167,8 +1182,15 @@ export default function EpisodePanel({
                         </div>
                         <div className="type-caption text-numeric mt-1 text-white/70">
                           <span>{torrent.indexer || 'Unknown indexer'}</span>
-                          {torrent.episodeMatch && !torrent.seasonPack ? <span> · Exact episode</span> : null}
-                          {torrent.seasonPack ? <span> · Batch</span> : null}
+                          {torrent.pack ? (
+                            <span> · {PACK_LABELS[torrent.pack]}</span>
+                          ) : torrent.episodeMatch && !torrent.seasonPack ? (
+                            <span> · Exact episode</span>
+                          ) : torrent.seasonPack ? (
+                            <span> · Batch</span>
+                          ) : null}
+                          {torrent.quality ? <span> · {torrent.quality}</span> : null}
+                          {torrent.audio ? <span> · {torrent.audio}</span> : null}
                           {torrent.seeders ? <span> · {torrent.seeders} seeders</span> : null}
                           {torrent.size ? <span> · {formatBytes(torrent.size)}</span> : null}
                         </div>

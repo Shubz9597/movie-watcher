@@ -149,7 +149,7 @@ func TestResolveGrabsOnlySelectedSourceAndCachesMagnet(t *testing.T) {
 			mockIndexerList(w, []map[string]any{indexerEntry(1, "test", true, "torrent", 1)})
 		case r.URL.Path == "/api/v1/search":
 			_ = json.NewEncoder(w).Encode([]prowlarrRelease{{
-				Title: "Selected release", Indexer: "test", Protocol: "torrent",
+				Title: "Selected 2024 1080p WEB-DL", Indexer: "test", Protocol: "torrent",
 				DownloadURL: server.URL + "/api/v1/indexer/3/download/selected",
 			}})
 		case r.URL.Path == "/api/v1/indexer/3/download/selected":

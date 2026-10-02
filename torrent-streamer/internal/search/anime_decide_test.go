@@ -2,7 +2,11 @@ package search
 
 import "testing"
 
-func TestAnimeReleaseRelevant(t *testing.T) {
+func releaseAccepted(request Request, title string) bool {
+	return !decideRelease(request, buildKnownTitles(request), prowlarrRelease{Title: title}).reject
+}
+
+func TestAnimeReleaseAccepted(t *testing.T) {
 	t.Parallel()
 
 	season := 1
@@ -31,15 +35,15 @@ func TestAnimeReleaseRelevant(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got := animeReleaseRelevant(request, test.title)
+			got := releaseAccepted(request, test.title)
 			if got != test.want {
-				t.Errorf("animeReleaseRelevant(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
+				t.Errorf("releaseAccepted(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
 			}
 		})
 	}
 }
 
-func TestAnimeReleaseRelevantDefaultsToFirstSeason(t *testing.T) {
+func TestAnimeReleaseDefaultsToFirstSeason(t *testing.T) {
 	t.Parallel()
 
 	// Title-level anime search sends NO season: sequels that mark themselves
@@ -63,15 +67,15 @@ func TestAnimeReleaseRelevantDefaultsToFirstSeason(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got := animeReleaseRelevant(request, test.title)
+			got := releaseAccepted(request, test.title)
 			if got != test.want {
-				t.Errorf("animeReleaseRelevant(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
+				t.Errorf("releaseAccepted(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
 			}
 		})
 	}
 }
 
-func TestAnimeReleaseRelevantPrefersRequestedSeason(t *testing.T) {
+func TestAnimeReleasePrefersRequestedSeason(t *testing.T) {
 	t.Parallel()
 
 	metadataSeason := 1
@@ -95,9 +99,9 @@ func TestAnimeReleaseRelevantPrefersRequestedSeason(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got := animeReleaseRelevant(request, test.title)
+			got := releaseAccepted(request, test.title)
 			if got != test.want {
-				t.Errorf("animeReleaseRelevant(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
+				t.Errorf("releaseAccepted(%q, %q) = %t, want %t", request.Title, test.title, got, test.want)
 			}
 		})
 	}

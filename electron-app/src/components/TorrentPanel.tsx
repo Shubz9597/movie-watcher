@@ -43,6 +43,9 @@ type TorrentApiItem = {
   infoHash?: string;
   indexer?: string;
   publishDate?: string;
+  quality?: string;
+  source?: string;
+  audio?: string;
 };
 
 const formatBytes = (value?: number) => {
@@ -215,6 +218,9 @@ export default function TorrentPanel({
         downloadUrl: it.downloadUrl,
         infoHash: it.infoHash,
         indexer: it.indexer || '-',
+        quality: it.quality,
+        source: it.source,
+        audio: it.audio,
         publishDate: it.publishDate,
       }));
       console.log('[TorrentPanel] Found', rows.length, 'torrents');
@@ -402,7 +408,7 @@ export default function TorrentPanel({
         <>
           <ul className="list-none" aria-label="Available torrent sources">
             {displayedTorrents.slice(0, 10).map((t, idx) => {
-              const quality = qualityFromTitle(t.title);
+              const quality = t.quality || qualityFromTitle(t.title);
               const isPreviouslyUsed = t.previouslyUsed === true;
               const torrentActionKey = actionKey(t);
               const playActionId = `play:${torrentActionKey}`;
@@ -442,6 +448,12 @@ export default function TorrentPanel({
                               ) : (
                                 <span className="type-caption shrink-0 rounded border border-white/15 px-1.5 py-0.5 text-white/60">Unknown quality</span>
                               )}
+                              {t.source ? (
+                                <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">{t.source}</span>
+                              ) : null}
+                              {t.audio ? (
+                                <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">{t.audio}</span>
+                              ) : null}
                               {isSelected ? (
                                 <span className="type-caption shrink-0 rounded bg-white px-1.5 py-0.5 font-medium text-black">Selected</span>
                               ) : isPreviouslyUsed ? (

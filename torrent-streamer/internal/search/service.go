@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -24,7 +23,6 @@ import (
 	"unicode"
 
 	"github.com/anacrolix/torrent/metainfo"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -86,13 +84,6 @@ var (
 	hexHashPattern    = regexp.MustCompile(`(?i)^[a-f0-9]{40}$`)
 	base32HashPattern = regexp.MustCompile(`(?i)^[a-z2-7]{32}$`)
 	magnetHashPattern = regexp.MustCompile(`(?i)(?:^|[?&])xt=urn:btih:([a-z0-9]{32,40})(?:&|$)`)
-	seasonEpisode     = regexp.MustCompile(`(?i)\bS(\d{1,2})[ ._-]*E(\d{1,3})\b`)
-	episodeToken      = regexp.MustCompile(`(?i)\b(?:EP?|Episode|#)[ ._-]*(\d{1,4})\b`)
-	packToken         = regexp.MustCompile(`(?i)\b(complete|batch|season[ ._-]*pack|full[ ._-]*season|collection)\b`)
-	// episodeRange matches multi-episode spans in both "01-12" and
-	// "E01-E12" forms: the E/EP/Episode prefix is optional on EACH number
-	// ("E01-E12" previously never matched — the second E broke the pattern).
-	episodeRange = regexp.MustCompile(`(?i)\b(?:EP?|Episodes?)?[ ._-]*(\d{1,3})[ ._-]*(?:-|to)[ ._-]*(?:EP?|Episodes?)?[ ._-]*(\d{1,3})\b`)
 )
 
 type cacheEntry struct {
@@ -170,6 +161,12 @@ type Service struct {
 	sources      map[string]sourceEntry
 	searchFlight singleflight.Group
 	resolveGroup singleflight.Group
+
+	store              ReleaseStore
+	softDeadline       time.Duration
+	refreshing         map[string]bool
+	indexerList        []indexerInfo
+	indexerListExpires time.Time
 }
 
 // NewService creates a Prowlarr search service.
@@ -191,57 +188,8 @@ func NewService(baseURL, apiKey string, httpClient *http.Client) (*Service, erro
 		baseURL: parsed, apiKey: apiKey, httpClient: httpClient, now: time.Now,
 		cacheTTL: defaultCacheTTL, sourceTTL: defaultSourceTTL,
 		cache: make(map[string]cacheEntry), sources: make(map[string]sourceEntry),
+		refreshing: make(map[string]bool), softDeadline: softDeadline,
 	}, nil
-}
-
-// Search concurrently runs bounded title variants and returns renderer-safe results.
-func (s *Service) Search(ctx context.Context, request Request) (Response, error) {
-	request.Title = strings.TrimSpace(request.Title)
-	if request.Title == "" {
-		return Response{}, errors.New("title is required")
-	}
-	if request.Kind != KindMovie && request.Kind != KindTV && request.Kind != KindAnime {
-		return Response{}, errors.New("kind must be movie, tv, or anime")
-	}
-	keyBytes, err := json.Marshal(request)
-	if err != nil {
-		return Response{}, fmt.Errorf("encode search key: %w", err)
-	}
-	key := string(keyBytes)
-	if cached, ok := s.cached(key); ok {
-		return Response{Query: request, Total: len(cached), Results: cached}, nil
-	}
-
-	resultChannel := s.searchFlight.DoChan(key, func() (any, error) {
-		if cached, ok := s.cached(key); ok {
-			return cached, nil
-		}
-		releases, queryErr := s.searchAll(ctx, request)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		results := s.normalize(request, releases)
-		s.mu.Lock()
-		s.pruneExpiredLocked()
-		s.cache[key] = cacheEntry{expires: s.now().Add(s.cacheTTL), results: slices.Clone(results)}
-		s.mu.Unlock()
-		return results, nil
-	})
-	var flightResult singleflight.Result
-	select {
-	case <-ctx.Done():
-		return Response{}, ctx.Err()
-	case flightResult = <-resultChannel:
-	}
-	if flightResult.Err != nil {
-		return Response{}, flightResult.Err
-	}
-	results, ok := flightResult.Val.([]Result)
-	if !ok {
-		return Response{}, errors.New("unexpected search result type")
-	}
-	results = slices.Clone(results)
-	return Response{Query: request, Total: len(results), Results: results}, nil
 }
 
 // Resolve performs the one Prowlarr grab authorized by a user's selection.
@@ -305,166 +253,6 @@ func (s *Service) source(id string) (sourceEntry, bool) {
 	entry, ok := s.sources[id]
 	s.mu.RUnlock()
 	return entry, ok && s.now().Before(entry.expires)
-}
-
-func (s *Service) searchAll(ctx context.Context, request Request) ([]prowlarrRelease, error) {
-	// The aggregate Prowlarr endpoint waits for its slowest indexer. Give
-	// each indexer its own request so a timeout cannot discard other results.
-	searchCtx, cancel := context.WithTimeout(ctx, searchBudget)
-	defer cancel()
-	indexers, err := s.enabledIndexers(searchCtx)
-	if err != nil {
-		return nil, err
-	}
-	variants := buildQueries(request)
-	queries := make([]prowlarrQuery, 0, len(indexers)*len(variants))
-	// Try the primary title on every indexer before spending time on aliases.
-	for _, variant := range variants {
-		for _, id := range indexers {
-			query := variant
-			query.indexerID = id
-			queries = append(queries, query)
-		}
-	}
-	var (
-		mu       sync.Mutex
-		releases []prowlarrRelease
-		errs     []error
-	)
-	group, groupCtx := errgroup.WithContext(searchCtx)
-	group.SetLimit(maxSearches)
-	for _, query := range queries {
-		if groupCtx.Err() != nil {
-			break
-		}
-		query := query
-		group.Go(func() error {
-			indexerCtx, cancel := context.WithTimeout(groupCtx, indexerBudget)
-			defer cancel()
-			found, err := s.query(indexerCtx, query)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				errs = append(errs, err)
-				return nil
-			}
-			releases = append(releases, found...)
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return nil, fmt.Errorf("wait for prowlarr searches: %w", err)
-	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if searchCtx.Err() != nil {
-		errs = append(errs, searchCtx.Err())
-	}
-	if len(releases) == 0 && len(errs) > 0 {
-		// Resilience fallback (anime indexer flakiness): per-indexer scoped
-		// queries fail hard when ONE tracker is unavailable ("all selected
-		// indexers being unavailable", Prowlarr status 400). Retry the primary
-		// query UNSCOPED — Prowlarr tolerates individual indexer failures in
-		// unscoped mode and returns whatever healthy indexers provide.
-		//
-		// A fallback that SUCCEEDS but finds nothing is a truthful 0-result
-		// response (the trackers are simply not serving this title right now)
-		// — never upgraded into a hard error, so the client can render its
-		// retryable empty state.
-		variants := buildQueries(request)
-		if len(variants) > 0 {
-			retry := variants[0]
-			retry.indexerID = 0
-			found, fallbackErr := s.query(searchCtx, retry)
-			if fallbackErr == nil {
-				return found, nil
-			}
-			errs = append(errs, fallbackErr)
-		}
-	}
-	if len(releases) == 0 && len(errs) > 0 {
-		return nil, fmt.Errorf("all prowlarr searches failed: %w", errors.Join(errs...))
-	}
-	return releases, nil
-}
-
-func (s *Service) enabledIndexers(ctx context.Context) ([]int, error) {
-	endpoint := s.baseURL.ResolveReference(&url.URL{Path: "/api/v1/indexer"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create indexer list request: %w", err)
-	}
-	req.Header.Set("X-Api-Key", s.apiKey)
-	req.Header.Set("Accept", "application/json")
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("list prowlarr indexers: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list prowlarr indexers: status %d", resp.StatusCode)
-	}
-	var indexers []struct {
-		ID       int    `json:"id"`
-		Enable   bool   `json:"enable"`
-		Protocol string `json:"protocol"`
-		Priority int    `json:"priority"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&indexers); err != nil {
-		return nil, fmt.Errorf("decode prowlarr indexers: %w", err)
-	}
-	sort.SliceStable(indexers, func(i, j int) bool { return indexers[i].Priority < indexers[j].Priority })
-	ids := make([]int, 0, len(indexers))
-	for _, indexer := range indexers {
-		if indexer.Enable && indexer.ID > 0 && indexer.Protocol == "torrent" {
-			ids = append(ids, indexer.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, errors.New("no enabled torrent indexers in prowlarr")
-	}
-	return ids, nil
-}
-
-func buildQueries(request Request) []prowlarrQuery {
-	titles := append([]string{request.Title}, request.Aliases...)
-	seen := make(map[string]struct{}, len(titles))
-	queries := make([]prowlarrQuery, 0, min(len(titles), maxSearches))
-	for _, title := range titles {
-		title = strings.TrimSpace(title)
-		key := strings.ToLower(title)
-		if title == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		query := title
-		if request.Kind == KindMovie && request.Year > 0 {
-			query += " " + strconv.Itoa(request.Year)
-		}
-		if request.Kind == KindAnime {
-			episode := request.Episode
-			if request.Absolute != nil {
-				episode = request.Absolute
-			}
-			if episode != nil {
-				query += fmt.Sprintf(" %02d", *episode)
-			}
-		}
-		queries = append(queries, prowlarrQuery{query: query, kind: request.Kind, request: request})
-		if len(queries) == maxSearches {
-			break
-		}
-	}
-	if hint := queryLanguageHint(request); hint != "" && len(queries) < maxSearches && len(queries) > 0 {
-		hinted := queries[0]
-		hinted.query += " " + hint
-		queries = append(queries, hinted)
-	}
-	return queries
 }
 
 func (s *Service) query(ctx context.Context, query prowlarrQuery) ([]prowlarrRelease, error) {
@@ -572,18 +360,15 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 	results := make([]Result, 0, len(releases))
 	resultByKey := make(map[string]int, len(releases)*2)
 	episodeRequested := request.Episode != nil || request.Absolute != nil
+	known := buildKnownTitles(request)
 	for _, release := range releases {
 		if release.Protocol != "" && !strings.EqualFold(release.Protocol, "torrent") {
 			continue
 		}
-		// Relevance audit: one classification gate for title, year, season,
-		// episode, and pack coverage. Rejected releases never reach ranking.
-		class := classifyRelease(request, release)
-		if class == classReject {
-			continue
-		}
-		languageRank, allowed := releaseLanguageRank(request, release)
-		if !allowed {
+		// One Sonarr-style decision per release: exact title, season/episode
+		// coverage, quality and audio. Rejected releases never reach ranking.
+		decision := decideRelease(request, known, release)
+		if decision.reject {
 			continue
 		}
 		hash := normalizeHash(release.InfoHash)
@@ -622,11 +407,15 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		if indexer == "" {
 			indexer = release.IndexerName
 		}
-		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate, languageRank: languageRank, verified: class == classVerified}
-		if request.Episode != nil {
-			matched := matchesEpisode(release.Title, request.Season, request.Episode, request.Absolute)
+		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate,
+			languageRank: decision.languageRank, verified: decision.class == classVerified, packTier: int(decision.pack), qualityTier: decision.qualityTier}
+		applyBadges(&result, request, decision)
+		if episodeRequested {
+			matched := decision.episodeMatch
 			result.EpisodeMatch = &matched
-			result.SeasonPack = detectSeasonPack(release.Title, request.Season, request.Episode)
+			if decision.pack != packNone {
+				result.SeasonPack = &SeasonPack{Season: request.Season, Reason: decision.packReason, Keywords: []string{decision.packReason}}
+			}
 		}
 		keys := resultIdentityKeys(result)
 		duplicateIndex := -1
@@ -667,13 +456,8 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		}
 		results = matched
 	}
-	// Swarm health first (device pass): a badly-seeded release must never
-	// outrank a healthy one merely because its title carries an explicit
-	// language tag. torrentHealthScore makes health the dominant term and
-	// language a bounded bonus; dead/unknown swarms (seeders<=0) are dropped
-	// entirely when enough known-alive alternatives exist. VERIFICATION is
-	// the top sort key: ambiguous releases (no verifiable evidence) can never
-	// outrank a verified match, whatever their seeder count.
+	// Dead swarms (seeders <= 0) are dropped when enough live alternatives
+	// exist; otherwise they stay, ranked last.
 	alive := 0
 	for _, result := range results {
 		if result.Seeders > 0 {
@@ -689,43 +473,58 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		}
 		results = kept
 	}
+	// Ranking: live swarms first, then verified evidence, then what the
+	// torrent covers (exact episode, then packs), quality, original audio,
+	// and finally swarm size; indexer trust only breaks near ties.
 	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].verified != results[j].verified {
-			return results[i].verified
+		a, b := results[i], results[j]
+		if (a.Seeders > 0) != (b.Seeders > 0) {
+			return a.Seeders > 0
 		}
-		si, sj := torrentHealthScore(results[i]), torrentHealthScore(results[j])
-		if si != sj {
-			return si > sj
+		// A one- or two-seeder torrent barely streams; healthy swarms of any
+		// coverage come first.
+		if healthy(a) != healthy(b) {
+			return healthy(a)
 		}
-		return results[i].Size < results[j].Size
+		if a.verified != b.verified {
+			return a.verified
+		}
+		if a.packTier != b.packTier {
+			return a.packTier < b.packTier
+		}
+		if a.qualityTier != b.qualityTier {
+			return a.qualityTier < b.qualityTier
+		}
+		if (a.languageRank >= 2) != (b.languageRank >= 2) {
+			return a.languageRank >= 2
+		}
+		return betterSwarm(a, b)
 	})
 	return results
 }
 
-// torrentHealthScore ranks one release. Health: log-scaled seeders (10 per
-// doubling) plus up to 5 points for a healthy seeder/leecher ratio. Language:
-// a bounded bonus (+25 for an explicitly matched original language, +12 for
-// an untagged release that plausibly retains it, −100 for disallowed
-// dubs/multi-language). Source reputation (indexerTrust) adds up to +12 for
-// renowned sources — breaking near-ties in favor of YTS/Nyaa-class trackers
-// without ever rescuing a near-dead swarm.
+// torrentHealthScore is swarm size on a log scale (10 points per doubling)
+// plus the bounded indexer-trust bonus; it picks the better copy of a
+// duplicated release.
 func torrentHealthScore(result Result) float64 {
-	score := 0.0
-	if result.Seeders > 0 {
-		score += math.Log2(float64(result.Seeders+1)) * 10.0
-		if total := result.Seeders + result.Leechers; total > 0 {
-			score += (float64(result.Seeders) / float64(total)) * 5.0
-		}
+	return seederScore(result.Seeders)*10 + indexerTrustBonus(result.Indexer)
+}
+
+func healthy(result Result) bool { return result.Seeders >= 3 }
+
+// betterSwarm orders by seeders. Indexer trust (YTS, Nyaa...) only decides
+// when the swarms are within about 15% of each other.
+func betterSwarm(a, b Result) bool {
+	if gap := seederScore(a.Seeders) - seederScore(b.Seeders); gap > 0.2 || gap < -0.2 {
+		return gap > 0
 	}
-	switch {
-	case result.languageRank >= 2:
-		score += 25
-	case result.languageRank == 1:
-		score += 12
-	default:
-		score -= 100
+	if ta, tb := indexerTrustBonus(a.Indexer), indexerTrustBonus(b.Indexer); ta != tb {
+		return ta > tb
 	}
-	return score + indexerTrustBonus(result.Indexer)
+	if a.Seeders != b.Seeders {
+		return a.Seeders > b.Seeders
+	}
+	return a.Size < b.Size
 }
 
 func resultIdentityKeys(result Result) []string {
@@ -905,51 +704,4 @@ func hashFromMagnet(magnet string) string {
 
 func magnetFromHash(hash string) string {
 	return "magnet:?xt=urn:btih:" + hash
-}
-
-func matchesEpisode(title string, season, episode, absolute *int) bool {
-	for _, match := range seasonEpisode.FindAllStringSubmatch(title, -1) {
-		foundSeason, _ := strconv.Atoi(match[1])
-		foundEpisode, _ := strconv.Atoi(match[2])
-		if episode != nil && foundEpisode == *episode && (season == nil || foundSeason == *season) {
-			return true
-		}
-	}
-	target := episode
-	if absolute != nil {
-		target = absolute
-	}
-	if target == nil {
-		return false
-	}
-	for _, match := range episodeToken.FindAllStringSubmatch(title, -1) {
-		found, _ := strconv.Atoi(match[1])
-		if found == *target {
-			return true
-		}
-	}
-	if absolute != nil {
-		looseToken := regexp.MustCompile(`(?i)\b0*` + strconv.Itoa(*absolute) + `\b`)
-		if looseToken.MatchString(title) {
-			return true
-		}
-	}
-	return false
-}
-
-func detectSeasonPack(title string, season, episode *int) *SeasonPack {
-	if match := packToken.FindStringSubmatch(title); len(match) == 2 {
-		return &SeasonPack{Season: season, Reason: "keyword", Keywords: []string{strings.ToLower(match[1])}}
-	}
-	if episode == nil {
-		return nil
-	}
-	for _, match := range episodeRange.FindAllStringSubmatch(title, -1) {
-		start, _ := strconv.Atoi(match[1])
-		end, _ := strconv.Atoi(match[2])
-		if start <= *episode && *episode <= end {
-			return &SeasonPack{Season: season, Reason: "episode-range", Keywords: []string{match[0]}}
-		}
-	}
-	return nil
 }

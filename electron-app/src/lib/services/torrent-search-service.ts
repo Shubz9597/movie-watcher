@@ -12,6 +12,11 @@ export type TorrentSearchResult = {
   sourceId?: string;
   publishDate?: string;
   episodeMatch?: boolean;
+  /** Parsed by the server from the release name. */
+  quality?: string;
+  source?: string;
+  audio?: string;
+  pack?: 'episode' | 'range' | 'season' | 'series';
   seasonPack?: {
     season?: number | null;
     reason?: string | null;

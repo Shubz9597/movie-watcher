@@ -75,7 +75,7 @@ func TestTorrentSearchRouteCapturedShape(t *testing.T) {
 	]`
 	service := newProwlarrStub(t, releases)
 	recorder := postJSON(TorrentSearchHandlers{Service: service}.handleSearch,
-		"/v1/torrents/search", `{"kind":"movie","title":"Show","year":2026}`)
+		"/v1/torrents/search", `{"kind":"tv","title":"Show","year":2026,"season":1,"episode":5}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -84,7 +84,7 @@ func TestTorrentSearchRouteCapturedShape(t *testing.T) {
 	}
 	payload := decodeBody(t, recorder)
 	query, ok := payload["query"].(map[string]any)
-	if !ok || query["kind"] != "movie" || query["title"] != "Show" {
+	if !ok || query["kind"] != "tv" || query["title"] != "Show" {
 		t.Fatalf("query echo missing/mismatched: %v", payload["query"])
 	}
 	results, ok := payload["results"].([]any)
