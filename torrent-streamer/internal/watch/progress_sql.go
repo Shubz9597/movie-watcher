@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -33,6 +34,14 @@ type ProgressSource struct {
 }
 
 // EpisodeRef identifies an episode that can follow the current playback item.
+// CompletedPercent is the watched threshold: at or past it an episode or
+// movie counts as watched, leaves Continue watching, and (for episodes)
+// queues the next one. 90% leaves room for long end credits.
+const (
+	CompletedPercent    = 90.0
+	completedPercentSQL = "90"
+)
+
 type EpisodeRef struct {
 	Season  int
 	Episode int
@@ -234,8 +243,8 @@ ON CONFLICT (progress_id, session_id) DO UPDATE SET last_seq=EXCLUDED.last_seq`,
 	}
 
 	// A new partial watch makes any old dismissal for this item stale.
-	// Completion itself is represented by percent >= 95.
-	if pos > 0 && percent < 95 {
+	// Completion itself is represented by percent >= CompletedPercent.
+	if pos > 0 && percent < CompletedPercent {
 		if _, err = tx.ExecContext(ctx, `
 DELETE FROM continue_dismissals
 WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
@@ -244,7 +253,7 @@ WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
 		}
 	}
 
-	if percent >= 95 && next != nil {
+	if percent >= CompletedPercent && next != nil {
 		if _, err = tx.ExecContext(ctx, `
 INSERT INTO watch_progress (
   subject_id, series_id, season, episode, position_s, duration_s, percent, created_at, updated_at
@@ -293,7 +302,7 @@ SELECT series_id, season, episode, position_s, duration_s, percent, updated_at
 FROM watch_progress
 WHERE subject_id=$1 AND series_id=$2
   AND position_s > 0
-  AND (duration_s <= 0 OR percent < 95)`
+  AND (duration_s <= 0 OR percent < ` + completedPercentSQL + `)`
 	args := []any{subjectID, seriesID}
 	if season != nil && episode != nil {
 		query += ` AND season=$3 AND episode=$4`
@@ -341,7 +350,7 @@ latest AS (
   FROM series_rows wp
   WHERE wp.updated_at=wp.series_updated_at
     AND (
-      (wp.position_s >= 10 AND wp.duration_s > 0 AND wp.percent < 95)
+      (wp.position_s >= 10 AND wp.duration_s > 0 AND wp.percent < `+completedPercentSQL+`)
       OR (wp.position_s = 0 AND wp.duration_s = 0 AND wp.percent = 0)
     )
 )
@@ -408,4 +417,128 @@ VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, subjectID, seriesID, season, ep
 }
 func (s *Store) MarkCompleted(ctx context.Context, subjectID, seriesID string, season, episode int) error {
 	return s.Dismiss(ctx, subjectID, seriesID, season, episode, "completed")
+}
+
+// WatchedEpisode is one item's watched state for a subject.
+type WatchedEpisode struct {
+	Season    int
+	Episode   int
+	PositionS int
+	DurationS int
+	Percent   float64
+	Watched   bool
+}
+
+// ListWatched returns the items of one title the subject has started or
+// finished (movies use season 0, episode 0).
+func (s *Store) ListWatched(ctx context.Context, subjectID, seriesID string) ([]WatchedEpisode, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT season, episode, position_s, duration_s, percent
+FROM watch_progress
+WHERE subject_id=$1 AND series_id=$2 AND (percent > 0 OR position_s > 0)
+ORDER BY season, episode`, subjectID, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []WatchedEpisode{}
+	for rows.Next() {
+		var item WatchedEpisode
+		if err := rows.Scan(&item.Season, &item.Episode, &item.PositionS, &item.DurationS, &item.Percent); err != nil {
+			return nil, err
+		}
+		item.Watched = item.Percent >= CompletedPercent
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// SetWatched marks items watched (percent 100, out of Continue watching) or
+// unwatched (progress cleared). Marking watched with a next episode queues it
+// in Continue watching, the same way finishing an episode does.
+func (s *Store) SetWatched(ctx context.Context, subjectID, seriesID string, items []EpisodeRef, watched bool, next *EpisodeRef) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, item := range items {
+		if watched {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, duration_s, percent, created_at, updated_at)
+VALUES ($1,$2,$3,$4,0,0,100,now(),now())
+ON CONFLICT (subject_id, series_id, season, episode) DO UPDATE
+SET percent=100, position_s=GREATEST(watch_progress.position_s, watch_progress.duration_s), updated_at=now()`,
+				subjectID, seriesID, item.Season, item.Episode); err != nil {
+				return fmt.Errorf("mark watched: %w", err)
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM watch_progress WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
+			subjectID, seriesID, item.Season, item.Episode); err != nil {
+			return fmt.Errorf("mark unwatched: %w", err)
+		}
+	}
+	if watched && next != nil {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, duration_s, percent, created_at, updated_at)
+VALUES ($1,$2,$3,$4,0,0,0,now(),now())
+ON CONFLICT (subject_id, series_id, season, episode) DO UPDATE
+SET updated_at=now() WHERE watch_progress.percent < `+completedPercentSQL,
+			subjectID, seriesID, next.Season, next.Episode); err != nil {
+			return fmt.Errorf("queue next episode: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM continue_dismissals WHERE subject_id=$1 AND series_id=$2 AND season=$3 AND episode=$4`,
+			subjectID, seriesID, next.Season, next.Episode); err != nil {
+			return fmt.Errorf("clear next dismissal: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// OfflineProgress is a position recorded by a device while offline
+// (downloaded playback), synced when the device reconnects.
+type OfflineProgress struct {
+	SeriesID  string
+	Season    int
+	Episode   int
+	PositionS int
+	DurationS int
+	WatchedAt time.Time
+}
+
+// SyncOffline applies offline positions without clobbering newer or
+// completed server state: an item is written when the server has no record,
+// when the offline watch completes an item the server had not, or when the
+// server record is older than the offline watch. A completed item is never
+// moved back to partial. Returns how many items were applied.
+func (s *Store) SyncOffline(ctx context.Context, subjectID string, items []OfflineProgress) (int, error) {
+	applied := 0
+	for _, item := range items {
+		if item.SeriesID == "" || item.DurationS <= 0 || item.PositionS <= 0 {
+			continue
+		}
+		percent := math.Min(100, float64(item.PositionS)*100/float64(item.DurationS))
+		watchedAt := item.WatchedAt
+		if watchedAt.IsZero() || watchedAt.After(time.Now()) {
+			watchedAt = time.Now()
+		}
+		res, err := s.DB.ExecContext(ctx, `
+INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, duration_s, percent, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+ON CONFLICT (subject_id, series_id, season, episode) DO UPDATE
+SET position_s=EXCLUDED.position_s, duration_s=EXCLUDED.duration_s, percent=EXCLUDED.percent
+WHERE (EXCLUDED.percent >= `+completedPercentSQL+` AND watch_progress.percent < `+completedPercentSQL+`)
+   OR (watch_progress.percent < `+completedPercentSQL+` AND watch_progress.updated_at <= EXCLUDED.updated_at)`,
+			subjectID, item.SeriesID, item.Season, item.Episode, item.PositionS, item.DurationS, percent, watchedAt)
+		if err != nil {
+			return applied, fmt.Errorf("sync offline progress: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			applied++
+		}
+	}
+	return applied, nil
 }

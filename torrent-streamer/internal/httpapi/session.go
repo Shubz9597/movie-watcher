@@ -48,6 +48,8 @@ func (h *SessionHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/resume/source/probe", cors(h.ResumeSourceProbe))
 	mux.HandleFunc("/v1/continue", cors(h.ContinueList))
 	mux.HandleFunc("/v1/continue/dismiss", cors(h.ContinueDismiss))
+	mux.HandleFunc("/v1/watched", cors(h.Watched))
+	mux.HandleFunc("/v1/watched/sync", cors(h.WatchedSync))
 	mux.HandleFunc("/v1/resume.m3u", cors(h.ResumeM3U))
 }
 
@@ -400,6 +402,134 @@ func (h *SessionHandlers) ContinueDismiss(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Watched serves per-title watched state (GET ?subjectId=&seriesId=) and
+// manual marking (POST {subjectId, seriesId, items:[{season,episode}],
+// watched, next?}). Marking watched with next queues that episode in
+// Continue watching, like finishing playback does.
+func (h *SessionHandlers) Watched(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		subjectID := strings.TrimSpace(r.URL.Query().Get("subjectId"))
+		seriesID := strings.TrimSpace(r.URL.Query().Get("seriesId"))
+		if subjectID == "" || seriesID == "" {
+			http.Error(w, "subjectId & seriesId required", http.StatusBadRequest)
+			return
+		}
+		items, err := h.d.Watch.ListWatched(r.Context(), subjectID, seriesID)
+		if err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		type itemBody struct {
+			Season    int     `json:"season"`
+			Episode   int     `json:"episode"`
+			PositionS int     `json:"position_s"`
+			DurationS int     `json:"duration_s"`
+			Percent   float64 `json:"percent"`
+			Watched   bool    `json:"watched"`
+		}
+		body := struct {
+			Threshold float64    `json:"threshold"`
+			Items     []itemBody `json:"items"`
+		}{Threshold: watch.CompletedPercent, Items: make([]itemBody, 0, len(items))}
+		for _, item := range items {
+			body.Items = append(body.Items, itemBody{item.Season, item.Episode, item.PositionS, item.DurationS, item.Percent, item.Watched})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
+	case http.MethodPost:
+		var in struct {
+			SubjectID string `json:"subjectId"`
+			SeriesID  string `json:"seriesId"`
+			Items     []struct {
+				Season  int `json:"season"`
+				Episode int `json:"episode"`
+			} `json:"items"`
+			Watched bool `json:"watched"`
+			Next    *struct {
+				Season  int `json:"season"`
+				Episode int `json:"episode"`
+			} `json:"next"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if in.SubjectID == "" || in.SeriesID == "" || len(in.Items) == 0 || len(in.Items) > 500 {
+			http.Error(w, "subjectId, seriesId and 1-500 items required", http.StatusBadRequest)
+			return
+		}
+		refs := make([]watch.EpisodeRef, 0, len(in.Items))
+		for _, item := range in.Items {
+			if item.Season < 0 || item.Episode < 0 {
+				http.Error(w, "season/episode must be >= 0", http.StatusBadRequest)
+				return
+			}
+			refs = append(refs, watch.EpisodeRef{Season: item.Season, Episode: item.Episode})
+		}
+		var next *watch.EpisodeRef
+		if in.Next != nil && in.Next.Episode > 0 && in.Next.Season >= 0 {
+			next = &watch.EpisodeRef{Season: in.Next.Season, Episode: in.Next.Episode}
+		}
+		if err := h.d.Watch.SetWatched(r.Context(), in.SubjectID, in.SeriesID, refs, in.Watched, next); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// WatchedSync applies positions a device recorded while offline (POST
+// {subjectId, items:[{seriesId, season, episode, position_s, duration_s,
+// watchedAt}]}, watchedAt in epoch seconds). Responds {applied}.
+func (h *SessionHandlers) WatchedSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		SubjectID string `json:"subjectId"`
+		Items     []struct {
+			SeriesID  string  `json:"seriesId"`
+			Season    int     `json:"season"`
+			Episode   int     `json:"episode"`
+			PositionS float64 `json:"position_s"`
+			DurationS float64 `json:"duration_s"`
+			WatchedAt float64 `json:"watchedAt"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if in.SubjectID == "" || len(in.Items) > 500 {
+		http.Error(w, "subjectId and at most 500 items required", http.StatusBadRequest)
+		return
+	}
+	items := make([]watch.OfflineProgress, 0, len(in.Items))
+	for _, item := range in.Items {
+		if item.Season < 0 || item.Episode < 0 {
+			continue
+		}
+		items = append(items, watch.OfflineProgress{
+			SeriesID: strings.TrimSpace(item.SeriesID), Season: item.Season, Episode: item.Episode,
+			PositionS: int(item.PositionS), DurationS: int(item.DurationS),
+			WatchedAt: time.Unix(int64(item.WatchedAt), 0),
+		})
+	}
+	applied, err := h.d.Watch.SyncOffline(r.Context(), in.SubjectID, items)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]int{"applied": applied})
 }
 
 func (h *SessionHandlers) Ended(w http.ResponseWriter, r *http.Request) {
