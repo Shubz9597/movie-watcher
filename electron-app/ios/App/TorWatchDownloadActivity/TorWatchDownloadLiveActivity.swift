@@ -38,10 +38,16 @@ struct TorWatchDownloadLiveActivity: Widget {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                // The expanded island's corners are rounded: keep trailing and
+                // bottom content inset from the curve so nothing is clipped.
                 DynamicIslandExpandedRegion(.trailing) {
                     if context.state.hasKnownTotal {
                         Text("\(context.state.percent)%")
-                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .font(.subheadline.monospacedDigit().weight(.semibold))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.trailing, 6)
+                            .frame(maxHeight: .infinity, alignment: .center)
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -50,10 +56,10 @@ struct TorWatchDownloadLiveActivity: Widget {
                             ProgressView(value: context.state.progress)
                                 .tint(context.state.tint)
                         }
-                        HStack {
+                        HStack(spacing: 8) {
                             Text(byteProgress(context.state))
                                 .monospacedDigit()
-                            Spacer()
+                            Spacer(minLength: 8)
                             if let summary = transferSummary(context) {
                                 Text(summary)
                                     .monospacedDigit()
@@ -63,7 +69,11 @@ struct TorWatchDownloadLiveActivity: Widget {
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
                 }
             } compactLeading: {
                 TorWatchActivityIcon(size: 24)
