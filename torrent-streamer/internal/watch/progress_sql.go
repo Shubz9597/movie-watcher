@@ -78,19 +78,6 @@ type SaveResult struct {
 	Ignored string // "" when accepted; "stale_seq" | "stale_estimate"
 }
 
-func (s *Store) SaveProgressWithSource(ctx context.Context, subjectID, seriesID string, season, episode, pos, dur int, source *ProgressSource) error {
-	_, err := s.SaveProgressUpdate(ctx, ProgressUpdate{
-		SubjectID: subjectID,
-		SeriesID:  seriesID,
-		Season:    season,
-		Episode:   episode,
-		Position:  pos,
-		Duration:  dur,
-		Source:    source,
-	})
-	return err
-}
-
 // SaveProgressUpdate persists a checkpoint through the server-ordered write
 // path and atomically queues its known successor when the current episode
 // reaches the completion threshold. Ordering: commit-order LWW with a
@@ -414,9 +401,6 @@ func (s *Store) Dismiss(ctx context.Context, subjectID, seriesID string, season,
 INSERT INTO continue_dismissals(subject_id,series_id,season,episode,reason)
 VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, subjectID, seriesID, season, episode, reason)
 	return err
-}
-func (s *Store) MarkCompleted(ctx context.Context, subjectID, seriesID string, season, episode int) error {
-	return s.Dismiss(ctx, subjectID, seriesID, season, episode, "completed")
 }
 
 // WatchedEpisode is one item's watched state for a subject.

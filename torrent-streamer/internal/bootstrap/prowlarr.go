@@ -241,11 +241,6 @@ func waitReady(ctx context.Context, opts Options, apiKey string) error {
 	}
 }
 
-type indexerField struct {
-	Name  string `json:"name"`
-	Value any    `json:"value"`
-}
-
 // installStarters adds the starter set to an empty instance and completes a
 // partially installed starter set on later runs. A populated instance with no
 // recognized starter names is treated as operator-owned and preserved. Every

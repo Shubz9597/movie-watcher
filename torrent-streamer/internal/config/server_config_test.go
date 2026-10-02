@@ -1,7 +1,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -61,46 +60,6 @@ func TestLoadServerConfigFallsBackToProwlarrNames(t *testing.T) {
 	cfg := LoadServerConfig()
 	if cfg.ProwlarrURL != "http://prowlarr-only:9696" || cfg.ProwlarrAPIKey != "prowlarr-key" {
 		t.Fatalf("PROWLARR_* fallback failed: %q %q", cfg.ProwlarrURL, cfg.ProwlarrAPIKey)
-	}
-}
-
-func TestServerConfigValidationNamesMissingSettingsWithoutEchoingSecrets(t *testing.T) {
-	cfg := ServerConfig{
-		PGDSN:          "postgres://torwatch:supersecret@db:5432/torwatch",
-		ProwlarrAPIKey: "prowlarr-supersecret",
-	}
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for missing PROWLARR_URL")
-	}
-	message := err.Error()
-	if !strings.Contains(message, "PROWLARR_URL") {
-		t.Fatalf("error must name the missing setting: %q", message)
-	}
-	for _, secret := range cfg.SecretValues() {
-		if strings.Contains(message, secret) {
-			t.Fatalf("validation error echoed a secret value: %q", message)
-		}
-	}
-}
-
-func TestServerConfigValidatePassesWhenComplete(t *testing.T) {
-	cfg := ServerConfig{
-		PGDSN:          "postgres://torwatch:x@db:5432/torwatch",
-		ProwlarrURL:    "http://prowlarr:9696",
-		ProwlarrAPIKey: "key",
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("unexpected validation error: %v", err)
-	}
-}
-
-func TestServerConfigListenOrDefault(t *testing.T) {
-	if got := (ServerConfig{ListenAddr: "0.0.0.0:5000"}).ListenOrDefault(); got != "0.0.0.0:5000" {
-		t.Fatalf("listen override ignored: %q", got)
-	}
-	if got := (ServerConfig{}).ListenOrDefault(); got != ListenAddr() {
-		t.Fatalf("default listen %q != V1 default %q", got, ListenAddr())
 	}
 }
 

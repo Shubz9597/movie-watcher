@@ -423,12 +423,6 @@ func Prebuffer(r torrent.Reader, want int64, timeout time.Duration) int64 {
 	return done
 }
 
-func SetLastTouch(cat string, ih metainfo.Hash) {
-	stateMu.Lock()
-	lastTouch[key(cat, ih)] = time.Now()
-	stateMu.Unlock()
-}
-
 // TouchTorrent records recent use in memory and periodically persists enough
 // metadata for safe, exact-file eviction after a service restart.
 func TouchTorrent(cat string, t *torrent.Torrent) {
@@ -570,18 +564,12 @@ func GetLastTouch(cat string, ih metainfo.Hash) (time.Time, bool) {
 	v, ok := lastTouch[key(cat, ih)]
 	return v, ok
 }
-func ClearTouch(cat string, ih metainfo.Hash) {
-	stateMu.Lock()
-	delete(lastTouch, key(cat, ih))
-	stateMu.Unlock()
-}
-
-func LastFileIndexKey(cat string, ih metainfo.Hash) string { return key(cat, ih) }
 func SetLastFileIndex(cat string, ih metainfo.Hash, idx int) {
 	stateMu.Lock()
 	lastFileIndex[key(cat, ih)] = idx
 	stateMu.Unlock()
 }
+
 func GetLastFileIndex(cat string, ih metainfo.Hash) (int, bool) {
 	stateMu.RLock()
 	defer stateMu.RUnlock()
@@ -625,7 +613,7 @@ func StopTorrentForKey(cat, id string) {
 	}
 	var wantIH *metainfo.Hash
 	if strings.HasPrefix(id, "magnet:") {
-		if m, err := metainfo.ParseMagnetURI(id); err == nil && m.InfoHash != (metainfo.Hash{}) {
+		if m, err := metainfo.ParseMagnetUri(id); err == nil && m.InfoHash != (metainfo.Hash{}) {
 			h := m.InfoHash
 			wantIH = &h
 		}
@@ -863,7 +851,7 @@ func ClientGone(err error) bool {
 
 func mustParseMagnet(src string) metainfo.Hash {
 	if strings.HasPrefix(src, "magnet:") {
-		m, err := metainfo.ParseMagnetURI(src)
+		m, err := metainfo.ParseMagnetUri(src)
 		if err == nil && m.InfoHash != (metainfo.Hash{}) {
 			return m.InfoHash
 		}

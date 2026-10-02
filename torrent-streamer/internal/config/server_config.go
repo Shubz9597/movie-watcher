@@ -1,8 +1,6 @@
 package config
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"strings"
 )
@@ -105,48 +103,3 @@ func (c ServerConfig) AllowedClientOriginList() (origins []string, warnings []st
 	}
 	return origins, warnings
 }
-
-// Validate reports whether the configuration is sufficient to start the
-// server. Error messages name the missing setting but never echo secret
-// values (constitution principle VI).
-func (c ServerConfig) Validate() error {
-	var missing []string
-	if strings.TrimSpace(c.PGDSN) == "" {
-		missing = append(missing, "PG_DSN")
-	}
-	if strings.TrimSpace(c.ProwlarrURL) == "" {
-		missing = append(missing, "PROWLARR_URL (or INDEXER_URL)")
-	}
-	if strings.TrimSpace(c.ProwlarrAPIKey) == "" {
-		missing = append(missing, "PROWLARR_API_KEY (or INDEXER_API_KEY)")
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("server configuration missing: %s", strings.Join(missing, ", "))
-	}
-	return nil
-}
-
-// ListenOrDefault returns the configured listen address or the V1 default.
-func (c ServerConfig) ListenOrDefault() string {
-	if strings.TrimSpace(c.ListenAddr) != "" {
-		return c.ListenAddr
-	}
-	return ListenAddr()
-}
-
-// SecretValues returns the secret material held by this config so callers can
-// assert it never reaches logs or error messages.
-func (c ServerConfig) SecretValues() []string {
-	var secrets []string
-	if dsn := c.PGDSN; dsn != "" {
-		secrets = append(secrets, dsn)
-	}
-	if key := c.ProwlarrAPIKey; key != "" {
-		secrets = append(secrets, key)
-	}
-	return secrets
-}
-
-// ErrConfigInvalid marks validation failures for callers that need to
-// distinguish configuration problems from other startup errors.
-var ErrConfigInvalid = errors.New("invalid server configuration")

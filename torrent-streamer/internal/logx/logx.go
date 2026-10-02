@@ -27,7 +27,6 @@ type Writer struct {
 	window      time.Duration
 	mu          sync.Mutex
 	lastSeen    map[string]time.Time
-	normalizeWS bool
 	pending     string
 }
 

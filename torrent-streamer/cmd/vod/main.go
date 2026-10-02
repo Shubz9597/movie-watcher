@@ -522,15 +522,6 @@ func refreshIMDbRatings(ctx context.Context, store *imdb.Store) {
 	}
 }
 
-func firstEnv(names ...string) string {
-	for _, name := range names {
-		if value := os.Getenv(name); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 // buildCatalogProviders assembles the server-side catalog providers in fixed
 // priority order (contracts/v2-catalog-api.md §Merge determinism). Provider
 // credentials never leave the backend (FR-003/FR-012); a provider without

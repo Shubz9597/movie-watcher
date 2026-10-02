@@ -36,7 +36,7 @@ type torznabFeed struct {
 
 func (c *TorznabClient) Query(ctx context.Context, title string, season, episode int, abs *int) ([]types.Candidate, error) {
 	if strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(c.APIKey) == "" {
-		return nil, fmt.Errorf("Prowlarr is not configured")
+		return nil, fmt.Errorf("prowlarr is not configured")
 	}
 	q := title
 	if abs != nil {
@@ -67,7 +67,7 @@ func (c *TorznabClient) Query(ctx context.Context, title string, season, episode
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Prowlarr returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("prowlarr returned status %d", resp.StatusCode)
 	}
 
 	var feed torznabFeed

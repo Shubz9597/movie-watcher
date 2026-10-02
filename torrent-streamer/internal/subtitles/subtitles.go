@@ -722,26 +722,6 @@ func DownloadOpenSubSubtitle(ctx context.Context, fileID string, apiKey string) 
 	return vtt, nil
 }
 
-// ClearCache removes expired entries from the subtitle cache
-func ClearCache() {
-	subCacheMu.Lock()
-	now := time.Now()
-	for k, v := range subCache {
-		if now.Sub(v.fetched) > cacheTTL {
-			delete(subCache, k)
-		}
-	}
-	subCacheMu.Unlock()
-
-	searchCacheMu.Lock()
-	for k, v := range searchCache {
-		if now.Sub(v.fetched) > searchCacheTTL {
-			delete(searchCache, k)
-		}
-	}
-	searchCacheMu.Unlock()
-}
-
 // normalizeLang converts various language codes to ISO 639-1 (2-letter)
 func normalizeLang(lang string) string {
 	lang = strings.ToLower(strings.TrimSpace(lang))

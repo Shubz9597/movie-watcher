@@ -14,15 +14,6 @@ import (
 
 var errProviderUnavailable = errors.New("catalog: provider unavailable")
 
-// Transient egress failures (ISP peering drops, provider 5xx bursts, the
-// documented "sometimes TMDb results do not load" flake) get ONE bounded
-// retry: cheap for the 99% clean path, and it removes the majority of the
-// user-visible "content error" flashes without any VPN machinery. 429 keeps
-// its dedicated rate-limit error; 404 is authoritative and never retried.
-func isTransientProviderError(status int) bool {
-	return status == http.StatusTooManyRequests || status >= 500
-}
-
 // fetchJSON performs one provider HTTP call, mapping status codes to catalog
 // errors: 404 → ErrNotFound, 429 → ErrRateLimited, other 4xx/5xx → transport
 // error. Responses are capped at 8 MiB.

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/anacrolix/torrent"
-	"github.com/anacrolix/torrent/metainfo"
 
 	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/torrentx"
@@ -50,10 +49,6 @@ var (
 		m map[Key]bool
 	}{m: make(map[Key]bool)}
 )
-
-func key(cat string, ih metainfo.Hash, fidx int) Key {
-	return Key{Cat: cat, IH: ih.HexString(), FIdx: fidx}
-}
 
 func Get(k Key) *Controller {
 	bufMu.Lock()
@@ -294,15 +289,6 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 			}
 		}
 	}()
-}
-
-func (c *Controller) StopWarm() {
-	c.mu.Lock()
-	cancel := c.warmCancel
-	c.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
 }
 
 func (c *Controller) stop() <-chan struct{} {

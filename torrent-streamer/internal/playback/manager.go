@@ -143,15 +143,6 @@ func NewManager(cfg Config, tools Tools, prober Prober, resolver Resolver, sourc
 	}
 }
 
-// Ready reports whether the complete configured service is functional. The
-// capability MUST NOT be advertised when this returns false.
-func (m *Manager) Ready(ctx context.Context) (bool, string) {
-	if m == nil || m.source == nil || m.resolver == nil {
-		return false, "playback service not wired"
-	}
-	return m.tools.Available(ctx)
-}
-
 // Create validates input, inspects the media, plans playback, and (for
 // remux/transcode) starts the bounded FFmpeg process. Planning NEVER starts
 // playback on a client device; it only prepares server resources.

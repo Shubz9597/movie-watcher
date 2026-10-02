@@ -68,11 +68,6 @@ func (f *fakeResolver) Resolve(_ context.Context, _, sourceID string, _ int) (Re
 	return src, nil
 }
 
-type fakeRunner struct {
-	started chan string
-	closed  chan struct{}
-}
-
 // fakeSessionRunner records starts without launching any process.
 type fakeSessionRunner struct {
 	started  int

@@ -10,19 +10,6 @@ import (
 // seeder ranking can promote it. These tests attack the classifier the way
 // real indexers mislabel releases.
 
-func hashes(ids ...rune) []prowlarrRelease {
-	releases := make([]prowlarrRelease, 0, len(ids))
-	for _, id := range ids {
-		releases = append(releases, prowlarrRelease{
-			Title:    "filler",
-			Indexer:  "test",
-			Protocol: "torrent",
-			InfoHash: idHex(id),
-		})
-	}
-	return releases
-}
-
 func idHex(id rune) string {
 	// 40-char lowercase hex derived from the codepoint — always a VALID
 	// info hash (non-hex filler would be dropped by normalizeHash, which is
@@ -99,7 +86,7 @@ func TestMovieRemakeRejectedByExplicitYear(t *testing.T) {
 
 	results := service.normalize(request, []prowlarrRelease{
 		{Title: "The Lion King 2019 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('1'), Seeders: 900}, // remake
-		{Title: "The Lion King 1994 720p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('2'), Seeders: 30},  // requested
+		{Title: "The Lion King 1994 720p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('2'), Seeders: 30},   // requested
 	})
 	if len(results) != 1 {
 		t.Fatalf("len(normalize(remake)) = %d, want the 1994 release only", len(results))
@@ -252,8 +239,8 @@ func TestTVTitleLevelSeasonEvidence(t *testing.T) {
 	request := Request{Kind: KindTV, Title: "Example Show", Season: &season}
 
 	results := service.normalize(request, []prowlarrRelease{
-		{Title: "Example Show S02 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('1'), Seeders: 10},   // verified
-		{Title: "Example Show S01 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('2'), Seeders: 999}, // wrong season → rejected
+		{Title: "Example Show S02 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('1'), Seeders: 10},        // verified
+		{Title: "Example Show S01 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('2'), Seeders: 999},       // wrong season → rejected
 		{Title: "Example Show Season Pack 1080p", Indexer: "test", Protocol: "torrent", InfoHash: idHex('3'), Seeders: 5}, // unverifiable → ambiguous
 	})
 	if len(results) != 2 {

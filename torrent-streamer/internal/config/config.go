@@ -26,8 +26,7 @@ var (
 	targetPause4KSec  int64 = 120 // was 600!
 	warmReadAhead4KMB int64 = 384
 
-	endgameDuplicate = true
-	watchDropGuard   = 10 * time.Minute
+	watchDropGuard = 10 * time.Minute
 
 	// Multi-client lease/admission (V2, plan P7). Defaults preserve V1 lease
 	// semantics; the admission default is the conservative one-distinct-title
@@ -106,8 +105,6 @@ func Load() {
 	watchReaperIntv = getenvDuration("WATCH_REAPER_INTERVAL", watchReaperIntv)
 	maxActiveTitles = int(getenvInt64("WATCH_MAX_ACTIVE_TITLES", int64(maxActiveTitles)))
 
-	endgameDuplicate = strings.ToLower(getenv("ENDGAME_DUPLICATE", "true")) != "false"
-
 	listenAddr = getenv("LISTEN", listenAddr)
 
 	ffmpegPath = getenv("FFMPEG_PATH", ffmpegPath)
@@ -152,7 +149,6 @@ func WarmReadAheadMB() int64             { return warmReadAheadMB }
 func TargetPlay4KSec() int64             { return targetPlay4KSec }
 func TargetPause4KSec() int64            { return targetPause4KSec }
 func WarmReadAhead4KMB() int64           { return warmReadAhead4KMB }
-func EndgameDuplicate() bool             { return endgameDuplicate }
 func WatchDropGuard() time.Duration      { return watchDropGuard }
 func WatchStaleAfter() time.Duration     { return watchStaleAfter }
 func WatchReaperInterval() time.Duration { return watchReaperIntv }
