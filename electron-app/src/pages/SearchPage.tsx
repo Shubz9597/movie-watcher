@@ -12,6 +12,7 @@ import { catalogGateway } from '../lib/services/catalog-gateway';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { loadTitlePage } from '../lib/route-loaders';
+import { organizeSearchResults } from '../lib/search-franchise';
 import { rankSearchResults, uniqueRecentSearches } from '../lib/search-order';
 
 type Basic = {
@@ -27,6 +28,8 @@ type Basic = {
   sourceKind?: 'movie' | 'tv' | 'anime';
   sourceLabel?: string;
   malId?: number | null;
+  format?: string;
+  popularity?: number;
 };
 
 type SearchKind = 'movie' | 'tv' | 'anime';
@@ -111,6 +114,8 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
           genreIds: card.genreIds,
           sourceProvider: 'tmdb',
           sourceKind: card.sourceKind ?? 'movie',
+          format: card.format,
+          popularity: card.popularity,
         });
       }
       return mapped;
@@ -128,8 +133,10 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
           genreIds: card.genreIds,
           sourceProvider: 'anilist' as const,
           sourceKind: 'anime' as const,
+          format: card.format,
+          popularity: card.popularity,
         })),
-        12,
+        24,
       ).map((item) => ({
         id: item.id,
         title: item.title,
@@ -141,6 +148,8 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
         genreIds: item.genreIds,
         sourceProvider: 'anilist' as const,
         sourceKind: 'anime' as const,
+        format: item.format,
+        popularity: item.popularity,
       }));
     // Both searches run concurrently; each renders as IT settles, so the
     // slower source can never block the faster one behind a full-page skeleton.
@@ -148,7 +157,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
       (cards) => { if (!cancelled) setTmdbState({ status: 'ready', items: mapTmdb(cards) }); },
       () => { if (!cancelled) setTmdbState(FAILED_SOURCE); },
     );
-    catalogGateway.searchAnime(debounced, 1, 12).then(
+    catalogGateway.searchAnime(debounced, 1, 24).then(
       (page) => { if (!cancelled) setAnimeState({ status: 'ready', items: mapAnime(page.items) }); },
       () => { if (!cancelled) setAnimeState(FAILED_SOURCE); },
     );
@@ -189,13 +198,24 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
 
   // Stable per-item cards + callbacks: a keystroke re-renders this component,
   // but every memoized PosterCard now bails out (no fresh objects/closures).
+  // Franchise-aware organization: labels, cross-provider dedupe, main
+  // series first, long franchises collapsed (lib/search-franchise).
+  const [expandedFranchises, setExpandedFranchises] = React.useState<ReadonlySet<string>>(() => new Set());
+  React.useEffect(() => { setExpandedFranchises(new Set()); }, [debounced]);
+  const organized = React.useMemo(
+    () => organizeSearchResults(results, expandedFranchises),
+    [results, expandedFranchises],
+  );
   const cards = React.useMemo(
     () =>
-      results.map((item) => {
+      organized.map((entry) => {
+        if (entry.kind === 'more') return { key: `more-${entry.groupKey}`, more: entry };
+        const item = entry.item;
         const kind: SearchKind =
           item.sourceProvider === 'anilist' ? 'anime' : item.sourceKind === 'tv' ? 'tv' : 'movie';
         return {
           key: `${kind}-${item.id}`,
+          label: entry.label,
           card: {
             id: item.id,
             title: item.title,
@@ -209,7 +229,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
           onOpen: () => openTitle(kind, item),
         };
       }),
-    [results, openTitle],
+    [organized, openTitle],
   );
 
   return (
@@ -289,18 +309,28 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
             {!searching && failedCount === 2 ? <span className="text-[#ffc285]">Search is unavailable.</span> : null}
             {!searching && failedCount === 1 ? <span className="text-[#ffc285]">Some results are missing.</span> : null}
             {!searching && failedCount === 0 && results.length ? (
-              <span className="text-white/60">{results.length} results for “{debounced}”</span>
+              <span className="text-white/60">Results for “{debounced}”</span>
             ) : null}
             {!searching && failedCount === 0 && !results.length ? (
               <span className="text-white/60">No results for “{debounced}”</span>
             ) : null}
           </div>
           <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
-            {cards.map(({ key, card, onOpen }) => (
-              <li key={key}>
-                <PosterCard movie={card} onOpen={onOpen} />
+            {cards.map((entry) => ('more' in entry && entry.more ? (
+              <li key={entry.key} className="col-span-full">
+                <button
+                  type="button"
+                  onClick={() => setExpandedFranchises((current) => new Set(current).add(entry.more.groupKey))}
+                  className={`inline-flex min-h-12 items-center gap-2 rounded-lg px-1 text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
+                >
+                  Show {entry.more.hidden} more from {entry.more.name}
+                </button>
               </li>
-            ))}
+            ) : 'card' in entry && entry.card ? (
+              <li key={entry.key}>
+                <PosterCard movie={entry.card} label={entry.label} onOpen={entry.onOpen} />
+              </li>
+            ) : null))}
           </ul>
         </div>
       )}

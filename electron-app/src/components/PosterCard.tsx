@@ -9,11 +9,14 @@ const PREFETCH_DELAY_MS = 300;
 function PosterCardBase({
   movie,
   rank,
+  label,
   onOpen,
   onPrefetch,
 }: {
   movie: MovieCard;
   rank?: number;
+  /** Kind/format label, e.g. "Anime movie" (search results). */
+  label?: string;
   onOpen: (movie: MovieCard) => void;
   onPrefetch?: (movie: MovieCard) => void;
 }) {
@@ -113,6 +116,8 @@ function PosterCardBase({
           {movie.title}
         </h3>
         <div className="type-caption text-numeric mt-1 flex items-center gap-2 text-white/70">
+          {label ? <span>{label}</span> : null}
+          {label && movie.year ? <span aria-hidden="true">·</span> : null}
           {movie.year ? <span>{movie.year}</span> : null}
           {movie.year && typeof score === 'number' ? <span aria-hidden="true">·</span> : null}
           {typeof score === 'number' ? <span>{score}%</span> : null}

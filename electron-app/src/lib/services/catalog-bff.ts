@@ -69,6 +69,8 @@ type BffTitle = {
   providerIds?: Record<string, string>;
   imdbId?: string;
   mergedFrom?: string[];
+  format?: string;
+  popularity?: number;
   // Detail-only enrichment (contracts/v2-catalog-api.md §title detail):
   runtime?: number;
   genres?: string[];
@@ -208,6 +210,8 @@ export function backendTitleToCard(row: BffTitle): Card {
     sourceKind: sourceKindOf(row.type),
     sourceLabel: canonical.toUpperCase(),
     malId: providerIds.jikan ? Number(providerIds.jikan) : null,
+    format: row.format,
+    popularity: row.popularity,
     // bff-mode extensions (not part of the V1 Card contract):
     catalogId: row.id,
     providerIds,

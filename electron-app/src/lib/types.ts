@@ -19,6 +19,9 @@ export type MovieCard = {
   sourceKind?: 'movie' | 'tv' | 'anime';
   sourceLabel?: string;
   malId?: number | null;
+  /** Provider release format (tv, movie, ova, ona, special). */
+  format?: string;
+  popularity?: number;
 };
 
 export type TorrentRow = {
