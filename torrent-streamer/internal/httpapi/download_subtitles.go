@@ -2,8 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"log"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"torrent-streamer/internal/downloads"
 	"torrent-streamer/internal/subtitles"
@@ -20,7 +23,28 @@ type DownloadSubtitleSource struct{}
 // still breaks ties.
 const candidatesConsidered = 10
 
-func (DownloadSubtitleSource) FetchSubtitle(ctx context.Context, q downloads.SubtitleQuery) ([]byte, string, error) {
+// subtitleRetryDelays spaces retries of transient provider failures
+// (timeouts, resets, 5xx, rate limits). The provider is noticeably flaky from
+// home networks; one blip should not fail a download that asked for
+// subtitles. "No match" is final and is not retried.
+var subtitleRetryDelays = []time.Duration{10 * time.Second, 30 * time.Second, 60 * time.Second}
+
+func (s DownloadSubtitleSource) FetchSubtitle(ctx context.Context, q downloads.SubtitleQuery) ([]byte, string, error) {
+	for attempt := 0; ; attempt++ {
+		data, ext, err := s.fetchOnce(ctx, q)
+		if err == nil || errors.Is(err, downloads.ErrSubtitleNotFound) || attempt >= len(subtitleRetryDelays) {
+			return data, ext, err
+		}
+		log.Printf("[downloads] subtitle %q attempt %d failed, retrying: %v", q.Lang, attempt+1, err)
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-time.After(subtitleRetryDelays[attempt]):
+		}
+	}
+}
+
+func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.SubtitleQuery) ([]byte, string, error) {
 	apiKey := openSubtitlesAPIKey()
 	if apiKey == "" {
 		return nil, "", downloads.ErrSubtitleNotFound

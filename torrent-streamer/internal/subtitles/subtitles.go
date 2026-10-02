@@ -3,6 +3,7 @@ package subtitles
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -161,10 +162,12 @@ const (
 	cacheTTL           = 24 * time.Hour
 	searchCacheTTL     = 30 * time.Minute
 	openSubMinSpacing  = 300 * time.Millisecond
-	openSubAPI         = "https://api.opensubtitles.com/api/v1"
 	defaultHTTPTimout  = 15 * time.Second
 	openSubMaxAttempts = 3
 )
+
+// openSubAPI is a variable so tests can point the client at a stub.
+var openSubAPI = "https://api.opensubtitles.com/api/v1"
 
 // RateLimitError lets the HTTP layer preserve OpenSubtitles' retry guidance
 // instead of turning quota throttling into an opaque 500 response.
@@ -383,7 +386,31 @@ func downloadSubtitleResponse(ctx context.Context, client *http.Client, req *htt
 // FetchFromOpenSub searches OpenSubtitles using stable title identifiers when
 // available. For episodic content OpenSubtitles expects the show's identifier
 // as a parent ID together with season and episode numbers.
+// forbiddenError marks an OpenSubtitles 403 ("You cannot consume this
+// service"), which some API consumers receive for parent-id/type=episode
+// searches while title searches still work.
+type forbiddenError struct{ status int }
+
+func (e *forbiddenError) Error() string { return fmt.Sprintf("opensub returned status %d", e.status) }
+
+// FetchFromOpenSub searches OpenSubtitles. Some API consumers are refused
+// (403) the richer query shape — parent show ids, type=episode, server-side
+// ordering — while plain searches work, so a 403 is retried once with the
+// minimal form: lowercase title + season/episode for episodes, the id alone
+// for movies. Results are ranked locally either way.
 func FetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string) ([]SubResult, error) {
+	results, err := fetchFromOpenSub(ctx, query, apiKey, false)
+	var forbidden *forbiddenError
+	if err != nil && errors.As(err, &forbidden) {
+		episode := query.Season > 0 && query.Episode > 0
+		if !episode || strings.TrimSpace(query.Title) != "" {
+			return fetchFromOpenSub(ctx, query, apiKey, true)
+		}
+	}
+	return results, err
+}
+
+func fetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string, minimal bool) ([]SubResult, error) {
 	if apiKey == "" {
 		return nil, nil
 	}
@@ -393,13 +420,28 @@ func FetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string) ([]
 	tmdbNumeric := strings.TrimLeft(strings.TrimSpace(query.TMDBID), "0")
 	isEpisode := query.Season > 0 && query.Episode > 0
 
-	if isEpisode {
+	// OpenSubtitles wants lowercase values (otherwise it answers with a
+	// redirect to the lowercased URL).
+	title := strings.ToLower(strings.TrimSpace(query.Title))
+	if isEpisode && minimal {
+		params.Set("query", title)
+		params.Set("season_number", strconv.Itoa(query.Season))
+		params.Set("episode_number", strconv.Itoa(query.Episode))
+	} else if minimal {
+		if imdbNumeric != "" {
+			params.Set("imdb_id", imdbNumeric)
+		} else if tmdbNumeric != "" {
+			params.Set("tmdb_id", tmdbNumeric)
+		} else if title != "" {
+			params.Set("query", title)
+		}
+	} else if isEpisode {
 		if imdbNumeric != "" {
 			params.Set("parent_imdb_id", imdbNumeric)
 		} else if tmdbNumeric != "" {
 			params.Set("parent_tmdb_id", tmdbNumeric)
-		} else if strings.TrimSpace(query.Title) != "" {
-			params.Set("query", strings.TrimSpace(query.Title))
+		} else if title != "" {
+			params.Set("query", title)
 		}
 		params.Set("season_number", strconv.Itoa(query.Season))
 		params.Set("episode_number", strconv.Itoa(query.Episode))
@@ -409,8 +451,8 @@ func FetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string) ([]
 			params.Set("imdb_id", imdbNumeric)
 		} else if tmdbNumeric != "" {
 			params.Set("tmdb_id", tmdbNumeric)
-		} else if strings.TrimSpace(query.Title) != "" {
-			params.Set("query", strings.TrimSpace(query.Title))
+		} else if title != "" {
+			params.Set("query", title)
 		}
 		params.Set("type", "movie")
 		if query.Year > 0 {
@@ -425,8 +467,10 @@ func FetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string) ([]
 	if len(query.Langs) > 0 {
 		params.Set("languages", strings.Join(query.Langs, ","))
 	}
-	params.Set("order_by", "download_count")
-	params.Set("order_direction", "desc")
+	if !minimal {
+		params.Set("order_by", "download_count")
+		params.Set("order_direction", "desc")
+	}
 	cacheKey := params.Encode()
 	searchCacheMu.RLock()
 	if cached, ok := searchCache[cacheKey]; ok && time.Since(cached.fetched) < searchCacheTTL {
@@ -453,6 +497,9 @@ func FetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string) ([]
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return nil, &RateLimitError{RetryAfter: retryAfter(resp)}
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, &forbiddenError{status: resp.StatusCode}
 		}
 		return nil, fmt.Errorf("opensub returned status %d", resp.StatusCode)
 	}
