@@ -28,6 +28,7 @@ import type { DownloadSelection } from '../mobile/download-queue';
 type Props = {
   kind: 'tv' | 'anime';
   title: string;
+  posterUrl?: string | null;
   titleAliases?: string[] | null;
   imdbId?: string;
   year?: number;
@@ -118,7 +119,6 @@ function ArtworkLoadingDots() {
     </span>
   );
 }
-
 function EpisodeArtworkMedia({
   src,
   hydrating,
@@ -170,6 +170,7 @@ function EpisodeArtworkMedia({
 export default function EpisodePanel({
   kind,
   title,
+  posterUrl,
   titleAliases,
   imdbId,
   year,
@@ -802,6 +803,7 @@ export default function EpisodePanel({
       season,
       episode,
       title,
+      posterUrl,
       subtitleLabel: `S${season} E${episode}`,
       sizeBytes: torrent.size,
     };
@@ -1080,5 +1082,3 @@ export default function EpisodePanel({
     </aside>
   );
 }
-
-

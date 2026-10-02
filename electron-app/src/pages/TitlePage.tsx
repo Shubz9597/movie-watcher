@@ -43,7 +43,6 @@ function IMDbMark({ className = '' }: { className?: string }) {
     </span>
   );
 }
-
 // Module scope (perf): Intl.DisplayNames resolves locale data; constructing
 // it on every render is wasted work. Constructed once per JS context.
 const languageFormatter =
@@ -932,6 +931,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             {isMovie ? (
               <TorrentPanel
                 title={detail.title}
+                posterUrl={detail.posterUrl}
                 year={detail.year}
                 imdbId={detail.imdbId}
                 originalLanguage={detail.originalLanguage}
@@ -946,6 +946,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
               <EpisodePanel
                 kind={kind === 'anime' ? 'anime' : 'tv'}
                 title={detail.title}
+                posterUrl={detail.posterUrl}
                 titleAliases={detail.altTitles}
                 imdbId={detail.imdbId}
                 year={detail.year}
@@ -969,5 +970,3 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
     </div>
   );
 }
-
-

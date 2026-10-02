@@ -90,6 +90,7 @@ final class DownloadCoordinator: NSObject {
         let season: Int
         let episode: Int
         let title: String
+        let posterURL: String
         let subtitleLabel: String
         let video: (urlPath: String, sizeBytes: Int64, sha256: String)
         let subtitles: [(lang: String, urlPath: String, sizeBytes: Int64, sha256: String)]
@@ -120,6 +121,7 @@ final class DownloadCoordinator: NSObject {
             season: request.season,
             episode: request.episode,
             title: request.title,
+            posterURL: request.posterURL,
             subtitleLabel: request.subtitleLabel,
             state: .queued,
             reason: "",
@@ -129,6 +131,9 @@ final class DownloadCoordinator: NSObject {
             updatedAt: Date())
         try store.upsert(record)
         try startTasks(for: record)
+        if #available(iOS 16.1, *) {
+            DownloadLiveActivity.start(record)
+        }
         emitChange()
     }
 
@@ -164,6 +169,9 @@ final class DownloadCoordinator: NSObject {
             for task in tasks { task.suspend() }
             do {
                 try self.store.setState(downloadId, .paused)
+                if #available(iOS 16.1, *), let record = try? self.store.get(downloadId) {
+                    DownloadLiveActivity.refresh(record, status: "Paused")
+                }
                 self.emitChange()
                 completion(nil)
             } catch {
@@ -190,12 +198,16 @@ final class DownloadCoordinator: NSObject {
                     try self.store.removeTasks(downloadId)
                     try? FileManager.default.removeItem(
                         at: try DownloadStore.stagingDirectory(downloadId: downloadId))
+                    try self.store.resetTransferProgress(downloadId)
                     try self.startTasks(for: record)
                 } else if tasks.isEmpty {
                     try self.startTasks(for: record)
                 } else {
                     for task in tasks { task.resume() }
                     try self.store.setState(downloadId, .downloading)
+                }
+                if #available(iOS 16.1, *), let fresh = try? self.store.get(downloadId) {
+                    DownloadLiveActivity.refresh(fresh, status: "Downloading")
                 }
                 self.emitChange()
                 completion(nil)
@@ -210,10 +222,14 @@ final class DownloadCoordinator: NSObject {
     /// touched.
     func remove(_ downloadId: String, completion: @escaping (Error?) -> Void) {
         liveTasks(downloadId: downloadId) { tasks in
+            let record = try? self.store.get(downloadId)
             for task in tasks { task.cancel() }
             _ = try? self.store.deleteDownload(downloadId)
             try? FileManager.default.removeItem(at: try DownloadStore.stagingDirectory(downloadId: downloadId))
             try? FileManager.default.removeItem(at: try DownloadStore.readyDirectory(downloadId: downloadId))
+            if #available(iOS 16.1, *), let record = record {
+                DownloadLiveActivity.finish(record, status: "Cancelled", immediate: true)
+            }
             self.emitChange()
             completion(nil)
         }
@@ -334,7 +350,17 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         }
         lastProgressWrite[Int(downloadTask.taskIdentifier)] = now
         stateLock.unlock()
-        try? store.setReceivedBytes(mapping.downloadId, totalBytesWritten)
+        try? store.setAssetReceivedBytes(
+            mapping.downloadId,
+            urlPath: mapping.urlPath,
+            bytes: totalBytesWritten)
+        if #available(iOS 16.1, *), let record = try? store.get(mapping.downloadId) {
+            guard record.state == .queued || record.state == .downloading || record.state == .paused else {
+                return
+            }
+            let status = record.state == .paused ? "Paused" : "Downloading"
+            DownloadLiveActivity.refresh(record, status: status)
+        }
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
@@ -420,7 +446,11 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             failDownload(record.downloadId, reason: "verification_failed")
             return
         }
+        try? store.setReceivedBytes(record.downloadId, fresh.totalBytes)
         try? store.setState(record.downloadId, .ready)
+        if #available(iOS 16.1, *), let complete = try? store.get(record.downloadId) {
+            DownloadLiveActivity.finish(complete, status: "Downloaded")
+        }
         emitChange()
     }
 
@@ -442,6 +472,15 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
 
     private func failDownload(_ downloadId: String, reason: String) {
         try? store.setState(downloadId, .failed, reason: reason)
+        if #available(iOS 16.1, *), let record = try? store.get(downloadId) {
+            DownloadLiveActivity.finish(record, status: "Needs attention")
+        }
         emitChange()
+        // One failed asset invalidates the atomic download. Stop its sibling
+        // transfers instead of wasting bandwidth until the user taps Retry.
+        liveTasks(downloadId: downloadId) { tasks in
+            for task in tasks { task.cancel() }
+            try? self.store.removeTasks(downloadId)
+        }
     }
 }

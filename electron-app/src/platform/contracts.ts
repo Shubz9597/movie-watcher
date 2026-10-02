@@ -115,9 +115,12 @@ export type DownloadItemState = 'ready' | 'needs-repair';
 export type DownloadItemSnapshot = {
   downloadId: string;
   title: string;
+  posterUrl?: string;
   subtitle?: string;
   state: DownloadItemState;
+  transferState?: 'queued' | 'downloading' | 'paused' | 'ready' | 'failed';
   sizeBytes?: number;
+  receivedBytes?: number;
   /** Short, user-facing explanation for a failed local transfer. */
   repairReason?: string;
   /** Interrupted/partial transfer: shows Waiting for server, never Play (WF06). */

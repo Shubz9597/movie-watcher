@@ -15,6 +15,7 @@ export type DownloadSelection = {
   season: number;
   episode: number;
   title: string;
+  posterUrl?: string | null;
   subtitleLabel?: string;
   sizeBytes?: number;
 };
@@ -207,6 +208,7 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
         season: pending.season,
         episode: pending.episode,
         title: pending.title,
+        posterUrl: pending.posterUrl || undefined,
         subtitleLabel: pending.subtitleLabel,
         video: manifest.video,
         subtitles: manifest.subtitles || [],

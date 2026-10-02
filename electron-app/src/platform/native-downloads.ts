@@ -15,6 +15,7 @@ export type NativeDownloadItem = {
   season: number;
   episode: number;
   title: string;
+  posterUrl: string;
   subtitleLabel: string;
   state: NativeDownloadState;
   reason: string;
@@ -41,6 +42,7 @@ export type NativeEnqueueRequest = {
   season: number;
   episode: number;
   title: string;
+  posterUrl?: string;
   subtitleLabel?: string;
   video: NativeManifestAsset;
   subtitles?: NativeManifestAsset[];

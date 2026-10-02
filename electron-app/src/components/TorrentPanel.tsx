@@ -17,6 +17,7 @@ import { NativeDownloadButton } from './NativeDownloadButton';
 
 type Props = {
   title: string;
+  posterUrl?: string | null;
   year?: number;
   imdbId?: string;
   originalLanguage?: string;
@@ -70,7 +71,6 @@ function qualityFromTitle(title: string) {
   if (lower.includes('720p')) return '720p';
   return null;
 }
-
 // The backend origin is read per call so runtime origin switches apply.
 async function downloadM3U(magnet: string, displayTitle: string, cat: string, seriesId?: string, imdbId?: string) {
   const VOD_BASE = getVodBase();
@@ -122,6 +122,7 @@ async function downloadM3U(magnet: string, displayTitle: string, cat: string, se
 
 export default function TorrentPanel({
   title,
+  posterUrl,
   year,
   imdbId,
   originalLanguage,
@@ -506,6 +507,7 @@ export default function TorrentPanel({
                                 season: 0,
                                 episode: 0,
                                 title,
+                                posterUrl,
                                 subtitleLabel: quality || undefined,
                                 sizeBytes: t.size,
                               }}
@@ -524,6 +526,7 @@ export default function TorrentPanel({
                         season: 0,
                         episode: 0,
                         title,
+                        posterUrl,
                         subtitleLabel: quality || undefined,
                         sizeBytes: t.size,
                       }}
@@ -602,5 +605,3 @@ export default function TorrentPanel({
     </aside>
   );
 }
-
-

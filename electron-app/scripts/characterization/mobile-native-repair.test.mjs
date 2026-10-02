@@ -74,7 +74,13 @@ test("iOS target compiles and registers the native downloads plugin", () => {
   const controller = readFileSync(join(appRoot, "App", "MainViewController.swift"), "utf8");
   const storyboard = readFileSync(join(appRoot, "App", "Base.lproj", "Main.storyboard"), "utf8");
 
-  for (const source of ["TorWatchDownloadsPlugin.swift", "DownloadStore.swift", "DownloadCoordinator.swift"]) {
+  for (const source of [
+    "TorWatchDownloadsPlugin.swift",
+    "DownloadStore.swift",
+    "DownloadCoordinator.swift",
+    "DownloadActivityAttributes.swift",
+    "DownloadLiveActivity.swift",
+  ]) {
     assert.match(project, new RegExp(`${source.replace(".", "\\.")} in Sources`), `${source} must belong to the App target`);
   }
   assert.match(
@@ -87,6 +93,31 @@ test("iOS target compiles and registers the native downloads plugin", () => {
     /customClass="MainViewController"[^>]+customModule="App"/u,
     "the launch storyboard must instantiate the controller that registers app-local plugins",
   );
+});
+
+test("downloads expose poster progress controls and an embedded Live Activity", () => {
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const appRoot = join(repoRoot, "electron-app", "ios", "App");
+  const project = readFileSync(join(appRoot, "App.xcodeproj", "project.pbxproj"), "utf8");
+  const appInfo = readFileSync(join(appRoot, "App", "Info.plist"), "utf8");
+  const coordinator = readFileSync(join(appRoot, "App", "Downloads", "DownloadCoordinator.swift"), "utf8");
+  const store = readFileSync(join(appRoot, "App", "Downloads", "DownloadStore.swift"), "utf8");
+  const activity = readFileSync(join(appRoot, "TorWatchDownloadActivity", "TorWatchDownloadLiveActivity.swift"), "utf8");
+  const page = readFileSync(join(repoRoot, "electron-app", "src", "pages", "DownloadsPage.tsx"), "utf8");
+
+  assert.match(project, /productType = "com\.apple\.product-type\.app-extension"/u);
+  assert.match(project, /TorWatchDownloadActivity\.appex in Embed App Extensions/u);
+  assert.match(appInfo, /<key>NSSupportsLiveActivities<\/key>\s*<true\/>/u);
+  assert.match(activity, /DynamicIslandExpandedRegion\(\.bottom\)[\s\S]+ProgressView/u);
+  assert.match(activity, /Image\("TorWatchActivityIcon"\)/u);
+  assert.match(coordinator, /DownloadLiveActivity\.refresh\(record, status: status\)/u);
+  assert.match(store, /poster_url TEXT NOT NULL DEFAULT ''/u);
+  assert.match(store, /func setAssetReceivedBytes/u);
+  assert.match(store, /SELECT COALESCE\(SUM\(received_bytes\), 0\) FROM download_assets/u);
+  assert.match(coordinator, /setAssetReceivedBytes\([\s\S]+urlPath: mapping\.urlPath/u);
+  assert.match(page, /function DownloadPoster/u);
+  assert.match(page, /role="progressbar"/u);
+  assert.match(page, /native\[action\]\(\{ downloadId \}\)/u);
 });
 
 test("native download repair resumes failed work and finalizes staged assets", () => {
@@ -112,8 +143,8 @@ test("native download repair resumes failed work and finalizes staged assets", (
     /record\.state == \.failed[\s\S]+removeTasks\(downloadId\)[\s\S]+stagingDirectory\(downloadId:/u,
     "repair must discard stale task mappings and damaged staged bytes before retrying",
   );
-  assert.match(page, /native\.resume\(\{ downloadId \}\)/u, "repair must restart the native transfer");
-  assert.match(page, /'Retry download'/u, "the failed state must expose an actionable retry control");
+  assert.match(page, /native\[action\]\(\{ downloadId \}\)/u, "repair must restart the native transfer");
+  assert.match(page, /Retry download/u, "the failed state must expose an actionable retry control");
 });
 
 function jsonResponse(status, body) {

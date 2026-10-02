@@ -63,6 +63,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
                     "season": record.season,
                     "episode": record.episode,
                     "title": record.title,
+                    "posterUrl": record.posterURL,
                     "subtitleLabel": record.subtitleLabel,
                     "state": record.state.rawValue,
                     "reason": record.reason,
@@ -120,6 +121,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             season: call.getInt("season") ?? 0,
             episode: call.getInt("episode") ?? 0,
             title: title,
+            posterURL: call.getString("posterUrl") ?? "",
             subtitleLabel: call.getString("subtitleLabel") ?? "",
             video: (urlPath: videoPath, sizeBytes: videoSize, sha256: videoSHA.lowercased()),
             subtitles: subtitles)

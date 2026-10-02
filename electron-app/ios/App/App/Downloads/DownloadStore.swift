@@ -47,6 +47,7 @@ final class DownloadStore {
         var season: Int
         var episode: Int
         var title: String
+        var posterURL: String
         var subtitleLabel: String
         var state: State
         var reason: String
@@ -148,6 +149,7 @@ final class DownloadStore {
           season INTEGER NOT NULL DEFAULT 0,
           episode INTEGER NOT NULL DEFAULT 0,
           title TEXT NOT NULL,
+          poster_url TEXT NOT NULL DEFAULT '',
           subtitle_label TEXT NOT NULL DEFAULT '',
           state TEXT NOT NULL,
           reason TEXT NOT NULL DEFAULT '',
@@ -163,6 +165,7 @@ final class DownloadStore {
           size_bytes INTEGER NOT NULL,
           sha256 TEXT NOT NULL,
           lang TEXT NOT NULL DEFAULT '',
+          received_bytes INTEGER NOT NULL DEFAULT 0,
           done INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (download_id, url_path)
         );
@@ -183,6 +186,11 @@ final class DownloadStore {
           value TEXT NOT NULL
         );
         """)
+        // Existing installs predate artwork in the durable download record.
+        // SQLite has no ADD COLUMN IF NOT EXISTS, so a duplicate-column error
+        // is the expected no-op after the first migration.
+        try? exec("ALTER TABLE downloads ADD COLUMN poster_url TEXT NOT NULL DEFAULT ''")
+        try? exec("ALTER TABLE download_assets ADD COLUMN received_bytes INTEGER NOT NULL DEFAULT 0")
         // Schema versioning: future migrations key off this value.
         try exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('schemaVersion', '1')")
     }
@@ -222,26 +230,26 @@ final class DownloadStore {
             try transaction {
                 try exec("""
                 INSERT INTO downloads (download_id, instance_id, origin, client_id, series_id, season, episode,
-                                       title, subtitle_label, state, reason, expected_bytes, received_bytes, created_at, updated_at)
+                                       title, poster_url, subtitle_label, state, reason, expected_bytes, received_bytes, created_at, updated_at)
                 VALUES ('\(_esc(record.downloadId))', '\(_esc(record.instanceId))', '\(_esc(record.origin))',
                         '\(_esc(record.clientId))', '\(_esc(record.seriesId))', \(record.season), \(record.episode),
-                        '\(_esc(record.title))', '\(_esc(record.subtitleLabel))', '\(record.state.rawValue)',
+                        '\(_esc(record.title))', '\(_esc(record.posterURL))', '\(_esc(record.subtitleLabel))', '\(record.state.rawValue)',
                         '\(_esc(record.reason))', \(record.totalBytes), \(record.receivedBytes),
                         \(record.createdAt.timeIntervalSince1970), \(record.updatedAt.timeIntervalSince1970))
                 ON CONFLICT (download_id) DO UPDATE SET
                   instance_id='\(_esc(record.instanceId))', origin='\(_esc(record.origin))',
                   client_id='\(_esc(record.clientId))', series_id='\(_esc(record.seriesId))',
                   season=\(record.season), episode=\(record.episode), title='\(_esc(record.title))',
-                  subtitle_label='\(_esc(record.subtitleLabel))', state='\(record.state.rawValue)',
+                  poster_url='\(_esc(record.posterURL))', subtitle_label='\(_esc(record.subtitleLabel))', state='\(record.state.rawValue)',
                   reason='\(_esc(record.reason))', expected_bytes=\(record.totalBytes),
                   received_bytes=\(record.receivedBytes), updated_at=\(record.updatedAt.timeIntervalSince1970)
                 """)
                 try exec("DELETE FROM download_assets WHERE download_id='\(_esc(record.downloadId))'")
                 for asset in record.assets {
                     try exec("""
-                    INSERT INTO download_assets (download_id, url_path, disk_name, size_bytes, sha256, lang, done)
+                    INSERT INTO download_assets (download_id, url_path, disk_name, size_bytes, sha256, lang, received_bytes, done)
                     VALUES ('\(_esc(record.downloadId))', '\(_esc(asset.urlPath))', '\(_esc(asset.diskName))',
-                            \(asset.sizeBytes), '\(_esc(asset.sha256))', '\(_esc(asset.lang))', 0)
+                            \(asset.sizeBytes), '\(_esc(asset.sha256))', '\(_esc(asset.lang))', 0, 0)
                     """)
                 }
             }
@@ -266,10 +274,48 @@ final class DownloadStore {
         }
     }
 
+    /// Persists progress per asset, then derives the download total. A video
+    /// and its subtitle tasks can report in any order without making the UI
+    /// or Live Activity jump backwards.
+    func setAssetReceivedBytes(_ downloadId: String, urlPath: String, bytes: Int64) throws {
+        try onQueue {
+            try transaction {
+                try exec("""
+                UPDATE download_assets
+                SET received_bytes=MIN(size_bytes, MAX(0, \(bytes)))
+                WHERE download_id='\(_esc(downloadId))' AND url_path='\(_esc(urlPath))'
+                """)
+                try exec("""
+                UPDATE downloads
+                SET received_bytes=(
+                  SELECT COALESCE(SUM(received_bytes), 0) FROM download_assets
+                  WHERE download_id='\(_esc(downloadId))'
+                ), updated_at=\(Date().timeIntervalSince1970)
+                WHERE download_id='\(_esc(downloadId))'
+                """)
+            }
+        }
+    }
+
+    func resetTransferProgress(_ downloadId: String) throws {
+        try onQueue {
+            try transaction {
+                try exec("""
+                UPDATE download_assets SET received_bytes=0, done=0
+                WHERE download_id='\(_esc(downloadId))'
+                """)
+                try exec("""
+                UPDATE downloads SET received_bytes=0, updated_at=\(Date().timeIntervalSince1970)
+                WHERE download_id='\(_esc(downloadId))'
+                """)
+            }
+        }
+    }
+
     func markAssetDone(_ downloadId: String, urlPath: String) throws {
         try onQueue {
             try exec("""
-            UPDATE download_assets SET done=1
+            UPDATE download_assets SET done=1, received_bytes=size_bytes
             WHERE download_id='\(_esc(downloadId))' AND url_path='\(_esc(urlPath))'
             """)
         }
@@ -354,7 +400,7 @@ final class DownloadStore {
             defer { sqlite3_finalize(stmt) }
             guard sqlite3_prepare_v2(db, """
             SELECT download_id, instance_id, origin, client_id, series_id, season, episode, title,
-                   subtitle_label, state, reason, received_bytes, created_at, updated_at
+                   poster_url, subtitle_label, state, reason, received_bytes, created_at, updated_at
             FROM downloads ORDER BY created_at
             """, -1, &stmt, nil) == SQLITE_OK else {
                 throw StoreError.database("prepare list failed")
@@ -370,13 +416,14 @@ final class DownloadStore {
                     season: Int(sqlite3_column_int(stmt, 5)),
                     episode: Int(sqlite3_column_int(stmt, 6)),
                     title: String(cString: sqlite3_column_text(stmt, 7)),
-                    subtitleLabel: String(cString: sqlite3_column_text(stmt, 8)),
-                    state: State(rawValue: String(cString: sqlite3_column_text(stmt, 9))) ?? .failed,
-                    reason: String(cString: sqlite3_column_text(stmt, 10)),
+                    posterURL: String(cString: sqlite3_column_text(stmt, 8)),
+                    subtitleLabel: String(cString: sqlite3_column_text(stmt, 9)),
+                    state: State(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .failed,
+                    reason: String(cString: sqlite3_column_text(stmt, 11)),
                     assets: try assetsFor(id),
-                    receivedBytes: sqlite3_column_int64(stmt, 11),
-                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 12)),
-                    updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 13)))
+                    receivedBytes: sqlite3_column_int64(stmt, 12),
+                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 13)),
+                    updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 14)))
                 result.append(record)
             }
             return result

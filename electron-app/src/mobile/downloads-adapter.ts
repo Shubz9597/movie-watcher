@@ -63,11 +63,14 @@ export class NativeDownloadsAdapter implements DownloadsPort {
         items: items.map((item) => ({
           downloadId: item.downloadId,
           title: item.title,
+          posterUrl: item.posterUrl || undefined,
           subtitle: [item.subtitleLabel, item.season > 0 ? `S${item.season} E${item.episode}` : null]
             .filter(Boolean)
             .join(' · '),
           state: item.state === 'ready' ? 'ready' : 'needs-repair',
+          transferState: item.state,
           sizeBytes: item.totalBytes > 0 ? item.totalBytes : undefined,
+          receivedBytes: item.receivedBytes > 0 ? item.receivedBytes : 0,
           repairReason: item.state === 'failed' ? repairMessage(item.reason) : undefined,
           waitingForServer: item.state === 'queued' || item.state === 'downloading' || item.state === 'paused',
         })),
