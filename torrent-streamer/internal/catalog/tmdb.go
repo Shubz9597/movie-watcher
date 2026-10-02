@@ -172,6 +172,7 @@ func (p *TMDb) titleFromMedia(mediaType string, id int64, title, name, originalT
 		Artwork:       artwork,
 		ProviderIDs:   map[string]string{"tmdb": qualifiedID},
 		MergedFrom:    []string{"tmdb"},
+		Format:        mediaType,
 	}
 }
 

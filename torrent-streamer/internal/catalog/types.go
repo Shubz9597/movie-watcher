@@ -29,6 +29,11 @@ type Title struct {
 	ProviderIDs   map[string]string `json:"providerIds"`
 	IMDBID        string            `json:"imdbId,omitempty"`
 	MergedFrom    []string          `json:"mergedFrom"`
+	// Format is the provider's release format (tv, movie, ova, ona,
+	// special, tv_short, music); Popularity its relative audience size.
+	// Search uses both to label and order franchise entries.
+	Format     string  `json:"format,omitempty"`
+	Popularity float64 `json:"popularity,omitempty"`
 
 	// Detail-only enrichment (contracts/v2-catalog-api.md §title detail).
 	Runtime       int               `json:"runtime,omitempty"`

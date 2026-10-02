@@ -798,9 +798,14 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			// Exploration: well-regarded outside the household's own lists.
 			item.Reason = Reason{Code: reasonPopular, Text: "Something different"}
 		} else if entry.score > 0 && entry.reasonSeed != nil {
-			text := reasonText[entry.reasonSeed.label](entry.reasonSeed.title)
+			primary := shortTitle(entry.reasonSeed.title)
+			text := reasonText[entry.reasonSeed.label](primary)
 			if entry.alsoSeed != nil && entry.alsoSeed.title != entry.alsoSeed.id {
-				text = fmt.Sprintf("Because you like %s and %s", entry.reasonSeed.title, entry.alsoSeed.title)
+				if other := shortTitle(entry.alsoSeed.title); !strings.EqualFold(other, primary) {
+					text = fmt.Sprintf("Because you like %s and %s", primary, other)
+				} else {
+					text = fmt.Sprintf("Because you like %s", primary) // same franchise
+				}
 			}
 			// An unresolved title is only an id: never show it to people.
 			if entry.reasonSeed.title == entry.reasonSeed.id {
@@ -860,4 +865,24 @@ func dailyJitter(now time.Time, id string) float64 {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(now.UTC().Format("2006-01-02") + "\x00" + id))
 	return float64(hash.Sum32()%1000) / 1000
+}
+
+// shortTitle trims a seed title to its main name for reasons: subtitles after
+// ":" or " - " and franchise suffixes are dropped ("Demon Slayer -Kimetsu no
+// Yaiba- The Movie: Mugen Train" → "Demon Slayer"), keeping at least three
+// characters of the original.
+func shortTitle(title string) string {
+	short := strings.TrimSpace(title)
+	for _, separator := range []string{":", " - ", " -", " – "} {
+		if index := strings.Index(short, separator); index >= 3 {
+			short = strings.TrimSpace(short[:index])
+		}
+	}
+	if len([]rune(short)) > 40 {
+		short = string([]rune(short)[:38]) + "…"
+	}
+	if short == "" {
+		return title
+	}
+	return short
 }

@@ -302,6 +302,8 @@ func (p *AniList) toTitle(media aniListMedia) Title {
 		Artwork:       artwork,
 		ProviderIDs:   providerIDs,
 		MergedFrom:    []string{"anilist"},
+		Format:        strings.ToLower(media.Format),
+		Popularity:    float64(media.Popularity),
 		Runtime:       media.Duration,
 		Genres:        media.Genres,
 		ExternalLinks: externalLinks,
