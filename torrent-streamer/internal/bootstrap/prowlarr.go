@@ -91,7 +91,10 @@ func DefaultStarters() []Starter {
 			},
 		},
 		{Implementation: "SubsPlease", Name: "SubsPlease", Priority: 10, MinimumSeeders: 1},
-		{Implementation: "Knaben", Name: "Knaben", Priority: 20, MinimumSeeders: 2, Enabled: &preferFalse},
+		// Anime Tosho mirrors Nyaa's anime releases and stays reachable on
+		// networks that filter nyaa.si.
+		{Definition: "animetosho-xyz", Name: "Anime Tosho", Priority: 10, MinimumSeeders: 1},
+		{Implementation: "Knaben", Name: "Knaben", Priority: 20, MinimumSeeders: 2},
 		{Definition: "torrentdownload", Name: "TorrentDownload", Priority: 20, MinimumSeeders: 2},
 		{Definition: "thepiratebay", Name: "The Pirate Bay", Priority: 25, MinimumSeeders: 2},
 		{Definition: "limetorrents", Name: "LimeTorrents", Priority: 25, MinimumSeeders: 2, PreferMagnet: &preferFalse},
