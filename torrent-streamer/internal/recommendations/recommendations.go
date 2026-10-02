@@ -45,7 +45,7 @@ const (
 	// Per-seed "more like this" bounds: the first few usable favourites each
 	// contribute one bounded similar-title page to the candidate pool.
 	seedSimilarLimit  = 12
-	seedSimilarSeeds  = 3
+	seedSimilarSeeds  = 6
 )
 
 // SeedSimilarSource resolves per-seed "more like this" candidates (TMDb
@@ -535,16 +535,25 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	// Candidate pool: per-seed "more like this" for the strongest signals
 	// FIRST (genuinely personal), then the global weekly trending pool.
 	pool := make([]catalog.Title, 0, candidateLimit)
+	// fromSeed remembers which signal's "more like this" list produced a
+	// candidate: that signal is its truthful reason, not whichever signal
+	// happens to weigh most among shared genres.
+	fromSeed := map[string]*signalInfoWithKeys{}
 	if s.seedSimilar != nil {
 		ordered := append([]signalInfoWithKeys(nil), resolved...)
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].weight > ordered[j].weight })
-		for i, signal := range ordered {
+		for i := range ordered {
 			if i >= seedSimilarSeeds {
 				break
 			}
-			similar, err := s.seedSimilar.SeedSimilar(ctx, signal.id, seedSimilarLimit)
+			similar, err := s.seedSimilar.SeedSimilar(ctx, ordered[i].id, seedSimilarLimit)
 			if err != nil {
 				continue
+			}
+			for _, candidate := range similar {
+				if _, taken := fromSeed[candidate.ID]; !taken {
+					fromSeed[candidate.ID] = &ordered[i]
+				}
 			}
 			pool = append(pool, similar...)
 		}
@@ -596,6 +605,10 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				}
 			}
 		}
+		if seed := fromSeed[candidate.ID]; seed != nil {
+			score += seed.weight // "more like this" outranks genre overlap alone
+			reasonSeed = seed
+		}
 		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed})
 	}
 
@@ -610,11 +623,43 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		return scored_[i].title.ID < scored_[j].title.ID
 	})
 
+	// Diversity: rotate between the shows behind the recommendations so one
+	// heavy signal (e.g. a Watch Later title) cannot crowd out the rest;
+	// each show's own candidates keep their score order, popular picks last.
+	{
+		groups := map[string][]scored{}
+		order := []string{}
+		for _, entry := range scored_ {
+			key := ""
+			if entry.score > 0 && entry.reasonSeed != nil {
+				key = entry.reasonSeed.id
+			}
+			if _, seen := groups[key]; !seen && key != "" {
+				order = append(order, key)
+			}
+			groups[key] = append(groups[key], entry)
+		}
+		interleaved := make([]scored, 0, len(scored_))
+		for progress := true; progress; {
+			progress = false
+			for _, key := range order {
+				if len(groups[key]) == 0 {
+					continue
+				}
+				interleaved = append(interleaved, groups[key][0])
+				groups[key] = groups[key][1:]
+				progress = true
+			}
+		}
+		scored_ = append(interleaved, groups[""]...)
+	}
+
 	reasonText := map[string]func(string) string{
 		"favourited":  func(t string) string { return fmt.Sprintf("Because you favourited %s", t) },
 		"watched":     func(t string) string { return fmt.Sprintf("Because you watched %s", t) },
 		"watch-later": func(t string) string { return fmt.Sprintf("Because %s is in your Watch Later", t) },
 		"started":     func(t string) string { return fmt.Sprintf("Because you started %s", t) },
+		"downloaded":  func(t string) string { return fmt.Sprintf("Because you downloaded %s", t) },
 		"opened":      func(t string) string { return fmt.Sprintf("Because you opened %s", t) },
 	}
 	items := make([]Item, 0, len(scored_))
