@@ -25,9 +25,8 @@ import (
 // search that returns as soon as the fast and primary indexers answered and
 // finishes the slow ones in the background.
 
-// ReleaseStore persists raw indexer releases between restarts. Only
-// magnet/info-hash releases are stored: indexer download URLs carry the
-// Prowlarr API key and are never written.
+// ReleaseStore persists raw indexer releases between restarts. Grab URLs are
+// stored without the Prowlarr API key (see withoutAPIKey).
 type ReleaseStore interface {
 	LoadReleases(ctx context.Context, key string) (payload []byte, fetchedAt time.Time, ok bool, err error)
 	SaveReleases(ctx context.Context, key string, payload []byte) error
@@ -109,7 +108,7 @@ func searchKey(request Request) string {
 		return strconv.Itoa(*pointer)
 	}
 	return strings.Join([]string{
-		"v2", string(request.Kind), normalizeAnimeTitle(request.Title), strconv.Itoa(request.Year),
+		"v3", string(request.Kind), normalizeAnimeTitle(request.Title), strconv.Itoa(request.Year),
 		value(request.Season), value(request.Episode), value(request.Absolute),
 		string(normalizeLanguage(request.OriginalLanguage)), normalizeIMDBID(request.IMDBID),
 	}, "|")
@@ -134,7 +133,45 @@ func (s *Service) loadStored(ctx context.Context, key string) ([]prowlarrRelease
 	if json.Unmarshal(payload, &releases) != nil || len(releases) == 0 {
 		return nil, time.Time{}, false
 	}
+	for index := range releases {
+		if releases[index].DownloadURL != "" {
+			releases[index].DownloadURL = s.withAPIKey(releases[index].DownloadURL)
+		}
+	}
 	return releases, fetchedAt, true
+}
+
+// Prowlarr grab URLs carry the API key as a query parameter. Stored copies
+// drop it and get it back only in memory, so the key never reaches the
+// database.
+func (s *Service) withoutAPIKey(raw string) (string, bool) {
+	safe, ok := s.safeDownloadURL(raw)
+	if !ok {
+		return "", false
+	}
+	parsed, err := url.Parse(safe)
+	if err != nil {
+		return "", false
+	}
+	query := parsed.Query()
+	for name := range query {
+		if strings.EqualFold(name, "apikey") {
+			query.Del(name)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), true
+}
+
+func (s *Service) withAPIKey(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	query := parsed.Query()
+	query.Set("apikey", s.apiKey)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (s *Service) saveStored(key string, releases []prowlarrRelease) {
@@ -143,10 +180,14 @@ func (s *Service) saveStored(key string, releases []prowlarrRelease) {
 	}
 	keep := make([]prowlarrRelease, 0, len(releases))
 	for _, release := range releases {
-		if normalizeHash(release.InfoHash) == "" && !strings.HasPrefix(strings.ToLower(release.MagnetURL), "magnet:?") {
-			continue // grab URLs carry the indexer API key
+		if release.DownloadURL != "" {
+			stripped, ok := s.withoutAPIKey(release.DownloadURL)
+			hasMagnet := normalizeHash(release.InfoHash) != "" || strings.HasPrefix(strings.ToLower(release.MagnetURL), "magnet:?")
+			if !ok && !hasMagnet {
+				continue // nothing safe to fetch it with later
+			}
+			release.DownloadURL = stripped
 		}
-		release.DownloadURL = ""
 		keep = append(keep, release)
 	}
 	if len(keep) == 0 {

@@ -84,7 +84,8 @@ func (m *memoryStore) saved(key string) []byte {
 func TestSearchReturnsEarlyAndFinishesSlowIndexersInBackground(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/indexer":
 			mockIndexerList(w, []map[string]any{indexerEntry(1, "YTS", true, "torrent", 1), indexerEntry(2, "Slow Tracker", true, "torrent", 2)})
@@ -93,7 +94,7 @@ func TestSearchReturnsEarlyAndFinishesSlowIndexersInBackground(t *testing.T) {
 		default:
 			<-release
 			_ = json.NewEncoder(w).Encode([]prowlarrRelease{{Title: "Dune 2021 2160p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", InfoHash: idHex('b'), Seeders: 50,
-				DownloadURL: "http://indexer/download?apikey=secret"}, {Title: "Dune 2021 720p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", DownloadURL: "http://127.0.0.1/api/v1/indexer/2/download/x"}})
+				DownloadURL: "http://indexer/download?apikey=secret"}, {Title: "Dune 2021 720p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", DownloadURL: server.URL + "/2/download?apikey=test-api-key&link=abc"}})
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -126,11 +127,20 @@ func TestSearchReturnsEarlyAndFinishesSlowIndexersInBackground(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	saved := string(store.saved(key))
-	if !strings.Contains(saved, "2160p") || strings.Contains(saved, "apikey") || strings.Contains(saved, "720p") {
-		t.Fatalf("stored releases = %s, want the full magnet/hash set and no grab URLs", saved)
+	if !strings.Contains(saved, "2160p") || !strings.Contains(saved, "720p") || strings.Contains(saved, "test-api-key") || strings.Contains(saved, "indexer/download") {
+		t.Fatalf("stored releases = %s, want the full set, grab URLs without the API key, foreign hosts dropped", saved)
 	}
-	if cached, ok := service.cached(key); !ok || len(cached) != 2 {
-		t.Fatalf("cached results = %d, want the completed set of 2", len(cached))
+	if cached, ok := service.cached(key); !ok || len(cached) != 3 {
+		t.Fatalf("cached results = %d, want the completed set of 3", len(cached))
+	}
+	reloaded, _, ok := service.loadStored(context.Background(), key)
+	if !ok || len(reloaded) != 3 {
+		t.Fatalf("reloaded = %d releases, want 3", len(reloaded))
+	}
+	for _, release := range reloaded {
+		if release.DownloadURL != "" && !strings.Contains(release.DownloadURL, "apikey=test-api-key") {
+			t.Fatalf("reloaded grab URL %q lost its in-memory API key", release.DownloadURL)
+		}
 	}
 }
 
