@@ -108,6 +108,10 @@ func (h DownloadsHandlers) handleCreate(w http.ResponseWriter, r *http.Request) 
 		SourceID       string `json:"sourceId"`
 		SourceKind     string `json:"sourceKind"`
 		FileIndex      *int   `json:"fileIndex"`
+		// Subtitles are requested sidecar languages; SubtitleHints let the
+		// worker search the provider when the torrent has none (§3).
+		Subtitles     []string                `json:"subtitles"`
+		SubtitleHints downloads.SubtitleHints `json:"subtitleHints"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeSystemError(w, http.StatusBadRequest, ErrorDetail{Code: "bad_json", Message: "The request body is not valid JSON."})
@@ -132,6 +136,8 @@ func (h DownloadsHandlers) handleCreate(w http.ResponseWriter, r *http.Request) 
 		Season:         body.Season,
 		Episode:        body.Episode,
 		PickID:         pickID,
+		Subtitles:      body.Subtitles,
+		SubtitleHints:  body.SubtitleHints,
 	})
 	if err != nil {
 		h.writeStoreError(w, err)

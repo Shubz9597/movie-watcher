@@ -58,6 +58,37 @@ type CreateRequest struct {
 	Episode        int
 	PickID         int64
 	Subtitles      []string
+	SubtitleHints  SubtitleHints
+}
+
+// SubtitleHints are optional catalog identifiers the client already knows;
+// the preparation worker uses them to search the subtitle provider when the
+// torrent has no sidecar for a requested language. Never trusted as paths.
+type SubtitleHints struct {
+	Title  string `json:"title,omitempty"`
+	Year   int    `json:"year,omitempty"`
+	IMDBID string `json:"imdbId,omitempty"`
+}
+
+// Valid bounds the hints to harmless shapes before persistence.
+func (h SubtitleHints) Valid() bool {
+	if len(h.Title) > 300 || strings.ContainsAny(h.Title, "\x00\n\r") {
+		return false
+	}
+	if h.Year != 0 && (h.Year < 1870 || h.Year > 2200) {
+		return false
+	}
+	if h.IMDBID != "" {
+		if len(h.IMDBID) < 3 || len(h.IMDBID) > 12 || !strings.HasPrefix(h.IMDBID, "tt") {
+			return false
+		}
+		for _, r := range h.IMDBID[2:] {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Job is the durable preparation job as exposed to clients and workers.
@@ -73,6 +104,7 @@ type Job struct {
 	ReasonCode     string
 	// RequestedSubtitles are the requested sidecar languages (may be empty).
 	RequestedSubtitles []string
+	SubtitleHints      SubtitleHints
 	ReadyAt            *time.Time
 	ExpiresAt          *time.Time
 	CreatedAt          time.Time
@@ -87,16 +119,22 @@ type Store struct {
 func NewStore(db *sql.DB) *Store { return &Store{DB: db} }
 
 const jobColumns = `id, idempotency_key, client_id, series_id, season, episode, pick_id,
-state, reason_code, requested_subtitles, ready_at, expires_at, created_at, updated_at`
+state, reason_code, requested_subtitles, subtitle_hints, ready_at, expires_at, created_at, updated_at`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var readyAt, expiresAt sql.NullTime
 	var requested string
+	var hints []byte
 	err := row.Scan(&j.ID, &j.IdempotencyKey, &j.ClientID, &j.SeriesID, &j.Season, &j.Episode,
-		&j.PickID, &j.State, &j.ReasonCode, &requested, &readyAt, &expiresAt, &j.CreatedAt, &j.UpdatedAt)
+		&j.PickID, &j.State, &j.ReasonCode, &requested, &hints, &readyAt, &expiresAt, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		return Job{}, err
+	}
+	if len(hints) > 0 {
+		// Hints are advisory: an unreadable value only disables the
+		// provider search, never the job.
+		_ = json.Unmarshal(hints, &j.SubtitleHints)
 	}
 	if requested != "" {
 		j.RequestedSubtitles = strings.Split(requested, ",")
@@ -127,7 +165,14 @@ func (s *Store) Create(ctx context.Context, req CreateRequest) (Job, bool, error
 			return Job{}, false, ErrInvalidRequest
 		}
 	}
+	if len(req.Subtitles) > 5 || !req.SubtitleHints.Valid() {
+		return Job{}, false, ErrInvalidRequest
+	}
 	requested := strings.Join(req.Subtitles, ",")
+	hints, err := json.Marshal(req.SubtitleHints)
+	if err != nil {
+		return Job{}, false, ErrInvalidRequest
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, false, fmt.Errorf("begin create: %w", err)
@@ -135,10 +180,10 @@ func (s *Store) Create(ctx context.Context, req CreateRequest) (Job, bool, error
 	defer tx.Rollback()
 	var created bool
 	err = tx.QueryRowContext(ctx, `
-INSERT INTO download_jobs (idempotency_key, client_id, series_id, season, episode, pick_id, state, requested_subtitles)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO download_jobs (idempotency_key, client_id, series_id, season, episode, pick_id, state, requested_subtitles, subtitle_hints)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT (client_id, idempotency_key) DO NOTHING
-RETURNING TRUE`, req.IdempotencyKey, req.ClientID, req.SeriesID, req.Season, req.Episode, req.PickID, StatePreparing, requested).Scan(&created)
+RETURNING TRUE`, req.IdempotencyKey, req.ClientID, req.SeriesID, req.Season, req.Episode, req.PickID, StatePreparing, requested, hints).Scan(&created)
 	if errors.Is(err, sql.ErrNoRows) {
 		created = false
 	} else if err != nil {

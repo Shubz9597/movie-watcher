@@ -207,12 +207,15 @@ func main() {
 		os.MkdirAll(filepath.Join(downloadRootAbs, "ready"), 0o755) == nil &&
 		os.MkdirAll(filepath.Join(downloadRootAbs, "staging"), 0o755) == nil {
 		downloadPrepper = downloads.NewPrepper(downloads.NewStore(db), pickRepo, downloadRootAbs, config.DownloadMaxConcurrent())
+		// Requested subtitle languages missing from the torrent fall back to
+		// the OpenSubtitles credential the player already uses.
+		downloadPrepper.Subtitles = httpapi.DownloadSubtitleSource{}
 		if released, err := downloadPrepper.ReconcileStartup(context.Background()); err != nil {
 			log.Printf("[boot] download job reconciliation: %v", err)
 		} else if released > 0 {
 			log.Printf("[boot] reconciled %d preparing download jobs from a previous run", released)
 		}
-		capabilities = append(capabilities, "downloads.offline.v1")
+		capabilities = append(capabilities, "downloads.offline.v1", "downloads.subtitles.v1")
 		log.Printf("[boot] downloads.offline.v1 ready (root=%s maxConcurrent=%d)", downloadRootAbs, config.DownloadMaxConcurrent())
 	} else {
 		log.Printf("[boot] downloads.offline.v1 unavailable: the download storage root is not writable")

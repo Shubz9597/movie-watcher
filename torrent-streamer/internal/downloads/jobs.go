@@ -28,9 +28,12 @@ const (
 	ReasonSourceUnavailable       = "source_unavailable"
 	ReasonInsufficientServerSpace = "insufficient_server_storage"
 	ReasonPreparationFailed       = "preparation_failed"
-	ReasonClientCancelled         = "client_cancelled"
-	ReasonReplaced                = "replaced"
-	ReasonRetentionExpired        = "retention_expired"
+	// ReasonSubtitlesUnavailable: a requested subtitle language could not be
+	// found in the torrent or the subtitle provider (migration 010).
+	ReasonSubtitlesUnavailable = "subtitles_unavailable"
+	ReasonClientCancelled      = "client_cancelled"
+	ReasonReplaced             = "replaced"
+	ReasonRetentionExpired     = "retention_expired"
 )
 
 // ValidReasonCodes maps every state to its allowed reason codes. A persisted
@@ -42,6 +45,7 @@ var ValidReasonCodes = map[string]map[string]bool{
 		ReasonSourceUnavailable:       true,
 		ReasonInsufficientServerSpace: true,
 		ReasonPreparationFailed:       true,
+		ReasonSubtitlesUnavailable:    true,
 	},
 	StateCancelled: {
 		ReasonClientCancelled: true,

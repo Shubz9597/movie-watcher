@@ -53,6 +53,22 @@ INSERT INTO download_jobs (idempotency_key, client_id, series_id, pick_id, state
 VALUES ('test-key-1', 'test-client', 'tmdb:movie:1', 1, 'failed', 'source_unavailable')`); err != nil {
 		t.Fatalf("insert contracted failed job: %v", err)
 	}
+	// 010: subtitles_unavailable joins the failed reasons; subtitle hints
+	// default to an empty object.
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO download_jobs (idempotency_key, client_id, series_id, pick_id, state, reason_code)
+VALUES ('test-key-3', 'test-client', 'tmdb:movie:1', 1, 'failed', 'subtitles_unavailable')`); err != nil {
+		t.Fatalf("insert failed/subtitles_unavailable job: %v", err)
+	}
+	var hints string
+	if err := db.QueryRowContext(ctx, `SELECT subtitle_hints::text FROM download_jobs WHERE idempotency_key='test-key-3'`).Scan(&hints); err != nil || hints != "{}" {
+		t.Fatalf("subtitle_hints default = %q err=%v, want {}", hints, err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO download_jobs (idempotency_key, client_id, series_id, pick_id, state, reason_code)
+VALUES ('test-key-4', 'test-client', 'tmdb:movie:1', 1, 'ready', 'subtitles_unavailable')`); err == nil {
+		t.Fatalf("ready/subtitles_unavailable was accepted")
+	}
 	// A foreign reason code is rejected by the CHECK constraint.
 	if _, err := db.ExecContext(ctx, `
 INSERT INTO download_jobs (idempotency_key, client_id, series_id, pick_id, state, reason_code)

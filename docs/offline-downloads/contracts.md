@@ -59,7 +59,8 @@ Request:
   "sourceId": "opaque id returned by torrent search",
   "sourceKind": "movie",
   "fileIndex": 0,
-  "subtitles": ["en"]
+  "subtitles": ["en"],
+  "subtitleHints": { "title": "Dune: Part Two", "year": 2024, "imdbId": "tt15239678" }
 }
 ```
 
@@ -79,6 +80,16 @@ Request:
   the manifest; a requested language the source cannot provide keeps the job
   from becoming ready — the client then retries or re-enqueues without it
   (the "Continue without subtitles" choice).
+- Sidecars come from the torrent first; a language the torrent lacks falls
+  back to the server's OpenSubtitles credential (the player's provider),
+  preferring the release whose name best matches the video file. Lookups run
+  before the video copy, so a missing language fails within seconds with
+  `subtitles_unavailable`.
+- `subtitleHints` is OPTIONAL catalog metadata (`title` ≤ 300 chars, `year`,
+  `imdbId` = `tt` + digits) used only for that provider search. At most five
+  languages per job. Servers advertise this behaviour with the
+  `downloads.subtitles.v1` capability; clients only offer subtitle choices
+  when it is present.
 - Response `201` (or `200` on idempotent replay):
 
 ```json
@@ -102,7 +113,7 @@ Safe `reasonCode` values — enumeration is closed; no internal details:
 |---|---|
 | preparing | `""` |
 | ready | `""` |
-| failed | `source_unavailable` \| `insufficient_server_storage` \| `preparation_failed` |
+| failed | `source_unavailable` \| `insufficient_server_storage` \| `preparation_failed` \| `subtitles_unavailable` |
 | cancelled | `client_cancelled` \| `replaced` |
 | expired | `retention_expired` |
 

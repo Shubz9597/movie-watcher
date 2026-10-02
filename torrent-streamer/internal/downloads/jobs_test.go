@@ -42,6 +42,9 @@ func TestValidateReason(t *testing.T) {
 	if !ValidateReason(StateFailed, ReasonSourceUnavailable) {
 		t.Fatalf("failed/source_unavailable is legal")
 	}
+	if !ValidateReason(StateFailed, ReasonSubtitlesUnavailable) {
+		t.Fatalf("failed/subtitles_unavailable is legal (migration 010)")
+	}
 	if ValidateReason(StateFailed, ReasonNone) {
 		t.Fatalf("failed without a reason is illegal")
 	}

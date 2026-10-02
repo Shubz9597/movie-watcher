@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,8 +29,11 @@ import (
 // (downloading must not starve streaming and must not be evicted
 // mid-transfer).
 type Prepper struct {
-	Store         *Store
-	Repo          *torrentx.Repo
+	Store *Store
+	Repo  *torrentx.Repo
+	// Subtitles is the optional provider fallback for requested languages
+	// the torrent does not carry. Nil means torrent sidecars only.
+	Subtitles     SubtitleSource
 	DownloadRoot  string        // resolved absolute downloads root
 	MaxConcurrent int           // bounded admission (default 1)
 	InfoTimeout   time.Duration // metadata wait per job (default 10m)
@@ -40,6 +44,26 @@ type Prepper struct {
 	mu       sync.Mutex
 	running  int
 }
+
+// SubtitleQuery describes one provider lookup for a prepared video.
+type SubtitleQuery struct {
+	SeriesID  string // canonical catalog id, e.g. tmdb:movie:693134
+	Season    int
+	Episode   int
+	Lang      string // lowercase ISO 639-1
+	VideoName string // torrent file name, used to prefer matching releases
+	Hints     SubtitleHints
+}
+
+// SubtitleSource fetches one subtitle file from an external provider.
+// It returns the file bytes and a safe lowercase extension ("vtt", "srt").
+// ErrSubtitleNotFound means the provider has no match for the language.
+type SubtitleSource interface {
+	FetchSubtitle(ctx context.Context, q SubtitleQuery) (data []byte, ext string, err error)
+}
+
+// ErrSubtitleNotFound reports that no provider subtitle matched.
+var ErrSubtitleNotFound = errors.New("no subtitle found for the requested language")
 
 func NewPrepper(store *Store, repo *torrentx.Repo, downloadRoot string, maxConcurrent int) *Prepper {
 	if maxConcurrent < 1 {
@@ -240,11 +264,72 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	file := files[fileIdx]
 	file.Download()
 
-	// 4. Stage the video (hash while copying; ctx cancellation aborts).
+	// 4. Subtitle sidecars, resolved BEFORE the long video copy so a missing
+	// language fails in seconds, not hours. Torrent-internal files win;
+	// otherwise the provider fallback supplies the best-matching release.
+	// A requested language nobody can provide fails the job with
+	// subtitles_unavailable (the client offers Continue without subtitles —
+	// never silently ready, contracts.md §4).
 	if err := os.MkdirAll(staged, 0o755); err != nil {
 		fail(ReasonInsufficientServerSpace, err)
 		return
 	}
+	var subtitleAssets []AssetRow
+	if len(job.RequestedSubtitles) > 0 {
+		requested := requestedSet(job.RequestedSubtitles)
+		matched := map[string]torrentx.SubtitleFile{}
+		for _, sub := range torrentx.FindSubtitleFilesForVideo(t, fileIdx) {
+			lang := strings.ToLower(sub.Lang)
+			if requested[lang] && matched[lang].Index == 0 && matched[lang].Path == "" {
+				matched[lang] = sub
+			}
+		}
+		for _, lang := range job.RequestedSubtitles {
+			url := "/v1/downloads/jobs/" + job.ID + "/assets/subtitles/" + lang
+			if sub, ok := matched[lang]; ok {
+				name := "subtitles." + lang + "." + sub.Ext
+				size, sha, err := p.copyTo(jobCtx, files[sub.Index], filepath.Join(staged, name))
+				if err != nil {
+					fail(ReasonPreparationFailed, err)
+					return
+				}
+				subtitleAssets = append(subtitleAssets, AssetRow{
+					Kind: AssetKindSubtitle, Lang: lang, URLPath: url,
+					DiskPath:  "ready/" + filepath.Base(job.ID) + "/" + name,
+					SizeBytes: size, SHA256: sha,
+				})
+				continue
+			}
+			if p.Subtitles == nil {
+				fail(ReasonSubtitlesUnavailable, fmt.Errorf("requested subtitle language %q not in torrent", lang))
+				return
+			}
+			data, subExt, err := p.Subtitles.FetchSubtitle(jobCtx, SubtitleQuery{
+				SeriesID: job.SeriesID, Season: job.Season, Episode: job.Episode, Lang: lang,
+				VideoName: filepath.Base(file.Path()), Hints: job.SubtitleHints,
+			})
+			if err != nil || len(data) == 0 {
+				fail(ReasonSubtitlesUnavailable, fmt.Errorf("subtitle %q: %v", lang, err))
+				return
+			}
+			if subExt != "vtt" && subExt != "srt" {
+				subExt = "vtt"
+			}
+			name := "subtitles." + lang + "." + subExt
+			size, sha, err := writeHashed(filepath.Join(staged, name), data)
+			if err != nil {
+				fail(ReasonInsufficientServerSpace, err)
+				return
+			}
+			subtitleAssets = append(subtitleAssets, AssetRow{
+				Kind: AssetKindSubtitle, Lang: lang, URLPath: url,
+				DiskPath:  "ready/" + filepath.Base(job.ID) + "/" + name,
+				SizeBytes: size, SHA256: sha,
+			})
+		}
+	}
+
+	// 5. Stage the video (hash while copying; ctx cancellation aborts).
 	ext := strings.ToLower(filepath.Ext(file.Path()))
 	if !isSafeExt(ext) {
 		fail(ReasonPreparationFailed, fmt.Errorf("unexpected video extension %q", ext))
@@ -262,42 +347,11 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		return
 	}
 
-	// 5. Subtitle sidecars: torrent-internal files matching the requested
-	// languages. A requested language the source cannot provide fails the
-	// job (the client offers Retry or Continue-without — never silently
-	// ready, contracts.md §4).
 	assets := []AssetRow{{
 		Kind: AssetKindVideo, URLPath: videoURL, DiskPath: videoDisk,
 		SizeBytes: videoSize, SHA256: videoSHA,
 	}}
-	if len(job.RequestedSubtitles) > 0 {
-		requested := requestedSet(job.RequestedSubtitles)
-		matched := map[string]torrentx.SubtitleFile{}
-		for _, sub := range torrentx.FindSubtitleFilesForVideo(t, fileIdx) {
-			lang := strings.ToLower(sub.Lang)
-			if requested[lang] && matched[lang].Index == 0 && matched[lang].Path == "" {
-				matched[lang] = sub
-			}
-		}
-		for _, lang := range job.RequestedSubtitles {
-			sub, ok := matched[lang]
-			if !ok {
-				fail(ReasonPreparationFailed, fmt.Errorf("requested subtitle language %q not available", lang))
-				return
-			}
-			disk := "ready/" + filepath.Base(job.ID) + "/subtitles." + lang + "." + sub.Ext
-			url := "/v1/downloads/jobs/" + job.ID + "/assets/subtitles/" + lang
-			size, sha, err := p.copyTo(jobCtx, files[sub.Index], filepath.Join(staged, "subtitles."+lang+"."+sub.Ext))
-			if err != nil {
-				fail(ReasonPreparationFailed, err)
-				return
-			}
-			assets = append(assets, AssetRow{
-				Kind: AssetKindSubtitle, Lang: lang, URLPath: url, DiskPath: disk,
-				SizeBytes: size, SHA256: sha,
-			})
-		}
-	}
+	assets = append(assets, subtitleAssets...)
 
 	// 6. Atomic finalize: rename staging to ready on the same volume, then
 	// ONE transaction attaches the assets and flips the state. If the job
@@ -439,4 +493,14 @@ func copyExact(ctx context.Context, out io.Writer, reader io.Reader, expected in
 		return written, "", fmt.Errorf("incomplete copy: %d of %d bytes", written, expected)
 	}
 	return written, hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// writeHashed writes provider bytes into staging and returns their size and
+// SHA-256, matching copyTo's integrity contract for torrent assets.
+func writeHashed(dst string, data []byte) (int64, string, error) {
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return 0, "", err
+	}
+	sum := sha256.Sum256(data)
+	return int64(len(data)), hex.EncodeToString(sum[:]), nil
 }

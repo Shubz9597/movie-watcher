@@ -205,6 +205,28 @@ func TestDownloadsCreateRegistersOpaqueSelectedSource(t *testing.T) {
 	}
 }
 
+func TestDownloadsCreatePassesSubtitleRequest(t *testing.T) {
+	svc := &fakeDownloadService{createJob: readyTestJob(), createNew: true}
+	mux := http.NewServeMux()
+	newDownloadsTestHandlers(svc).Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/downloads/jobs", strings.NewReader(
+		`{"clientId":"device-1","idempotencyKey":"attempt-2","seriesId":"tmdb:movie:693134","pickId":5,`+
+			`"subtitles":["en"],"subtitleHints":{"title":"Dune: Part Two","year":2024,"imdbId":"tt15239678"}}`,
+	)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with subtitles = %d %s", rec.Code, rec.Body.String())
+	}
+	got := svc.lastCreate
+	if len(got.Subtitles) != 1 || got.Subtitles[0] != "en" {
+		t.Fatalf("requested subtitles = %#v", got.Subtitles)
+	}
+	if got.SubtitleHints.Title != "Dune: Part Two" || got.SubtitleHints.Year != 2024 || got.SubtitleHints.IMDBID != "tt15239678" {
+		t.Fatalf("subtitle hints = %#v", got.SubtitleHints)
+	}
+}
+
 func TestDownloadsGetScopesByClient(t *testing.T) {
 	svc := &fakeDownloadService{getJob: readyTestJob()}
 	mux := newDownloadsTestMux(svc)
