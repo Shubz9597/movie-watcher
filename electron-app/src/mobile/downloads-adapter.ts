@@ -44,6 +44,8 @@ function repairMessage(reason: string): string {
       return 'Server unavailable';
     case 'verification_failed':
       return 'File check failed';
+    case 'storage_failed':
+      return 'Couldn’t save the finished file';
     default:
       return 'Download interrupted';
   }

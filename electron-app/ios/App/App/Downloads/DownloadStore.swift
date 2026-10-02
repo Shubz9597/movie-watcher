@@ -24,10 +24,10 @@ let sqliteTransientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.se
  */
 final class DownloadStore {
 
-    static let states = ["queued", "downloading", "paused", "ready", "failed"]
+    static let states = ["queued", "downloading", "paused", "verifying", "ready", "failed"]
 
     enum State: String {
-        case queued, downloading, paused, ready, failed
+        case queued, downloading, paused, verifying, ready, failed
     }
 
     struct Asset: Codable, Equatable {

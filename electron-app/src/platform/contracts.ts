@@ -118,7 +118,7 @@ export type DownloadItemSnapshot = {
   posterUrl?: string;
   subtitle?: string;
   state: DownloadItemState;
-  transferState?: 'queued' | 'downloading' | 'paused' | 'ready' | 'failed';
+  transferState?: 'queued' | 'downloading' | 'paused' | 'verifying' | 'ready' | 'failed';
   sizeBytes?: number;
   receivedBytes?: number;
   /** Short, user-facing explanation for a failed local transfer. */

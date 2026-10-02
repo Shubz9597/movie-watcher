@@ -104,12 +104,16 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   const store = readFileSync(join(appRoot, "App", "Downloads", "DownloadStore.swift"), "utf8");
   const activity = readFileSync(join(appRoot, "TorWatchDownloadActivity", "TorWatchDownloadLiveActivity.swift"), "utf8");
   const page = readFileSync(join(repoRoot, "electron-app", "src", "pages", "DownloadsPage.tsx"), "utf8");
+  const queue = readFileSync(join(repoRoot, "electron-app", "src", "mobile", "download-queue.ts"), "utf8");
 
   assert.match(project, /productType = "com\.apple\.product-type\.app-extension"/u);
   assert.match(project, /TorWatchDownloadActivity\.appex in Embed App Extensions/u);
   assert.match(appInfo, /<key>NSSupportsLiveActivities<\/key>\s*<true\/>/u);
   assert.match(activity, /DynamicIslandExpandedRegion\(\.bottom\)[\s\S]+ProgressView/u);
   assert.match(activity, /Image\("TorWatchActivityIcon"\)/u);
+  assert.match(activity, /compactTrailing:[\s\S]+ActivityProgressRing/u);
+  assert.match(activity, /minimal:[\s\S]+TorWatchActivityIcon/u);
+  assert.match(activity, /Color\(red: 0\.12, green: 0\.84, blue: 0\.49\)/u);
   assert.match(coordinator, /DownloadLiveActivity\.refresh\(record, status: status\)/u);
   assert.match(store, /poster_url TEXT NOT NULL DEFAULT ''/u);
   assert.match(store, /func setAssetReceivedBytes/u);
@@ -118,6 +122,9 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   assert.match(page, /function DownloadPoster/u);
   assert.match(page, /role="progressbar"/u);
   assert.match(page, /native\[action\]\(\{ downloadId \}\)/u);
+  assert.match(page, /Cancel download of/u);
+  assert.match(queue, /export async function cancelPendingDownload/u);
+  assert.match(queue, /This title is already in Downloads/u);
 });
 
 test("native download repair resumes failed work and finalizes staged assets", () => {
@@ -140,8 +147,23 @@ test("native download repair resumes failed work and finalizes staged assets", (
   );
   assert.match(
     coordinator,
-    /record\.state == \.failed[\s\S]+removeTasks\(downloadId\)[\s\S]+stagingDirectory\(downloadId:/u,
-    "repair must discard stale task mappings and damaged staged bytes before retrying",
+    /record\.state == \.failed[\s\S]+stagedAssetsAreVerified\(record\)[\s\S]+tryMaybeFinalize\(record\)[\s\S]+removeItem/u,
+    "repair must salvage verified staged bytes and only discard genuinely damaged downloads",
+  );
+  assert.match(
+    coordinator,
+    /setState\(record\.downloadId, \.verifying\)[\s\S]+status: "Checking file"/u,
+    "a completed transfer must expose a truthful verification phase",
+  );
+  assert.match(
+    coordinator,
+    /createDirectory\([\s\S]+ready\.deletingLastPathComponent\(\)[\s\S]+moveItem\(at: staging, to: ready\)/u,
+    "the ready parent must exist before atomic finalization",
+  );
+  assert.match(
+    coordinator,
+    /catch \{\s*failDownload\(record\.downloadId, reason: "storage_failed"\)/u,
+    "storage finalization failures must not be mislabeled as file-integrity failures",
   );
   assert.match(page, /native\[action\]\(\{ downloadId \}\)/u, "repair must restart the native transfer");
   assert.match(page, /Retry download/u, "the failed state must expose an actionable retry control");

@@ -5,7 +5,7 @@
 // localPlayablePath, which resolves ONLY verified ready downloads.
 import type { Plugin } from '@capacitor/core';
 
-export type NativeDownloadState = 'queued' | 'downloading' | 'paused' | 'ready' | 'failed';
+export type NativeDownloadState = 'queued' | 'downloading' | 'paused' | 'verifying' | 'ready' | 'failed';
 
 export type NativeDownloadItem = {
   downloadId: string;

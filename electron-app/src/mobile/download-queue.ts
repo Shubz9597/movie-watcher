@@ -6,6 +6,7 @@ import { DOWNLOADS_UI_ENABLED, getNativeDownloads } from './downloads-adapter.ts
 const STORAGE_KEY = 'torwatch_pending_downloads_v1';
 const CHANGE_EVENT = 'torwatch:downloads-changed';
 const activeJobs = new Map<string, Promise<void>>();
+const cancelledJobs = new Set<string>();
 
 export type DownloadSelection = {
   seriesId: string;
@@ -82,6 +83,20 @@ export function removePendingDownload(jobId: string): void {
   writePending(readPending().filter((item) => item.jobId !== jobId));
 }
 
+export async function cancelPendingDownload(pending: PendingDownload): Promise<void> {
+  cancelledJobs.add(pending.jobId);
+  removePendingDownload(pending.jobId);
+  try {
+    await fetch(
+      `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}/cancel?clientId=${encodeURIComponent(pending.clientId)}`,
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+  } catch {
+    // The device-side cancellation is already authoritative. The server's
+    // bounded retention cleanup will reclaim a package it could not cancel.
+  }
+}
+
 function requestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${getDeviceId()}-${Date.now()}`;
 }
@@ -111,6 +126,19 @@ export async function queueNativeDownload(
   const native = getNativeDownloads();
   if (!DOWNLOADS_UI_ENABLED || !native) throw new Error('Downloads are unavailable on this device.');
   if (!selection.seriesId || !selection.sourceId) throw new Error('Choose this source again, then download it.');
+
+  const sameTitle = (item: { seriesId: string; season: number; episode: number }) => (
+    item.seriesId === selection.seriesId
+      && item.season === selection.season
+      && item.episode === selection.episode
+  );
+  if (readPending().some(sameTitle)) {
+    throw new Error('This title is already in Downloads.');
+  }
+  const local = await native.list();
+  if (local.items.some(sameTitle)) {
+    throw new Error('This title is already in Downloads. Retry or cancel it there.');
+  }
 
   if (selection.sizeBytes && selection.sizeBytes > 0) {
     const storage = await native.storage();
@@ -180,10 +208,12 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
   if (!native) return;
   try {
     for (;;) {
+      if (cancelledJobs.has(pending.jobId)) return;
       const response = await fetch(
         `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}?clientId=${encodeURIComponent(pending.clientId)}`,
         { headers: { Accept: 'application/json' } },
       );
+      if (cancelledJobs.has(pending.jobId)) return;
       if (!response.ok) throw await responseError(response, 'Could not check the download.');
       const job = await response.json() as JobBody;
       if (job.state === 'preparing') {
@@ -196,9 +226,11 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
         `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}/manifest?clientId=${encodeURIComponent(pending.clientId)}`,
         { headers: { Accept: 'application/json' } },
       );
+      if (cancelledJobs.has(pending.jobId)) return;
       if (!manifestResponse.ok) throw await responseError(manifestResponse, 'Could not read the download package.');
       const manifest = await manifestResponse.json() as ManifestBody;
       if (manifest.manifestVersion !== 1) throw new Error('This download format is not supported.');
+      if (cancelledJobs.has(pending.jobId)) return;
       await native.enqueue({
         downloadId: pending.jobId,
         instanceId: pending.instanceId,
@@ -217,6 +249,7 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
       return;
     }
   } catch (error) {
+    if (cancelledJobs.has(pending.jobId)) return;
     upsertPending({
       ...pending,
       state: 'failed',

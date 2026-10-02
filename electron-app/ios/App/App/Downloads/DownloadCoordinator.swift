@@ -190,16 +190,23 @@ final class DownloadCoordinator: NSObject {
                     return
                 }
                 if record.state == .failed {
-                    // A failed file may still exist in staging with the right
-                    // length but a bad hash. A repair must not trust or reuse
-                    // it, and stale URLSession mappings must not suppress the
-                    // replacement task.
                     for task in tasks { task.cancel() }
                     try self.store.removeTasks(downloadId)
-                    try? FileManager.default.removeItem(
-                        at: try DownloadStore.stagingDirectory(downloadId: downloadId))
-                    try self.store.resetTransferProgress(downloadId)
-                    try self.startTasks(for: record)
+                    if self.stagedAssetsAreVerified(record) {
+                        // Older builds could verify every byte and then fail
+                        // only because ready/ did not exist. Salvage those
+                        // staged bytes instead of downloading gigabytes again.
+                        try self.store.setState(downloadId, .verifying)
+                        self.tryMaybeFinalize(record)
+                        completion(nil)
+                        return
+                    } else {
+                        // Never reuse a genuinely damaged or partial asset.
+                        try? FileManager.default.removeItem(
+                            at: try DownloadStore.stagingDirectory(downloadId: downloadId))
+                        try self.store.resetTransferProgress(downloadId)
+                        try self.startTasks(for: record)
+                    }
                 } else if tasks.isEmpty {
                     try self.startTasks(for: record)
                 } else {
@@ -277,6 +284,12 @@ final class DownloadCoordinator: NSObject {
                     try? self.startTasks(for: record)
                 }
             }
+            // A process may be suspended after the transfer finishes but
+            // before verification/finalization. The staged files are durable,
+            // so finish that state instead of leaving it stuck forever.
+            for record in self.store.incompleteDownloads() where record.state == .verifying {
+                self.tryMaybeFinalize(record)
+            }
             self.emitChange()
         }
     }
@@ -302,6 +315,20 @@ final class DownloadCoordinator: NSObject {
         let url = dir.appendingPathComponent(asset.diskName)
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]) else { return false }
         return (values.fileSize ?? 0) == Int(asset.sizeBytes)
+    }
+
+    private func stagedAssetsAreVerified(_ record: DownloadStore.Record) -> Bool {
+        guard let staging = try? DownloadStore.stagingDirectory(downloadId: record.downloadId) else {
+            return false
+        }
+        return record.assets.allSatisfy { asset in
+            let url = staging.appendingPathComponent(asset.diskName)
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+                  (values.fileSize ?? 0) == Int(asset.sizeBytes) else {
+                return false
+            }
+            return Self.sha256Hex(ofFileAt: url) == asset.sha256.lowercased()
+        }
     }
 
     static func assetURL(origin: String, urlPath: String, clientId: String) -> URL? {
@@ -415,11 +442,20 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
     // MARK: - Finalize
 
     private func tryMaybeFinalize(_ record: DownloadStore.Record) {
-        guard let fresh = try? store.get(record.downloadId), fresh.state == .downloading || fresh.state == .queued else { return }
+        guard let fresh = try? store.get(record.downloadId),
+              fresh.state == .downloading || fresh.state == .queued || fresh.state == .verifying else { return }
         let allDone = fresh.assets.allSatisfy { asset in
             (try? isAssetDone(record.downloadId, asset)) ?? false
         }
         guard allDone else { emitChange(); return }
+
+        if fresh.state != .verifying {
+            try? store.setState(record.downloadId, .verifying)
+            if #available(iOS 16.1, *), let checking = try? store.get(record.downloadId) {
+                DownloadLiveActivity.refresh(checking, status: "Checking file")
+            }
+            emitChange()
+        }
 
         // Verify every file against the manifest BEFORE anything is ready
         // (acceptance D7: no ready/notification before verification). The
@@ -436,14 +472,20 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         // Same-volume atomic finalize: rename staging → ready.
         let ready = try? DownloadStore.readyDirectory(downloadId: record.downloadId)
         guard let staging = staging, let ready = ready else {
-            failDownload(record.downloadId, reason: "verification_failed")
+            failDownload(record.downloadId, reason: "storage_failed")
             return
         }
-        try? FileManager.default.removeItem(at: ready)
         do {
+            // `ready/<download-id>` cannot be renamed into place until its
+            // parent exists. Missing this directory made every first download
+            // reach 100%, pass its hash, then fail during the final move.
+            try FileManager.default.createDirectory(
+                at: ready.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: ready)
             try FileManager.default.moveItem(at: staging, to: ready)
         } catch {
-            failDownload(record.downloadId, reason: "verification_failed")
+            failDownload(record.downloadId, reason: "storage_failed")
             return
         }
         try? store.setReceivedBytes(record.downloadId, fresh.totalBytes)

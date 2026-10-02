@@ -22,7 +22,7 @@
 		D1A000000000000000000003 /* DownloadActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000000000000000000013 /* DownloadActivityAttributes.swift */; };
 		D1A000000000000000000004 /* TorWatchDownloadActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000000000000000000014 /* TorWatchDownloadActivityBundle.swift */; };
 		D1A000000000000000000005 /* TorWatchDownloadLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000000000000000000015 /* TorWatchDownloadLiveActivity.swift */; };
-		D1A000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
+		D1A000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D1A000000000000000000018 /* Assets.xcassets */; };
 		D1A000000000000000000007 /* TorWatchDownloadActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D1A000000000000000000017 /* TorWatchDownloadActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
@@ -72,6 +72,7 @@
 		D1A000000000000000000015 /* TorWatchDownloadLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TorWatchDownloadLiveActivity.swift; sourceTree = "<group>"; };
 		D1A000000000000000000016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		D1A000000000000000000017 /* TorWatchDownloadActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TorWatchDownloadActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		D1A000000000000000000018 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -158,6 +159,7 @@
 				D1A000000000000000000014 /* TorWatchDownloadActivityBundle.swift */,
 				D1A000000000000000000015 /* TorWatchDownloadLiveActivity.swift */,
 				D1A000000000000000000016 /* Info.plist */,
+				D1A000000000000000000018 /* Assets.xcassets */,
 			);
 			path = TorWatchDownloadActivity;
 			sourceTree = "<group>";
