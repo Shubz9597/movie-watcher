@@ -28,8 +28,17 @@ enum DownloadLiveActivity {
         }
     }
 
-    static func refresh(_ record: DownloadStore.Record, status: String) {
-        let state = contentState(record, status: status)
+    static func refresh(
+        _ record: DownloadStore.Record,
+        status: String,
+        bytesPerSecond: Int64 = 0,
+        etaSeconds: Int64? = nil
+    ) {
+        let state = contentState(
+            record,
+            status: status,
+            bytesPerSecond: bytesPerSecond,
+            etaSeconds: etaSeconds)
         Task {
             guard let current = activity(downloadId: record.downloadId) else {
                 start(record)
@@ -64,12 +73,16 @@ enum DownloadLiveActivity {
 
     private static func contentState(
         _ record: DownloadStore.Record,
-        status: String
+        status: String,
+        bytesPerSecond: Int64 = 0,
+        etaSeconds: Int64? = nil
     ) -> DownloadActivityAttributes.ContentState {
         DownloadActivityAttributes.ContentState(
             receivedBytes: record.receivedBytes,
             totalBytes: record.totalBytes,
-            status: status)
+            status: status,
+            bytesPerSecond: bytesPerSecond > 0 ? bytesPerSecond : nil,
+            etaSeconds: etaSeconds)
     }
 
     private static func update(

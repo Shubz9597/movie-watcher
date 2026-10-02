@@ -39,6 +39,9 @@ final class DownloadCoordinator: NSObject {
     private var backgroundCompletionHandler: (() -> Void)?
     /// Throttle for progress writes: persist at most every 0.5s per task.
     private var lastProgressWrite: [Int: Date] = [:]
+    private var lastProgressSample: [Int: (date: Date, bytes: Int64)] = [:]
+    private var transferSpeeds: [String: Double] = [:]
+    private var lastActivityRefresh: [String: Date] = [:]
     private let stateLock = NSLock()
 
     /// Emitted (on the main queue) whenever durable state changed; the
@@ -80,6 +83,16 @@ final class DownloadCoordinator: NSObject {
     }
 
     // MARK: - Public API (plugin)
+
+    func transferMetrics(for record: DownloadStore.Record) -> (bytesPerSecond: Int64, etaSeconds: Int64?) {
+        stateLock.lock()
+        let speed = transferSpeeds[record.downloadId] ?? 0
+        stateLock.unlock()
+        guard speed >= 1_024 else { return (0, nil) }
+        let remaining = max(0, record.totalBytes - record.receivedBytes)
+        let eta = min(Int64(30 * 24 * 60 * 60), Int64((Double(remaining) / speed).rounded(.up)))
+        return (Int64(speed.rounded()), eta)
+    }
 
     struct EnqueueRequest {
         let downloadId: String
@@ -139,6 +152,7 @@ final class DownloadCoordinator: NSObject {
 
     /// Creates + resumes one download task per not-yet-done asset.
     private func startTasks(for record: DownloadStore.Record) throws {
+        resetTransferMetrics(record.downloadId)
         let staging = try DownloadStore.stagingDirectory(downloadId: record.downloadId)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try store.setState(record.downloadId, .downloading)
@@ -237,6 +251,7 @@ final class DownloadCoordinator: NSObject {
             if #available(iOS 16.1, *), let record = record {
                 DownloadLiveActivity.finish(record, status: "Cancelled", immediate: true)
             }
+            self.resetTransferMetrics(downloadId)
             self.emitChange()
             completion(nil)
         }
@@ -351,6 +366,20 @@ final class DownloadCoordinator: NSObject {
         }
     }
 
+    private func resetTransferMetrics(_ downloadId: String) {
+        stateLock.lock()
+        transferSpeeds.removeValue(forKey: downloadId)
+        lastActivityRefresh.removeValue(forKey: downloadId)
+        stateLock.unlock()
+    }
+
+    private func clearTaskMetrics(_ taskId: Int) {
+        stateLock.lock()
+        lastProgressWrite.removeValue(forKey: taskId)
+        lastProgressSample.removeValue(forKey: taskId)
+        stateLock.unlock()
+    }
+
     private enum FinalizeError: Error {
         case sizeMismatch
         case hashMismatch
@@ -370,23 +399,47 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         // plenty for bytes/percentage display and keeps flash writes bounded.
         stateLock.lock()
         let now = Date()
-        let last = lastProgressWrite[Int(downloadTask.taskIdentifier)] ?? .distantPast
+        let taskId = Int(downloadTask.taskIdentifier)
+        let last = lastProgressWrite[taskId] ?? .distantPast
         guard now.timeIntervalSince(last) > 0.5 else {
             stateLock.unlock()
             return
         }
-        lastProgressWrite[Int(downloadTask.taskIdentifier)] = now
+        lastProgressWrite[taskId] = now
+        if let sample = lastProgressSample[taskId] {
+            let elapsed = now.timeIntervalSince(sample.date)
+            let delta = totalBytesWritten - sample.bytes
+            if elapsed > 0, delta >= 0 {
+                let instant = Double(delta) / elapsed
+                let previous = transferSpeeds[mapping.downloadId] ?? instant
+                transferSpeeds[mapping.downloadId] = previous * 0.7 + instant * 0.3
+            }
+        }
+        lastProgressSample[taskId] = (date: now, bytes: totalBytesWritten)
+        let previousActivityRefresh = lastActivityRefresh[mapping.downloadId] ?? .distantPast
+        let shouldRefreshActivity = now.timeIntervalSince(previousActivityRefresh) >= 2
+        if shouldRefreshActivity { lastActivityRefresh[mapping.downloadId] = now }
         stateLock.unlock()
         try? store.setAssetReceivedBytes(
             mapping.downloadId,
             urlPath: mapping.urlPath,
             bytes: totalBytesWritten)
+        // The durable store changed, so the Downloads screen must re-read it;
+        // without this event the row remained visually stuck at 0%.
+        emitChange()
         if #available(iOS 16.1, *), let record = try? store.get(mapping.downloadId) {
             guard record.state == .queued || record.state == .downloading || record.state == .paused else {
                 return
             }
             let status = record.state == .paused ? "Paused" : "Downloading"
-            DownloadLiveActivity.refresh(record, status: status)
+            if shouldRefreshActivity {
+                let metrics = transferMetrics(for: record)
+                DownloadLiveActivity.refresh(
+                    record,
+                    status: status,
+                    bytesPerSecond: metrics.bytesPerSecond,
+                    etaSeconds: metrics.etaSeconds)
+            }
         }
     }
 
@@ -416,7 +469,9 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
             try store.markAssetDone(record.downloadId, urlPath: asset.urlPath)
-            try store.removeTask(Int(downloadTask.taskIdentifier))
+            let taskId = Int(downloadTask.taskIdentifier)
+            try store.removeTask(taskId)
+            clearTaskMetrics(taskId)
             tryMaybeFinalize(record)
         } catch {
             try? FileManager.default.removeItem(at: location)
@@ -425,11 +480,13 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let mapping = store.taskOwner(Int(task.taskIdentifier)) else { return }
+        let taskId = Int(task.taskIdentifier)
+        guard let mapping = store.taskOwner(taskId) else { return }
         guard let error = error as NSError? else { return } // nil error = success path
+        clearTaskMetrics(taskId)
         if error.code == NSURLErrorCancelled {
             // pause()/remove() initiated this; durable state already reflects it.
-            try? store.removeTask(Int(task.taskIdentifier))
+            try? store.removeTask(taskId)
             return
         }
         failDownload(mapping.downloadId, reason: "network_failed")
@@ -493,6 +550,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         if #available(iOS 16.1, *), let complete = try? store.get(record.downloadId) {
             DownloadLiveActivity.finish(complete, status: "Downloaded")
         }
+        resetTransferMetrics(record.downloadId)
         emitChange()
     }
 
@@ -517,6 +575,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         if #available(iOS 16.1, *), let record = try? store.get(downloadId) {
             DownloadLiveActivity.finish(record, status: "Needs attention")
         }
+        resetTransferMetrics(downloadId)
         emitChange()
         // One failed asset invalidates the atomic download. Stop its sibling
         // transfers instead of wasting bandwidth until the user taps Retry.

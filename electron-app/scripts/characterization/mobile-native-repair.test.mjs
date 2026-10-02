@@ -105,16 +105,20 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   const activity = readFileSync(join(appRoot, "TorWatchDownloadActivity", "TorWatchDownloadLiveActivity.swift"), "utf8");
   const page = readFileSync(join(repoRoot, "electron-app", "src", "pages", "DownloadsPage.tsx"), "utf8");
   const queue = readFileSync(join(repoRoot, "electron-app", "src", "mobile", "download-queue.ts"), "utf8");
+  const episodePanel = readFileSync(join(repoRoot, "electron-app", "src", "components", "EpisodePanelWrapper.tsx"), "utf8");
+  const nativePlugin = readFileSync(join(appRoot, "App", "TorWatchNativePlugin.swift"), "utf8");
 
   assert.match(project, /productType = "com\.apple\.product-type\.app-extension"/u);
   assert.match(project, /TorWatchDownloadActivity\.appex in Embed App Extensions/u);
   assert.match(appInfo, /<key>NSSupportsLiveActivities<\/key>\s*<true\/>/u);
+  assert.match(appInfo, /<key>NSSupportsLiveActivitiesFrequentUpdates<\/key>\s*<true\/>/u);
   assert.match(activity, /DynamicIslandExpandedRegion\(\.bottom\)[\s\S]+ProgressView/u);
   assert.match(activity, /Image\("TorWatchActivityIcon"\)/u);
   assert.match(activity, /compactTrailing:[\s\S]+ActivityProgressRing/u);
   assert.match(activity, /minimal:[\s\S]+TorWatchActivityIcon/u);
   assert.match(activity, /Color\(red: 0\.12, green: 0\.84, blue: 0\.49\)/u);
-  assert.match(coordinator, /DownloadLiveActivity\.refresh\(record, status: status\)/u);
+  assert.match(coordinator, /DownloadLiveActivity\.refresh\([\s\S]+bytesPerSecond: metrics\.bytesPerSecond/u);
+  assert.match(coordinator, /setAssetReceivedBytes\([\s\S]+emitChange\(\)/u);
   assert.match(store, /poster_url TEXT NOT NULL DEFAULT ''/u);
   assert.match(store, /func setAssetReceivedBytes/u);
   assert.match(store, /SELECT COALESCE\(SUM\(received_bytes\), 0\) FROM download_assets/u);
@@ -123,8 +127,12 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   assert.match(page, /role="progressbar"/u);
   assert.match(page, /native\[action\]\(\{ downloadId \}\)/u);
   assert.match(page, /Cancel download of/u);
+  assert.match(page, /Speed <span[\s\S]+ETA <span/u);
+  assert.match(page, /navigate\('player',[\s\S]+downloadId:/u);
+  assert.match(nativePlugin, /CAPPluginMethod\(name: "playLocal"/u);
   assert.match(queue, /export async function cancelPendingDownload/u);
   assert.match(queue, /This title is already in Downloads/u);
+  assert.match(episodePanel, /selectedSize = resolved\.fileLength \?\? torrent\.size/u);
 });
 
 test("native download repair resumes failed work and finalizes staged assets", () => {
@@ -315,6 +323,25 @@ test('native start observes events emitted before play resolves', async () => {
   } finally { await controller.dispose(); }
 });
 
+test('local download playback uses the shared control lifecycle without a server session', async () => {
+  const fake = fakeBridge();
+  const server = stubServer();
+  server.client.create = async () => { throw new Error('local playback must not create a server session'); };
+  const controller = new NativePlaybackController({ client: server.client, bridge: fake.bridge });
+  const states = [];
+  controller.subscribeState((state) => states.push(state));
+  try {
+    await controller.startLocal({ downloadId: 'download-1', title: 'Interstellar' });
+    assert.equal(fake.calls.play.length, 0);
+    assert.equal(fake.calls.playLocal.length, 1);
+    assert.equal(fake.calls.playLocal[0].downloadId, 'download-1');
+    fake.emitState({ state: 'playing', playId: fake.calls.playLocal[0].playId });
+    assert.deepEqual(states, ['playing']);
+    await controller.stop();
+    assert.equal(fake.calls.dismissed.length, 1);
+  } finally { await controller.dispose(); }
+});
+
 test('subtitle download failures propagate and late completion cannot select a replacement', async () => {
   const fake = fakeBridge();
   fake.bridge.loadSubtitle = async () => { throw new Error('download failed'); };
@@ -336,7 +363,7 @@ function fakeBridge() {
   const timeListeners = new Set();
   const stateListeners = new Set();
   const bufferingListeners = new Set();
-  const calls = { play: [], seeks: [], dismissed: [], disposed: 0 };
+  const calls = { play: [], playLocal: [], seeks: [], dismissed: [], disposed: 0 };
   return {
     calls,
     timeListeners,
@@ -346,6 +373,7 @@ function fakeBridge() {
     emitBuffering: (u) => bufferingListeners.forEach((f) => f(u)),
     bridge: {
       play: async (input) => { calls.play.push(input); },
+      playLocal: async (input) => { calls.playLocal.push(input); },
       seek: async (pos) => { calls.seeks.push(pos); },
       onTime: (cb) => { timeListeners.add(cb); return () => timeListeners.delete(cb); },
       onState: (cb) => { stateListeners.add(cb); return () => stateListeners.delete(cb); },

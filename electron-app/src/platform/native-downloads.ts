@@ -21,6 +21,8 @@ export type NativeDownloadItem = {
   reason: string;
   receivedBytes: number;
   totalBytes: number;
+  bytesPerSecond?: number;
+  etaSeconds?: number;
   positionS?: number;
   durationS?: number;
   subtitleLang?: string;

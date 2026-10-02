@@ -340,6 +340,8 @@ export class FixtureDownloads implements DownloadsPort {
           transferState: 'downloading',
           receivedBytes: 325058560,
           sizeBytes: 524288000,
+          bytesPerSecond: 7340032,
+          etaSeconds: 28,
           waitingForServer: true,
         },
         {

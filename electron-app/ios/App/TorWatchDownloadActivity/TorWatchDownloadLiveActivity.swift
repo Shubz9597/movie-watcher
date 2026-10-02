@@ -16,10 +16,10 @@ struct TorWatchDownloadLiveActivity: Widget {
                     ActivityProgressRing(
                         progress: context.state.progress,
                         tint: context.state.tint,
-                        size: 42,
+                        size: 44,
                         lineWidth: 3
                     ) {
-                        TorWatchActivityIcon(size: 32)
+                        TorWatchActivityIcon(size: 36)
                     }
                 }
                 DynamicIslandExpandedRegion(.center) {
@@ -42,9 +42,10 @@ struct TorWatchDownloadLiveActivity: Widget {
                         ProgressView(value: context.state.progress)
                             .tint(context.state.tint)
                         HStack {
-                            Text(context.attributes.subtitle.isEmpty ? "TorWatch" : context.attributes.subtitle)
-                            Spacer()
                             Text(byteProgress(context.state))
+                                .monospacedDigit()
+                            Spacer()
+                            Text(transferSummary(context.state))
                                 .monospacedDigit()
                         }
                         .font(.caption2)
@@ -52,7 +53,7 @@ struct TorWatchDownloadLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                TorWatchActivityIcon(size: 20)
+                TorWatchActivityIcon(size: 24)
             } compactTrailing: {
                 ActivityProgressRing(
                     progress: context.state.progress,
@@ -60,9 +61,17 @@ struct TorWatchDownloadLiveActivity: Widget {
                     size: 24,
                     lineWidth: 2.5
                 ) {
-                    Image(systemName: context.state.symbolName)
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(context.state.tint)
+                    if context.state.status == "Downloading" {
+                        Text(context.state.compactETA)
+                            .font(.system(size: 7, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .minimumScaleFactor(0.7)
+                    } else {
+                        Image(systemName: context.state.symbolName)
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(context.state.tint)
+                    }
                 }
                 .accessibilityLabel(context.state.status)
                 .accessibilityValue("\(context.state.percent) percent")
@@ -116,6 +125,9 @@ private struct LockScreenDownloadView: View {
                 Text(byteProgress(context.state))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
+                Text(transferSummary(context.state))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(16)
@@ -131,7 +143,6 @@ private struct TorWatchActivityIcon: View {
             .resizable()
             .scaledToFit()
             .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
             .accessibilityHidden(true)
     }
 }
@@ -191,6 +202,14 @@ private extension DownloadActivityAttributes.ContentState {
         default: return "arrow.down"
         }
     }
+
+    var compactETA: String {
+        guard let etaSeconds, etaSeconds > 0 else { return "—" }
+        if etaSeconds < 60 { return "<1m" }
+        let minutes = Int(ceil(Double(etaSeconds) / 60))
+        if minutes < 60 { return "\(minutes)m" }
+        return "\(min(99, Int(ceil(Double(minutes) / 60))))h"
+    }
 }
 
 @available(iOSApplicationExtension 16.1, *)
@@ -198,4 +217,16 @@ private func byteProgress(_ state: DownloadActivityAttributes.ContentState) -> S
     let received = ByteCountFormatter.string(fromByteCount: state.receivedBytes, countStyle: .file)
     let total = ByteCountFormatter.string(fromByteCount: state.totalBytes, countStyle: .file)
     return "\(received) of \(total)"
+}
+
+@available(iOSApplicationExtension 16.1, *)
+private func transferSummary(_ state: DownloadActivityAttributes.ContentState) -> String {
+    guard state.status == "Downloading" else { return state.status }
+    let rate: String
+    if let bytesPerSecond = state.bytesPerSecond, bytesPerSecond > 0 {
+        rate = ByteCountFormatter.string(fromByteCount: bytesPerSecond, countStyle: .file) + "/s"
+    } else {
+        rate = "—/s"
+    }
+    return "\(rate) · ETA \(state.compactETA)"
 }

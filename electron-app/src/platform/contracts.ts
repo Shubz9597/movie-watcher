@@ -80,6 +80,8 @@ export interface PlayerRequest {
 // treat it like a stop plus an actionable error surface.
 export interface PlayerPort {
   start(request: PlayerRequest): Promise<void>;
+  /** Native-only verified file playback; no server session is created. */
+  startLocal?(input: { downloadId: string; title: string; posterUrl?: string | null }): Promise<void>;
   stop(): Promise<void>;
   onStopped(callback: (event: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => void): () => void;}
 
@@ -121,6 +123,8 @@ export type DownloadItemSnapshot = {
   transferState?: 'queued' | 'downloading' | 'paused' | 'verifying' | 'ready' | 'failed';
   sizeBytes?: number;
   receivedBytes?: number;
+  bytesPerSecond?: number;
+  etaSeconds?: number;
   /** Short, user-facing explanation for a failed local transfer. */
   repairReason?: string;
   /** Interrupted/partial transfer: shows Waiting for server, never Play (WF06). */

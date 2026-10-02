@@ -6,7 +6,7 @@
 // downloads". Ready items play locally; server preparation and native
 // transfer states are merged into one concise queue.
 import { useEffect, useState } from 'react';
-import { Film, Pause, Play, RotateCcw, X } from 'lucide-react';
+import { Film, LoaderCircle, Pause, Play, RotateCcw, X } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadItemSnapshot, DownloadsInventory } from '../platform/contracts';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
@@ -30,6 +30,28 @@ function formatSize(bytes?: number): string | null {
   if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return null;
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
   return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
+
+function formatRate(bytesPerSecond?: number): string {
+  const size = formatSize(bytesPerSecond);
+  return size ? `${size}/s` : '—';
+}
+
+function formatEta(seconds?: number): string {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '—';
+  if (seconds < 60) return '<1m';
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
+function formatElapsed(startedAt: number | undefined, now: number): string {
+  if (!startedAt) return '';
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m`;
 }
 
 function progressPercent(received = 0, total = 0): number {
@@ -104,6 +126,7 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   const [pending, setPending] = useState<PendingDownload[]>(() => pendingDownloads());
   const [acting, setActing] = useState<Set<string>>(() => new Set());
   const [repairErrors, setRepairErrors] = useState<Record<string, string>>({});
+  const [now, setNow] = useState(() => Date.now());
   // D03 device-test hook: explicitly activated with ?downloads=native.
   const nativeHookActive = new URLSearchParams(window.location.search).get('downloads') === 'native'
     && getNativeDownloads() != null;
@@ -148,11 +171,19 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
     return unsubscribe;
   }, []);
 
-  const playLocal = async (downloadId: string): Promise<void> => {
-    const native = getNativeDownloads();
-    if (!native) return;
-    const { getTorWatchNativePlugin } = await import('../platform/native-player');
-    await getTorWatchNativePlugin().playLocal?.({ downloadId, playId: `local-${Date.now()}` });
+  useEffect(() => {
+    if (!pending.some((item) => item.state === 'preparing')) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 5_000);
+    return () => window.clearInterval(timer);
+  }, [pending]);
+
+  const playLocal = (item: DownloadItemSnapshot): void => {
+    navigate('player', {
+      downloadId: item.downloadId,
+      title: item.title,
+      ...(item.posterUrl ? { posterUrl: item.posterUrl } : {}),
+      ...(item.subtitle ? { subtitle: item.subtitle } : {}),
+    });
   };
 
   const runNativeAction = async (downloadId: string, action: 'pause' | 'resume' | 'cancel'): Promise<void> => {
@@ -270,18 +301,23 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
                       type="button"
                       onClick={() => void cancelPendingDownload(item)}
                       aria-label={`Cancel download of ${item.title}`}
-                      className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-white/70 transition hover:bg-white/[0.06] hover:text-white ${FOCUS_RING_CLASS}`}
+                      title="Cancel download"
+                      className={`inline-flex h-11 w-11 items-center justify-center rounded-full text-white/60 transition hover:bg-red-500/10 hover:text-red-300 ${FOCUS_RING_CLASS}`}
                     >
-                      <X className="h-3.5 w-3.5" aria-hidden="true" /> Cancel
+                      <X className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </div>
                 </div>
                 <div className="mt-4">
-                  <div className={`mb-2 flex items-center justify-between gap-3 text-xs ${item.state === 'failed' ? 'text-red-300' : 'text-white/65'}`}>
-                    <span>{item.state === 'failed' ? item.reason || 'Preparation failed' : 'Preparing on server'}</span>
+                  <div className={`flex items-center justify-between gap-3 text-xs ${item.state === 'failed' ? 'text-red-300' : 'text-white/65'}`}>
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      {item.state === 'preparing' ? <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
+                      <span>{item.state === 'failed'
+                        ? item.reason || 'Preparation failed'
+                        : `Preparing episode${formatElapsed(item.queuedAt, now) ? ` · ${formatElapsed(item.queuedAt, now)}` : ''}`}</span>
+                    </span>
                     {item.sizeBytes ? <span className="text-numeric shrink-0 text-white/45">{formatSize(item.sizeBytes)}</span> : null}
                   </div>
-                  {item.state !== 'failed' ? <DownloadProgress label={`Preparing ${item.title}`} /> : null}
                 </div>
               </div>
             </li>
@@ -311,7 +347,7 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
                     {item.transferState === 'ready' || (item.transferState == null && !needsRepair) ? (
                       <button
                         type="button"
-                        onClick={() => void playLocal(item.downloadId)}
+                        onClick={() => playLocal(item)}
                         className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-white px-4 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}
                       >
                         <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Play
@@ -354,9 +390,10 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
                           onClick={() => void runNativeAction(item.downloadId, 'cancel')}
                           disabled={busy}
                           aria-label={`Cancel download of ${item.title}`}
-                          className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-white/10 px-3 text-xs text-white/70 transition hover:bg-white/[0.06] hover:text-white disabled:text-white/35 ${FOCUS_RING_CLASS}`}
+                          title="Cancel download"
+                          className={`inline-flex h-11 w-11 self-end items-center justify-center rounded-full text-white/60 transition hover:bg-red-500/10 hover:text-red-300 disabled:text-white/35 ${FOCUS_RING_CLASS}`}
                         >
-                          <X className="h-3.5 w-3.5" aria-hidden="true" /> Cancel
+                          <X className="h-4 w-4" aria-hidden="true" />
                         </button>
                       </div>
                     ) : null}
@@ -374,6 +411,12 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
                       ) : null}
                     </div>
                     {showProgress ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
+                    {item.transferState === 'downloading' ? (
+                      <div className="text-numeric mt-2 flex items-center gap-4 text-[11px] text-white/50">
+                        <span>Speed <span className="text-white/75">{formatRate(item.bytesPerSecond)}</span></span>
+                        <span>ETA <span className="text-white/75">{formatEta(item.etaSeconds)}</span></span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </li>

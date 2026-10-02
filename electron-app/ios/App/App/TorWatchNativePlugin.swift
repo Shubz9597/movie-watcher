@@ -40,6 +40,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     public let jsName = "TorWatchNative"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "playLocal", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seekBy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "togglePlayback", returnType: CAPPluginReturnPromise),

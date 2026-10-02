@@ -28,6 +28,7 @@ export type PendingDownload = DownloadSelection & {
   clientId: string;
   state: 'preparing' | 'failed';
   reason?: string;
+  queuedAt?: number;
 };
 
 type JobBody = {
@@ -177,6 +178,7 @@ export async function queueNativeDownload(
     instanceId: version.instanceId,
     clientId,
     state: 'preparing',
+    queuedAt: Date.now(),
   };
   upsertPending(pending);
   void resumePendingDownload(pending);
@@ -211,20 +213,20 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
       if (cancelledJobs.has(pending.jobId)) return;
       const response = await fetch(
         `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}?clientId=${encodeURIComponent(pending.clientId)}`,
-        { headers: { Accept: 'application/json' } },
+        { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) },
       );
       if (cancelledJobs.has(pending.jobId)) return;
       if (!response.ok) throw await responseError(response, 'Could not check the download.');
       const job = await response.json() as JobBody;
       if (job.state === 'preparing') {
-        await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
         continue;
       }
       if (job.state !== 'ready') throw new Error(preparationFailure(job.reasonCode));
 
       const manifestResponse = await fetch(
         `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}/manifest?clientId=${encodeURIComponent(pending.clientId)}`,
-        { headers: { Accept: 'application/json' } },
+        { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) },
       );
       if (cancelledJobs.has(pending.jobId)) return;
       if (!manifestResponse.ok) throw await responseError(manifestResponse, 'Could not read the download package.');

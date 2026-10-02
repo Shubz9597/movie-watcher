@@ -184,6 +184,15 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
         subTextScale: readEmbeddedScalePref(),
       });
     },
+    async playLocal(input) {
+      await ensureReady();
+      if (!plugin.playLocal) throw new Error('Offline playback is unavailable on this device.');
+      currentPlayId = input.playId;
+      await plugin.playLocal({
+        downloadId: input.downloadId,
+        playId: input.playId,
+      });
+    },
     async setSubtitleScale(percent: number, playId: string) {
       if (currentPlayId !== playId) return;
       await plugin.setSubtitleScale?.({ percent, playId });
@@ -295,6 +304,10 @@ export class NativePlayer implements PlayerPort {
 
   async start(request: PlayerRequest): Promise<void> {
     await this.controller.start(request);
+  }
+
+  async startLocal(input: { downloadId: string; title: string; posterUrl?: string | null }): Promise<void> {
+    await this.controller.startLocal(input);
   }
 
   async stop(): Promise<void> {

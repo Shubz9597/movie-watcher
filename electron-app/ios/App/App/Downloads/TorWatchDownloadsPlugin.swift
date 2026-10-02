@@ -55,6 +55,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         do {
             let records = try coordinator.store.list()
             let progress = records.map { record -> [String: Any] in
+                let metrics = coordinator.transferMetrics(for: record)
                 var body: [String: Any] = [
                     "downloadId": record.downloadId,
                     "instanceId": record.instanceId,
@@ -69,7 +70,9 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
                     "reason": record.reason,
                     "receivedBytes": record.receivedBytes,
                     "totalBytes": record.totalBytes,
+                    "bytesPerSecond": metrics.bytesPerSecond,
                 ]
+                if let eta = metrics.etaSeconds { body["etaSeconds"] = eta }
                 if let progress = coordinator.store.loadProgress(record.downloadId) {
                     body["positionS"] = progress.positionS
                     body["durationS"] = progress.durationS

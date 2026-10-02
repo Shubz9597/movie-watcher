@@ -73,6 +73,8 @@ export class NativeDownloadsAdapter implements DownloadsPort {
           transferState: item.state,
           sizeBytes: item.totalBytes > 0 ? item.totalBytes : undefined,
           receivedBytes: item.receivedBytes > 0 ? item.receivedBytes : 0,
+          bytesPerSecond: item.bytesPerSecond,
+          etaSeconds: item.etaSeconds,
           repairReason: item.state === 'failed' ? repairMessage(item.reason) : undefined,
           waitingForServer: item.state === 'queued' || item.state === 'downloading' || item.state === 'paused',
         })),

@@ -21,7 +21,9 @@ type Props = {
 export default function PlayerPage({ navigate, params }: Props) {
   const {
     magnet,
+    downloadId,
     title: paramTitle,
+    posterUrl: localPosterUrl,
     cat = 'movie',
     tmdbId,
     imdbId: paramImdbId,
@@ -100,7 +102,7 @@ export default function PlayerPage({ navigate, params }: Props) {
   }, [nativeSurface, platform.player, playbackError, retryToken]);
 
   useEffect(() => {
-    if (!magnet) {
+    if (!downloadId && !magnet) {
       console.error('[PlayerPage] No magnet provided');
       setPlaybackError('The selected source does not include a playable torrent. Return to the title and choose another source.');
       return;
@@ -116,6 +118,24 @@ export default function PlayerPage({ navigate, params }: Props) {
     async function startPlayback() {
       setPlaybackError(null);
       try {
+        if (downloadId) {
+          if (!platform.player?.startLocal) {
+            throw new Error('Offline playback is unavailable on this device.');
+          }
+          const localTitle = paramTitle || 'Downloaded video';
+          setPlaybackMeta({
+            title: localTitle,
+            posterUrl: localPosterUrl || null,
+            logoUrl: null,
+          });
+          await platform.player.startLocal({
+            downloadId,
+            title: localTitle,
+            posterUrl: localPosterUrl || null,
+          });
+          if (!cancelled) didStartPlaybackRef.current = true;
+          return;
+        }
         let playbackTitle = paramTitle || 'Playing';
         let playbackYear: number | undefined;
         let playbackPosterUrl: string | null = null;
@@ -251,7 +271,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         console.error('[PlayerPage] Error stopping MPV on unmount:', err);
       });
     };
-  }, [magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, resolveEpisodeFile, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
+  }, [downloadId, localPosterUrl, magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, resolveEpisodeFile, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
 
   // M1.4.7: on native mobile the VLC surface sits BEHIND the WebView; this
   // page must stay transparent so the video shows through (LoadingScreen is
@@ -296,7 +316,7 @@ export default function PlayerPage({ navigate, params }: Props) {
                 <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
                   <p>{playbackError}</p>
                   <div className="mt-5 flex flex-wrap justify-center gap-3">
-                    {magnet ? (
+                    {magnet || downloadId ? (
                       <button
                         type="button"
                         onClick={() => setRetryToken((token) => token + 1)}
@@ -310,7 +330,7 @@ export default function PlayerPage({ navigate, params }: Props) {
                       onClick={() => returnToSource()}
                       className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                     >
-                      Choose another source
+                      {downloadId ? 'Back to Downloads' : 'Choose another source'}
                     </button>
                   </div>
                 </div>
@@ -333,7 +353,7 @@ export default function PlayerPage({ navigate, params }: Props) {
               <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
                 <p>{playbackError}</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-3">
-                  {magnet ? (
+                  {magnet || downloadId ? (
                     <button
                       type="button"
                       onClick={() => setRetryToken((token) => token + 1)}
@@ -347,7 +367,7 @@ export default function PlayerPage({ navigate, params }: Props) {
                     onClick={() => returnToSource()}
                     className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                   >
-                    Choose another source
+                    {downloadId ? 'Back to Downloads' : 'Choose another source'}
                   </button>
                 </div>
               </div>
@@ -356,13 +376,13 @@ export default function PlayerPage({ navigate, params }: Props) {
         </div>
       ) : (
         <NativePlayerControls
-          key={`${magnet}:${fileIndex ?? ''}:${retryToken}`}
+          key={`${downloadId || magnet}:${fileIndex ?? ''}:${retryToken}`}
           player={platform.player as unknown as Parameters<typeof NativePlayerControls>[0]['player']}
           title={playbackMeta.title}
           year={playbackMeta.year}
           posterUrl={playbackMeta.posterUrl}
           logoUrl={playbackMeta.logoUrl}
-          magnet={magnet}
+          magnet={magnet || ''}
           cat={cat}
           fileIndex={playbackMeta.fileIndex}
           tmdbId={tmdbId ? Number(tmdbId) : undefined}

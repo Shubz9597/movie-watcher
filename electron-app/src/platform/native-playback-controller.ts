@@ -72,6 +72,7 @@ export type NativePlaybackBridge = {
   prepare?(title: string, playId: string, posterUrl?: string | null): Promise<void>;
   showError?(message: string, playId: string): Promise<void>;
   play(input: NativePlaybackInput): Promise<void>;
+  playLocal?(input: { downloadId: string; title: string; posterUrl?: string | null; playId: string }): Promise<void>;
   seek(positionSec: number, playId: string): Promise<void>;
   // M1.4.7 VLC layer: interactive controls beyond the modal-player baseline.
   seekBy?(deltaSeconds: number, playId: string): Promise<void>;
@@ -430,6 +431,37 @@ export class NativePlaybackController {
     this.startHeartbeat(generation);
     void this.confirmResumeAndSeek(generation);
     return session;
+  }
+
+  /** Starts a verified device file through the same event/control surface. */
+  async startLocal(input: { downloadId: string; title: string; posterUrl?: string | null }): Promise<void> {
+    if (this.disposed) {
+      throw new PlaybackClientError('invalid', 'The native player has been disposed.');
+    }
+    if (!this.bridge.playLocal) {
+      throw new PlaybackClientError('invalid', 'Offline playback is unavailable on this device.');
+    }
+    await this.teardown(/* notify */ false);
+    const generation = ++this.generation;
+    const playId = `local-${generation}`;
+    this.lastPositionSec = 0;
+    this.lastDurationSec = 0;
+    this.currentState = null;
+    this.currentTime = null;
+    this.bufferingClock = null;
+    this.advancingTicks = 0;
+    this.currentPlayId = playId;
+    this.request = null;
+    this.publishBuffering({ active: true });
+    this.attachBridgeListeners(generation);
+    try {
+      await this.bridge.playLocal({ ...input, playId });
+    } catch (error) {
+      if (generation === this.generation) await this.teardown(false);
+      throw error instanceof PlaybackClientError
+        ? error
+        : new PlaybackClientError('invalid', 'The downloaded file could not be played.');
+    }
   }
 
   /**

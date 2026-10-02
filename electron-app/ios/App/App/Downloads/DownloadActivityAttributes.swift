@@ -6,6 +6,8 @@ struct DownloadActivityAttributes: ActivityAttributes {
         let receivedBytes: Int64
         let totalBytes: Int64
         let status: String
+        let bytesPerSecond: Int64?
+        let etaSeconds: Int64?
 
         var progress: Double {
             guard totalBytes > 0 else { return 0 }

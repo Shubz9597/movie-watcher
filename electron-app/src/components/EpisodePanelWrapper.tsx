@@ -774,7 +774,8 @@ export default function EpisodePanel({
   const downloadSelectionFor = async (torrent: TorrentRow): Promise<DownloadSelection> => {
     if (!activeEpisode) throw new Error('Choose an episode first.');
     let fileIndex = torrent.fileIndex;
-    if (fileIndex == null && torrent.seasonPack) {
+    let selectedSize = torrent.size;
+    if (torrent.seasonPack) {
       const magnet = await resolveTorrentSource(torrent);
       const resolved = await resolveTorrentFile({
         magnetUri: magnet,
@@ -787,6 +788,7 @@ export default function EpisodePanel({
         absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
       });
       fileIndex = resolved.fileIndex;
+      selectedSize = resolved.fileLength ?? torrent.size;
     }
     const season = activeEpisode.seasonNumber || selectedSeason;
     const episode = activeEpisode.episodeNumber;
@@ -805,7 +807,9 @@ export default function EpisodePanel({
       title,
       posterUrl,
       subtitleLabel: `S${season} E${episode}`,
-      sizeBytes: torrent.size,
+      // A season pack can be tens of gigabytes, but offline download stores
+      // only the resolved episode. Use that file for storage checks and copy.
+      sizeBytes: selectedSize,
     };
   };
 
