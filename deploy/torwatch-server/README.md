@@ -131,15 +131,6 @@ sudo systemctl start torwatch-git-deploy.service  # run immediately
   pre-update backup with `scripts/restore.sh <backup-dir> --yes`.
 - Data rollback: `scripts/restore.sh <backup-dir-or-timestamp> --yes`.
 
-## Admission envelope (SC-006)
-
-`WATCH_MAX_ACTIVE_TITLES` defaults to **1** — one guaranteed active
-distinct-title resource set on the 4 GB reference host (conservative default
-pending ROCK 3A measurements, T063). Same-title concurrent clients share the
-key's torrent/buffer; a second distinct title is rejected with
-`503 capacity_exceeded` + `retryAfterSeconds` while healthy streams are never
-terminated.
-
 ## Platform runbooks
 
 - Fedora (AMD64, first live target): `docs/v2-server-package/fedora-runbook.md`

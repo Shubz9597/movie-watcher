@@ -35,7 +35,6 @@ var (
 	activeMu      sync.Mutex
 	activeStreams = map[string]int{} // key(cat:ih) -> concurrent readers
 
-	lastFileIndex = make(map[string]int) // key(cat:infohash) -> last streamed file index
 )
 
 // CacheEntry is the durable record used by the janitor. It lets eviction find
@@ -230,6 +229,22 @@ func CountTrackers(raw string) (udp, http, https, other int) {
 	return
 }
 
+// validInfoHash accepts a 40-char hex or 32-char base32 BitTorrent v1 hash.
+func validInfoHash(value string) bool {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if len(value) == 40 {
+		return strings.IndexFunc(value, func(r rune) bool {
+			return !((r >= '0' && r <= '9') || (r >= 'A' && r <= 'F'))
+		}) == -1
+	}
+	if len(value) == 32 {
+		return strings.IndexFunc(value, func(r rune) bool {
+			return !((r >= 'A' && r <= 'Z') || (r >= '2' && r <= '7'))
+		}) == -1
+	}
+	return false
+}
+
 func ParseSrc(q url.Values) (string, error) {
 	if s := q.Get("magnet"); s != "" {
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "magnet:") {
@@ -268,24 +283,6 @@ func ParseSrc(q url.Values) (string, error) {
 		return "", errors.New("invalid infoHash")
 	}
 	return "", errors.New("missing magnet/src/infoHash")
-}
-
-func srcFromID(id string) (string, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return "", errors.New("empty id")
-	}
-	if strings.HasPrefix(strings.ToLower(id), "magnet:") {
-		result := sanitizeMagnet(id)
-		if mustParseMagnet(result) == (metainfo.Hash{}) {
-			return "", errors.New("invalid magnet URI")
-		}
-		return result, nil
-	}
-	if validInfoHash(id) {
-		return sanitizeMagnet("magnet:?xt=urn:btih:" + strings.ToUpper(id)), nil
-	}
-	return "", fmt.Errorf("unrecognized id: %q", id)
 }
 
 func GetClientFor(cat string) *torrent.Client {
@@ -385,17 +382,6 @@ func ContentTypeForName(name string) string {
 		return ct
 	}
 	return "application/octet-stream"
-}
-
-func TorrentTotalSize(t *torrent.Torrent) int64 {
-	if t.Info() == nil {
-		return 0
-	}
-	var s int64
-	for _, f := range t.Files() {
-		s += f.Length()
-	}
-	return s
 }
 
 func Prebuffer(r torrent.Reader, want int64, timeout time.Duration) int64 {
@@ -558,88 +544,12 @@ func removeCacheManifest(cat string, ih metainfo.Hash) error {
 	}
 	return err
 }
-func GetLastTouch(cat string, ih metainfo.Hash) (time.Time, bool) {
-	stateMu.RLock()
-	defer stateMu.RUnlock()
-	v, ok := lastTouch[key(cat, ih)]
-	return v, ok
-}
-func SetLastFileIndex(cat string, ih metainfo.Hash, idx int) {
-	stateMu.Lock()
-	lastFileIndex[key(cat, ih)] = idx
-	stateMu.Unlock()
-}
-
-func GetLastFileIndex(cat string, ih metainfo.Hash) (int, bool) {
-	stateMu.RLock()
-	defer stateMu.RUnlock()
-	v, ok := lastFileIndex[key(cat, ih)]
-	return v, ok
-}
 
 func clearTorrentState(cat string, ih metainfo.Hash) {
 	stateMu.Lock()
 	delete(lastTouch, key(cat, ih))
-	delete(lastFileIndex, key(cat, ih))
 	delete(manifestWrite, key(cat, ih))
 	stateMu.Unlock()
-}
-
-func EnsureTorrentForKey(cat, id string) error {
-	cat = validCat(cat)
-	cl := GetClientFor(cat)
-	src, err := srcFromID(id)
-	if err != nil {
-		return err
-	}
-	t, err := AddOrGetTorrent(cl, src)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = WaitForInfo(ctx, t)
-	TouchTorrent(cat, t)
-	return nil
-}
-
-func StopTorrentForKey(cat, id string) {
-	cat = validCat(cat)
-	clientsMu.Lock()
-	cl := clients[cat]
-	clientsMu.Unlock()
-	if cl == nil {
-		return
-	}
-	var wantIH *metainfo.Hash
-	if strings.HasPrefix(id, "magnet:") {
-		if m, err := metainfo.ParseMagnetUri(id); err == nil && m.InfoHash != (metainfo.Hash{}) {
-			h := m.InfoHash
-			wantIH = &h
-		}
-	} else if len(id) == 40 {
-		h := metainfo.NewHashFromHex(strings.ToUpper(id))
-		wantIH = &h
-	}
-	for _, t := range cl.Torrents() {
-		match := false
-		if wantIH != nil {
-			match = (t.InfoHash() == *wantIH)
-		} else if strings.EqualFold(t.InfoHash().HexString(), id) {
-			match = true
-		}
-		if match {
-			if !mayDrop(cat, t.InfoHash()) {
-				log.Printf("[watch] skip drop (guard) [%s] %s ih=%s",
-					cat, t.Name(), t.InfoHash().HexString())
-				return
-			}
-			log.Printf("[watch] dropping [%s] %s ih=%s", cat, t.Name(), t.InfoHash().HexString())
-			t.Drop()
-			clearTorrentState(cat, t.InfoHash())
-			return
-		}
-	}
 }
 
 // EvictTorrentData drops an inactive torrent and removes only the exact files
@@ -785,19 +695,6 @@ func removeFileWithRetry(path string) error {
 		time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 	}
 	return err
-}
-
-func ForEachClient(fn func(cat string, c *torrent.Client)) {
-	clientsMu.Lock()
-	defer clientsMu.Unlock()
-	cats := make([]string, 0, len(clients))
-	for c := range clients {
-		cats = append(cats, c)
-	}
-	sort.Strings(cats)
-	for _, cat := range cats {
-		fn(cat, clients[cat])
-	}
 }
 
 func DirSize(root string) int64 {

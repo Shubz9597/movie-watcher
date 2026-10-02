@@ -125,7 +125,6 @@ services:
       SUB_CACHE_DIR: /data/subcache
       LOG_FILE: /data/logs/backend.log
       ERROR_LOG_FILE: /data/logs/errors.log
-      WATCH_MAX_ACTIVE_TITLES: ${WATCH_MAX_ACTIVE_TITLES:-1}
       # Direct VLC playback on small hosts; video conversion is opt-in.
       PLAYBACK_TRANSCODE_MODE: ${PLAYBACK_TRANSCODE_MODE:-off}
       PLAYBACK_MAX_TRANSCODES: ${PLAYBACK_MAX_TRANSCODES:-1}

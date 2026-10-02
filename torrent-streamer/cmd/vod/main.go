@@ -31,7 +31,6 @@ import (
 	"torrent-streamer/internal/middleware"
 	"torrent-streamer/internal/playback"
 	"torrent-streamer/internal/recommendations"
-	"torrent-streamer/internal/scoring"
 	"torrent-streamer/internal/search"
 	"torrent-streamer/internal/skipsegments"
 	"torrent-streamer/internal/taste"
@@ -90,7 +89,6 @@ func startPlaybackSweeper(manager *playback.Manager, interval time.Duration) (st
 var (
 	db         *sql.DB
 	pickRepo   *torrentx.Repo
-	searchCli  *torrentx.TorznabClient
 	progressDB *watch.Store
 )
 
@@ -162,7 +160,6 @@ func main() {
 		log.Printf("[boot] prowlarr bootstrap complete keySource=%s preserved=%d added=%d failed=%d",
 			res.KeySource, res.IndexersPreserved, len(res.IndexersAdded), len(res.IndexersFailed))
 	}
-	searchCli = &torrentx.TorznabClient{BaseURL: prowlarrURL, APIKey: prowlarrAPIKey, HTTP: prowlarrHTTP}
 	torrentSearch, err := search.NewService(prowlarrURL, prowlarrAPIKey, prowlarrHTTP)
 	if err != nil {
 		exitOnError("Prowlarr configuration failed", err)
@@ -370,14 +367,7 @@ func main() {
 		go downloadPrepper.Run(context.Background())
 	}
 
-	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{
-		Picks: torrentx.EnsureDeps{
-			Repo:   pickRepo,
-			Search: searchCli,
-		},
-		Watch:       progressDB,
-		ProfileCaps: scoring.ProfileCaps{CodecAllow: map[string]bool{"h264": true, "hevc": true, "av1": true}},
-	})
+	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{Watch: progressDB})
 	sess.Register(mux)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -393,42 +383,6 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	// watch/lease manager wiring — V1 lease semantics preserved with
-	// configurable stale/reaper timings and the T056/T057 admission policy
-	// (distinct-key counting; denial never touches healthy leases).
-	mgr := watch.NewManager(
-		config.WatchStaleAfter(),
-		config.WatchReaperInterval(),
-		func(k watch.Key) error { return torrentx.EnsureTorrentForKey(k.Cat, k.ID) },
-		func(k watch.Key) { torrentx.StopTorrentForKey(k.Cat, k.ID) },
-	)
-	mgr.SetMaxActiveTitles(config.MaxActiveTitles())
-	mgr.SetCapacityRetryAfter(config.WatchReaperInterval())
-	httpapi.SetAdmissionSnapshot(mgr.AdmissionSnapshot)
-
-	// CORS-wrapped watch endpoints
-	mux.HandleFunc("/watch/open", func(w http.ResponseWriter, r *http.Request) {
-		middleware.EnableCORS(w)
-		if r.Method == http.MethodOptions {
-			return
-		}
-		mgr.HandleOpen(w, r)
-	})
-	mux.HandleFunc("/watch/ping", func(w http.ResponseWriter, r *http.Request) {
-		middleware.EnableCORS(w)
-		if r.Method == http.MethodOptions {
-			return
-		}
-		mgr.HandlePing(w, r)
-	})
-	mux.HandleFunc("/watch/close", func(w http.ResponseWriter, r *http.Request) {
-		middleware.EnableCORS(w)
-		if r.Method == http.MethodOptions {
-			return
-		}
-		mgr.HandleClose(w, r)
-	})
-
 	// not found for everything else (with CORS preflight support)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -474,9 +428,6 @@ func main() {
 	shCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shCtx)
-
-	// stop watch leases
-	mgr.Shutdown()
 
 	// close torrent clients
 	torrentx.CloseAllClients()

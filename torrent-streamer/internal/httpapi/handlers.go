@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,90 +45,14 @@ func getProgressStore() *watch.Store {
 	return progressStore
 }
 
-// admissionSnapshot supplies sanitized admission observability (counts only)
-// for /stats; nil keeps the field absent for pre-admission consumers.
-var (
-	admissionSnapshotMu sync.RWMutex
-	admissionSnapshot   func() watch.AdmissionSnapshot
-)
-
-// SetAdmissionSnapshot wires the admission limiter into /stats (T057).
-func SetAdmissionSnapshot(snapshot func() watch.AdmissionSnapshot) {
-	admissionSnapshotMu.Lock()
-	admissionSnapshot = snapshot
-	admissionSnapshotMu.Unlock()
-}
-
-func getAdmissionSnapshot() *watch.AdmissionSnapshot {
-	admissionSnapshotMu.RLock()
-	snapshotFunc := admissionSnapshot
-	admissionSnapshotMu.RUnlock()
-	if snapshotFunc == nil {
-		return nil
-	}
-	snapshot := snapshotFunc()
-	return &snapshot
-}
-
 type fileEntry struct {
 	Index  int    `json:"index"`
 	Name   string `json:"name"`
 	Length int64  `json:"length"`
 }
-type addResp struct {
-	InfoHash string      `json:"infoHash"`
-	Name     string      `json:"name"`
-	Files    []fileEntry `json:"files"`
-}
-type prefetchResp struct {
-	InfoHash       string                  `json:"infoHash"`
-	Name           string                  `json:"name"`
-	FileIndex      int                     `json:"fileIndex"`
-	FileName       string                  `json:"fileName"`
-	FileLength     int64                   `json:"fileLength"`
-	MetadataMs     int64                   `json:"metadataMs"`
-	PrebufferBytes int64                   `json:"prebufferBytes"`
-	PrebufferMs    int64                   `json:"prebufferMs"`
-	Note           string                  `json:"note"`
-	Files          []fileEntry             `json:"files,omitempty"`
-	Subtitles      []torrentx.SubtitleFile `json:"subtitles,omitempty"`
-}
-
-type torrentStat struct {
-	InfoHash      string `json:"infoHash"`
-	Name          string `json:"name"`
-	HaveInfo      bool   `json:"haveInfo"`
-	Size          int64  `json:"size"`
-	NumFiles      int    `json:"numFiles"`
-	BestIndex     int    `json:"bestIndex"`
-	BestName      string `json:"bestName"`
-	BestLength    int64  `json:"bestLength"`
-	SelectedIndex *int   `json:"selectedIndex,omitempty"`
-	LastTouched   string `json:"lastTouched"`
-	BufferedAhead int64  `json:"bufferedAhead"`
-	TargetAhead   int64  `json:"targetAhead"`
-}
-type categoryStats struct {
-	Category string        `json:"category"`
-	Torrents []torrentStat `json:"torrents"`
-}
-type statsResp struct {
-	UptimeSeconds   int64                    `json:"uptimeSeconds"`
-	DataRoot        string                   `json:"dataRoot"`
-	TotalCacheBytes int64                    `json:"totalCacheBytes"`
-	CacheMaxBytes   int64                    `json:"cacheMaxBytes"`
-	EvictTTL        string                   `json:"evictTTL"`
-	TrackersMode    string                   `json:"trackersMode"`
-	Categories      []categoryStats          `json:"categories"`
-	Admission       *watch.AdmissionSnapshot `json:"admission,omitempty"`
-}
-
 func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/add", handleAdd)
 	mux.HandleFunc("/files", handleFiles)
-	mux.HandleFunc("/prefetch", handlePrefetch)
 	mux.HandleFunc("/stream", handleStream)
-	mux.HandleFunc("/stats", handleStats)
 	mux.HandleFunc("/buffer/state", handleBufferState)
 	mux.HandleFunc("/buffer/info", handleBufferInfo)
 }
@@ -165,51 +88,6 @@ func estimateDuration(sizeBytes int64) int {
 	return int(durationS)
 }
 
-func handleAdd(w http.ResponseWriter, r *http.Request) {
-	middleware.EnableCORS(w)
-	cat := parseCat(r.URL.Query())
-	cl := torrentx.GetClientFor(cat)
-
-	src, err := torrentx.ParseSrc(r.URL.Query())
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-
-	t, err := torrentx.AddOrGetTorrent(cl, src)
-	if strings.HasPrefix(src, "magnet:") {
-		u, h, s, o := torrentx.CountTrackers(src)
-		log.Printf("[trackers] udp=%d http=%d https=%d other=%d", u, h, s, o)
-	}
-	if err != nil {
-		http.Error(w, "add torrent: "+err.Error(), 400)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), config.WaitMetadata())
-	defer cancel()
-	metaStart := time.Now()
-	_ = torrentx.WaitForInfo(ctx, t)
-	metaMs := time.Since(metaStart).Milliseconds()
-
-	ih := t.InfoHash()
-	log.Printf("[add] connected cat=%s ih=%s name=%q files=%d", cat, ih.HexString(), t.Name(), len(t.Files()))
-	torrentx.TouchTorrent(cat, t)
-
-	var files []fileEntry
-	if t.Info() != nil {
-		for i, f := range t.Files() {
-			files = append(files, fileEntry{Index: i, Name: f.Path(), Length: f.Length()})
-		}
-	}
-	log.Printf("[add] cat=%s ih=%s name=%q metadataMs=%d files=%d", cat, ih.HexString(), t.Name(), metaMs, len(files))
-	_ = json.NewEncoder(w).Encode(addResp{
-		InfoHash: ih.HexString(),
-		Name:     t.Name(),
-		Files:    files,
-	})
-}
-
 func handleFiles(w http.ResponseWriter, r *http.Request) {
 	middleware.EnableCORS(w)
 	cat := parseCat(r.URL.Query())
@@ -240,95 +118,6 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[files] cat=%s ih=%s name=%q files=%d", cat, t.InfoHash().HexString(), t.Name(), len(files))
 	_ = json.NewEncoder(w).Encode(files)
-}
-
-func handlePrefetch(w http.ResponseWriter, r *http.Request) {
-	middleware.EnableCORS(w)
-	cat := parseCat(r.URL.Query())
-	cl := torrentx.GetClientFor(cat)
-
-	src, err := torrentx.ParseSrc(r.URL.Query())
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	t, err := torrentx.AddOrGetTorrent(cl, src)
-	if err != nil {
-		http.Error(w, "add torrent: "+err.Error(), 400)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), config.WaitMetadata())
-	defer cancel()
-	metaStart := time.Now()
-	if err := torrentx.WaitForInfo(ctx, t); err != nil {
-		log.Printf("[prefetch] cat=%s name=%q metadata TIMEOUT after %s", cat, t.Name(), time.Since(metaStart))
-		_ = json.NewEncoder(w).Encode(prefetchResp{
-			InfoHash:   t.InfoHash().HexString(),
-			Name:       t.Name(),
-			MetadataMs: time.Since(metaStart).Milliseconds(),
-			Note:       "metadata-timeout",
-		})
-		return
-	}
-	metaMs := time.Since(metaStart).Milliseconds()
-	torrentx.TouchTorrent(cat, t)
-
-	// Find and prebuffer subtitle files first (they're small, typically <500KB)
-	subtitleFiles := torrentx.FindSubtitleFiles(t)
-	for _, sub := range subtitleFiles {
-		if sub.Index >= 0 && sub.Index < len(t.Files()) {
-			subFile := t.Files()[sub.Index]
-			// Only prebuffer subtitles up to 2MB
-			if subFile.Length() <= 2<<20 {
-				subRd := subFile.NewReader()
-				subRd.SetResponsive()
-				got := torrentx.Prebuffer(subRd, subFile.Length(), 10*time.Second)
-				subRd.Close()
-				log.Printf("[prefetch] subtitle %s (%s) prebuffered %d/%d bytes",
-					sub.Name, sub.Lang, got, subFile.Length())
-			}
-		}
-	}
-
-	f, fidx := torrentx.ChooseBestVideoFile(t)
-	if f == nil {
-		_ = json.NewEncoder(w).Encode(prefetchResp{
-			InfoHash:   t.InfoHash().HexString(),
-			Name:       t.Name(),
-			MetadataMs: metaMs,
-			Note:       "no-playable-file",
-			Subtitles:  subtitleFiles,
-		})
-		return
-	}
-
-	rd := f.NewReader()
-	defer rd.Close()
-	_, _ = rd.Seek(0, io.SeekStart)
-	readStart := time.Now()
-	got := torrentx.Prebuffer(rd, min64(config.PrebufferBytes(), 512<<10), config.PrebufferTimeout())
-	log.Printf("[prefetch] cat=%s ih=%s file=%d bytes=%d in %s",
-		cat, t.InfoHash().HexString(), fidx, got, time.Since(readStart))
-
-	var files []fileEntry
-	for i, ff := range t.Files() {
-		files = append(files, fileEntry{Index: i, Name: ff.Path(), Length: ff.Length()})
-	}
-
-	_ = json.NewEncoder(w).Encode(prefetchResp{
-		InfoHash:       t.InfoHash().HexString(),
-		Name:           t.Name(),
-		FileIndex:      fidx,
-		FileName:       f.Path(),
-		FileLength:     f.Length(),
-		MetadataMs:     metaMs,
-		PrebufferBytes: got,
-		PrebufferMs:    time.Since(readStart).Milliseconds(),
-		Note:           "ok",
-		Files:          files,
-		Subtitles:      subtitleFiles,
-	})
 }
 
 func handleStream(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +182,6 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[stream] starting cat=%s file=%s (%d bytes) fidx=%d", cat, f.Path(), f.Length(), fidx)
-	torrentx.SetLastFileIndex(cat, t.InfoHash(), fidx)
 
 	torrentx.IncActive(cat, t.InfoHash())
 	defer torrentx.DecActive(cat, t.InfoHash())
@@ -640,107 +428,6 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		cat, t.Name(), fidx, start, end, written, target)
 }
 
-func handleStats(w http.ResponseWriter, r *http.Request) {
-	middleware.EnableCORS(w)
-
-	wantCat := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("cat")))
-	wantIH := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("infoHash")))
-
-	resp := statsResp{
-		UptimeSeconds:   int64(time.Since(startTime()).Seconds()),
-		DataRoot:        config.DataRoot(),
-		TotalCacheBytes: torrentx.DirSize(config.DataRoot()),
-		CacheMaxBytes:   config.CacheMaxBytes(),
-		EvictTTL:        config.EvictTTL().String(),
-		TrackersMode:    strings.ToLower(config.TrackersMode()),
-	}
-
-	var cats []categoryStats
-
-	torrentx.ForEachClient(func(cat string, cl *torrent.Client) {
-		if wantCat != "" && wantCat != cat {
-			return
-		}
-		var rows []torrentStat
-		for _, t := range cl.Torrents() {
-			ih := strings.ToLower(t.InfoHash().HexString())
-			if wantIH != "" && !strings.EqualFold(wantIH, ih) {
-				continue
-			}
-			haveInfo := t.Info() != nil
-			size := torrentx.TorrentTotalSize(t)
-			numFiles := 0
-			best, bestIdx := (*torrent.File)(nil), -1
-			if haveInfo {
-				numFiles = len(t.Files())
-				if bf, idx := torrentx.ChooseBestVideoFile(t); bf != nil {
-					best, bestIdx = bf, idx
-				}
-			}
-			var selPtr *int
-			if idx, ok := torrentx.GetLastFileIndex(cat, t.InfoHash()); ok {
-				sel := idx
-				selPtr = &sel
-			}
-			last := "never"
-			if ts, ok := torrentx.GetLastTouch(cat, t.InfoHash()); ok {
-				last = ts.Format(time.RFC3339)
-			}
-			row := torrentStat{
-				InfoHash:  ih,
-				Name:      t.Name(),
-				HaveInfo:  haveInfo,
-				Size:      size,
-				NumFiles:  numFiles,
-				BestIndex: bestIdx,
-				BestName: func() string {
-					if best != nil {
-						return best.Path()
-					}
-					return ""
-				}(),
-				BestLength: func() int64 {
-					if best != nil {
-						return best.Length()
-					}
-					return 0
-				}(),
-				SelectedIndex: selPtr,
-				LastTouched:   last,
-			}
-			if best != nil && bestIdx >= 0 {
-				kb := buffer.Key{Cat: cat, IH: t.InfoHash().HexString(), FIdx: bestIdx}
-				ctl := buffer.Get(kb)
-				row.BufferedAhead = buffer.ContiguousAheadPieceExact(t, best, ctl.Playhead())
-				row.TargetAhead = ctl.TargetBytes()
-			}
-			rows = append(rows, row)
-		}
-		sort.Slice(rows, func(i, j int) bool {
-			li := rows[i].LastTouched
-			lj := rows[j].LastTouched
-			if li != "never" && lj != "never" {
-				return li > lj
-			}
-			if li != "never" {
-				return true
-			}
-			if lj != "never" {
-				return false
-			}
-			return rows[i].Name < rows[j].Name
-		})
-		cats = append(cats, categoryStats{Category: cat, Torrents: rows})
-	})
-
-	resp.Categories = cats
-	if admissionState := getAdmissionSnapshot(); admissionState != nil {
-		resp.Admission = admissionState
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
 func handleBufferState(w http.ResponseWriter, r *http.Request) {
 	middleware.EnableCORS(w)
 	q := r.URL.Query()
@@ -974,10 +661,6 @@ func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // ===== helpers =====
-
-var startAt = time.Now()
-
-func startTime() time.Time { return startAt }
 
 func isProbeRange(start, end int64) bool {
 	const maxProbe = 1 << 10

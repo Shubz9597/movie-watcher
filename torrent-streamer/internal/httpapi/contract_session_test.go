@@ -110,24 +110,6 @@ func TestSessionResumeSourceContract(t *testing.T) {
 	}
 }
 
-func TestSessionResumeSourceProbeContract(t *testing.T) {
-	t.Parallel()
-	handler := newSessionTestHandlers().ResumeSourceProbe
-
-	recorder := httptest.NewRecorder()
-	handler(recorder, httptest.NewRequest(http.MethodPost, "/v1/resume/source/probe", nil))
-	if recorder.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST probe = %d", recorder.Code)
-	}
-
-	recorder = httptest.NewRecorder()
-	handler(recorder, httptest.NewRequest(http.MethodGet, "/v1/resume/source/probe", nil))
-	if recorder.Code != http.StatusBadRequest ||
-		recorder.Body.String() != "subjectId, seriesId, season & episode required\n" {
-		t.Fatalf("missing params = %d %q", recorder.Code, recorder.Body.String())
-	}
-}
-
 func TestSessionContinueContract(t *testing.T) {
 	t.Parallel()
 	list := newSessionTestHandlers().ContinueList
@@ -168,31 +150,3 @@ func TestSessionContinueContract(t *testing.T) {
 	}
 }
 
-func TestSessionStartAndEndedBadJSONContract(t *testing.T) {
-	t.Parallel()
-	handlers := newSessionTestHandlers()
-
-	recorder := httptest.NewRecorder()
-	handlers.Start(recorder, httptest.NewRequest(http.MethodPost, "/v1/session/start", strings.NewReader("{")))
-	if recorder.Code != http.StatusBadRequest || recorder.Body.String() != "bad json\n" {
-		t.Fatalf("start bad json = %d %q", recorder.Code, recorder.Body.String())
-	}
-
-	recorder = httptest.NewRecorder()
-	handlers.Ended(recorder, httptest.NewRequest(http.MethodPost, "/v1/session/ended", strings.NewReader("{")))
-	if recorder.Code != http.StatusBadRequest || recorder.Body.String() != "bad json\n" {
-		t.Fatalf("ended bad json = %d %q", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestSessionResumeM3UContract(t *testing.T) {
-	t.Parallel()
-	handler := newSessionTestHandlers().ResumeM3U
-
-	recorder := httptest.NewRecorder()
-	handler(recorder, httptest.NewRequest(http.MethodGet, "/v1/resume.m3u", nil))
-	if recorder.Code != http.StatusBadRequest ||
-		recorder.Body.String() != "subjectId & seriesId required\n" {
-		t.Fatalf("missing ids = %d %q", recorder.Code, recorder.Body.String())
-	}
-}
