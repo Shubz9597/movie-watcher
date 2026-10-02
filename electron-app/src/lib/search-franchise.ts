@@ -94,12 +94,16 @@ export function organizeSearchResults<T extends SearchItemLike>(
       for (const item of members) out.push({ kind: 'item', item, label: resultLabel(item) });
       continue;
     }
-    // Main entry: the most popular series of the franchise, else the most
-    // relevant member; the rest follow by release year (unreleased last).
+    // Main entry: the franchise's ORIGINAL series (earliest dated one; later
+    // arcs/seasons are separate entries), popularity breaking ties; without
+    // a series, the most relevant member. The rest follow by release year
+    // (unreleased last).
     const series = members.filter(isSeries);
-    const primary = (series.length ? series : members)
-      .slice()
-      .sort((left, right) => (right.popularity ?? 0) - (left.popularity ?? 0))[0];
+    const primary = series.length
+      ? series.slice().sort((left, right) =>
+        (left.year ?? Number.MAX_SAFE_INTEGER) - (right.year ?? Number.MAX_SAFE_INTEGER)
+        || (right.popularity ?? 0) - (left.popularity ?? 0))[0]
+      : members[0];
     const rest = members
       .filter((item) => item !== primary)
       .sort((left, right) => (left.year ?? Number.MAX_SAFE_INTEGER) - (right.year ?? Number.MAX_SAFE_INTEGER));
