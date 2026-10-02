@@ -53,7 +53,7 @@ func TestCatalogEndpointsEndToEnd(t *testing.T) {
 	t.Cleanup(cinemeta.Close)
 	anizip := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"title":"葬送のフリーレン","english":{"title":"Frieren"},"imdbId":"tt28015436","episodes":{"1":{"season":1,"episode":1,"airDate":"2023-09-29","title":"The Journey's End","image":"e1.png","overview":"start","duration":24}}}`))
+		_, _ = w.Write([]byte(`{"titles":{"ja":"葬送のフリーレン","en":"Frieren"},"mappings":{"imdb_id":"tt28015436"},"episodes":{"1":{"airDate":"2023-09-29","title":{"en":"The Journey's End"},"image":"e1.png","overview":"start","runtime":24}}}`))
 	}))
 	t.Cleanup(anizip.Close)
 
