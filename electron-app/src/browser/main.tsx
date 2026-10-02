@@ -279,7 +279,7 @@ function BrowserApp({
 }) {
   const { route, navigate, goBack } = useHashRouter(launch.tab ?? 'home');
   const compat = useConnectionStatus();
-  const { connection, storage } = usePlatform();
+  const { connection, storage, downloads } = usePlatform();
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   // First-run connect transition: after a successful setup save the shell
   // mounts for the rest of the session (a reload resolves 'shell' from
@@ -342,10 +342,39 @@ function BrowserApp({
     anilistId?: number;
     malId?: number;
   }) => {
+    void (async () => {
+      // A downloaded copy of this exact episode/movie plays from the device
+      // (works offline, no source selection); otherwise open the title.
+      try {
+        const inventory = await downloads?.inventory();
+        const local = inventory?.items.find((download) => download.seriesId === item.seriesId
+          && (download.season ?? 0) === item.season
+          && (download.episode ?? 0) === item.episode
+          && (download.transferState === 'ready' || (download.transferState == null && download.state === 'ready' && !download.waitingForServer)));
+        if (local) {
+          navigate('player', {
+            downloadId: local.downloadId,
+            title: local.title,
+            ...(local.posterUrl ? { posterUrl: local.posterUrl } : {}),
+            ...(local.subtitle ? { subtitle: local.subtitle } : {}),
+            localSeriesId: item.seriesId,
+            season: String(item.season),
+            episode: String(item.episode),
+          });
+          return;
+        }
+      } catch {
+        // Inventory unavailable: fall back to the title page.
+      }
+      openResumeTitle(item);
+    })();
+  };
+
+  const openResumeTitle = (item: Parameters<typeof requestResume>[0]) => {
     const kind = item.kind || (item.seriesId.startsWith('tmdb:movie:') ? 'movie' : item.seriesId.startsWith('tmdb:tv:') ? 'tv' : 'anime');
     const id = kind === 'anime' ? item.anilistId : item.tmdbId;
     if (!id) {
-      setResumeNotice(`TorWatch could not identify -${item.title || item.seriesId}-. Open it from Library and choose the source again.`);
+      setResumeNotice(`TorWatch couldn’t identify “${item.title || item.seriesId}”. Open it from Library and choose the source again.`);
       return;
     }
     const params: Record<string, string> = {

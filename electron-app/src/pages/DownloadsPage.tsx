@@ -15,6 +15,7 @@ import { getNativeDownloads } from '../mobile/downloads-adapter';
 import { getDeviceId } from '../lib/device-id';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
+import { downloadMeta, forgetDownloadMeta } from '../lib/offline-download-meta';
 import {
   cancelPendingDownload,
   pendingDownloads,
@@ -82,6 +83,29 @@ function DownloadPoster({ src }: { src?: string | null }) {
       ) : (
         <div className="grid h-full place-items-center text-white/25" aria-hidden="true">
           <Film className="h-6 w-6" aria-hidden="true" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "4 · Good News About Hell", or "Episode 4" without a stored name. */
+function episodeLabel(episode: number | undefined, name: string | undefined): string {
+  if (episode == null) return name ?? 'Episode';
+  return name ? `${episode} · ${name}` : `Episode ${episode}`;
+}
+
+// Episode rows lead with the episode still (16:9), stored on the device so
+// it also shows offline.
+function EpisodeStill({ src }: { src?: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="relative aspect-video w-[112px] shrink-0 self-start overflow-hidden rounded-lg bg-white/[0.06] sm:w-[144px]">
+      {src && !failed ? (
+        <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover" />
+      ) : (
+        <div className="grid h-full place-items-center text-white/25" aria-hidden="true">
+          <Film className="h-5 w-5" aria-hidden="true" />
         </div>
       )}
     </div>
@@ -173,7 +197,7 @@ function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[
       groups.push({ kind: 'pending', item });
       continue;
     }
-    const show = showFor(item.seriesId, item.title, item.posterUrl);
+    const show = showFor(item.seriesId, item.title, downloadMeta(item.jobId).poster ?? item.posterUrl);
     show.count += 1;
     if (item.state === 'failed') show.failed += 1;
     else show.preparing += 1;
@@ -183,7 +207,7 @@ function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[
       groups.push({ kind: 'item', item });
       continue;
     }
-    const show = showFor(item.seriesId, item.title, item.posterUrl);
+    const show = showFor(item.seriesId, item.title, downloadMeta(item.downloadId).poster ?? item.posterUrl);
     show.count += 1;
     show.bytes += item.sizeBytes ?? 0;
     if (item.transferState === 'failed' || (item.transferState == null && item.state === 'needs-repair')) show.failed += 1;
@@ -320,6 +344,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     try {
       await downloads.remove(item.downloadId);
       forgetOfflineSkipSegments(item.downloadId);
+      forgetDownloadMeta(item.downloadId);
       setPendingRemoval(null);
       setReloadKey((key) => key + 1);
     } catch {
@@ -343,11 +368,11 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     const elapsed = formatElapsed(item.queuedAt, now);
     return (
       <li key={`pending-${item.jobId}`} className={ROW_CLASS}>
-        {episodeView ? null : <DownloadPoster src={item.posterUrl} />}
+        {episodeView ? <EpisodeStill src={downloadMeta(item.jobId).still} /> : <DownloadPoster src={downloadMeta(item.jobId).poster ?? item.posterUrl} />}
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="truncate text-base font-medium text-white">{episodeView ? `Episode ${item.episode}` : item.title}</p>
+              <p className="truncate text-base font-medium text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.jobId).episodeTitle) : item.title}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitleLabel, formatSize(item.sizeBytes), subtitleSummary(item.subtitles)].filter(Boolean).join(' · ')}
               </p>
@@ -412,11 +437,11 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       : received;
     return (
       <li key={item.downloadId} className={ROW_CLASS}>
-        {episodeView ? null : <DownloadPoster src={item.posterUrl} />}
+        {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="truncate text-base font-medium text-white">{episodeView ? `Episode ${item.episode ?? ''}` : item.title}</p>
+              <p className="truncate text-base font-medium text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.downloadId).episodeTitle) : item.title}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
               </p>

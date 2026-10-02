@@ -893,6 +893,8 @@ export default function EpisodePanel({
       posterUrl,
       subtitleLabel: `S${season} E${episode}`,
       subtitleHints: { title, year, imdbId },
+      ...(activeEpisode.name ? { episodeTitle: activeEpisode.name } : {}),
+      ...(activeEpisode.stillUrl ? { stillUrl: activeEpisode.stillUrl } : {}),
       skipQuery: kind === 'anime'
         ? { kind: 'anime', ...(malId ? { malId: String(malId) } : {}), episode: String(activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber) }
         : { kind: 'tv', ...(tmdbId ? { tmdbId: String(tmdbId) } : {}), ...(imdbId ? { imdbId } : {}), season: String(season), episode: String(episode) },

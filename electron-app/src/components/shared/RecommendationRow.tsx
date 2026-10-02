@@ -100,34 +100,36 @@ function RecommendationCard({ item, navigate, index }: {
         type="button"
         onClick={() => navigate('title', titleRouteParams(item.canonicalId))}
         aria-label={`${item.title}${item.reason.code === 'seed_genre' ? `, ${item.reason.text}` : ', popular pick'}`}
-        className={`group relative aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] ${FOCUS_RING_CLASS}`}
+        className={`group block w-full rounded-lg text-left ${FOCUS_RING_CLASS}`}
       >
-        {item.artwork?.poster ? (
-          <img
-            src={item.artwork.poster}
-            alt=""
-            width="342"
-            height="513"
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-            <Sparkles className="h-6 w-6 opacity-30" aria-hidden="true" />
-          </div>
-        )}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 pb-1.5 pt-6 text-left">
-          <span className="line-clamp-2 text-xs font-medium leading-4 text-white">{item.title}</span>
-          <span className="mt-0.5 block text-[10px] capitalize leading-3 text-white/60">
-            {item.type === 'series' ? 'Series' : item.type}{item.year ? ` · ${item.year}` : ''}
-          </span>
-          {/* Truthful reason: favourite-grounded vs Popular pick are
-              distinguishable in text, never by color alone. */}
-          <span className="mt-0.5 line-clamp-1 block text-[10px] leading-3 text-white/60">
-            {item.reason.text}
-          </span>
-        </div>
+        <span className="relative block aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[var(--surface-raised)]">
+          {item.artwork?.poster ? (
+            <img
+              src={item.artwork.poster}
+              alt=""
+              width="342"
+              height="513"
+              loading="lazy"
+              decoding="async"
+              className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
+            />
+          ) : (
+            <span className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
+              <Sparkles className="h-6 w-6 opacity-30" aria-hidden="true" />
+            </span>
+          )}
+        </span>
+        {/* Text sits below the artwork (readable on any poster), matching
+            the other rails. The reason names the seed title only. */}
+        <span className="mt-2 line-clamp-2 block text-sm font-medium leading-snug text-white/90 group-hover:text-white">{item.title}</span>
+        <span className="type-caption mt-1 block capitalize text-white/60">
+          {item.type === 'series' ? 'Series' : item.type}{item.year ? ` · ${item.year}` : ''}
+        </span>
+        {/* Truthful reason: favourite-grounded vs Popular pick are
+            distinguishable in text, never by color alone. */}
+        <span className="type-caption mt-0.5 line-clamp-2 block text-white/60">
+          {item.reason.text}
+        </span>
         <span className="sr-only">Recommendation {index + 1}</span>
       </button>
       {/* Same Watch Later / Favourites overlays as every other rail: the

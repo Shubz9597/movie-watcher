@@ -3,6 +3,7 @@ import type { NativeManifestAsset } from '../platform/native-downloads.ts';
 import { getDeviceId } from '../lib/device-id.ts';
 import { DOWNLOADS_UI_ENABLED, getNativeDownloads } from './downloads-adapter.ts';
 import { cacheOfflineSkipSegments } from '../lib/offline-skip-segments.ts';
+import { cacheDownloadMeta } from '../lib/offline-download-meta.ts';
 
 const STORAGE_KEY = 'torwatch_pending_downloads_v1';
 const CHANGE_EVENT = 'torwatch:downloads-changed';
@@ -26,6 +27,9 @@ export type DownloadSelection = {
   subtitleHints?: { title?: string; year?: number; imdbId?: string };
   /** /skip-segments query (minus duration) so skip-intro works offline. */
   skipQuery?: Record<string, string>;
+  /** Episode name and still, kept on the device for the Downloads list. */
+  episodeTitle?: string;
+  stillUrl?: string;
 };
 
 export type PendingDownload = DownloadSelection & {
@@ -258,6 +262,11 @@ export async function queueNativeDownload(
     queuedAt: Date.now(),
   };
   upsertPending(pending);
+  void cacheDownloadMeta(pending.jobId, {
+    episodeTitle: selection.episodeTitle,
+    stillUrl: selection.stillUrl,
+    posterUrl: selection.posterUrl,
+  }).catch(() => {});
   void resumePendingDownload(pending);
   return pending;
 }
