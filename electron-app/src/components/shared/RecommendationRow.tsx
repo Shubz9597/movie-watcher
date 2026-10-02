@@ -146,7 +146,7 @@ function SectionHeader({ fallback, degraded, navigate }: { fallback: boolean; de
       <div className="min-w-0">
       {/* M1.4 UI pass: the decorative icon is gone — cleaner Netflix-style
           section headers. */}
-      <h2 className="text-lg font-semibold text-white">
+      <h2 className="type-row-title text-white">
         <span>
         {fallback ? 'Popular picks' : 'Recommended for your household'}
         </span>
@@ -271,7 +271,7 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
       <h1 className="type-section-title mt-2 text-white">
         {state.data?.fallback ? 'Popular picks' : 'Recommended for your household'}
       </h1>
-      <div className="mt-4 flex items-center justify-end gap-4 md:hidden">
+      <div className={`mt-4 items-center justify-end gap-4 md:hidden ${items.length ? 'flex' : 'hidden'}`}>
         <button
           type="button"
           onClick={() => setMobileFiltersOpen(true)}

@@ -44,9 +44,9 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
     >
       {/* Structural edge spacers instead of container padding: scrollable
           padding disappears the moment the rail is swiped, leaving cards
-          flush against the screen edge. Spacers keep the 20px inset at both
-          rest positions on compact widths. */}
-      <div aria-hidden="true" className="w-5 shrink-0 snap-start md:hidden" />
+          flush against the screen edge. A 4px spacer plus the 16px gap keeps
+          the cards on the page's 20px gutter at both rest positions. */}
+      <div aria-hidden="true" className="w-1 shrink-0 snap-start md:hidden" />
       {items.map((item) => {
         const pct = Math.max(0, Math.min(100, Math.round(Number(item.percent) || 0)));
         const displayTitle = item.title || item.seriesId;
@@ -125,7 +125,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
           </article>
         );
       })}
-      <div aria-hidden="true" className="w-5 shrink-0 md:hidden" />
+      <div aria-hidden="true" className="w-1 shrink-0 md:hidden" />
     </div>
   );
 }

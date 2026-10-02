@@ -8,7 +8,6 @@ import * as React from 'react';
 import { History, Search, X } from 'lucide-react';
 import PosterCard from '../components/PosterCard';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
-import { PageBack } from '../components/shared/PageBack';
 import { catalogGateway } from '../lib/services/catalog-gateway';
 import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
@@ -215,10 +214,8 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
 
   return (
     <div className="search-page mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col px-5 pt-4 md:px-8">
-      <PageBack label="Home" onBack={() => navigate('home')} />
-
       {/* Search field: always visible, 16px (iOS no-zoom), clearable. */}
-      <div className="mt-3 flex min-h-12 shrink-0 items-center gap-3 rounded-lg border border-white/15 bg-white/[0.05] pl-4 pr-1 focus-within:border-white/40">
+      <div className="mt-1 flex min-h-12 shrink-0 items-center gap-3 rounded-lg border border-white/15 bg-white/[0.05] pl-4 pr-1 focus-within:border-white/40">
         <Search className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />
         <input
           ref={inputRef}

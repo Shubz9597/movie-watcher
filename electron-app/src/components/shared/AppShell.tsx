@@ -2,10 +2,10 @@
 // Compact widths get an icon top bar plus a bottom destination bar
 // (Home/Library/Search, icons with small labels, 48px targets); desktop
 // widths render the existing AppHeader so the Electron layout is unchanged.
-// M1.4 UI pass: shell-level back chevrons (top bar + bottom nav) are REMOVED
-// — pages own their back affordance ("‹ Label" row, e.g. "‹ Library"), the
-// pattern users expect; hardware/gesture back still works everywhere.
-import { Download, Home, Library, Search, Settings2 } from 'lucide-react';
+// Back (design-system.md: detail uses Back): tab destinations show the logo;
+// every pushed detail screen shows one back chevron in the same place, the
+// iOS navigation-bar convention. Gesture/hardware back still works.
+import { ChevronLeft, Download, Home, Library, Search, Settings2 } from 'lucide-react';
 import AppHeader from '../AppHeader';
 import { ConnectionChip } from './ConnectionChip';
 import torWatchLogo from '../../assets/torwatch-app-icon.png';
@@ -30,8 +30,8 @@ const DESTINATIONS = [
 ] as const;
 
 export function AppShell({ routePath, navigate, onOpenSettings, onBack, downloadsAvailable, children }: AppShellProps) {
-  void onBack; // pages own back affordances now; kept for interface stability
   const search = routePath === 'search';
+  const tabRoot = ['home', 'library', 'search', 'downloads'].includes(routePath);
   const frame = useSearchViewport(search);
 
 
@@ -43,32 +43,44 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
         <AppHeader navigate={navigate} />
       </div>
 
-      {/* Compact: slim top bar with explicit icon actions. No back chevron —
-          pages render their own "‹ Label" back row. */}
+      {/* Compact: slim top bar — logo on tab roots, back on detail screens. */}
       <header className="sticky top-0 z-40 flex items-center justify-between border-b border-white/[0.08] bg-[#0a0a0a] px-4 pb-2 pt-[calc(var(--app-safe-top)+0.5rem)] lg:hidden">
         <div className="flex items-center">
-          <button
-            type="button"
-            onClick={() => navigate('home')}
-            aria-label="TorWatch home"
-            className={`inline-flex h-12 w-12 items-center justify-center rounded-xl ${FOCUS_RING_CLASS}`}
-          >
-            {/* -translate-y-1: the icon artwork sits low inside its PNG;
-                optically centered against the row of 44px action buttons. */}
-            <img src={torWatchLogo} alt="" className="h-9 w-9 -translate-y-1 object-contain" />
-          </button>
+          {!tabRoot ? (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back"
+              className={`-ml-2 inline-flex h-12 w-12 items-center justify-center rounded-lg text-white ${FOCUS_RING_CLASS}`}
+            >
+              <ChevronLeft className="h-7 w-7" strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate('home')}
+              aria-label="TorWatch home"
+              className={`inline-flex h-12 w-12 items-center justify-center rounded-xl ${FOCUS_RING_CLASS}`}
+            >
+              {/* -translate-y-1: the icon artwork sits low inside its PNG;
+                  optically centered against the row of 44px action buttons. */}
+              <img src={torWatchLogo} alt="" className="h-9 w-9 -translate-y-1 object-contain" />
+            </button>
+          )}
           {/* M1.4 UI pass: connection status at a glance (mobile header). */}
           <ConnectionChip onOpenSettings={onOpenSettings} />
         </div>
         <div className="flex items-center">
-          <button
-            type="button"
-            aria-label="Search titles"
-            onClick={() => navigate('search')}
-            className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white/75 hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
-          >
-            <Search className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
-          </button>
+          {!search ? (
+            <button
+              type="button"
+              aria-label="Search titles"
+              onClick={() => navigate('search')}
+              className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white/75 hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
+            >
+              <Search className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
+            </button>
+          ) : null}
           <button
             type="button"
             aria-label="Open settings"

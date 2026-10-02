@@ -212,9 +212,9 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
 
   if (loading) {
     return (
-      <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
+      <section className="tw-cull py-6 md:py-10">
         <div className="mb-4">
-          <h2 className="type-section-title text-white">Continue watching</h2>
+          <h2 className="type-row-title text-white">Continue watching</h2>
         </div>
         <div className="hide-scrollbar flex gap-4 overflow-x-auto pb-2">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -234,9 +234,9 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
   if (!rows.length) return null;
 
   return (
-    <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
+    <section className="tw-cull py-6 md:py-10">
       <div className="mb-4">
-        <h2 className="type-section-title text-white">Continue watching</h2>
+        <h2 className="type-row-title text-white">Continue watching</h2>
       </div>
       {dismissError ? (
         <p className="type-body mb-4 rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3 text-red-100" role="alert">
@@ -736,7 +736,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           </section>
         ) : <div>
           <CarouselRow
-          title="Movies – Trending"
+          title="Trending movies"
           items={movies}
           loading={moviesLoading}
           error={moviesError}
@@ -744,13 +744,13 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           onOpenSettings={openSetup}
           onOpen={openMovie}
           onPrefetch={prefetch}
-          seeAllHref={`/see-all?title=${encodeURIComponent('Movies – Trending')}&api=${encodeURIComponent('tmdb:trending:movie')}&kind=movie`}
+          seeAllHref={`/see-all?title=${encodeURIComponent('Trending movies')}&api=${encodeURIComponent('tmdb:trending:movie')}&kind=movie`}
           navigate={navigate}
           libraryKind="movie"
         />
 
           <CarouselRow
-          title="Series – Trending"
+          title="Trending series"
           items={series}
           loading={seriesLoading}
           error={seriesError}
@@ -758,13 +758,13 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           onOpenSettings={openSetup}
           onOpen={openTv}
           onPrefetch={prefetch}
-          seeAllHref={`/see-all?title=${encodeURIComponent('Series – Trending')}&api=${encodeURIComponent('tmdb:trending:tv')}&kind=tv`}
+          seeAllHref={`/see-all?title=${encodeURIComponent('Trending series')}&api=${encodeURIComponent('tmdb:trending:tv')}&kind=tv`}
           navigate={navigate}
           libraryKind="tv"
         />
 
           <CarouselRow
-          title="Anime – Trending this season"
+          title="Trending anime"
           items={anime}
           loading={animeLoading && !anime.length}
           error={animeError}
@@ -772,7 +772,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           emptyMessage="Anime is unavailable right now."
           onOpen={openAnime}
           onPrefetch={prefetch}
-          seeAllHref={`/see-all?title=${encodeURIComponent('Anime – Trending')}&api=${encodeURIComponent('anilist:trending:anime')}&kind=anime`}
+          seeAllHref={`/see-all?title=${encodeURIComponent('Trending anime')}&api=${encodeURIComponent('anilist:trending:anime')}&kind=anime`}
           navigate={navigate}
           libraryKind="anime"
         />

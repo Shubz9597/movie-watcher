@@ -718,52 +718,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       <div className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-t from-[#0a0a0a] via-transparent to-black/15" />
 
       <div className="mx-auto max-w-[1600px] space-y-6">
-        {/* Compact action toolbar (lg:hidden): desktop keeps the familiar
-            two-column layout unchanged (WF09). */}
-        <div className={`flex items-center justify-between gap-2 ${platform.desktop ? 'lg:hidden' : ''}`}>
-          <PageBackButton />
-          <div aria-label="Title actions" className="ml-auto flex flex-wrap items-center justify-end gap-1">
-            {/* design-system.md: Play/Resume is the primary action. Without a
-                resumable source, Play opens source selection below. */}
-            <button
-              type="button"
-              onClick={canDirectResume ? playResume : scrollToSources}
-              className="mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-            >
-              <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-              {canDirectResume ? 'Resume' : 'Play'}
-            </button>
-            {/* Save toggles appear only when the server library can persist
-                them — never as unexplained disabled controls. */}
-            {libraryAvailable && libraryCanonicalId ? (
-              <>
-                <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" />
-                <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" />
-              </>
-            ) : null}
-            {nativeDownloadsSupported() ? (
-              <button
-                type="button"
-                onClick={scrollToSources}
-                aria-label="Download"
-                title="Download"
-                className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              >
-                <Download className="h-5 w-5" aria-hidden="true" />
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={scrollToSources}
-              aria-label="Sources"
-              title="Sources"
-              className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-            >
-              <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white">
           <div className={platform.desktop ? 'hidden lg:block' : 'hidden'}><PageBackButton /></div>
           <div className="type-caption text-numeric flex flex-wrap items-center gap-2 font-medium text-white/70">
@@ -790,7 +744,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
-              <h1 className="type-feature-title text-white">{detail.title}</h1>
+              <h1 className="type-feature-title !text-[1.75rem] !leading-[2.125rem] text-white md:!text-[4.5rem] md:!leading-[1.02]">{detail.title}</h1>
               {detail.tagline ? <p className="measure-compact type-body text-white/70">{detail.tagline}</p> : null}
               <div className="type-secondary text-numeric flex flex-wrap items-center gap-2 text-white/70">
                 {metaBadges.map((item, index) => (
@@ -823,6 +777,50 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   . Used with permission.
                 </p>
               ) : null}
+            </div>
+
+            {/* Compact title actions sit under the title and metadata (Play
+                first, then bare save/download/source tools); desktop keeps its
+                two-column layout. */}
+            <div aria-label="Title actions" className={`flex flex-wrap items-center gap-1 ${platform.desktop ? 'lg:hidden' : ''}`}>
+              {/* design-system.md: Play/Resume is the primary action. Without a
+                  resumable source, Play opens source selection below. */}
+              <button
+                type="button"
+                onClick={canDirectResume ? playResume : scrollToSources}
+                className="mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+                {canDirectResume ? 'Resume' : 'Play'}
+              </button>
+              {/* Save toggles appear only when the server library can persist
+                  them — never as unexplained disabled controls. */}
+              {libraryAvailable && libraryCanonicalId ? (
+                <>
+                  <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" />
+                  <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" />
+                </>
+              ) : null}
+              {nativeDownloadsSupported() ? (
+                <button
+                  type="button"
+                  onClick={scrollToSources}
+                  aria-label="Download"
+                  title="Download"
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                >
+                  <Download className="h-5 w-5" aria-hidden="true" />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={scrollToSources}
+                aria-label="Sources"
+                title="Sources"
+                className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              >
+                <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
 
             {detail.overview ? (

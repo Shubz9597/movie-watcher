@@ -107,10 +107,10 @@ function CarouselRow({
   };
 
   return (
-    <section className="tw-cull py-8 md:py-10">
+    <section className="tw-cull py-6 md:py-10">
       <div className="shelf-heading mb-5">
         <div className="min-w-0">
-          <h2 className="type-section-title text-white">{title}</h2>
+          <h2 className="type-row-title text-white">{title}</h2>
           {subtitle ? <p className="measure-compact type-body mt-2 text-white/70">{subtitle}</p> : null}
         </div>
         {seeAllHref && navigate ? (

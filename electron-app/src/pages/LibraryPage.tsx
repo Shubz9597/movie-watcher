@@ -468,17 +468,18 @@ export function LibraryCategoryPage({ navigate, provider, collection, kind, sort
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => navigate('library', { collection, sort })}
-          className={`-ml-2 inline-flex min-h-12 items-center gap-1 rounded-lg pl-1 pr-3 text-sm text-white/70 hover:text-white ${FOCUS_RING_CLASS}`}
-        >
-          <ChevronLeft className="h-5 w-5" aria-hidden="true" /> Library
-        </button>
+      {/* Phones use the shell's back chevron; desktop keeps the labelled row. */}
+      <button
+        type="button"
+        onClick={() => navigate('library', { collection, sort })}
+        className={`-ml-2 hidden min-h-12 items-center gap-1 rounded-lg pl-1 pr-3 text-sm text-white/70 hover:text-white lg:inline-flex ${FOCUS_RING_CLASS}`}
+      >
+        <ChevronLeft className="h-5 w-5" aria-hidden="true" /> Library
+      </button>
+      <div className="flex items-center justify-between gap-3 lg:mt-2">
+        <h1 className="type-section-title text-white">{title}</h1>
         <SortButton current={sort} onSelect={setSort} />
       </div>
-      <h1 className="type-section-title mt-2 text-white">{title}</h1>
 
       {library ? (
         <ServerLibraryGrid library={library} collection={collection} kind={kind} sort={sort} navigate={navigate} />
