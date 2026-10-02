@@ -41,7 +41,6 @@ export interface DesktopChrome {
   openSetup(): void;
   openTmdbGuide?(): void;
   repairTmdb?(credential: unknown): Promise<unknown>;
-  requestTmdb?<T>(params: { path: string; params?: Record<string, string | number> }): Promise<T>;
   debugLog?(message: string, meta?: Record<string, unknown>): void;
 }
 

@@ -12,6 +12,7 @@ export function registerSetupIpc(ipcMain, deps) {
     vodBase,
     urls,
     getAppConfig,
+    getCatalogState,
     getMainWindow,
     getRuntimeState,
     getSetupIssue,
@@ -38,6 +39,8 @@ export function registerSetupIpc(ipcMain, deps) {
     verifyTmdbConnection,
   } = deps;
 
+  ipcMain.handle("catalog:get-state", () => getCatalogState());
+
   ipcMain.handle("setup:get-defaults", () => ({
     ...runtimeManager.loadSettings(),
     hasTmdbKey: hasTmdbCredential(),
@@ -61,13 +64,18 @@ export function registerSetupIpc(ipcMain, deps) {
   ipcMain.handle("setup:repair-tmdb", async (_event, replacement) => {
     const enteredTmdb = String(replacement || "").trim();
     const credentials = resolveSetupCredentials({ tmdbKey: enteredTmdb });
+    // A new credential only reaches the local server through its
+    // environment, so a running server restarts to pick it up.
+    const saveEnteredCredential = async () => {
+      if (!enteredTmdb) return;
+      applyTmdbCredential(enteredTmdb);
+      runtimeManager.saveCatalogSecrets(getAppConfig());
+      persistAppConfig();
+      await runtimeManager.stopBackend();
+    };
     try {
       await verifyTmdbConnection(credentials);
-      if (enteredTmdb) {
-        applyTmdbCredential(enteredTmdb);
-        runtimeManager.saveCatalogSecrets(getAppConfig());
-        persistAppConfig();
-      }
+      await saveEnteredCredential();
       setSetupIssue("");
       publishCatalogState({ status: "ready", issue: "" });
       publishSetupMode();
@@ -78,11 +86,7 @@ export function registerSetupIpc(ipcMain, deps) {
     } catch (error) {
       const issue = error?.message || "TMDb could not be verified. Try again.";
       if (!tmdbRequiresCredentialRepair(error)) {
-        if (enteredTmdb) {
-          applyTmdbCredential(enteredTmdb);
-          runtimeManager.saveCatalogSecrets(getAppConfig());
-          persistAppConfig();
-        }
+        await saveEnteredCredential();
         console.warn("[TMDb] Saved credential without a live availability check:", issue);
         setSetupIssue("");
         publishCatalogState({ status: "ready", issue: "" });
@@ -259,7 +263,7 @@ export function registerSetupIpc(ipcMain, deps) {
         sendSetupCheck("services", "skipped", "Set up later");
         publishRuntimeState({
           status: "setup-required",
-          message: "Browsing is ready. Add your playback connection when you want to watch.",
+          message: "Finish setup in Settings to start TorWatch. Browsing and playback both run on the local server.",
           code: "PLAYBACK_SETUP_REQUIRED",
         });
         return { ok: true };

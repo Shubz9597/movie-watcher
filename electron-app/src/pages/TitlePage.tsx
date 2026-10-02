@@ -6,23 +6,12 @@ import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
 import TorrentPanel from '../components/TorrentPanel';
 import { usePlatform } from '../platform/PlatformProvider';
-import { findAnimeIMDbId, getMovie as getTmdbMovie, getTv as getTmdbTv } from '../lib/services/tmdb-service';
-import { getTvSeason, getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
+import { getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
 import { bffEpisodes, bffTitleDetail } from '../lib/services/catalog-bff';
 import { getVodBase } from '../lib/api-client';
 import { getDeviceId } from '../lib/device-id';
-import { getCatalogSource } from '../lib/catalog-source';
-import { getAnime as getAniListAnime } from '../lib/services/anilist-service';
-import { getAnime as getJikanAnime } from '../lib/services/jikan-service';
 import { getIMDbRating } from '../lib/services/imdb-service';
-import {
-  detailFromTmdbMovie,
-  detailFromTmdbTv,
-  detailFromAniList,
-  detailFromJikan,
-  detailFromBackendTitle,
-  type Detail,
-} from '../lib/adapters/media';
+import { detailFromBackendTitle, type Detail } from '../lib/adapters/media';
 import { getSavedResumeSource } from '../lib/services/continue-service';
 import { useLibrary, useLibrarySelector } from '../lib/library-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
@@ -160,22 +149,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       enrichIMDb(next.imdbId);
     };
 
-    const enrichAnimeIMDb = (next: Detail, isMovieFormat: boolean) => {
-      if (next.imdbId) return;
-      void findAnimeIMDbId({
-        title: next.title,
-        aliases: next.altTitles,
-        year: next.year,
-        isMovie: isMovieFormat,
-      }).then((imdbId) => {
-        if (cancelled || !imdbId) return;
-        setDetail((current) => current && !current.imdbId ? { ...current, imdbId } : current);
-        enrichIMDb(imdbId);
-      }).catch((error: unknown) => {
-        if (!cancelled) console.warn('[TitlePage] Anime IMDb mapping is unavailable:', error);
-      });
-    };
-
     const enrichAnimeEpisodeArtwork = (anilistId: number) => {
       setEpisodeArtworkHydrating(true);
       console.info('[TitlePage] Episode artwork hydration starting for anilist id:', anilistId);
@@ -193,7 +166,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
         });
     };
 
-    // BFF-mode helpers (T042.3): map contract responses onto the episode
+    // Catalog helpers (T042.3): map contract responses onto the episode
     // shapes the panel consumes. Absolute server stills stay untouched.
     type BffEpisodeRow = {
       id: number;
@@ -261,8 +234,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
         setInitialSeason(firstSeason);
         // Episodes resolve SERVER-SIDE (BFF → TMDb): a direct client
         // api.themoviedb.org call from the phone WebView is the flaky link
-        // (ISP peering) and broke anime episodes + stills on device. The
-        // direct renderer call remains for the desktop renderer path only.
+        // (ISP peering) and broke anime episodes + stills on device.
         setInitialEpisodes(await bffEpisodeRows(`tmdb:tv:${id}`, firstSeason));
         return;
       }
@@ -320,8 +292,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       setSeasons([{ seasonNumber, name: `Season ${seasonNumber}` }]);
       setInitialSeason(seasonNumber);
       setInitialEpisodes(episodes);
-      // Stills hydration on the BFF path too: `id` IS the AniList id for this
-      // route, and the metadata service falls back to AniList streaming
+      // Stills hydration: `id` IS the AniList id for this route, and the metadata service falls back to AniList streaming
       // thumbnails when ani.zip is unavailable.
       if (episodes.some((episode) => !episode.stillUrl)) {
         enrichAnimeEpisodeArtwork(Number(id));
@@ -336,241 +307,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
         setEpisodeArtworkHydrating(false);
         console.log('[TitlePage] Loading', kind, id);
 
-        // BFF mode (T042.3): detail/seasons/episodes resolve through the
-        // /v2/catalog/* contract; renderer provider services are not called.
-        if (await getCatalogSource() === 'bff') {
-          await loadBffTitle();
-          return;
-        }
-
-        if (kind === 'movie') {
-          const raw = await getTmdbMovie(Number(id));
-          const d = detailFromTmdbMovie(raw);
-          publishDetail(d);
-          setIsAnimeMovie(false);
-        } else if (kind === 'tv') {
-          const raw = await getTmdbTv(Number(id));
-          const d = detailFromTmdbTv(raw);
-          publishDetail(d);
-
-          // Load seasons
-          const seasonsData = Array.isArray(raw.seasons)
-            ? raw.seasons
-                .filter((s: any) => s.season_number >= 0 && (s.episode_count ?? 0) > 0)
-                .sort((a: any, b: any) => a.season_number - b.season_number)
-                .map((s: any) => ({
-                  seasonNumber: s.season_number,
-                  name: s.name || `Season ${s.season_number}`,
-                  episodeCount: s.episode_count ?? undefined,
-                  airDate: s.air_date,
-                  posterUrl: s.poster_path ? `https://image.tmdb.org/t/p/w342${s.poster_path}` : undefined,
-                }))
-            : [];
-          setSeasons(seasonsData);
-          const firstSeason = Number.isInteger(requestedSeason) && seasonsData.some((s: any) => s.seasonNumber === requestedSeason)
-            ? requestedSeason
-            : seasonsData[0]?.seasonNumber ?? 1;
-          setInitialSeason(firstSeason);
-
-          // Load first season episodes
-          const seasonData = await getTvSeason(Number(id), firstSeason);
-          const episodes = Array.isArray(seasonData.episodes)
-            ? seasonData.episodes.map((ep: any) => ({
-                id: ep.id,
-                episodeNumber: ep.episode_number,
-                seasonNumber: ep.season_number,
-                name: ep.name,
-                overview: ep.overview,
-                airDate: ep.air_date,
-                stillUrl: ep.still_path ? `https://image.tmdb.org/t/p/w780${ep.still_path}` : undefined,
-                runtime: ep.runtime,
-              }))
-            : [];
-          setInitialEpisodes(episodes);
-        } else if (isTmdbBackedAnime) {
-          if (tmdbAnimeMediaKind === 'movie') {
-            const raw = await getTmdbMovie(Number(id));
-            publishDetail(detailFromTmdbMovie(raw));
-            setIsAnimeMovie(true);
-            setSeasons([]);
-            setInitialEpisodes([]);
-          } else {
-            const raw = await getTmdbTv(Number(id));
-            publishDetail(detailFromTmdbTv(raw));
-            setIsAnimeMovie(false);
-
-            const seasonsData = Array.isArray(raw.seasons)
-              ? raw.seasons
-                  .filter((season: any) => season.season_number >= 0 && (season.episode_count ?? 0) > 0)
-                  .sort((left: any, right: any) => left.season_number - right.season_number)
-                  .map((season: any) => ({
-                    seasonNumber: season.season_number,
-                    name: season.name || `Season ${season.season_number}`,
-                    episodeCount: season.episode_count ?? undefined,
-                    airDate: season.air_date,
-                    posterUrl: season.poster_path ? `https://image.tmdb.org/t/p/w342${season.poster_path}` : undefined,
-                  }))
-              : [];
-            setSeasons(seasonsData);
-            const firstSeason = Number.isInteger(requestedSeason) && seasonsData.some((season: any) => season.seasonNumber === requestedSeason)
-              ? requestedSeason
-              : seasonsData[0]?.seasonNumber ?? 1;
-            setInitialSeason(firstSeason);
-            const seasonData = await getTvSeason(Number(id), firstSeason);
-            setInitialEpisodes(Array.isArray(seasonData.episodes)
-              ? seasonData.episodes.map((episode: any) => ({
-                  id: episode.id,
-                  episodeNumber: episode.episode_number,
-                  seasonNumber: episode.season_number,
-                  name: episode.name,
-                  overview: episode.overview,
-                  airDate: episode.air_date,
-                  stillUrl: episode.still_path ? `https://image.tmdb.org/t/p/w780${episode.still_path}` : undefined,
-                  runtime: episode.runtime,
-                }))
-              : []);
-          }
-        } else {
-          // Anime
-          const routeMalId = Number(params?.malId);
-          const validRouteMalId = Number.isInteger(routeMalId) && routeMalId > 0 ? routeMalId : undefined;
-          const configureEpisodes = (
-            isMovieFormat: boolean,
-            episodeCount?: number | null,
-            nextAiringEpisode?: { episode?: number | null; airingAt?: number | null } | null,
-            scheduleNodes: Array<{ episode?: number | null; airingAt?: number | null }> = [],
-            status?: string | null,
-          ) => {
-            setIsAnimeMovie(isMovieFormat);
-            if (isMovieFormat) {
-              setSeasons([]);
-              setInitialEpisodes([]);
-              return;
-            }
-
-            const resumeAnimeSeason = Number.isInteger(requestedSeason) && requestedSeason > 0 ? requestedSeason : 1;
-            const schedule = new Map<number, number>();
-            for (const item of scheduleNodes) {
-              if (Number.isInteger(item.episode) && Number(item.episode) > 0 && Number(item.airingAt) > 0) {
-                schedule.set(Number(item.episode), Number(item.airingAt));
-              }
-            }
-            const nextAiringEpisodeNumber = Number(nextAiringEpisode?.episode);
-            const nextAiringAt = Number(nextAiringEpisode?.airingAt);
-            const hasNextAiringEpisode = Number.isInteger(nextAiringEpisodeNumber) && nextAiringEpisodeNumber > 0;
-            if (hasNextAiringEpisode && nextAiringAt > 0 && !schedule.has(nextAiringEpisodeNumber)) {
-              schedule.set(nextAiringEpisodeNumber, nextAiringAt);
-            }
-            const airedEpisodeCount = hasNextAiringEpisode
-              ? Math.max(0, nextAiringEpisodeNumber - 1)
-              : 0;
-            const scheduledEpisodeCount = Math.max(0, ...schedule.keys());
-            const knownEpisodeCount = Math.min(1000, Math.max(
-              Number(episodeCount) || 0,
-              airedEpisodeCount,
-              scheduledEpisodeCount,
-              Number.isInteger(requestedEpisode) && requestedEpisode > 0 ? requestedEpisode : 0,
-            ));
-            const normalizedStatus = String(status || '').trim().toLocaleLowerCase();
-            const catalogueFinished = normalizedStatus.includes('finished');
-            const catalogueContinuationUnknown = normalizedStatus !== '' && !catalogueFinished;
-            const animeEpisodes = Array.from({ length: knownEpisodeCount }, (_, index) => {
-              const episodeNumber = index + 1;
-              const airingAt = schedule.get(episodeNumber);
-              const continuationAvailable = hasNextAiringEpisode
-                ? episodeNumber < nextAiringEpisodeNumber
-                : catalogueFinished
-                  ? true
-                  : catalogueContinuationUnknown
-                    ? false
-                    : undefined;
-              return {
-                id: episodeNumber,
-                episodeNumber,
-                absoluteNumber: episodeNumber,
-                seasonNumber: resumeAnimeSeason,
-                name: `Episode ${episodeNumber}`,
-                airDate: airingAt ? new Date(airingAt * 1000).toISOString() : undefined,
-                continuationAvailable,
-              };
-            });
-
-            if (Number.isInteger(requestedEpisode) && requestedEpisode > 0 &&
-                !animeEpisodes.some((episode) => episode.episodeNumber === requestedEpisode)) {
-              animeEpisodes.push({
-                id: requestedEpisode,
-                episodeNumber: requestedEpisode,
-                absoluteNumber: requestedEpisode,
-                seasonNumber: resumeAnimeSeason,
-                name: `Episode ${requestedEpisode}`,
-                airDate: undefined,
-                continuationAvailable: false,
-              });
-              animeEpisodes.sort((left, right) => left.episodeNumber - right.episodeNumber);
-            }
-
-            setSeasons([{ seasonNumber: resumeAnimeSeason, name: `Season ${resumeAnimeSeason}` }]);
-            setInitialSeason(resumeAnimeSeason);
-            setInitialEpisodes(animeEpisodes);
-          };
-
-          let raw;
-          try {
-            raw = await getAniListAnime(Number(id));
-          } catch (aniListError) {
-            if (!validRouteMalId) throw aniListError;
-            console.warn('[TitlePage] AniList detail failed; using Jikan fallback.', aniListError);
-            const jikanRaw = await getJikanAnime(validRouteMalId);
-            const jikanDetail = detailFromJikan(jikanRaw);
-            publishDetail({ ...jikanDetail, id: Number(id), malId: validRouteMalId });
-            enrichAnimeIMDb(jikanDetail, jikanRaw?.type === 'Movie');
-            configureEpisodes(jikanRaw?.type === 'Movie', jikanRaw?.episodes, undefined, [], jikanRaw?.status);
-            if (jikanRaw?.type !== 'Movie') enrichAnimeEpisodeArtwork(Number(id));
-            return;
-          }
-
-          const aniListDetail = detailFromAniList(raw);
-          publishDetail(aniListDetail);
-          enrichAnimeIMDb(aniListDetail, raw.format === 'MOVIE');
-          configureEpisodes(
-            raw.format === 'MOVIE',
-            raw.episodes,
-            raw.nextAiringEpisode,
-            raw.airingSchedule?.nodes || [],
-            raw.status,
-          );
-          if (raw.format !== 'MOVIE') enrichAnimeEpisodeArtwork(raw.id);
-
-          // Render the AniList shell immediately. Jikan is a single cached
-          // enrichment request and must never make the page unavailable.
-          setLoading(false);
-          const malId = validRouteMalId || raw.idMal || undefined;
-          if (malId) {
-            try {
-              const jikanDetail = detailFromJikan(await getJikanAnime(malId));
-              setDetail((current) => current ? {
-                ...current,
-                title: jikanDetail.title || current.title,
-                year: jikanDetail.year ?? current.year,
-                overview: jikanDetail.overview || current.overview,
-                genres: Array.from(new Set([...(current.genres || []), ...(jikanDetail.genres || [])])),
-                runtime: jikanDetail.runtime ?? current.runtime,
-                trailerKey: jikanDetail.trailerKey || current.trailerKey,
-                imdbId: jikanDetail.imdbId || current.imdbId,
-                tmdbRatingPct: jikanDetail.tmdbRatingPct ?? current.tmdbRatingPct,
-                rating: jikanDetail.rating ?? current.rating,
-                altTitles: Array.from(new Set([...(current.altTitles || []), ...(jikanDetail.altTitles || [])])),
-                status: jikanDetail.status || current.status,
-                networks: jikanDetail.networks?.length ? jikanDetail.networks : current.networks,
-                totalEpisodes: jikanDetail.totalEpisodes ?? current.totalEpisodes,
-                malId,
-              } : current);
-              enrichIMDb(jikanDetail.imdbId);
-            } catch (jikanError) {
-              console.warn('[TitlePage] Jikan enrichment failed; keeping AniList detail.', jikanError);
-            }
-          }
-        }
+        // Detail, seasons and episodes resolve through the /v2/catalog/*
+        // contract (T042.3).
+        await loadBffTitle();
       } catch (err) {
         console.error('[TitlePage] Failed to load title:', err);
         setLoadError(err instanceof Error ? err.message : 'Couldn’t load this title.');

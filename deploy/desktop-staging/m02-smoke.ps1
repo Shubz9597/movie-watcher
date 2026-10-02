@@ -123,13 +123,12 @@ try {
     Wait-HttpReady "http://127.0.0.1:4002/readyz" 30
     Write-Stage "M0.2 backend ready on 127.0.0.1:4002 (library.household.v1 expected)."
 
-    # 3. Renderer build pointed at the M0.2 backend (BFF-only).
+    # 3. Renderer build pointed at the M0.2 backend.
     if (-not $SkipBuild) {
-        Write-Stage "Building the renderer bundle for M0.2 (VITE_TORWATCH_BACKEND_URL=http://127.0.0.1:4002, VITE_CATALOG_SOURCE=bff)..."
+        Write-Stage "Building the renderer bundle for M0.2 (VITE_TORWATCH_BACKEND_URL=http://127.0.0.1:4002)..."
         Push-Location $electronDirectory
         try {
             $env:VITE_TORWATCH_BACKEND_URL = "http://127.0.0.1:4002"
-            $env:VITE_CATALOG_SOURCE = "bff"
             & npm.cmd run build:renderer
             if ($LASTEXITCODE -ne 0) { throw "build:renderer failed (exit $LASTEXITCODE)." }
         } finally { Pop-Location }

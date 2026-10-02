@@ -57,9 +57,8 @@ export function createElectronConnection(): ConnectionConfig {
     async loadOrigin() {
       return getVodBase();
     },
-    // Electron's origin is fixed by the build/config bridge (rollback story:
-    // flip the catalogSource flag, not the origin). Save reports the
-    // unchanged origin so callers get honest state.
+    // Electron's origin is fixed by the build/config bridge (its own local
+    // server). Save reports the unchanged origin so callers get honest state.
     async saveOrigin(origin: string) {
       return normalizeToCurrent(origin);
     },
@@ -115,7 +114,6 @@ export function createElectronPlatform(): Platform {
         openSetup: () => api.openSetup?.(),
         openTmdbGuide: () => api.openTmdbGuide?.(),
         repairTmdb: (credential: unknown) => api.repairTmdb?.(credential),
-        requestTmdb: <T,>(params: { path: string; params?: Record<string, string | number> }) => api.requestTmdb?.(params) as Promise<T>,
         debugLog: (message: string, meta?: Record<string, unknown>) => api.debugLog?.(message, meta),
       }
     : undefined;

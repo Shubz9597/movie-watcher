@@ -62,7 +62,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openTmdbGuide: () => ipcRenderer.invoke("setup:open-tmdb-guide"),
   getCatalogState: () => ipcRenderer.invoke("catalog:get-state"),
   repairTmdb: (replacement) => ipcRenderer.invoke("setup:repair-tmdb", replacement),
-  requestTmdb: (request) => ipcRenderer.invoke("tmdb:request", request),
   onCatalogState: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("catalog:state", listener);

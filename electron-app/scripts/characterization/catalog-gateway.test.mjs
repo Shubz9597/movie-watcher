@@ -2,11 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  getCatalogSource,
-  normalizeCatalogSource,
-  resolveCatalogSource,
-} from "../../src/lib/catalog-source.ts";
-import {
   CatalogBffError,
   backendTitleToCard,
   bffSearch,
@@ -31,49 +26,6 @@ const bffTitleRow = {
   imdbId: "tt28015436",
   mergedFrom: ["tmdb", "anilist", "jikan"],
 };
-
-test("browser and native mobile use the server catalog without desktop settings or local credentials", async () => {
-  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  try {
-    for (const electronAPI of [undefined, { openSetup: async () => ({ ok: true }) }]) {
-      let settingsRead = false;
-      Object.defineProperty(globalThis, "window", {
-        configurable: true,
-        value: {
-          electronAPI,
-          get localStorage() {
-            settingsRead = true;
-            throw new Error("device storage unavailable");
-          },
-        },
-      });
-      assert.equal(await getCatalogSource(), "bff");
-      assert.equal(settingsRead, false, "mobile never reads desktop catalog settings");
-      Object.defineProperty(globalThis, "window", {
-        configurable: true,
-        value: { electronAPI, localStorage: { getItem: () => "renderer" } },
-      });
-      assert.equal(await getCatalogSource(), "bff", "stale renderer overrides cannot activate local provider calls");
-    }
-  } finally {
-    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
-    else delete globalThis.window;
-  }
-});
-
-test("catalog flag normalizes and resolves with the documented priority", () => {
-  assert.equal(normalizeCatalogSource("BFF"), "bff");
-  assert.equal(normalizeCatalogSource("renderer"), "renderer");
-  assert.equal(normalizeCatalogSource("garbage"), "renderer");
-  assert.equal(normalizeCatalogSource(undefined), "renderer");
-
-  assert.equal(resolveCatalogSource({}), "renderer", "safe default");
-  assert.equal(resolveCatalogSource({ configValue: "bff" }), "bff");
-  assert.equal(resolveCatalogSource({ envValue: "bff" }), "bff");
-  assert.equal(resolveCatalogSource({ configValue: "bff", envValue: "renderer" }), "bff", "config beats env");
-  assert.equal(resolveCatalogSource({ localOverride: "renderer", configValue: "bff" }), "renderer", "localStorage override wins for instant rollback");
-  assert.equal(resolveCatalogSource({ localOverride: "nonsense", configValue: "bff" }), "renderer", "invalid override normalizes to renderer");
-});
 
 test("backendTitleToCard maps the contract row onto the renderer Card shape", () => {
   const card = backendTitleToCard(bffTitleRow);
@@ -134,35 +86,7 @@ test("older section responses produce an upgrade error instead of silent empty r
     (error) => error instanceof CatalogBffError && error.code === 'unsupported_capability');
 });
 
-function fakeLegacy(calls) {
-  return Object.fromEntries(
-    ["searchMulti", "getMovies", "getTvShows", "getTvSeason", "getTitlesByGenre", "searchAnime", "getTrendingAnime", "getAnimeList", "getAnimeByGenre", "getCinemetaSeasonMetadata", "getAnimeEpisodeMetadata"].map(
-      (name) => [
-        name,
-        async (...args) => {
-          calls.push([name, ...args]);
-          if (name === 'searchMulti') return { movie: [], tv: [], person: [] };
-          return { legacy: true, name };
-        },
-      ],
-    ),
-  );
-}
-
-test("gateway dispatches to the untouched legacy services in renderer mode", async () => {
-  const calls = [];
-  const gateway = createCatalogGateway({ legacy: fakeLegacy(calls) });
-
-  const result = await gateway.searchMulti("frieren", 1, { source: "renderer" });
-  assert.deepEqual(result, { movie: [], tv: [], anime: [], person: [] });
-  assert.deepEqual(calls[0], ["searchMulti", "frieren", 1]);
-
-  await gateway.getTvSeason(209867, 2, { source: "renderer" });
-  assert.deepEqual(calls[1], ["getTvSeason", 209867, 2]);
-});
-
-test("gateway dispatches to the BFF in bff mode and never calls legacy", async () => {
-  const calls = [];
+test("gateway reads the server catalog", async () => {
   const fetchRequests = [];
   const fetchImpl = async (url) => {
     fetchRequests.push(String(url));
@@ -171,43 +95,29 @@ test("gateway dispatches to the BFF in bff mode and never calls legacy", async (
     }
     return jsonResponse(404, { error: { code: "title_not_found" } });
   };
-  const gateway = createCatalogGateway({ legacy: fakeLegacy(calls) });
+  const gateway = createCatalogGateway();
 
-  const result = await gateway.searchMulti("frieren", 1, { source: "bff", fetchImpl });
-  assert.equal(result.anime.length, 1, "bff rows grouped by renderer sourceKind");
+  const result = await gateway.searchMulti("frieren", 1, { fetchImpl });
+  assert.equal(result.anime.length, 1, "rows grouped by renderer sourceKind");
   assert.equal(result.movie.length, 0);
-  assert.deepEqual(calls, [], "legacy provider services must not be invoked in bff mode");
   // The first request is the negotiation version check (fail-open on 404);
   // the catalog search follows on the contracted endpoint.
   assert.ok(fetchRequests.some((url) => url.includes("/v1/version")));
   assert.ok(fetchRequests.some((url) => url.includes("/v2/catalog/search?q=frieren")));
 });
 
-test("gateway bff errors propagate without legacy fallback", async () => {
-  const calls = [];
-  const gateway = createCatalogGateway({ legacy: fakeLegacy(calls) });
+test("gateway catalog errors propagate", async () => {
+  const gateway = createCatalogGateway();
   const fetchImpl = async () => jsonResponse(503, { error: { code: "providers_unavailable", message: "down", degradedProviders: ["tmdb"] } });
 
   await assert.rejects(
-    gateway.getTrendingAnime(1, 12, { source: "bff", fetchImpl }),
+    gateway.getTrendingAnime(1, 12, { fetchImpl }),
     (error) => error instanceof CatalogBffError && error.code === "providers_unavailable",
   );
-  assert.deepEqual(calls, []);
 });
 
-const legacyMovie = { id: 100, title: 'Movie', release_date: '2024-01-01', poster_path: '/movie.jpg' };
-const legacyTV = { id: 200, name: 'Series', first_air_date: '2023-01-01', poster_path: '/tv.jpg' };
-const legacyAnime = { id: 154587, idMal: 52991, title: { english: 'Anime' }, startDate: { year: 2023 }, coverImage: { large: 'https://poster.png' } };
-
-test('catalog lists expose cards and pagination in renderer and BFF modes', async () => {
-  const legacy = {
-    getMovies: async () => ({ results: [legacyMovie], total_pages: 7 }),
-    getTvShows: async () => ({ results: [legacyTV], total_pages: 8 }),
-    getTrendingAnime: async () => ({ media: [legacyAnime], pageInfo: { lastPage: 9 } }),
-    getAnimeList: async () => ({ media: [legacyAnime], pageInfo: { lastPage: 9 } }),
-    searchAnime: async () => ({ media: [legacyAnime], pageInfo: { lastPage: 9 } }),
-  };
-  const gateway = createCatalogGateway({ legacy });
+test('catalog lists expose cards and pagination', async () => {
+  const gateway = createCatalogGateway();
   const titles = [
     { id: 'tmdb:movie:100', type: 'movie', title: 'Movie', year: 2024, artwork: { poster: 'https://image.tmdb.org/t/p/w342/movie.jpg' }, providerIds: { tmdb: 'movie:100' } },
     { id: 'tmdb:tv:200', type: 'series', title: 'Series', year: 2023, artwork: { poster: 'https://image.tmdb.org/t/p/w342/tv.jpg' }, providerIds: { tmdb: 'tv:200' } },
@@ -221,23 +131,22 @@ test('catalog lists expose cards and pagination in renderer and BFF modes', asyn
     return jsonResponse(200, { results: url.includes('/search') ? [titles[2]] : titles });
   };
   const cases = [
-    ['getMovies', [1, 'popular'], 7], ['getTvShows', [1, 'trending'], 8],
-    ['getTrendingAnime', [1, 25], 9], ['getAnimeList', [1, 25], 9], ['searchAnime', ['Anime', 1, 24], 9],
+    ['getMovies', [1, 'popular'], [100, 'Movie', 2024, 'movie']],
+    ['getTvShows', [1, 'trending'], [200, 'Series', 2023, 'tv']],
+    ['getTrendingAnime', [1, 25], [154587, 'Anime', 2023, 'anime']],
+    ['getAnimeList', [1, 25], [154587, 'Anime', 2023, 'anime']],
+    ['searchAnime', ['Anime', 1, 24], [154587, 'Anime', 2023, 'anime']],
   ];
-  for (const [name, args, totalPages] of cases) {
-    const renderer = await gateway[name](...args, { source: 'renderer' });
-    const bff = await gateway[name](...args, { source: 'bff', fetchImpl });
-    assert.equal(renderer.totalPages, totalPages);
-    assert.equal(bff.items.length, 1, name);
-    const visible = (card) => [card.id, card.title, card.year, card.posterPath, card.sourceKind, card.sourceProvider];
-    assert.deepEqual(visible(bff.items[0]), visible(renderer.items[0]), name);
-    assert.equal(typeof bff.items[0].title, 'string');
-    assert.equal(bff.items[0].catalogId, titles.find((row) => row.title === bff.items[0].title).id);
+  for (const [name, args, expected] of cases) {
+    const page = await gateway[name](...args, { fetchImpl });
+    assert.equal(page.items.length, 1, name);
+    const card = page.items[0];
+    assert.deepEqual([card.id, card.title, card.year, card.sourceKind], expected, name);
+    assert.equal(card.catalogId, titles.find((row) => row.title === card.title).id);
   }
   assert.ok(requests.some((url) => url.includes('kind=popular')));
   assert.ok(!requests.some((url) => url.includes('/titles/')));
 });
-
 test("bffTitleDetail maps detail enrichment onto the renderer Detail shape", async () => {
   const requests = [];
   const fetchImpl = async (url) => {
@@ -326,9 +235,7 @@ test("paged and genre section requests use the additive contract parameters", as
   assert.equal(plain.totalPages, undefined, "page one without genre keeps the original response shape");
 });
 
-test("gateway exposes genre rails and pages in bff mode without legacy calls", async () => {
-  const calls = [];
-  const legacy = fakeLegacy(calls);
+test("gateway exposes genre rails and pages", async () => {
   const requests = [];
   const rows = [
     { id: "tmdb:100", type: "movie", title: "Movie", providerIds: { tmdb: "100" } },
@@ -339,53 +246,20 @@ test("gateway exposes genre rails and pages in bff mode without legacy calls", a
     if (url.includes("/v1/version")) return jsonResponse(404, {});
     return jsonResponse(200, { titleIds: rows.map((r) => r.id), results: rows, page: 2, totalPages: 5 });
   };
-  const gateway = createCatalogGateway({ legacy });
+  const gateway = createCatalogGateway();
 
-  const genrePage = await gateway.getTitlesByGenre("movie", 28, 2, { source: "bff", fetchImpl });
+  const genrePage = await gateway.getTitlesByGenre("movie", 28, 2, { fetchImpl });
   assert.ok(requests.some((url) => url.includes("kind=popular&page=2&genre=28&type=movie")));
   assert.equal(genrePage.items.length, 1, "media kind filtered client-side");
   assert.equal(genrePage.items[0].id, 100);
   assert.equal(genrePage.totalPages, 5, "bff pagination is no longer capped at one page");
 
-  const movies = await gateway.getMovies(2, "popular", { source: "bff", fetchImpl });
+  const movies = await gateway.getMovies(2, "popular", { fetchImpl });
   assert.equal(movies.totalPages, 5);
 
-  const anime = await gateway.getAnimeByGenre("Slice of Life", 2, 25, { source: "bff", fetchImpl });
+  const anime = await gateway.getAnimeByGenre("Slice of Life", 2, 25, { fetchImpl });
   assert.ok(requests.some((url) => url.includes("kind=popular&page=2&genre=Slice+of+Life&type=anime")));
   assert.equal(anime.items.length, 0, "non-anime rows cannot leak into the anime genre page");
-  assert.deepEqual(calls, [], "legacy provider services must stay unloaded in bff mode");
-});
-
-test("gateway getTitlesByGenre keeps the legacy discover path in renderer mode", async () => {
-  const calls = [];
-  const legacy = {
-    ...fakeLegacy(calls),
-    getTitlesByGenre: async (kind, genreId, page) => {
-      calls.push(["getTitlesByGenre", kind, genreId, page]);
-      return { results: [{ id: 300, title: "Action Movie", release_date: "2026-02-01", poster_path: "/a.jpg" }], total_pages: 4 };
-    },
-  };
-  const gateway = createCatalogGateway({ legacy });
-  const page = await gateway.getTitlesByGenre("movie", 28, 1, { source: "renderer" });
-  assert.deepEqual(calls, [["getTitlesByGenre", "movie", 28, 1]]);
-  assert.equal(page.items[0].id, 300);
-  assert.equal(page.totalPages, 4);
-});
-
-test("gateway getAnimeByGenre keeps the AniList path in renderer mode", async () => {
-  const calls = [];
-  const legacy = {
-    ...fakeLegacy(calls),
-    getAnimeByGenre: async (genre, page, perPage) => {
-      calls.push(["getAnimeByGenre", genre, page, perPage]);
-      return { media: [legacyAnime], pageInfo: { lastPage: 6 } };
-    },
-  };
-  const gateway = createCatalogGateway({ legacy });
-  const page = await gateway.getAnimeByGenre("Fantasy", 2, 25, { source: "renderer" });
-  assert.deepEqual(calls, [["getAnimeByGenre", "Fantasy", 2, 25]]);
-  assert.equal(page.items[0].id, 154587);
-  assert.equal(page.totalPages, 6);
 });
 
 test("origin switch aborts and stale-guards bff requests", async () => {

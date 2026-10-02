@@ -603,10 +603,6 @@ function Start-Staging {
     Push-Location $electronDirectory
     try {
         $env:VITE_TORWATCH_BACKEND_URL = $originPlan.backendOrigin
-        # Production browser/mobile staging is BFF-only. Without this flag
-        # the shared Title page falls back to renderer-side provider calls
-        # and incorrectly asks the browser for a TMDb credential.
-        $env:VITE_CATALOG_SOURCE = "bff"
         # Invoke the project-local Vite entry directly. This avoids relying on
         # the user's global npm/npx shims (which can be stale or broken after
         # a Node upgrade) while still using the lockfile-installed toolchain.

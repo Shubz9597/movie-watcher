@@ -270,7 +270,7 @@ export function createStartupController({
       startupWindow?.close();
       publishRuntimeState({
         status: "setup-required",
-        message: "Browsing is ready. Add your playback connection when you want to watch.",
+        message: "Finish setup in Settings to start TorWatch. Browsing and playback both run on the local server.",
         code: "PLAYBACK_SETUP_REQUIRED",
       });
       if (!getMainWindow()) createMainWindow();

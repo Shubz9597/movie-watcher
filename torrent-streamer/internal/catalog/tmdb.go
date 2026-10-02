@@ -14,9 +14,10 @@ import (
 // TMDb catalog provider (server-side API key, FR-001/FR-003: the key never
 // leaves the backend).
 type TMDb struct {
-	base   string
-	apiKey string
-	http   *http.Client
+	base       string
+	apiKey     string
+	configured bool // a v3 API key or a v4 read access token is set
+	http       *http.Client
 
 	// Genre id → name for movie+tv, fetched once a day: SeedSimilar used to
 	// re-fetch both lists per call, tripling its exposure to flaky links.
@@ -56,8 +57,11 @@ func (p *TMDb) genreNameMap(ctx context.Context) (map[int]string, error) {
 
 type TMDbOptions struct {
 	BaseURL string // default https://api.themoviedb.org
-	APIKey  string
-	HTTP    *http.Client
+	// APIKey is a v3 key (sent as api_key); AccessToken is a v4 read access
+	// token (sent as a Bearer header). Either one configures the provider.
+	APIKey      string
+	AccessToken string
+	HTTP        *http.Client
 }
 
 func NewTMDb(options TMDbOptions) *TMDb {
@@ -65,13 +69,53 @@ func NewTMDb(options TMDbOptions) *TMDb {
 	if base == "" {
 		base = "https://api.themoviedb.org"
 	}
-	return &TMDb{base: strings.TrimRight(base, "/"), apiKey: options.APIKey, http: options.HTTP}
+	apiKey := strings.TrimSpace(options.APIKey)
+	client := options.HTTP
+	accessToken := strings.TrimSpace(options.AccessToken)
+	if apiKey == "" && accessToken != "" {
+		client = bearerClient(client, accessToken)
+	}
+	return &TMDb{
+		base:       strings.TrimRight(base, "/"),
+		apiKey:     apiKey,
+		configured: apiKey != "" || accessToken != "",
+		http:       client,
+	}
+}
+
+// bearerClient copies the shared client and adds the v4 access token to
+// every request it sends.
+func bearerClient(base *http.Client, token string) *http.Client {
+	client := http.Client{}
+	if base != nil {
+		client = *base
+	}
+	next := client.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	client.Transport = bearerTransport{next: next, token: token}
+	return &client
+}
+
+type bearerTransport struct {
+	next  http.RoundTripper
+	token string
+}
+
+func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.token)
+	return t.next.RoundTrip(req)
 }
 
 func (p *TMDb) Name() string { return "tmdb" }
 
 func (p *TMDb) endpoint(path string, params map[string]string) string {
-	query := url.Values{"api_key": {p.apiKey}}
+	query := url.Values{}
+	if p.apiKey != "" {
+		query.Set("api_key", p.apiKey)
+	}
 	for key, value := range params {
 		query.Set(key, value)
 	}
@@ -98,7 +142,7 @@ type tmdbSearchResponse struct {
 }
 
 func (p *TMDb) Search(ctx context.Context, query SearchQuery) ([]Title, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, errProviderUnavailable
 	}
 	var payload tmdbSearchResponse
@@ -250,7 +294,7 @@ type tmdbDetailResponse struct {
 // numeric form stays a read alias with the documented deterministic movie→tv
 // probe order (ids are not self-describing).
 func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return Title{}, errProviderUnavailable
 	}
 	mediaType, externalID := splitTMDbExternalID(request.ProviderIDs["tmdb"])
@@ -388,7 +432,7 @@ type tmdbSeasonResponse struct {
 }
 
 func (p *TMDb) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, errProviderUnavailable
 	}
 	// Episodes always resolve through the tv endpoint; a qualified external
@@ -427,7 +471,7 @@ func (p *TMDb) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode,
 }
 
 func (p *TMDb) Section(ctx context.Context, kind string) ([]Title, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, errProviderUnavailable
 	}
 	path := ""
@@ -461,7 +505,7 @@ func (p *TMDb) Section(ctx context.Context, kind string) ([]Title, error) {
 // trending endpoints accept a page parameter; total_pages comes back in the
 // same payload.
 func (p *TMDb) SectionPage(ctx context.Context, kind string, page int) ([]Title, int, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, 0, errProviderUnavailable
 	}
 	path := ""
@@ -484,7 +528,7 @@ func (p *TMDb) SectionPage(ctx context.Context, kind string, page int) ([]Title,
 // GenreSection implements GenreSectionProvider: media-type scoped discover
 // queries for one TMDb genre id, paged (renderer genre rails, T042.1).
 func (p *TMDb) GenreSection(ctx context.Context, mediaType TitleType, genreID, page int) ([]Title, int, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, 0, errProviderUnavailable
 	}
 	var path string
@@ -570,7 +614,7 @@ type tmdbGenreListResponse struct {
 // maps each result's numeric genre ids onto names via the TMDb genre lists so
 // candidates carry genre metadata without a detail call per candidate.
 func (p *TMDb) PopularCandidates(ctx context.Context, limit int) ([]Title, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, errProviderUnavailable
 	}
 	genreName, err := p.genreNameMap(ctx)
@@ -623,7 +667,7 @@ func (p *TMDb) PopularCandidates(ctx context.Context, limit int) ([]Title, error
 // recommendations). Titles carry genre names so the recommendation scorer can
 // attribute them to seeds without a detail call each.
 func (p *TMDb) SeedSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, errProviderUnavailable
 	}
 	mediaType, externalID := splitTMDbExternalID(strings.TrimPrefix(canonicalID, "tmdb:"))
@@ -693,7 +737,7 @@ var movieToTVGenre = map[int][]int{
 // seed's TMDb keywords (OR-joined, well-rated, most-voted first) and falls
 // back to mapped genres when the seed has no useful keywords.
 func (p *TMDb) CrossTypeSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error) {
-	if p.apiKey == "" {
+	if !p.configured {
 		return nil, errProviderUnavailable
 	}
 	mediaType, externalID := splitTMDbExternalID(strings.TrimPrefix(canonicalID, "tmdb:"))

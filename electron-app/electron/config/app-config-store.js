@@ -20,14 +20,6 @@ function parseTmdbCredential(value) {
     : { tmdbAccessToken: credential, tmdbApiKey: "" };
 }
 
-// Runtime catalog flag (plan P5): which catalog implementation the renderer
-// uses. "renderer" keeps the characterized V1 provider calls active; "bff"
-// routes catalog discovery through the backend /v2/catalog/* contract. Never
-// a secret; surfaced through getPublicConfig.
-export function normalizeCatalogSource(value) {
-  return String(value || "").trim().toLowerCase() === "bff" ? "bff" : "renderer";
-}
-
 export function createAppConfigStore({ env = process.env, runtimeManager, userDataPath }) {
   const configPath = path.join(userDataPath, "config.json");
   let appConfig = {};
@@ -50,11 +42,9 @@ export function createAppConfigStore({ env = process.env, runtimeManager, userDa
     console.log("[Config] Loaded TMDB_ACCESS_TOKEN from environment");
   }
 
-  // Catalog flag precedence: saved config value, then environment override,
-  // then the safe default ("renderer" — V1 behavior unchanged).
-  appConfig.CATALOG_SOURCE = normalizeCatalogSource(
-    appConfig.CATALOG_SOURCE || env.TORWATCH_CATALOG_SOURCE || "renderer",
-  );
+  // The renderer/server catalog switch is gone (the server always owns the
+  // catalog); drop the stale flag older builds saved.
+  delete appConfig.CATALOG_SOURCE;
 
   function getConfig() {
     return appConfig;
@@ -77,11 +67,7 @@ export function createAppConfigStore({ env = process.env, runtimeManager, userDa
   }
 
   function saveConfig(config) {
-    const normalized = { ...config };
-    if ("CATALOG_SOURCE" in normalized) {
-      normalized.CATALOG_SOURCE = normalizeCatalogSource(normalized.CATALOG_SOURCE);
-    }
-    appConfig = { ...appConfig, ...normalized };
+    appConfig = { ...appConfig, ...config };
     runtimeManager.saveCatalogSecrets(config);
     persist();
   }

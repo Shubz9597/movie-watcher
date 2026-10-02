@@ -1,9 +1,8 @@
-// Catalog gateway (plan P5): the single dispatch layer between aggregation
-// call sites and the catalog implementation. catalogSource=renderer routes to
-// the untouched legacy provider services; catalogSource=bff routes to the
-// /v2/catalog/* BFF client. No silent fallback: bff errors propagate.
-import { getCatalogSource, type CatalogSource } from '../catalog-source.ts';
-import { cardFromAniList, cardFromTmdbMovie, cardFromTmdbTv, type Card } from '../adapters/media.ts';
+// Catalog gateway: the single dispatch layer between page call sites and the
+// server's /v2/catalog/* contract. Every platform (desktop, browser, phone)
+// reads the catalog through the TorWatch server; provider credentials never
+// reach the client. Errors propagate so pages can show their error states.
+import type { Card } from '../adapters/media.ts';
 import { ensureServerCompatible } from '../version-check.ts';
 import {
   backendTitleToCard,
@@ -13,107 +12,37 @@ import {
 } from './catalog-bff.ts';
 
 export type GatewayDispatch = {
-  // Forced source (tests / callers that resolved the flag already). When
-  // omitted the runtime flag is consulted.
-  source?: CatalogSource;
   fetchImpl?: typeof fetch;
 };
 
-// Legacy renderer services are loaded lazily: bff mode never imports them
-// and pure node tests never trigger the legacy path (extensionless Vite
-// imports are not resolvable under plain node ESM).
 export type CatalogPage = { items: Card[]; totalPages?: number };
 
-type Legacy = {
-  searchMulti: typeof import('./tmdb-service').searchMulti;
-  getMovies: typeof import('./tmdb-service').getMovies;
-  getTvShows: typeof import('./tmdb-service').getTvShows;
-  getTvSeason: typeof import('./tmdb-service').getTvSeason;
-  getTitlesByGenre: typeof import('./tmdb-service').getTitlesByGenre;
-  searchAnime: typeof import('./anilist-service').searchAnime;
-  getTrendingAnime: typeof import('./anilist-service').getTrendingAnime;
-  getAnimeList: typeof import('./anilist-service').getAnimeList;
-  getAnimeByGenre: typeof import('./anilist-service').getAnimeByGenre;
-  getCinemetaSeasonMetadata: typeof import('./cinemeta-service').getCinemetaSeasonMetadata;
-  getAnimeEpisodeMetadata: typeof import('./anime-episode-metadata-service').getAnimeEpisodeMetadata;
-};
-
-let legacyPromise: Promise<Legacy> | null = null;
-
-function loadLegacy(): Promise<Legacy> {
-  legacyPromise ??= (async () => {
-    const [tmdb, anilist, cinemeta, animeMeta] = await Promise.all([
-      import('./tmdb-service'),
-      import('./anilist-service'),
-      import('./cinemeta-service'),
-      import('./anime-episode-metadata-service'),
-    ]);
-    return {
-      searchMulti: tmdb.searchMulti,
-      getMovies: tmdb.getMovies,
-      getTvShows: tmdb.getTvShows,
-      getTvSeason: tmdb.getTvSeason,
-      getTitlesByGenre: tmdb.getTitlesByGenre,
-      searchAnime: anilist.searchAnime,
-      getTrendingAnime: anilist.getTrendingAnime,
-      getAnimeList: anilist.getAnimeList,
-      getAnimeByGenre: anilist.getAnimeByGenre,
-      getCinemetaSeasonMetadata: cinemeta.getCinemetaSeasonMetadata,
-      getAnimeEpisodeMetadata: animeMeta.getAnimeEpisodeMetadata,
-    };
-  })();
-  return legacyPromise;
+// FR-011: the client decides compatibility from protocol ranges before
+// starting a workflow; health/version discovery is never gated.
+async function route<T>(dispatch: GatewayDispatch | undefined, run: () => Promise<T>): Promise<T> {
+  await ensureServerCompatible({ fetchImpl: dispatch?.fetchImpl });
+  return run();
 }
 
-async function route<T>(
-  dispatch: GatewayDispatch | undefined,
-  legacyImpl: Legacy | null,
-  legacyFn: (legacy: Legacy) => Promise<T>,
-  bffFn: () => Promise<T>,
-): Promise<T> {
-  const source: CatalogSource = dispatch?.source ?? (await getCatalogSource());
-  if (source === 'bff') {
-    // FR-011: the client decides compatibility from protocol ranges before
-    // starting a workflow; health/version discovery is never gated.
-    await ensureServerCompatible({ fetchImpl: dispatch?.fetchImpl });
-    return bffFn();
-  }
-  const legacy = legacyImpl ?? (await loadLegacy());
-  return legacyFn(legacy);
-}
-
-export function createCatalogGateway(options?: { legacy?: Legacy }) {
-  const legacyOverride = options?.legacy ?? null;
-
+export function createCatalogGateway() {
   return {
-    // TMDb multi search → unified rows grouped the way GlobalSearch consumes.
-    async searchMulti(query: string, page = 1, dispatch?: GatewayDispatch) {
-      return route(
-        dispatch,
-        legacyOverride,
-        async (legacy) => {
-          const result = await legacy.searchMulti(query, page);
-          const toCard = (item: Card & { posterUrl?: string | null }): Card => ({ ...item, posterPath: item.posterUrl });
-          return { movie: result.movie.map(toCard), tv: result.tv.map(toCard), anime: [] as Card[], person: result.person };
-        },
-        async () => {
-          const rows = await bffSearch(query, 'all', 24, dispatch);
-          const cards = rows.map(backendTitleToCard);
-          return {
-            movie: cards.filter((card) => card.sourceKind === 'movie'),
-            tv: cards.filter((card) => card.sourceKind === 'tv'),
-            anime: cards.filter((card) => card.sourceKind === 'anime'),
-            person: [],
-          };
-        },
-      );
+    // Multi search → unified rows grouped the way the search pages consume.
+    // `page` is kept for call-site compatibility; the server returns one page.
+    async searchMulti(query: string, _page = 1, dispatch?: GatewayDispatch) {
+      return route(dispatch, async () => {
+        const rows = await bffSearch(query, 'all', 24, dispatch);
+        const cards = rows.map(backendTitleToCard);
+        return {
+          movie: cards.filter((card) => card.sourceKind === 'movie'),
+          tv: cards.filter((card) => card.sourceKind === 'tv'),
+          anime: cards.filter((card) => card.sourceKind === 'anime'),
+          person: [],
+        };
+      });
     },
 
     async getMovies(page = 1, sort = 'trending', dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.getMovies(page, sort);
-        return { items: (data.results ?? []).map(cardFromTmdbMovie), totalPages: data.total_pages };
-      }, async () => {
+      return route(dispatch, async () => {
         const section = await bffSectionPage(sort, page, dispatch, 'movie');
         return {
           items: section.titles.filter((row) => row.type === 'movie').map(backendTitleToCard),
@@ -123,10 +52,7 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
     },
 
     async getTvShows(page = 1, sort = 'trending', dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.getTvShows(page, sort);
-        return { items: (data.results ?? []).map(cardFromTmdbTv), totalPages: data.total_pages };
-      }, async () => {
+      return route(dispatch, async () => {
         const section = await bffSectionPage(sort, page, dispatch, 'series');
         return {
           items: section.titles.filter((row) => row.type === 'series').map(backendTitleToCard),
@@ -135,11 +61,8 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
       });
     },
 
-    async getTrendingAnime(page = 1, perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.getTrendingAnime(page, perPage);
-        return { items: (data.media ?? []).map(cardFromAniList), totalPages: data.pageInfo?.lastPage ?? undefined };
-      }, async () => {
+    async getTrendingAnime(page = 1, _perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
+      return route(dispatch, async () => {
         const section = await bffSectionPage('trending', page, dispatch, 'anime');
         return {
           items: section.titles.filter((row) => row.type === 'anime').map(backendTitleToCard),
@@ -148,11 +71,8 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
       });
     },
 
-    async getAnimeList(page = 1, perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.getAnimeList(page, perPage);
-        return { items: (data.media ?? []).map(cardFromAniList), totalPages: data.pageInfo?.lastPage ?? undefined };
-      }, async () => {
+    async getAnimeList(page = 1, _perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
+      return route(dispatch, async () => {
         const section = await bffSectionPage('popular', page, dispatch, 'anime');
         return {
           items: section.titles.filter((row) => row.type === 'anime').map(backendTitleToCard),
@@ -161,11 +81,8 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
       });
     },
 
-    async getAnimeByGenre(genre: string, page = 1, perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.getAnimeByGenre(genre, page, perPage);
-        return { items: (data.media ?? []).map(cardFromAniList), totalPages: data.pageInfo?.lastPage ?? undefined };
-      }, async () => {
+    async getAnimeByGenre(genre: string, page = 1, _perPage = 25, dispatch?: GatewayDispatch): Promise<CatalogPage> {
+      return route(dispatch, async () => {
         const section = await bffSectionPage('popular', page, dispatch, 'anime', genre);
         return {
           items: section.titles.filter((row) => row.type === 'anime').map(backendTitleToCard),
@@ -174,14 +91,9 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
       });
     },
 
-    // Genre rails (T042.5): renderer mode uses the tmdb discover service;
-    // bff mode uses the additive genre section parameters.
+    // Genre rails (T042.5) use the additive genre section parameters.
     async getTitlesByGenre(kind: 'movie' | 'tv', genreId: number, page = 1, dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.getTitlesByGenre(kind, genreId, page);
-        const toCard = kind === 'movie' ? cardFromTmdbMovie : cardFromTmdbTv;
-        return { items: (data.results ?? []).map(toCard), totalPages: data.total_pages };
-      }, async () => {
+      return route(dispatch, async () => {
         const section = await bffSectionPage('popular', page, dispatch, kind === 'movie' ? 'movie' : 'series', genreId);
         return {
           items: section.titles
@@ -192,18 +104,15 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
       });
     },
 
-    async searchAnime(query: string, page = 1, perPage = 24, dispatch?: GatewayDispatch): Promise<CatalogPage> {
-      return route(dispatch, legacyOverride, async (legacy) => {
-        const data = await legacy.searchAnime(query, page, perPage);
-        return { items: (data.media ?? []).map(cardFromAniList), totalPages: data.pageInfo?.lastPage ?? undefined };
-      }, async () => ({ items: (await bffSearch(query, 'anime', perPage, dispatch)).map(backendTitleToCard) }));
+    async searchAnime(query: string, _page = 1, perPage = 24, dispatch?: GatewayDispatch): Promise<CatalogPage> {
+      return route(dispatch, async () => ({ items: (await bffSearch(query, 'anime', perPage, dispatch)).map(backendTitleToCard) }));
     },
 
     // Season episodes: tmdb ids keep their numeric id path; anilist/imdb ids
-    // ride the opaque catalog id. M3.1.1: the bff path requests the
-    // media-qualified tv id — the alias stays read-only for old clients.
+    // ride the opaque catalog id. M3.1.1: requests use the media-qualified tv
+    // id — the alias stays read-only for old clients.
     async getTvSeason(tvId: number, season: number, dispatch?: GatewayDispatch) {
-      return route(dispatch, legacyOverride, (legacy) => legacy.getTvSeason(tvId, season), async () => {
+      return route(dispatch, async () => {
         const episodes = await bffEpisodes(`tmdb:tv:${tvId}`, season, dispatch);
         return {
           id: Number(tvId),
@@ -222,7 +131,7 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
     },
 
     async getCinemetaSeasonMetadata(imdbId: string | undefined, seasonNumber: number, dispatch?: GatewayDispatch) {
-      return route(dispatch, legacyOverride, (legacy) => legacy.getCinemetaSeasonMetadata(imdbId, seasonNumber), async () => {
+      return route(dispatch, async () => {
         if (!imdbId) return new Map();
         const episodes = await bffEpisodes(`imdb:${imdbId}`, seasonNumber, dispatch);
         const metadata = new Map<number, { thumbnailUrl: string; releasedAt: string }>();
@@ -237,7 +146,7 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
     },
 
     async getAnimeEpisodeMetadata(anilistId: number, dispatch?: GatewayDispatch) {
-      return route(dispatch, legacyOverride, (legacy) => legacy.getAnimeEpisodeMetadata(anilistId), async () => {
+      return route(dispatch, async () => {
         const episodes = await bffEpisodes(`anilist:${anilistId}`, 1, dispatch);
         const metadata = new Map<number, { stillUrl: string }>();
         for (const episode of episodes) {
@@ -249,7 +158,7 @@ export function createCatalogGateway(options?: { legacy?: Legacy }) {
   };
 }
 
-// Default gateway: real legacy services (lazy) + real BFF client + runtime flag.
+// Default gateway used by the pages.
 export const catalogGateway = createCatalogGateway();
 
 // Named wrappers so call sites can import individual functions statically.

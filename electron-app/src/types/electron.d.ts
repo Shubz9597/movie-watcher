@@ -31,7 +31,6 @@ export interface ElectronAPI {
   openTmdbGuide: () => Promise<{ ok: boolean }>;
   getCatalogState: () => Promise<CatalogState>;
   repairTmdb: (replacement: string) => Promise<{ ok: boolean; error?: string; next?: 'setup' | 'home' }>;
-  requestTmdb: <T = unknown>(request: { path: string; params?: Record<string, string> }) => Promise<{ ok: boolean; data?: T; error?: string; status: number; requiresSetup?: boolean }>;
   onCatalogState: (callback: (state: CatalogState) => void) => (() => void) | void;
   getRuntimeState: () => Promise<RuntimeState>;
   retryRuntime: () => Promise<{ ok: boolean; state: RuntimeState }>;

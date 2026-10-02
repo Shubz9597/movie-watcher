@@ -529,9 +529,13 @@ func refreshIMDbRatings(ctx context.Context, store *imdb.Store) {
 // overridable for disposable-stack testing.
 func buildCatalogProviders(client *http.Client) []catalog.Provider {
 	var providers []catalog.Provider
-	if apiKey := os.Getenv("TMDB_API_KEY"); apiKey != "" {
+	apiKey, accessToken := os.Getenv("TMDB_API_KEY"), os.Getenv("TMDB_ACCESS_TOKEN")
+	if apiKey != "" || accessToken != "" {
 		providers = append(providers, catalog.NewTMDb(catalog.TMDbOptions{
-			BaseURL: envOr("TORWATCH_TMDB_BASE_URL", ""), APIKey: apiKey, HTTP: client,
+			BaseURL:     envOr("TORWATCH_TMDB_BASE_URL", ""),
+			APIKey:      apiKey,
+			AccessToken: accessToken,
+			HTTP:        client,
 		}))
 	}
 	providers = append(providers,

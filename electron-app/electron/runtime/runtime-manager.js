@@ -879,6 +879,10 @@ export class RuntimeManager {
       TORWATCH_APP_VERSION: app.getVersion(),
       LISTEN: "127.0.0.1:4001",
     };
+    // The local server owns the catalog (the renderer never calls TMDb), so
+    // it needs the TMDb credential the user saved in setup.
+    if (secrets.tmdbAccessToken) backendEnv.TMDB_ACCESS_TOKEN = secrets.tmdbAccessToken;
+    else if (secrets.tmdbApiKey) backendEnv.TMDB_API_KEY = secrets.tmdbApiKey;
     const openSubApiKey = secrets.openSubApiKey || process.env.OPENSUB_API_KEY || process.env.OPENSUBTITLES_API_KEY;
     const openSubUserToken = secrets.openSubUserToken || process.env.OPENSUBTITLES_USER_TOKEN || process.env.OPENSUB_USER_TOKEN;
     if (openSubApiKey) backendEnv.OPENSUB_API_KEY = openSubApiKey;

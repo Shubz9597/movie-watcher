@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { verifyTmdbConnection } from "../electron/config/setup-validation.js";
 import { createTmdbTransport } from "../electron/config/tmdb-transport.js";
-import { registerTmdbIpc } from "../electron/ipc/tmdb-ipc.js";
 
 function vpnNotConfigured() {
   const error = new Error("No embedded VPN");
@@ -87,52 +86,4 @@ test("TMDb verification distinguishes credentials from availability", async () =
     verifyTmdbConnection({ tmdbApiKey: "saved" }, { fetch: async () => new Response("", { status: 500 }) }),
     (error) => error.code === "TMDB_REQUEST_FAILED",
   );
-});
-
-function createTmdbHandler({ credentials, fetchImpl }) {
-  const handlers = new Map();
-  const setupIssues = [];
-  registerTmdbIpc({ handle: (name, handler) => handlers.set(name, handler) }, {
-    getCredentials: () => credentials,
-    getCatalogState: () => ({ status: "ready", issue: "" }),
-    publishCatalogState: () => {},
-    requireTmdbSetup: (issue) => setupIssues.push(issue),
-    tmdbFetch: fetchImpl,
-  });
-  return { request: handlers.get("tmdb:request"), setupIssues };
-}
-
-test("TMDb IPC opens credential setup only for missing or rejected credentials", async () => {
-  const missing = createTmdbHandler({ credentials: {}, fetchImpl: async () => new Response() });
-  const missingResult = await missing.request({}, { path: "/configuration" });
-  assert.equal(missingResult.requiresSetup, true);
-  assert.equal(missing.setupIssues.length, 1);
-
-  const rejected = createTmdbHandler({
-    credentials: { tmdbApiKey: "bad" },
-    fetchImpl: async () => new Response("", { status: 401 }),
-  });
-  const rejectedResult = await rejected.request({}, { path: "/configuration" });
-  assert.equal(rejectedResult.requiresSetup, true);
-  assert.equal(rejected.setupIssues.length, 1);
-
-  const unavailable = createTmdbHandler({
-    credentials: { tmdbApiKey: "saved" },
-    fetchImpl: async () => new Response("", { status: 500 }),
-  });
-  const unavailableResult = await unavailable.request({}, { path: "/configuration" });
-  assert.equal(unavailableResult.requiresSetup, false);
-  assert.equal(unavailable.setupIssues.length, 0);
-
-  const blocked = createTmdbHandler({
-    credentials: { tmdbApiKey: "saved" },
-    fetchImpl: async () => {
-      const error = new Error("TMDb could not be reached through the current network connection.");
-      error.code = "TMDB_UNREACHABLE";
-      throw error;
-    },
-  });
-  const blockedResult = await blocked.request({}, { path: "/configuration" });
-  assert.equal(blockedResult.requiresSetup, false);
-  assert.equal(blocked.setupIssues.length, 0);
 });

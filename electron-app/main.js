@@ -18,7 +18,6 @@ import {
   registerDiagnosticsIpc,
   registerMpvIpc,
   registerSetupIpc,
-  registerTmdbIpc,
 } from "./electron/ipc/index.js";
 import {
   RESUME_TOLERANCE_SECONDS,
@@ -360,14 +359,6 @@ registerConfigIpc(ipcMain, {
   saveConfig: (config) => appConfigStore.saveConfig(config),
 });
 
-registerTmdbIpc(ipcMain, {
-  getCredentials: () => appConfigStore.resolveSetupCredentials({}),
-  getCatalogState: startupController.getCatalogState,
-  publishCatalogState: startupController.publishCatalogState,
-  requireTmdbSetup: startupController.requireTmdbSetup,
-  tmdbFetch: tmdbTransport.fetch,
-});
-
 registerSetupIpc(ipcMain, {
   dialog,
   shell,
@@ -376,6 +367,7 @@ registerSetupIpc(ipcMain, {
   vodBase: VOD_BASE,
   urls: SETUP_GUIDE_URLS,
   getAppConfig: () => appConfigStore.getConfig(),
+  getCatalogState: startupController.getCatalogState,
   getMainWindow: () => mainWindow,
   getRuntimeState: startupController.getRuntimeState,
   getSetupIssue: startupController.getSetupIssue,

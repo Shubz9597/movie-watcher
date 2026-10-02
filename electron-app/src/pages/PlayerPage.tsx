@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getCatalogSource } from '../lib/catalog-source';
 import { bffTitleDetail } from '../lib/services/catalog-bff';
 import { getDeviceId } from '../lib/device-id';
 import { usePlatform } from '../platform/PlatformProvider';
@@ -8,12 +7,6 @@ import { resolveTorrentFile } from '../lib/services/resolve-service';
 import NativePlayerControls from '../mobile/NativePlayerControls';
 import { advancePackParams } from '../lib/pack-advance';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
-
-// Legacy provider metadata loads lazily: bff mode never imports them (T042.4).
-async function legacyMetadataProviders() {
-  const [tmdb, anilist] = await Promise.all([import('../lib/services/tmdb-service'), import('../lib/services/anilist-service')]);
-  return { getTmdbMovie: tmdb.getMovie, getTmdbTv: tmdb.getTv, getAnime: anilist.getAnime };
-}
 
 type Props = {
   navigate: (path: string, params?: Record<string, string>) => void;
@@ -209,49 +202,28 @@ export default function PlayerPage({ navigate, params }: Props) {
         // work in the playback effect prevents metadata state updates from
         // stopping and restarting an active playback session. M1.4.7: mobile
         // resolves metadata too — the native player's buffering screen needs
-        // the poster + display title. BFF mode resolves through the catalog
-        // contract (T042.4).
+        // the poster + display title, resolved through the catalog contract
+        // (T042.4).
         if (tmdbId && cat !== 'anime') {
           try {
-            if (await getCatalogSource() === 'bff') {
-              // M3.1.1: request detail by the media-qualified canonical id
-              // derived from the route's explicit `cat` namespace.
-              const row = await bffTitleDetail(`tmdb:${cat === 'movie' ? 'movie' : 'tv'}:${tmdbId}`);
-              playbackPosterUrl = row.artwork?.poster ?? null;
-              playbackLogoUrl = row.artwork?.logo ?? null;
-              playbackImdbId = row.imdbId || playbackImdbId;
-              playbackYear = row.year;
-              playbackTitle = row.title || playbackTitle;
-            } else {
-              const { getTmdbMovie, getTmdbTv } = await legacyMetadataProviders();
-              const data = cat === 'movie'
-                ? await getTmdbMovie(Number(tmdbId))
-                : await getTmdbTv(Number(tmdbId));
-              playbackPosterUrl = data.poster_path || null;
-              playbackImdbId = data.imdb_id || data.external_ids?.imdb_id || playbackImdbId;
-              const date = data.release_date || data.first_air_date;
-              playbackYear = date ? Number(date.slice(0, 4)) : undefined;
-              playbackTitle = data.title || data.name || playbackTitle;
-            }
+            // M3.1.1: request detail by the media-qualified canonical id
+            // derived from the route's explicit `cat` namespace.
+            const row = await bffTitleDetail(`tmdb:${cat === 'movie' ? 'movie' : 'tv'}:${tmdbId}`);
+            playbackPosterUrl = row.artwork?.poster ?? null;
+            playbackLogoUrl = row.artwork?.logo ?? null;
+            playbackImdbId = row.imdbId || playbackImdbId;
+            playbackYear = row.year;
+            playbackTitle = row.title || playbackTitle;
           } catch (err) {
             console.error('[PlayerPage] Failed to fetch TMDB metadata:', err);
           }
         } else if (anilistId && cat === 'anime') {
           try {
-            if (await getCatalogSource() === 'bff') {
-              const row = await bffTitleDetail(`anilist:${anilistId}`);
-              playbackPosterUrl = row.artwork?.poster ?? null;
-              playbackYear = row.year;
-              playbackTitle = row.title || playbackTitle;
-              playbackMalId = row.providerIds?.jikan ? Number(row.providerIds.jikan) : playbackMalId;
-            } else {
-              const { getAnime } = await legacyMetadataProviders();
-              const data = await getAnime(Number(anilistId));
-              playbackPosterUrl = data.coverImage?.extraLarge || data.coverImage?.large || null;
-              playbackYear = data.startDate?.year || undefined;
-              playbackTitle = data.title?.english || data.title?.userPreferred || data.title?.romaji || playbackTitle;
-              playbackMalId = data.idMal || playbackMalId;
-            }
+            const row = await bffTitleDetail(`anilist:${anilistId}`);
+            playbackPosterUrl = row.artwork?.poster ?? null;
+            playbackYear = row.year;
+            playbackTitle = row.title || playbackTitle;
+            playbackMalId = row.providerIds?.jikan ? Number(row.providerIds.jikan) : playbackMalId;
           } catch (err) {
             console.error('[PlayerPage] Failed to fetch anime metadata:', err);
           }
