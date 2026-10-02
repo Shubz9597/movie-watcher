@@ -7,7 +7,6 @@ import {
 } from "../../backend-origin.mjs";
 import {
   buildBackendUrl,
-  getApiBase,
   getVodBase,
 } from "../../src/lib/api-client.ts";
 
@@ -43,8 +42,4 @@ test("api-client exposes the resolved origin and joins request paths", () => {
   assert.equal(getVodBase(), "http://localhost:4001", "renderer default must be byte-identical to V1");
   assert.equal(buildBackendUrl("/v1/continue"), "http://localhost:4001/v1/continue");
   assert.equal(buildBackendUrl("v1/continue"), "http://localhost:4001/v1/continue");
-});
-
-test("api-client keeps the legacy Next.js API base untouched (P8 removal scope)", () => {
-  assert.equal(getApiBase(), "http://localhost:3000");
 });

@@ -6,12 +6,10 @@
 // in-flight requests and discards their responses; a stale response can
 // never replace newer state (per-resource generation captured per request).
 import {
-  LibraryServiceError,
   libraryFetch,
   serverHasLibraryCapability,
 } from './library-service.ts';
 import { fetchServerVersion } from '../version-check.ts';
-import { backendGeneration } from '../connection-service.ts';
 
 export const RECOMMENDATIONS_CAPABILITY = 'recommendations.basic.v1';
 
@@ -47,12 +45,4 @@ export async function fetchRecommendations(deps?: { fetchImpl?: typeof fetch }):
 export async function hasLiveRecommendationsCapability(deps?: { fetchImpl?: typeof fetch }): Promise<boolean> {
   const version = await fetchServerVersion(deps);
   return serverHasRecommendationsCapability(version?.capabilities);
-}
-
-// assertFresh throws when the response raced an origin switch; callers must
-// discard it instead of applying cross-origin state.
-export function assertFreshResponse(startedGeneration: number): void {
-  if (backendGeneration() !== startedGeneration) {
-    throw new LibraryServiceError('origin_changed', 'The server origin changed; the recommendation response was discarded.', 0);
-  }
 }

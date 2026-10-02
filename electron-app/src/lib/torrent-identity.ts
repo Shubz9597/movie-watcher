@@ -44,12 +44,6 @@ export function torrentInfoHash(value?: string | null) {
   return '';
 }
 
-export function sameTorrent(left?: string | null, right?: string | null) {
-  const leftHash = torrentInfoHash(left);
-  const rightHash = torrentInfoHash(right);
-  return Boolean(leftHash && rightHash && leftHash === rightHash);
-}
-
 /** Promotes a prior source, or restores its saved magnet when indexers no longer return it. */
 export function prioritizePreviouslyUsedTorrent(
   rows: TorrentRow[],

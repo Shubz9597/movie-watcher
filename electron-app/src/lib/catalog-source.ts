@@ -61,18 +61,3 @@ export async function getCatalogSource(): Promise<CatalogSource> {
   const envValue = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_CATALOG_SOURCE ?? null;
   return resolveCatalogSource({ localOverride: localOverride(), configValue, envValue });
 }
-
-// Instant rollback path (plan P5 migration map): flip the override back to
-// "renderer" without touching the main-process config.
-export function setCatalogSourceOverride(value: CatalogSource | null): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (value === null) {
-      window.localStorage.removeItem(CATALOG_SOURCE_OVERRIDE_KEY);
-    } else {
-      window.localStorage.setItem(CATALOG_SOURCE_OVERRIDE_KEY, normalizeCatalogSource(value));
-    }
-  } catch (error) {
-    console.warn('[CatalogSource] Could not persist the catalog source override.', error);
-  }
-}

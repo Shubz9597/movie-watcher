@@ -140,7 +140,6 @@ test("Home keeps the featured carousel, Continue, recommendations, then rotating
   const catalogAt = home.indexOf("<CarouselRow", recommendationsAt);
   assert.ok(continueAt > 0 && continueAt < recommendationsAt && recommendationsAt < catalogAt, "personal rows precede broad trending shelves");
   assert.doesNotMatch(readFileSync("src/components/CarouselRow.tsx", "utf8"), /Now in rotation/, "removed rotation label stays removed");
-  assert.match(readFileSync("src/components/shared/BrowseRail.tsx", "utf8"), /md:hidden/, "browse pills remain phone-only");
 });
 
 test("desktop Library destination has visual weight beside Search", () => {

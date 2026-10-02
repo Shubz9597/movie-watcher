@@ -161,28 +161,6 @@ export async function getTitlesByGenre(kind: 'movie' | 'tv', genreId: number, pa
   });
 }
 
-async function discoverAnime(mediaKind: 'movie' | 'tv', page = 1) {
-  return requestTmdb<any>(`/discover/${mediaKind}`, {
-    page: String(page),
-    include_adult: 'false',
-    language: 'en-US',
-    sort_by: 'popularity.desc',
-    with_genres: '16',
-    with_original_language: 'ja',
-  });
-}
-
-export function getAnimeMovies(page = 1) {
-  return discoverAnime('movie', page);
-}
-
-export function getAnimeTvShows(page = 1) {
-  return discoverAnime('tv', page);
-}
-
 export async function getTvSeason(tvId: number, season: number) {
   return requestTmdb<any>(`/tv/${tvId}/season/${season}`, {}, DETAIL_TTL_MS);
 }
-
-
-
