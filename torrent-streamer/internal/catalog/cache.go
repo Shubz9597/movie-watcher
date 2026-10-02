@@ -152,6 +152,14 @@ func MergeEpisodes(groups [][]Episode) []Episode {
 			merged[i].ProviderIDs = map[string]string{}
 		}
 	}
+	// Provider ids are strings ("...:10" sorts before "...:2"); the list is
+	// shown in airing order.
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Season != merged[j].Season {
+			return merged[i].Season < merged[j].Season
+		}
+		return merged[i].Episode < merged[j].Episode
+	})
 	return merged
 }
 
