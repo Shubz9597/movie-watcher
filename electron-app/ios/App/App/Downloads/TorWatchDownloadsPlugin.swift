@@ -15,6 +15,28 @@ import Capacitor
  *  - `downloadsChanged` fires on the main queue after any durable change so
  *    the shared React adapter can re-read the inventory snapshot.
  */
+extension Notification.Name {
+    static let torwatchOpenRoute = Notification.Name("TorWatchOpenRoute")
+}
+
+/// torwatch://downloads links (Live Activity and notification taps). The
+/// route is kept until the web app's plugin has loaded, so a cold launch
+/// still lands on Downloads.
+enum TorWatchRouteLink {
+    private(set) static var pendingRoute: String?
+
+    static func handle(_ url: URL) {
+        guard url.scheme?.lowercased() == "torwatch", url.host?.lowercased() == "downloads" else { return }
+        pendingRoute = "downloads"
+        NotificationCenter.default.post(name: .torwatchOpenRoute, object: nil)
+    }
+
+    static func consume() -> String? {
+        defer { pendingRoute = nil }
+        return pendingRoute
+    }
+}
+
 @objc(TorWatchDownloadsPlugin)
 class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
 
@@ -41,6 +63,20 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         coordinator.onChange = { [weak self] in
             self?.notifyListeners("downloadsChanged", data: [:])
         }
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: .torwatchOpenRoute, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.emitPendingRoute()
+        }
+        emitPendingRoute()
+    }
+
+    private var routeObserver: NSObjectProtocol?
+
+    /// Retained until the web listener attaches (cold launch ordering).
+    private func emitPendingRoute() {
+        guard let route = TorWatchRouteLink.consume() else { return }
+        notifyListeners("openRoute", data: ["route": route], retainUntilConsumed: true)
     }
 
     // MARK: - Bridge API

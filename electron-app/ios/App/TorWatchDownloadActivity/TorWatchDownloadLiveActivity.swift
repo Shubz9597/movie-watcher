@@ -29,7 +29,7 @@ struct TorWatchDownloadLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(displayTitle(context.attributes))
+                        Text(displayTitle(context.state))
                             .font(.headline)
                             .lineLimit(1)
                         Text(statusLine(context))
@@ -57,6 +57,8 @@ struct TorWatchDownloadLiveActivity: Widget {
                             if let summary = transferSummary(context) {
                                 Text(summary)
                                     .monospacedDigit()
+                            } else if let waiting = waitingLine(context.state) {
+                                Text(waiting)
                             }
                         }
                         .font(.caption2)
@@ -92,6 +94,7 @@ struct TorWatchDownloadLiveActivity: Widget {
                 .accessibilityValue(context.state.hasKnownTotal ? "\(context.state.percent) percent" : "")
             }
             .keylineTint(context.state.tint)
+            .widgetURL(downloadsURL)
         }
     }
 }
@@ -113,7 +116,7 @@ private struct LockScreenDownloadView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(displayTitle(context.attributes))
+                        Text(displayTitle(context.state))
                             .font(.headline)
                             .lineLimit(1)
                         Text(statusLine(context))
@@ -138,9 +141,15 @@ private struct LockScreenDownloadView: View {
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
+                if let waiting = waitingLine(context.state) {
+                    Text(waiting)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(16)
+        .widgetURL(downloadsURL)
     }
 }
 
@@ -239,9 +248,18 @@ private func isStale(_ context: ActivityViewContext<DownloadActivityAttributes>)
 
 /// "Frieren · S1 E3" — the episode (or quality) label follows the title.
 @available(iOSApplicationExtension 16.1, *)
-private func displayTitle(_ attributes: DownloadActivityAttributes) -> String {
-    attributes.subtitle.isEmpty ? attributes.title : "\(attributes.title) · \(attributes.subtitle)"
+private func displayTitle(_ state: DownloadActivityAttributes.ContentState) -> String {
+    state.subtitle.isEmpty ? state.title : "\(state.title) · \(state.subtitle)"
 }
+
+/// Queue context for the rest of the device queue ("2 waiting").
+@available(iOSApplicationExtension 16.1, *)
+private func waitingLine(_ state: DownloadActivityAttributes.ContentState) -> String? {
+    state.waitingCount > 0 ? "\(state.waitingCount) waiting" : nil
+}
+
+/// Taps open the Downloads tab (SceneDelegate → TorWatchRouteLink).
+private let downloadsURL = URL(string: "torwatch://downloads")
 
 @available(iOSApplicationExtension 16.1, *)
 private func statusLine(_ context: ActivityViewContext<DownloadActivityAttributes>) -> String {

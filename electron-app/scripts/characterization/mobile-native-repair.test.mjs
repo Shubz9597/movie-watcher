@@ -121,8 +121,18 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   assert.match(activity, /default: return \.white/u);
   assert.match(activity, /var hasKnownTotal: Bool \{ totalBytes > 0 \}/u);
   assert.match(activity, /"Last update"/u);
-  assert.match(activity, /attributes\.title\) · \\\(attributes\.subtitle\)/u);
+  assert.match(activity, /state\.title\) · \\\(state\.subtitle\)/u);
   assert.doesNotMatch(activity, /—\/s/u, "unmeasured speed is omitted, never a dash placeholder");
+  // One activity for the whole queue (spec N2) that opens Downloads on tap.
+  const liveUpdater = readFileSync(join(appRoot, "App", "Downloads", "DownloadLiveActivity.swift"), "utf8");
+  const sceneDelegate = readFileSync(join(appRoot, "App", "SceneDelegate.swift"), "utf8");
+  assert.match(liveUpdater, /queueId == queueId/u, "a single queue-wide activity is reused");
+  assert.match(liveUpdater, /waitingCount\(excluding:/u);
+  assert.match(activity, /\.widgetURL\(downloadsURL\)/u);
+  assert.match(activity, /torwatch:\/\/downloads/u);
+  assert.match(appInfo, /<string>torwatch<\/string>/u);
+  assert.match(sceneDelegate, /TorWatchRouteLink\.handle\(context\.url\)/u);
+  assert.match(nativePlugin.length ? readFileSync(join(appRoot, "App", "Downloads", "TorWatchDownloadsPlugin.swift"), "utf8") : "", /retainUntilConsumed: true/u);
   assert.match(coordinator, /DownloadLiveActivity\.refresh\([\s\S]+bytesPerSecond: metrics\.bytesPerSecond/u);
   assert.match(coordinator, /setAssetReceivedBytes\([\s\S]+emitChange\(\)/u);
   assert.match(store, /poster_url TEXT NOT NULL DEFAULT ''/u);

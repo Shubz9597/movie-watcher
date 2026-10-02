@@ -144,6 +144,13 @@ async function start(): Promise<void> {
       void import('./download-queue').then(({ resumePendingDownloads }) => resumePendingDownloads());
     }
     root.render(<MobileShell composed={composed} browser={browser} />);
+    // Live Activity / notification taps (torwatch://downloads) open the
+    // Downloads tab; the native event is retained across a cold launch.
+    void import('./downloads-adapter').then(({ getNativeDownloads }) => {
+      void getNativeDownloads()?.addListener('openRoute', (event: { route?: string }) => {
+        if (event?.route === 'downloads') window.location.hash = '#downloads';
+      });
+    });
   })();
 
   const watchdog = new Promise<'timeout'>((resolve) => {
