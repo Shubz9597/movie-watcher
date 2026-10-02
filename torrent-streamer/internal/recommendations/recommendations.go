@@ -576,7 +576,10 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			}
 		}
 		if len(keys) == 0 {
-			continue // no usable genre metadata: contributes nothing
+			// Genres only drive overlap scoring; the title still contributes
+			// its "more like this" lists (a flaky detail lookup must not drop
+			// a household title from recommendations).
+			log.Printf("[recommendations] genres for %s unavailable; using its similar lists only: %v", signal.id, err)
 		}
 		if titled, ok := s.seedGenres.(interface {
 			SeedTitle(ctx context.Context, canonicalID string) (string, error)
@@ -796,8 +799,12 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			item.Reason = Reason{Code: reasonPopular, Text: "Something different"}
 		} else if entry.score > 0 && entry.reasonSeed != nil {
 			text := reasonText[entry.reasonSeed.label](entry.reasonSeed.title)
-			if entry.alsoSeed != nil {
+			if entry.alsoSeed != nil && entry.alsoSeed.title != entry.alsoSeed.id {
 				text = fmt.Sprintf("Because you like %s and %s", entry.reasonSeed.title, entry.alsoSeed.title)
+			}
+			// An unresolved title is only an id: never show it to people.
+			if entry.reasonSeed.title == entry.reasonSeed.id {
+				text = "Picked for you"
 			}
 			item.Reason = Reason{
 				Code:            reasonSeedGenre,
