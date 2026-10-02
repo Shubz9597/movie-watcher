@@ -5,7 +5,7 @@
 // The Electron desktop Home keeps its existing rail by default; this
 // component is the compact/alpha presentation selected explicitly.
 import { memo, useRef } from 'react';
-import { Play } from 'lucide-react';
+import { Film, Play, X } from 'lucide-react';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import type { EnrichedContinueItem } from '../../lib/services/continue-service';
 
@@ -58,7 +58,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
             key={`${item.seriesId}-${item.season}-${item.episode}`}
             className="w-[240px] shrink-0 snap-start sm:w-[260px]"
           >
-            <div className="relative aspect-video overflow-hidden rounded-xl border border-white/10 bg-[#151515]">
+            <div className="relative aspect-video overflow-hidden rounded-lg border border-white/10 bg-[var(--surface-raised)]">
               {item.posterPath ? (
                 <img
                   src={item.posterPath}
@@ -70,8 +70,8 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
                   className="absolute inset-0 h-full w-full object-cover"
                 />
               ) : (
-                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-                  <span className="text-3xl opacity-30" aria-hidden="true">🎬</span>
+                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025] text-white/30">
+                  <Film className="h-7 w-7" aria-hidden="true" />
                 </div>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" aria-hidden="true" />
@@ -88,14 +88,14 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
               </button>
 
               <div className="absolute left-3 top-3">
-                <span className="font-label text-numeric rounded-md bg-black/70 px-2 py-1 text-xs text-white/90">
+                <span className="type-caption text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90">
                   {episodeBadge}
                 </span>
               </div>
 
               {/* Progress lives on the artwork (accepted alpha design). */}
               <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/10">
-                <div className="h-full bg-[#ff7a17]" style={{ width: `${pct}%` }} />
+                <div className="h-full bg-white" style={{ width: `${pct}%` }} />
               </div>
             </div>
 
@@ -104,10 +104,10 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
               <button
                 type="button"
                 onClick={() => { if (!wasDragged()) onOpenTitle(item); }}
-                className={`min-h-11 flex-1 text-left text-sm font-medium leading-5 text-white line-clamp-2 rounded-lg px-1 hover:text-white/85 ${FOCUS_RING_CLASS}`}
+                className={`min-h-12 flex-1 text-left text-sm font-medium leading-5 text-white line-clamp-2 rounded-lg px-1 hover:text-white/85 ${FOCUS_RING_CLASS}`}
               >
                 {displayTitle}
-                <span className="block text-xs font-normal text-white/55">
+                <span className="block text-xs font-normal text-white/60">
                   {item.upNext ? 'Up next' : item.year ?? ''}
                 </span>
               </button>
@@ -116,9 +116,9 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
                   type="button"
                   aria-label={`Remove ${displayTitle} from Continue watching`}
                   onClick={() => { if (!wasDragged()) onDismiss(item); }}
-                  className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/50 hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
+                  className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
                 >
-                  ✕
+                  <X className="h-4 w-4" aria-hidden="true" />
                 </button>
               ) : null}
             </div>

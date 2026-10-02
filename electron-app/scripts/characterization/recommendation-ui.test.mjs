@@ -103,7 +103,7 @@ test("degraded state is labelled truthfully", async () => {
       navigate: () => {},
     }),
   );
-  assert.match(html, /degraded — the server is serving its last computed list/, "degraded is announced in text");
+  assert.match(html, /May be out of date/, "degraded is announced in text");
 });
 
 test("provider failure renders a bounded Retry row (Home is not blocked)", async () => {
@@ -115,7 +115,7 @@ test("provider failure renders a bounded Retry row (Home is not blocked)", async
       navigate: () => {},
     }),
   );
-  assert.match(html, /Recommendations could not be loaded\. Everything else keeps working\./);
+  assert.match(html, /Couldn’t load recommendations\./);
   assert.match(html, /aria-label="Retry recommendations"/, "Retry is a labelled control");
 });
 

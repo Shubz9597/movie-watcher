@@ -3,6 +3,7 @@
 // Library collections, and a bottom selection sheet for compact filters.
 // All styling comes from the shared token source (globals.css vars).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { FOCUS_RING_CLASS, TOUCH_TARGET_CLASS } from '../../lib/design-tokens';
 
@@ -238,11 +239,14 @@ export function SelectionSurface({ open, title, onClose, children }: SelectionSu
   // removed the sheet from the DOM.
 
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center" role="presentation">
+  // Portal to <body>: route containers create stacking contexts (enter
+  // animations), which would otherwise leave the sheet beneath the fixed
+  // bottom navigation. Server rendering (tests) has no document; render inline.
+  const sheet = (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center" role="presentation">
       <button
         type="button"
-        aria-label="Close filters"
+        aria-label={`Dismiss ${title}`}
         tabIndex={-1}
         onClick={requestClose}
         className="absolute inset-0 bg-black/60"
@@ -255,13 +259,13 @@ export function SelectionSurface({ open, title, onClose, children }: SelectionSu
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-t-2xl border border-white/10 bg-[#111] shadow-2xl"
+        className="relative w-full max-w-md rounded-t-lg border border-white/10 bg-[var(--surface-raised)] shadow-2xl"
         style={{
           animation: `${closing ? 'torwatch-sheet-out' : 'torwatch-sheet-in'} var(--motion-sheet) var(--ease-standard) forwards`,
         }}
       >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <h2 className="text-sm font-semibold text-white">{title}</h2>
+        <div className="flex items-center justify-between border-b border-white/10 py-1 pl-4 pr-1">
+          <h2 className="text-base font-semibold text-white">{title}</h2>
           <button
             ref={closeRef}
             type="button"
@@ -280,4 +284,5 @@ export function SelectionSurface({ open, title, onClose, children }: SelectionSu
       </div>
     </div>
   );
+  return typeof document === 'undefined' ? sheet : createPortal(sheet, document.body);
 }

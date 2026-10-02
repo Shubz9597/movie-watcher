@@ -207,9 +207,9 @@ export default function GlobalSearch({
       };
       const failedSources = [tmdbResult, animeResult].filter((result) => result.status === 'rejected').length;
       if (failedSources === 2) {
-        setError('Search is unavailable. Check your connection or Settings.');
+        setError('Search is unavailable.');
       } else if (failedSources === 1) {
-        setError('Some sources could not be reached. Showing the results that are available.');
+        setError('Some results are missing.');
       }
 
       setResults(nextResults);
@@ -218,7 +218,7 @@ export default function GlobalSearch({
     })().catch((reason: unknown) => {
       if (latestRequest.current !== requestId) return;
       console.error('[GlobalSearch] Search failed:', reason);
-      setError('Search is unavailable. Check your connection or Settings.');
+      setError('Search is unavailable.');
       setResults(EMPTY_RESULTS);
       setLoading(false);
     });
@@ -285,14 +285,14 @@ export default function GlobalSearch({
     >
       <DialogContent
         showCloseButton={false}
-        className="top-[max(8dvh,calc(var(--app-safe-top)+0.5rem))] max-h-[calc(92dvh-var(--app-safe-top)-var(--app-safe-bottom))] w-[calc(100%-2rem)] max-w-4xl translate-y-0 gap-0 overflow-hidden rounded-xl border-white/15 bg-[#0c0c0c] p-0 shadow-none sm:max-w-4xl"
+        className="top-[max(8dvh,calc(var(--app-safe-top)+0.5rem))] max-h-[calc(92dvh-var(--app-safe-top)-var(--app-safe-bottom))] w-[calc(100%-2rem)] max-w-4xl translate-y-0 gap-0 overflow-hidden rounded-lg border-white/15 bg-[#0c0c0c] p-0 shadow-none sm:max-w-4xl"
       >
         <DialogTitle className="sr-only">Search the TorWatch library</DialogTitle>
         <DialogDescription className="sr-only">
           Search across movies, series, and anime, or browse recent titles, suggestions, and genres.
         </DialogDescription>
 
-        <Command shouldFilter={false} className="rounded-none bg-transparent text-white [&_[cmdk-group-heading]]:font-label [&_[cmdk-group-heading]]:px-5 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:pt-5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-white/60">
+        <Command shouldFilter={false} className="rounded-none bg-transparent text-white [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:px-5 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:pt-5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-white/60">
           <div className="flex items-center border-b border-white/[0.08] px-2 py-2 [&>[data-slot=command-input-wrapper]]:min-w-0 [&>[data-slot=command-input-wrapper]]:flex-1">
             <button type="button" aria-label="Go back" onClick={() => onOpenChange(false)} className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
               <ChevronLeft className="h-6 w-6" aria-hidden="true" />
@@ -314,7 +314,7 @@ export default function GlobalSearch({
                   <div className="mb-2 flex min-h-8 items-center justify-between gap-4 px-2">
                     <h2 id="recent-searches-heading" className="type-secondary font-medium text-white/80">Recent searches</h2>
                     {recentSearches.length ? (
-                      <button type="button" onClick={clearRecent} className="min-h-8 rounded-full px-2.5 text-xs text-white/60 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">
+                      <button type="button" onClick={clearRecent} className="min-h-8 rounded-lg px-2.5 text-xs text-white/60 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">
                         Clear
                       </button>
                     ) : null}
@@ -347,14 +347,13 @@ export default function GlobalSearch({
                 <section className="border-b border-white/[0.08] px-3 py-5" aria-labelledby="suggested-titles-heading">
                   <div className="mb-3 flex items-start justify-between gap-4 px-2">
                     <div>
-                      <h2 id="suggested-titles-heading" className="type-secondary font-medium text-white/80">Worth a look</h2>
-                      <p className="type-caption mt-1 text-white/55">Shuffled from titles trending this week.</p>
+                      <h2 id="suggested-titles-heading" className="type-secondary font-medium text-white/80">Trending</h2>
                     </div>
                     <button
                       type="button"
                       onClick={() => setSuggestionShuffle((value) => value + 1)}
                       disabled={suggestionsLoading}
-                      className="flex min-h-9 items-center gap-2 rounded-full border border-white/12 px-3 text-xs text-white/65 transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-wait disabled:opacity-45"
+                      className="flex min-h-9 items-center gap-2 rounded-lg border border-white/12 px-3 text-xs text-white/65 transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-wait disabled:opacity-45"
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
                       Shuffle
@@ -397,12 +396,12 @@ export default function GlobalSearch({
                       ))}
                     </div>
                   ) : (
-                    <p className="px-2 py-3 text-sm text-white/60">Trending suggestions are unavailable right now. Search still works above.</p>
+                    <p className="px-2 py-3 text-sm text-white/60">Suggestions unavailable.</p>
                   )}
                 </section>
 
                 <section className="px-3 py-5" aria-labelledby="browse-library-heading">
-                  <h2 id="browse-library-heading" className="type-secondary px-2 font-medium text-white/80">Browse the library</h2>
+                  <h2 id="browse-library-heading" className="type-secondary px-2 font-medium text-white/80">Browse</h2>
                   <div className="mt-3 grid overflow-hidden rounded-lg border border-white/[0.09] sm:grid-cols-3 sm:divide-x sm:divide-white/[0.09]">
                     <BrowseCollection icon={Film} title="All movies" description="Popular films" onSelect={() => closeAndBrowse('Popular movies', 'tmdb:popular:movie', 'movie')} />
                     <BrowseCollection icon={Tv} title="All series" description="Popular shows" onSelect={() => closeAndBrowse('Popular series', 'tmdb:popular:tv', 'tv')} />
@@ -412,16 +411,15 @@ export default function GlobalSearch({
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-3 px-2">
                     <div>
                       <h3 className="text-sm text-white/75">Find by genre</h3>
-                      <p className="type-caption mt-1 text-white/50">Open a full collection, ranked by popularity.</p>
                     </div>
-                    <div className="flex rounded-full bg-white/[0.05] p-1" role="group" aria-label="Genre collection type">
+                    <div className="flex rounded-lg bg-white/[0.05] p-1" role="group" aria-label="Genre collection type">
                       {(['movie', 'tv'] as const).map((kind) => (
                         <button
                           key={kind}
                           type="button"
                           onClick={() => setGenreKind(kind)}
                           aria-pressed={genreKind === kind}
-                          className={`min-h-8 rounded-full px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${genreKind === kind ? 'bg-white text-black' : 'text-white/60 hover:text-white'}`}
+                          className={`min-h-8 rounded-lg px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${genreKind === kind ? 'bg-white text-black' : 'text-white/60 hover:text-white'}`}
                         >
                           {kind === 'movie' ? 'Movies' : 'Series'}
                         </button>
@@ -434,7 +432,7 @@ export default function GlobalSearch({
                         key={`${genreKind}-${genre.label}`}
                         value={`genre-${genreKind}-${genre.label}`}
                         onSelect={() => closeAndBrowse(`${genre.label} ${genreKind === 'movie' ? 'movies' : 'series'}`, `tmdb:genre:${genreKind}:${genre[genreKind]}`, genreKind)}
-                        className="min-h-10 rounded-full border border-white/12 px-4 text-sm text-white/70 data-[selected=true]:border-white/35 data-[selected=true]:bg-white/[0.08] data-[selected=true]:text-white"
+                        className="min-h-10 rounded-lg border border-white/12 px-4 text-sm text-white/70 data-[selected=true]:border-white/35 data-[selected=true]:bg-white/[0.08] data-[selected=true]:text-white"
                       >
                         {genre.label}
                       </CommandItem>
@@ -450,7 +448,7 @@ export default function GlobalSearch({
                 <button
                   type="button"
                   onClick={() => setFilterSheetOpen(true)}
-                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border border-white/15 px-3 text-xs text-white/75 hover:border-white/35 hover:text-white sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50`}
+                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-white/15 px-3 text-xs text-white/75 hover:border-white/35 hover:text-white sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50`}
                   aria-haspopup="dialog"
                 >
                   Filters{resultFilter !== 'all' ? ' · on' : ''}
@@ -464,7 +462,7 @@ export default function GlobalSearch({
                         type="button"
                         onClick={() => setResultFilter(filter.value)}
                         aria-pressed={resultFilter === filter.value}
-                        className={`min-h-9 rounded-full px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${resultFilter === filter.value ? 'bg-white text-black' : 'text-white/60 hover:bg-white/[0.06] hover:text-white'}`}
+                        className={`min-h-9 rounded-lg px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${resultFilter === filter.value ? 'bg-white text-black' : 'text-white/60 hover:bg-white/[0.06] hover:text-white'}`}
                       >
                         {filter.label} <span className="text-numeric opacity-65">{count}</span>
                       </button>
@@ -487,7 +485,7 @@ export default function GlobalSearch({
                       type="button"
                       onClick={() => { setResultFilter(filter.value); setFilterSheetOpen(false); }}
                       aria-pressed={resultFilter === filter.value}
-                      className={`flex min-h-11 items-center justify-between rounded-xl px-4 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${resultFilter === filter.value ? 'bg-white text-black' : 'bg-white/[0.05] text-white/75 hover:bg-white/[0.1] hover:text-white'}`}
+                      className={`flex min-h-12 items-center justify-between rounded-lg px-4 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${resultFilter === filter.value ? 'bg-white text-black' : 'bg-white/[0.05] text-white/75 hover:bg-white/[0.1] hover:text-white'}`}
                     >
                       {filter.label}
                       <span className="text-numeric opacity-65">{count}</span>
@@ -508,7 +506,7 @@ export default function GlobalSearch({
               <CommandEmpty>
                 <div className="px-4 py-12 text-center">
                   <p className="type-body text-white/75">No matches for “{query.trim()}”</p>
-                  <p className="type-secondary mt-2 text-white/60">Try a shorter title or a different spelling.</p>
+                  <p className="type-secondary mt-2 text-white/60">Try a shorter title.</p>
                 </div>
               </CommandEmpty>
             ) : null}
@@ -516,20 +514,20 @@ export default function GlobalSearch({
             {!loading && hasResults && visibleCount === 0 ? (
               <div className="px-4 py-12 text-center">
                 <p className="type-body text-white/75">No {resultFilter === 'tv' ? 'series' : resultFilter} matches</p>
-                <button type="button" onClick={() => setResultFilter('all')} className="mt-3 min-h-10 rounded-full border border-white/15 px-4 text-sm text-white/70 hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">
+                <button type="button" onClick={() => setResultFilter('all')} className="mt-3 min-h-10 rounded-lg border border-white/15 px-4 text-sm text-white/70 hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">
                   View all results
                 </button>
               </div>
             ) : null}
 
             {error ? (
-              <div className="flex items-center justify-between gap-4 px-5 py-3 text-[#ffc285]">
+              <div className="flex items-center justify-between gap-4 px-5 py-3 text-white/80">
                 <p className="type-secondary">{error}</p>
                 {!hasResults ? (
                   <button
                     type="button"
                     onClick={() => void window.electronAPI?.openSetup()}
-                    className="min-h-10 shrink-0 rounded-full border border-white/20 px-4 text-sm text-white/80 hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                    className="min-h-10 shrink-0 rounded-lg border border-white/20 px-4 text-sm text-white/80 hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
                   >
                     Open settings
                   </button>
@@ -542,7 +540,7 @@ export default function GlobalSearch({
             {visibleKinds.includes('anime') ? <ResultGroup heading="Anime" icon={MonitorPlay} kind="anime" items={results.anime} query={query} onSelect={closeAndNavigate} /> : null}
           </CommandList>
 
-          <div className="font-label flex items-center gap-5 border-t border-white/[0.08] px-5 py-3 text-xs text-white/55">
+          <div className="flex items-center gap-5 border-t border-white/[0.08] px-5 py-3 text-xs text-white/60">
             <span>↑↓ Navigate</span>
             <span>Enter Open</span>
             <span className="ml-auto">Esc Close</span>
@@ -604,7 +602,7 @@ function ResultGroup({ heading, icon: Icon, kind, items, query, onSelect }: {
               {typeof item.rating === 'number' ? <span>{item.rating.toFixed(1)}</span> : null}
             </div>
           </div>
-          <span className="font-label text-white/55 transition group-data-[selected=true]:text-white/85">{kindLabel(kind)}</span>
+          <span className="type-caption text-white/60 transition group-data-[selected=true]:text-white/85">{kindLabel(kind)}</span>
         </CommandItem>
       ))}
     </CommandGroup>

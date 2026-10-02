@@ -225,7 +225,7 @@ export default function TorrentPanel({
       // silently switching to another torrent.
       if (previousSelection && !rows.some((row) => actionKey(row) === previousSelection)) {
         setSelectedKey(null);
-        setSelectionNotice('The selected source is no longer available. Choose another source.');
+        setSelectionNotice('This source is no longer available.');
       } else {
         setSelectionNotice(null);
       }
@@ -275,7 +275,7 @@ export default function TorrentPanel({
     });
 
     if (!platform.player) {
-      setError('Playback is unavailable on this device. Reconnect to the server and try again.');
+      setError('Playback isn’t available on this device.');
       return;
     }
 
@@ -283,7 +283,7 @@ export default function TorrentPanel({
     try {
       magnet = await resolveTorrentSource(t);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to resolve the selected torrent.';
+      const message = error instanceof Error ? error.message : 'Couldn’t open this source.';
       setError(message);
       return;
     }
@@ -324,7 +324,7 @@ export default function TorrentPanel({
       const magnet = await resolveTorrentSource(torrent);
       await downloadM3U(magnet, title, kind, defaultSeriesId || undefined, imdbId);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : 'Unable to resolve the selected torrent.');
+      setError(actionError instanceof Error ? actionError.message : 'Couldn’t open this source.');
     } finally {
       actionInFlight.current = false;
       setBusyActionId(null);
@@ -343,19 +343,19 @@ export default function TorrentPanel({
     <aside data-source-panel className={`flex min-w-0 max-w-full flex-col bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
-          <p className="type-secondary font-medium text-white/65">Playback</p>
-          <h3 className="type-panel-title mt-1 text-white">Available sources</h3>
+          <h3 className="type-panel-title text-white">Sources</h3>
           {meta ? <p className="type-caption text-numeric mt-1 text-white/65">Updated {meta}</p> : null}
         </div>
         <Button
           size="sm"
           onClick={() => void refresh()}
           disabled={loading}
-          variant="outline"
-          className="min-h-11 rounded-full border-white/20 bg-transparent px-4 text-white/75 hover:border-white/40 hover:bg-white/[0.05] hover:text-white"
+          variant="ghost"
+          aria-label="Refresh sources"
+          title="Refresh sources"
+          className="h-12 w-12 rounded-lg p-0 text-white/75 hover:bg-white/[0.06] hover:text-white"
         >
-          <RotateCcw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
+          <RotateCcw className={`h-5 w-5 ${loading ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
         </Button>
       </div>
 
@@ -378,7 +378,7 @@ export default function TorrentPanel({
             <button
               type="button"
               onClick={() => platform.desktop?.openSetup()}
-              className="mt-3 min-h-10 rounded-full border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              className="mt-3 min-h-12 rounded-lg border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
             >
               Open settings
             </button>
@@ -413,12 +413,12 @@ export default function TorrentPanel({
                 <li
                   key={torrentInfoHash(t.infoHash) || torrentInfoHash(t.magnetUri) || t.magnetUri || t.infoHash || idx}
                   className={`border-b border-white/[0.08] last:border-b-0 ${
-                    isSelected ? 'bg-white/[0.07]' : isPreviouslyUsed ? 'bg-[#ff7a17]/[0.09]' : 'hover:bg-white/[0.035]'
+                    isSelected ? 'bg-white/[0.07]' : isPreviouslyUsed ? 'bg-white/[0.035]' : 'hover:bg-white/[0.035]'
                   }`}
                 >
                   <div className="px-5 py-4">
                     <div className="flex items-start gap-3 sm:items-center sm:justify-between">
-                      <button type="button" aria-label={`Play source ${t.title}`} onClick={() => { setSelectedKey(torrentActionKey); void playInMpv(t); }} disabled={Boolean(busyActionId)} className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-50 sm:hidden ${FOCUS_RING_CLASS}`}>
+                      <button type="button" aria-label={`Play source ${t.title}`} onClick={() => { setSelectedKey(torrentActionKey); void playInMpv(t); }} disabled={Boolean(busyActionId)} className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-black disabled:opacity-50 sm:hidden ${FOCUS_RING_CLASS}`}>
                         {busyActionId === playActionId ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
                       </button>
                       {/* WF06: tapping a row selects it --- playback is a
@@ -436,16 +436,16 @@ export default function TorrentPanel({
                             <div className="mb-2 flex flex-wrap items-center gap-2">
                               <p className={`break-all text-sm ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{t.title}</p>
                               {quality ? (
-                                <span className="font-label shrink-0 rounded border border-white/20 px-1.5 py-0.5 text-white/70">
+                                <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">
                                   {quality}
                                 </span>
                               ) : (
-                                <span className="font-label shrink-0 rounded border border-white/10 px-1.5 py-0.5 text-white/40">Unknown quality</span>
+                                <span className="type-caption shrink-0 rounded border border-white/15 px-1.5 py-0.5 text-white/60">Unknown quality</span>
                               )}
                               {isSelected ? (
-                                <span className="font-label shrink-0 rounded bg-white px-1.5 py-0.5 text-black">Selected</span>
+                                <span className="type-caption shrink-0 rounded bg-white px-1.5 py-0.5 font-medium text-black">Selected</span>
                               ) : isPreviouslyUsed ? (
-                                <span className="font-label shrink-0 rounded bg-[#ff7a17] px-1.5 py-0.5 text-black">Previously used</span>
+                                <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
                               ) : null}
                             </div>
                             <div className="type-caption text-numeric flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
@@ -456,10 +456,10 @@ export default function TorrentPanel({
                                   {t.seeders}
                                 </span>
                               ) : (
-                                <span className="text-white/40">No seed data</span>
+                                <span className="text-white/60">No seed data</span>
                               )}
                               {typeof t.leechers === 'number' && (
-                                <span className="inline-flex items-center gap-1 text-[#ffc285]/80" title={`${t.leechers} peers`}>
+                                <span className="inline-flex items-center gap-1" title={`${t.leechers} peers`}>
                                   <ArrowDown className="h-3 w-3" aria-hidden="true" />
                                   {t.leechers}
                                 </span>
@@ -492,7 +492,7 @@ export default function TorrentPanel({
                                   void playInMpv(t);
                                 }}
                                 disabled={Boolean(busyActionId)}
-                                className="min-h-11 rounded-full bg-white px-5 text-black hover:bg-white/85"
+                                className="min-h-12 rounded-lg bg-white px-5 text-black hover:bg-white/85"
                               >
                                 <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
                                 {busyActionId === playActionId ? 'Opening…' : 'Play'}
@@ -509,6 +509,7 @@ export default function TorrentPanel({
                                 title,
                                 posterUrl,
                                 subtitleLabel: quality || undefined,
+                                subtitleHints: { title, year, imdbId },
                                 sizeBytes: t.size,
                               }}
                               onError={setError}
@@ -528,6 +529,7 @@ export default function TorrentPanel({
                         title,
                         posterUrl,
                         subtitleLabel: quality || undefined,
+                        subtitleHints: { title, year, imdbId },
                         sizeBytes: t.size,
                       }}
                       onError={setError}
@@ -547,47 +549,47 @@ export default function TorrentPanel({
                         onClick={() => setDetailsOpenKey(detailsOpen ? null : torrentActionKey)}
                         aria-expanded={detailsOpen}
                         aria-controls={`source-details-${idx}`}
-                        className={`inline-flex min-h-9 items-center gap-1 rounded-full px-3 text-xs text-white/60 transition hover:text-white ${FOCUS_RING_CLASS}`}
+                        className={`inline-flex min-h-12 items-center gap-1 rounded-lg px-3 text-sm text-white/70 transition hover:text-white ${FOCUS_RING_CLASS}`}
                       >
                         {detailsOpen ? 'Hide details' : 'Details'}
                       </button>
                       {detailsOpen ? (
                         <dl id={`source-details-${idx}`} className="mt-3 space-y-2 rounded-lg border border-white/10 bg-black/30 p-4 text-sm">
                           <div>
-                            <dt className="text-xs uppercase tracking-wide text-white/45">Full release name</dt>
+                            <dt className="type-caption text-white/60">Full release name</dt>
                             <dd className="break-all text-white/85">{t.title}</dd>
                           </div>
                           <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Quality</dt>
+                              <dt className="type-caption text-white/60">Quality</dt>
                               <dd className="text-white/85">{quality ?? 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Size</dt>
+                              <dt className="type-caption text-white/60">Size</dt>
                               <dd className="text-numeric text-white/85">{t.size ? `${formatBytes(t.size)} (${t.size.toLocaleString()} bytes)` : 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Seeders</dt>
+                              <dt className="type-caption text-white/60">Seeders</dt>
                               <dd className="text-numeric text-white/85">{typeof t.seeders === 'number' ? t.seeders : 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Leechers</dt>
+                              <dt className="type-caption text-white/60">Leechers</dt>
                               <dd className="text-numeric text-white/85">{typeof t.leechers === 'number' ? t.leechers : 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Indexer</dt>
+                              <dt className="type-caption text-white/60">Indexer</dt>
                               <dd className="break-all text-white/85">{t.indexer && t.indexer !== '-' ? t.indexer : 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Published</dt>
+                              <dt className="type-caption text-white/60">Published</dt>
                               <dd className="text-white/85">{formatDate(t.publishDate) ?? 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Info hash</dt>
+                              <dt className="type-caption text-white/60">Info hash</dt>
                               <dd className="break-all text-numeric text-white/85">{torrentInfoHash(t.infoHash) ?? torrentInfoHash(t.magnetUri) ?? 'Unknown'}</dd>
                             </div>
                             <div>
-                              <dt className="text-xs uppercase tracking-wide text-white/45">Magnet link</dt>
+                              <dt className="type-caption text-white/60">Magnet link</dt>
                               <dd className="text-white/85">{t.magnetUri || torrentInfoHash(t.infoHash) || torrentInfoHash(t.magnetUri) ? 'Available' : 'Unknown'}</dd>
                             </div>
                           </div>

@@ -6,12 +6,14 @@
 // downloads". Ready items play locally; server preparation and native
 // transfer states are merged into one concise queue.
 import { useEffect, useState } from 'react';
-import { Film, LoaderCircle, Pause, Play, RotateCcw, X } from 'lucide-react';
+import { Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
-import type { DownloadItemSnapshot, DownloadsInventory } from '../platform/contracts';
-import { FOCUS_RING_CLASS } from '../lib/design-tokens';
+import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from '../platform/contracts';
+import { SelectionSurface } from '../components/primitives';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { getNativeDownloads } from '../mobile/downloads-adapter';
 import { getDeviceId } from '../lib/device-id';
+import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import {
   cancelPendingDownload,
   pendingDownloads,
@@ -32,13 +34,13 @@ function formatSize(bytes?: number): string | null {
   return `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
-function formatRate(bytesPerSecond?: number): string {
+function formatRate(bytesPerSecond?: number): string | null {
   const size = formatSize(bytesPerSecond);
-  return size ? `${size}/s` : '—';
+  return size ? `${size}/s` : null;
 }
 
-function formatEta(seconds?: number): string {
-  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '—';
+function formatEta(seconds?: number): string | null {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return null;
   if (seconds < 60) return '<1m';
   const minutes = Math.ceil(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
@@ -54,15 +56,15 @@ function formatElapsed(startedAt: number | undefined, now: number): string {
   return `${Math.floor(seconds / 60)}m`;
 }
 
-function progressPercent(received = 0, total = 0): number {
-  if (total <= 0) return 0;
+function progressPercent(received = 0, total = 0): number | undefined {
+  if (total <= 0) return undefined;
   return Math.max(0, Math.min(100, Math.round((received / total) * 100)));
 }
 
 function DownloadPoster({ src }: { src?: string | null }) {
   const [failed, setFailed] = useState(false);
   return (
-    <div className="relative aspect-[2/3] w-[76px] shrink-0 overflow-hidden rounded-xl bg-white/[0.06] sm:w-[88px]">
+    <div className="relative aspect-[2/3] w-[72px] shrink-0 overflow-hidden rounded-lg bg-white/[0.06] sm:w-[88px]">
       {src && !failed ? (
         <img
           src={src}
@@ -83,11 +85,12 @@ function DownloadPoster({ src }: { src?: string | null }) {
   );
 }
 
+// Unknown totals stay indeterminate (spec D2): no invented percentage.
 function DownloadProgress({ value, label }: { value?: number; label: string }) {
   const determinate = typeof value === 'number';
   return (
     <div
-      className="h-1.5 overflow-hidden rounded-full bg-white/10"
+      className="h-1 overflow-hidden rounded-full bg-white/10"
       role="progressbar"
       aria-label={label}
       aria-valuemin={0}
@@ -102,19 +105,30 @@ function DownloadProgress({ value, label }: { value?: number; label: string }) {
   );
 }
 
+function subtitleSummary(langs?: string[]): string | null {
+  const lang = langs?.[0];
+  if (!lang) return null;
+  const name = SUBTITLE_LANGUAGES.find((language) => language.code === lang)?.name ?? lang.toUpperCase();
+  return `${name} subtitles`;
+}
+
 function transferStatus(item: DownloadItemSnapshot): string {
   switch (item.transferState) {
     case 'queued': return 'Queued';
     case 'downloading': return 'Downloading';
     case 'paused': return 'Paused';
     case 'verifying': return 'Checking file';
-    case 'ready': return 'Downloaded';
-    case 'failed': return item.repairReason || 'Download interrupted';
+    case 'ready': return 'Ready';
+    case 'failed': return item.repairReason || 'Needs repair';
     default: return item.state === 'needs-repair'
       ? item.repairReason || 'Needs repair'
-      : item.waitingForServer ? 'Downloading' : 'Downloaded';
+      : item.waitingForServer ? 'Waiting for server' : 'Ready';
   }
 }
+
+const ROW_CLASS = 'flex gap-4 rounded-lg bg-[var(--surface-raised)] p-3 sm:p-4';
+const CANCEL_CLASS = `inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white disabled:text-white/35 ${FOCUS_RING_CLASS}`;
+const ROW_ACTION_CLASS = `${ACTION_SECONDARY_CLASS} px-4`;
 
 export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   const { downloads } = usePlatform();
@@ -127,6 +141,10 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   const [acting, setActing] = useState<Set<string>>(() => new Set());
   const [repairErrors, setRepairErrors] = useState<Record<string, string>>({});
   const [now, setNow] = useState(() => Date.now());
+  const [storage, setStorage] = useState<DownloadsStorage | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<DownloadItemSnapshot | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   // D03 device-test hook: explicitly activated with ?downloads=native.
   const nativeHookActive = new URLSearchParams(window.location.search).get('downloads') === 'native'
     && getNativeDownloads() != null;
@@ -138,6 +156,9 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
       try {
         const snapshot = downloads ? await downloads.inventory() : EMPTY_INVENTORY;
         if (active) setInventory(snapshot);
+        // Local usage is supplementary: a failed read hides the line only.
+        const usage = await downloads?.storage?.().catch(() => null);
+        if (active) setStorage(usage ?? null);
       } catch (error) {
         console.error('[Downloads] Inventory read failed:', error);
         // A failed read must never read as zero downloads (spec C2).
@@ -202,8 +223,8 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
       setRepairErrors((errors) => ({
         ...errors,
         [downloadId]: action === 'pause'
-          ? 'Couldn’t pause this download.'
-          : action === 'cancel' ? 'Couldn’t cancel. Try again.' : 'Couldn’t restart. Try again.',
+          ? 'Couldn’t pause. Try again.'
+          : action === 'cancel' ? 'Couldn’t cancel. Try again.' : 'Couldn’t resume. Try again.',
       }));
     } finally {
       setActing((ids) => {
@@ -214,36 +235,48 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
     }
   };
 
+  const confirmRemoval = async (item: DownloadItemSnapshot): Promise<void> => {
+    if (!downloads?.remove || removing) return;
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      await downloads.remove(item.downloadId);
+      setPendingRemoval(null);
+      setReloadKey((key) => key + 1);
+    } catch {
+      setRemoveError('Couldn’t remove this download. Try again.');
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const online = compat.status === 'ready';
 
   return (
-    <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8">
+    <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       <h1 className="type-section-title text-white">Downloads</h1>
+      {storage && inventory?.items.length ? (
+        <p className="type-secondary text-numeric mt-1 text-white/60">
+          {formatSize(storage.usedBytes) ?? '0 MB'} used · {formatSize(storage.freeBytes) ?? '0 MB'} free
+        </p>
+      ) : null}
 
       {loading ? (
-        <div className="mt-6 space-y-3" role="status" aria-label="Loading downloads">
+        <div className="mt-6 max-w-4xl space-y-3" role="status" aria-label="Loading downloads">
           {[0, 1].map((row) => (
-            <div key={row} className="h-16 animate-pulse rounded-xl bg-white/[0.06]" />
+            <div key={row} className="h-[132px] animate-pulse rounded-lg bg-white/[0.06] sm:h-[164px]" />
           ))}
         </div>
       ) : inventory?.unreadable ? (
         // Storage failure: repair/retry, never an empty state (wireframes
         // "Downloads storage failure").
-        <div className="mt-6 rounded-xl border border-white/10 bg-[#151619] p-5">
-          <p className="text-sm text-white">Couldn't read your downloads</p>
+        <div className="mt-6">
+          <p className="type-body text-white">Couldn’t read your downloads</p>
           <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => setReloadKey((key) => key + 1)}
-              className={`min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}
-            >
+            <button type="button" onClick={() => setReloadKey((key) => key + 1)} className={ACTION_PRIMARY_CLASS}>
               Retry
             </button>
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className={`min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 ${FOCUS_RING_CLASS}`}
-            >
+            <button type="button" onClick={onOpenSettings} className={ACTION_SECONDARY_CLASS}>
               Storage settings
             </button>
           </div>
@@ -251,170 +284,68 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
       ) : (!inventory || inventory.items.length === 0) && pending.length === 0 ? (
         // Empty: concise, no travel/setup explanation paragraph. The online
         // action finds something; the offline action goes to settings.
-        <div className="mt-6 rounded-xl border border-white/10 bg-[#151619] p-5">
-          <p className="text-sm text-white">No downloads yet</p>
+        <div className="mt-6">
+          <p className="type-body text-white">No downloads yet</p>
           <div className="mt-4 flex flex-wrap gap-3">
             {online ? (
-              <button
-                type="button"
-                onClick={() => navigate('search')}
-                className={`min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}
-              >
+              <button type="button" onClick={() => navigate('search')} className={ACTION_PRIMARY_CLASS}>
                 Find something
               </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className={`min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 ${FOCUS_RING_CLASS}`}
-            >
-              Go to settings
-            </button>
+            ) : (
+              <button type="button" onClick={onOpenSettings} className={ACTION_SECONDARY_CLASS}>
+                Go to settings
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <ul className="mt-6 max-w-4xl space-y-3">
-          {pending.map((item) => (
-            <li
-              key={`pending-${item.jobId}`}
-              className="flex gap-4 rounded-xl bg-[#151619] p-3 sm:gap-5 sm:p-4"
-            >
-              <DownloadPoster src={item.posterUrl} />
-              <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-medium text-white">{item.title}</p>
-                    {item.subtitleLabel ? <p className="mt-0.5 truncate text-xs text-white/50">{item.subtitleLabel}</p> : null}
-                  </div>
-                  <div className="flex shrink-0 flex-col gap-1">
-                    {item.state === 'failed' ? (
-                      <button
-                        type="button"
-                        onClick={() => retryPendingDownload(item)}
-                        aria-label={`Retry ${item.title}`}
-                        className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border border-white/20 px-3 text-xs text-white ${FOCUS_RING_CLASS}`}
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> Retry
-                      </button>
-                    ) : null}
+          {pending.map((item) => {
+            const failed = item.state === 'failed';
+            const elapsed = formatElapsed(item.queuedAt, now);
+            return (
+              <li key={`pending-${item.jobId}`} className={ROW_CLASS}>
+                <DownloadPoster src={item.posterUrl} />
+                <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 pt-1">
+                      <p className="truncate text-base font-medium text-white">{item.title}</p>
+                      <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
+                        {[item.subtitleLabel, formatSize(item.sizeBytes), subtitleSummary(item.subtitles)].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => void cancelPendingDownload(item)}
                       aria-label={`Cancel download of ${item.title}`}
                       title="Cancel download"
-                      className={`inline-flex h-11 w-11 items-center justify-center rounded-full text-white/60 transition hover:bg-red-500/10 hover:text-red-300 ${FOCUS_RING_CLASS}`}
+                      className={CANCEL_CLASS}
                     >
-                      <X className="h-4 w-4" aria-hidden="true" />
+                      <X className="h-5 w-5" aria-hidden="true" />
                     </button>
                   </div>
-                </div>
-                <div className="mt-4">
-                  <div className={`flex items-center justify-between gap-3 text-xs ${item.state === 'failed' ? 'text-red-300' : 'text-white/65'}`}>
-                    <span className="inline-flex min-w-0 items-center gap-2">
-                      {item.state === 'preparing' ? <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
-                      <span>{item.state === 'failed'
-                        ? item.reason || 'Preparation failed'
-                        : `Preparing episode${formatElapsed(item.queuedAt, now) ? ` · ${formatElapsed(item.queuedAt, now)}` : ''}`}</span>
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2" aria-live="polite">
+                    <span className={`type-secondary inline-flex min-w-0 items-center gap-2 ${failed ? 'text-red-300' : 'text-white/70'}`}>
+                      {!failed ? <LoaderCircle className="h-4 w-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
+                      <span>{failed ? item.reason || 'Couldn’t prepare this source.' : `Preparing${elapsed ? ` · ${elapsed}` : ''}`}</span>
                     </span>
-                    {item.sizeBytes ? <span className="text-numeric shrink-0 text-white/45">{formatSize(item.sizeBytes)}</span> : null}
-                  </div>
-                </div>
-              </div>
-            </li>
-          ))}
-          {(inventory?.items ?? []).map((item) => {
-            const size = formatSize(item.sizeBytes);
-            const percent = progressPercent(item.receivedBytes, item.sizeBytes);
-            const showProgress = item.transferState === 'queued'
-              || item.transferState === 'downloading'
-              || item.transferState === 'paused'
-              || item.transferState === 'verifying';
-            const needsRepair = item.transferState === 'failed'
-              || (item.transferState == null && item.state === 'needs-repair');
-            const busy = acting.has(item.downloadId);
-            return (
-              <li
-                key={item.downloadId}
-                className="flex gap-4 rounded-xl bg-[#151619] p-3 sm:gap-5 sm:p-4"
-              >
-                <DownloadPoster src={item.posterUrl} />
-                <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-medium text-white">{item.title}</p>
-                      <p className="mt-0.5 truncate text-xs text-white/50">{[item.subtitle, size].filter(Boolean).join(' · ')}</p>
-                    </div>
-                    {item.transferState === 'ready' || (item.transferState == null && !needsRepair) ? (
-                      <button
-                        type="button"
-                        onClick={() => playLocal(item)}
-                        className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-white px-4 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}
-                      >
-                        <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Play
-                      </button>
-                    ) : item.transferState !== 'verifying' ? (
-                      <div className="flex shrink-0 flex-col gap-1">
-                        {item.transferState === 'downloading' ? (
+                    {failed ? (
+                      <div className="flex flex-wrap gap-2">
+                        {item.reasonCode === 'subtitles_unavailable' ? (
+                          // Explicit choice (spec D3): never drop the
+                          // requested subtitles silently.
                           <button
                             type="button"
-                            onClick={() => void runNativeAction(item.downloadId, 'pause')}
-                            disabled={busy}
-                            aria-label={`Pause ${item.title}`}
-                            className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-white/20 px-3 text-xs text-white disabled:text-white/45 ${FOCUS_RING_CLASS}`}
+                            onClick={() => void retryPendingDownload(item, { subtitles: [] })}
+                            aria-label={`Download ${item.title} without subtitles`}
+                            className={ROW_ACTION_CLASS}
                           >
-                            <Pause className="h-3.5 w-3.5 fill-current" aria-hidden="true" /> Pause
-                          </button>
-                        ) : item.transferState === 'paused' ? (
-                          <button
-                            type="button"
-                            onClick={() => void runNativeAction(item.downloadId, 'resume')}
-                            disabled={busy}
-                            aria-label={`Resume ${item.title}`}
-                            className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-white/20 px-3 text-xs text-white disabled:text-white/45 ${FOCUS_RING_CLASS}`}
-                          >
-                            <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" /> Resume
-                          </button>
-                        ) : needsRepair ? (
-                          <button
-                            type="button"
-                            onClick={() => void runNativeAction(item.downloadId, 'resume')}
-                            disabled={busy}
-                            aria-label={`Retry download of ${item.title}`}
-                            className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-white/20 px-3 text-xs text-white disabled:cursor-wait disabled:text-white/45 ${FOCUS_RING_CLASS}`}
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> {busy ? 'Retrying…' : 'Retry'}
+                            Without subtitles
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          onClick={() => void runNativeAction(item.downloadId, 'cancel')}
-                          disabled={busy}
-                          aria-label={`Cancel download of ${item.title}`}
-                          title="Cancel download"
-                          className={`inline-flex h-11 w-11 self-end items-center justify-center rounded-full text-white/60 transition hover:bg-red-500/10 hover:text-red-300 disabled:text-white/35 ${FOCUS_RING_CLASS}`}
-                        >
-                          <X className="h-4 w-4" aria-hidden="true" />
+                        <button type="button" onClick={() => void retryPendingDownload(item)} aria-label={`Retry ${item.title}`} className={ROW_ACTION_CLASS}>
+                          <RotateCcw className="h-4 w-4" aria-hidden="true" /> Retry
                         </button>
-                      </div>
-                    ) : null}
-                  </div>
-                  {repairErrors[item.downloadId] ? (
-                    <p className="mt-1 text-xs text-red-300" role="status">{repairErrors[item.downloadId]}</p>
-                  ) : null}
-                  <div className="mt-4" aria-live="polite">
-                    <div className={`mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs ${item.transferState === 'failed' ? 'text-red-300' : 'text-white/65'}`}>
-                      <span>{transferStatus(item)}</span>
-                      {showProgress ? (
-                        <span className="text-numeric shrink-0 text-white/50">
-                          {formatSize(item.receivedBytes) || '0 MB'} of {size || '—'} · {percent}%
-                        </span>
-                      ) : null}
-                    </div>
-                    {showProgress ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
-                    {item.transferState === 'downloading' ? (
-                      <div className="text-numeric mt-2 flex items-center gap-4 text-[11px] text-white/50">
-                        <span>Speed <span className="text-white/75">{formatRate(item.bytesPerSecond)}</span></span>
-                        <span>ETA <span className="text-white/75">{formatEta(item.etaSeconds)}</span></span>
                       </div>
                     ) : null}
                   </div>
@@ -422,8 +353,152 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
               </li>
             );
           })}
+          {(inventory?.items ?? []).map((item) => {
+            const size = formatSize(item.sizeBytes);
+            const received = formatSize(item.receivedBytes);
+            const percent = progressPercent(item.receivedBytes, item.sizeBytes);
+            const inTransfer = item.transferState === 'queued'
+              || item.transferState === 'downloading'
+              || item.transferState === 'paused'
+              || item.transferState === 'verifying'
+              || (item.transferState == null && item.waitingForServer === true);
+            const needsRepair = item.transferState === 'failed'
+              || (item.transferState == null && item.state === 'needs-repair');
+            const ready = !inTransfer && !needsRepair;
+            const busy = acting.has(item.downloadId);
+            const rate = item.transferState === 'downloading' ? formatRate(item.bytesPerSecond) : null;
+            const eta = item.transferState === 'downloading' ? formatEta(item.etaSeconds) : null;
+            const amount = size
+              ? `${received || '0 MB'} of ${size}${typeof percent === 'number' ? ` · ${percent}%` : ''}`
+              : received;
+            return (
+              <li key={item.downloadId} className={ROW_CLASS}>
+                <DownloadPoster src={item.posterUrl} />
+                <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 pt-1">
+                      <p className="truncate text-base font-medium text-white">{item.title}</p>
+                      <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
+                        {[item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    {!ready && item.transferState !== 'verifying' ? (
+                      <button
+                        type="button"
+                        onClick={() => void runNativeAction(item.downloadId, 'cancel')}
+                        disabled={busy}
+                        aria-label={`Cancel download of ${item.title}`}
+                        title="Cancel download"
+                        className={CANCEL_CLASS}
+                      >
+                        <X className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    ) : ready && downloads?.remove ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRemoveError(null);
+                          setPendingRemoval(item);
+                        }}
+                        aria-label={`Remove ${item.title}`}
+                        title="Remove download"
+                        className={CANCEL_CLASS}
+                      >
+                        <Trash2 className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {ready ? (
+                    <div>
+                      <button type="button" onClick={() => playLocal(item)} className={`${ACTION_PRIMARY_CLASS} px-4`}>
+                        <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Play
+                      </button>
+                    </div>
+                  ) : (
+                    <div aria-live="polite">
+                      <div className={`type-secondary mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${needsRepair ? 'text-red-300' : 'text-white/70'}`}>
+                        <span>{transferStatus(item)}</span>
+                        {inTransfer && amount ? <span className="text-numeric shrink-0 text-white/60">{amount}</span> : null}
+                      </div>
+                      {inTransfer ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
+                      {repairErrors[item.downloadId] ? (
+                        <p className="type-secondary mt-2 text-red-300" role="status">{repairErrors[item.downloadId]}</p>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                        {rate || eta ? (
+                          <div className="type-secondary text-numeric flex items-center gap-4 text-white/60">
+                            {rate ? <span>Speed <span className="text-white/85">{rate}</span></span> : null}
+                            {eta ? <span>ETA <span className="text-white/85">{eta}</span></span> : null}
+                          </div>
+                        ) : <span />}
+                        {item.transferState === 'downloading' ? (
+                          <button
+                            type="button"
+                            onClick={() => void runNativeAction(item.downloadId, 'pause')}
+                            disabled={busy}
+                            aria-label={`Pause ${item.title}`}
+                            className={ROW_ACTION_CLASS}
+                          >
+                            <Pause className="h-4 w-4 fill-current" aria-hidden="true" /> Pause
+                          </button>
+                        ) : item.transferState === 'paused' ? (
+                          <button
+                            type="button"
+                            onClick={() => void runNativeAction(item.downloadId, 'resume')}
+                            disabled={busy}
+                            aria-label={`Resume ${item.title}`}
+                            className={ROW_ACTION_CLASS}
+                          >
+                            <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Resume
+                          </button>
+                        ) : needsRepair ? (
+                          <button
+                            type="button"
+                            onClick={() => void runNativeAction(item.downloadId, 'resume')}
+                            disabled={busy}
+                            aria-label={`Retry download of ${item.title}`}
+                            className={`${ROW_ACTION_CLASS} disabled:cursor-wait`}
+                          >
+                            <RotateCcw className="h-4 w-4" aria-hidden="true" /> {busy ? 'Retrying…' : 'Retry'}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
+      {/* Deletion is deliberate (wireframes "Deletion"): state what is
+          removed and what is kept before the destructive action. */}
+      <SelectionSurface open={pendingRemoval != null} title="Remove download?" onClose={() => { if (!removing) setPendingRemoval(null); }}>
+        {pendingRemoval ? (
+          <div className="pb-1">
+            <p className="type-body text-white">{pendingRemoval.title}{pendingRemoval.subtitle ? ` · ${pendingRemoval.subtitle}` : ''}</p>
+            <p className="type-secondary mt-1 text-white/70">
+              {formatSize(pendingRemoval.sizeBytes) ? `Frees ${formatSize(pendingRemoval.sizeBytes)} on this device. ` : 'Deletes the file from this device. '}
+              Watch Later and Favourites stay as they are.
+            </p>
+            {removeError ? <p className="type-secondary mt-3 text-red-300" role="alert">{removeError}</p> : null}
+            <div className="mt-5 grid gap-3">
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => void confirmRemoval(pendingRemoval)}
+                className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-red-600 px-5 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-wait disabled:opacity-60 ${FOCUS_RING_CLASS}`}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" /> {removing ? 'Removing…' : 'Remove download'}
+              </button>
+              <button type="button" disabled={removing} onClick={() => setPendingRemoval(null)} className={ACTION_SECONDARY_CLASS}>
+                Keep
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </SelectionSurface>
       {nativeHookActive ? <NativeTestHook onDone={() => setReloadKey((key) => key + 1)} /> : null}
     </section>
   );
@@ -511,7 +586,7 @@ function NativeTestHook({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="mt-8 rounded-xl border border-[#ffc285]/30 bg-[#ffc285]/[0.04] p-4" data-testid="native-test-hook">
+    <div className="mt-8 rounded-lg border border-[#ffc285]/30 bg-[#ffc285]/[0.04] p-4" data-testid="native-test-hook">
       <p className="text-xs font-medium uppercase tracking-[0.16em] text-[#ffc285]">Device test hook (preview)</p>
       <p className="mt-1 text-xs text-white/55">Create a preparation job on the server first (idempotency key + pick id via the API), then paste its job id here.</p>
       <input
@@ -522,13 +597,13 @@ function NativeTestHook({ onDone }: { onDone: () => void }) {
         autoCapitalize="none"
         autoCorrect="off"
         spellCheck={false}
-        className="mt-3 min-h-12 w-full rounded-xl border border-white/15 bg-white/[0.06] px-3.5 text-base text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+        className="mt-3 min-h-12 w-full rounded-lg border border-white/15 bg-white/[0.06] px-3.5 text-base text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
       />
       <div className="mt-3 flex flex-wrap gap-3">
-        <button type="button" onClick={() => void enqueue()} className={`min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 ${FOCUS_RING_CLASS}`}>
+        <button type="button" onClick={() => void enqueue()} className={ACTION_PRIMARY_CLASS}>
           Enqueue download
         </button>
-        <button type="button" onClick={() => void playLocal()} className={`min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 ${FOCUS_RING_CLASS}`}>
+        <button type="button" onClick={() => void playLocal()} className={ACTION_SECONDARY_CLASS}>
           Play local
         </button>
       </div>

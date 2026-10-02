@@ -11,7 +11,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, ListFilter, RotateCw, Sparkles } from 'lucide-react';
 import { PageBackButton } from './PageBackButton';
-import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
+import { ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import { titleRouteParams } from '../../lib/canonical-route';
 import { LibraryToggle } from './LibraryToggle';
 import { SelectionSurface } from '../primitives';
@@ -151,7 +151,7 @@ function SectionHeader({ fallback, degraded, navigate }: { fallback: boolean; de
         {fallback ? 'Popular picks' : 'Recommended for your household'}
         </span>
       </h2>
-      {degraded ? <p className="mt-2 text-xs text-white/65" role="note">(degraded — the server is serving its last computed list)</p> : null}
+      {degraded ? <p className="type-secondary mt-1 text-white/60" role="note">May be out of date</p> : null}
       </div>
       <button
         type="button"
@@ -198,13 +198,13 @@ export function RecommendationRowView({ state, retry, navigate, loadingPlacehold
     // Bounded failure row: Home continues regardless; Retry refetches.
     return (
       <section aria-label="Recommendations unavailable" className="border-t border-white/[0.08] py-6">
-        <div className="rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3" role="alert">
-          <p className="text-sm text-red-100">Recommendations could not be loaded. Everything else keeps working.</p>
+        <div role="alert">
+          <p className="type-body text-white/85">Couldn’t load recommendations.</p>
           <button
             type="button"
             onClick={() => void retry()}
             aria-label="Retry recommendations"
-            className={`mt-3 inline-flex min-h-11 items-center gap-2 rounded-full border border-white/15 px-4 text-sm text-white/85 hover:border-white/35 ${FOCUS_RING_CLASS}`}
+            className={`mt-3 ${ACTION_SECONDARY_CLASS}`}
           >
             <RotateCw className="h-4 w-4" aria-hidden="true" />
             Retry
@@ -271,12 +271,11 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
       <h1 className="type-section-title mt-2 text-white">
         {state.data?.fallback ? 'Popular picks' : 'Recommended for your household'}
       </h1>
-      <div className="mt-4 flex items-center justify-between gap-4">
-        <p className="text-sm leading-6 text-white/60">A mixed set of movies, series, and anime chosen for this household.</p>
+      <div className="mt-4 flex items-center justify-end gap-4 md:hidden">
         <button
           type="button"
           onClick={() => setMobileFiltersOpen(true)}
-          className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-white/15 px-4 text-sm text-white/75 md:hidden ${FOCUS_RING_CLASS}`}
+          className={`inline-flex min-h-12 shrink-0 items-center gap-2 rounded-lg px-2 text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
           aria-haspopup="dialog"
         >
           <ListFilter className="h-4 w-4" aria-hidden="true" />
@@ -291,7 +290,7 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
             type="button"
             onClick={() => chooseFilter(option.value)}
             aria-pressed={filter === option.value}
-            className={`relative min-h-11 px-4 text-sm transition ${filter === option.value ? 'text-white' : 'text-white/55 hover:text-white'} ${FOCUS_RING_CLASS}`}
+            className={`relative min-h-12 px-4 text-sm transition ${filter === option.value ? 'text-white' : 'text-white/55 hover:text-white'} ${FOCUS_RING_CLASS}`}
           >
             {option.label} <span className="text-numeric ml-1 text-xs opacity-60">{counts[option.value]}</span>
             <span aria-hidden="true" className={`absolute inset-x-3 bottom-0 h-0.5 bg-white transition-opacity ${filter === option.value ? 'opacity-100' : 'opacity-0'}`} />
@@ -307,7 +306,7 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
               type="button"
               onClick={() => chooseFilter(option.value)}
               aria-pressed={filter === option.value}
-              className={`flex min-h-12 items-center justify-between rounded-xl px-4 text-sm transition ${filter === option.value ? 'bg-white text-black' : 'bg-white/[0.05] text-white/75'} ${FOCUS_RING_CLASS}`}
+              className={`flex min-h-12 items-center justify-between rounded-lg px-4 text-sm transition ${filter === option.value ? 'bg-white text-black' : 'bg-white/[0.05] text-white/75'} ${FOCUS_RING_CLASS}`}
             >
               <span>{option.label}</span>
               <span className="flex items-center gap-3">
@@ -326,14 +325,14 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
           ))}
         </div>
       ) : state.status === 'error' ? (
-        <div className="mt-6 rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3" role="alert">
+        <div className="mt-6" role="alert">
           {/* Bounded friendly copy: raw error strings never render to users. */}
-          <p className="text-sm text-red-100">Recommendations could not be loaded. Everything else keeps working.</p>
+          <p className="type-body text-white/85">Couldn’t load recommendations.</p>
           <button
             type="button"
             onClick={() => void retry()}
             aria-label="Retry recommendations"
-            className={`mt-3 min-h-11 rounded-full border border-white/15 px-5 text-sm text-white/85 hover:border-white/35 ${FOCUS_RING_CLASS}`}
+            className={`mt-3 ${ACTION_SECONDARY_CLASS}`}
           >
             Retry
           </button>
@@ -341,24 +340,24 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
       ) : state.data && state.data.items.length > 0 ? (
         <>
           {state.data.degraded ? (
-            <p className="mt-2 text-xs text-white/45" role="note">Degraded — the server is serving its last computed list.</p>
+            <p className="type-secondary mt-2 text-white/60" role="note">May be out of date</p>
           ) : null}
           {visibleItems.length > 0 ? <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {visibleItems.map((item, index) => (
               <RecommendationCard key={item.canonicalId} item={item} navigate={navigate} index={index} />
             ))}
           </div> : (
-            <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-8 text-center" role="status">
-              <p className="text-sm text-white/65">No {filter} recommendations are in this set yet.</p>
-              <button type="button" onClick={() => chooseFilter('all')} className={`mt-3 min-h-11 rounded-full px-4 text-sm text-white hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}>
-                Show all recommendations
+            <div className="mt-6" role="status">
+              <p className="type-body text-white/70">No {RECOMMENDATION_FILTERS.find((option) => option.value === filter)?.label.toLowerCase()} here.</p>
+              <button type="button" onClick={() => chooseFilter('all')} className={`mt-3 ${ACTION_SECONDARY_CLASS}`}>
+                Show all
               </button>
             </div>
           )}
         </>
       ) : (
-        <p className="mt-6 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/55" role="status">
-          No recommendations right now. Favourite a few titles and the server will suggest similar ones.
+        <p className="type-body mt-6 text-white/70" role="status">
+          No recommendations right now. Favourite titles to get suggestions.
         </p>
       )}
     </section>

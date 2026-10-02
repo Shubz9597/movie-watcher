@@ -6,9 +6,10 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, HeartPulse } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, HeartPulse, Minus, Plus, X } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
+import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 
 export type NativeTrackInfo = { id: number; label?: string; language?: string };
 
@@ -100,6 +101,9 @@ function formatDelay(seconds: number): string {
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, onClose } = props;
+  // Offline downloads play without a magnet: no server catalog, torrent
+  // telemetry or import — only the tracks inside the downloaded package.
+  const local = !magnet;
 
   const [hasVideo, setHasVideo] = useState(false);
   const [buffering, setBuffering] = useState<{ active: boolean; progress?: number }>({ active: true });
@@ -306,7 +310,7 @@ export default function NativePlayerControls(props: Props) {
   // ONLY while the stats sheet is open (bounded surface, no background load).
   // Download speed is derived from downloadedBytes deltas between polls.
   useEffect(() => {
-    if (activeSheet !== 'stats') return;
+    if (activeSheet !== 'stats' || local) return;
     let cancelled = false;
     let timer: number | null = null;
 
@@ -348,7 +352,7 @@ export default function NativePlayerControls(props: Props) {
 
   // --- Subtitle catalog (server /subtitles/list) ---
   useEffect(() => {
-    if (activeSheet !== 'subtitles' || catalogStatus !== 'loading') return;
+    if (activeSheet !== 'subtitles' || catalogStatus !== 'loading' || local) return;
     let cancelled = false;
     const params = new URLSearchParams({ cat, magnet, langs: language, title });
     if (year) params.set('year', String(year));
@@ -470,7 +474,7 @@ export default function NativePlayerControls(props: Props) {
       if (operation !== subtitleOperation.current) return;
       await applyOverlayFromUrl(url, (track.format || 'vtt') as SubtitleFormat);
     } catch {
-      if (operation === subtitleOperation.current) setSubtitleError('The subtitle could not be loaded. Try again or choose another file.');
+      if (operation === subtitleOperation.current) setSubtitleError('Couldn’t load this subtitle.');
     } finally {
       if (operation === subtitleOperation.current) setLoadingSubtitleUrl(null);
     }
@@ -501,7 +505,7 @@ export default function NativePlayerControls(props: Props) {
     if (!file) return;
     if (loadingSubtitleUrl || importing) return;
     if (file.size > 4 * 1024 * 1024 || file.size === 0) {
-      setSubtitleError('Choose a non-empty subtitle file up to 4 MiB.');
+      setSubtitleError('Choose a subtitle file up to 4 MB.');
       return;
     }
     setImporting(true);
@@ -512,7 +516,7 @@ export default function NativePlayerControls(props: Props) {
       const body = new FormData();
       body.append('file', file);
       const res = await fetch(`${origin}/subtitles/import`, { method: 'POST', body, signal: AbortSignal.timeout(30000) });
-      if (!res.ok) throw new Error('The subtitle could not be imported. Check the file and try again.');
+      if (!res.ok) throw new Error('Couldn’t import this subtitle.');
       const data = (await res.json()) as { url?: string; fileName?: string; format?: string; error?: string };
       if (!res.ok || !data.url) {
         throw new Error(data.error ?? 'The subtitle could not be imported.');
@@ -596,19 +600,19 @@ export default function NativePlayerControls(props: Props) {
       {/* Top bar — safe-area aware so the close button never sits under the
           Dynamic Island / notch in either orientation. */}
       <div
-        className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
+        className={`absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 bg-gradient-to-b from-black/70 to-transparent pb-8 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         <button
           type="button"
           aria-label="Close player"
           onClick={onClose}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white [filter:drop-shadow(0_1px_3px_rgb(0_0_0/80%))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
         >
           <ChevronLeft className="h-6 w-6" aria-hidden="true" />
         </button>
-        {hasVideo ? <div className="pointer-events-none max-w-[55%] truncate rounded-full bg-black/50 px-4 py-2 text-sm text-white/85 backdrop-blur">{title}</div> : null}
-        <div className="w-11" aria-hidden="true" />
+        {hasVideo ? <p className="pointer-events-none min-w-0 flex-1 truncate text-center text-base font-medium text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">{title}</p> : null}
+        <div className="w-12 shrink-0" aria-hidden="true" />
       </div>
 
       {/* Skip-intro chip (where timestamps exist) */}
@@ -620,7 +624,7 @@ export default function NativePlayerControls(props: Props) {
               event.stopPropagation();
               player.seekTo(activeSkipSegment.end + 0.25);
             }}
-            className="min-h-11 rounded-full bg-white px-5 py-2 text-sm font-semibold text-black shadow-lg transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="min-h-12 rounded-lg bg-white px-5 text-sm font-medium text-black shadow-lg transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
             Skip intro
           </button>
@@ -635,10 +639,10 @@ export default function NativePlayerControls(props: Props) {
         {/* Seek bar — dragging scrubs locally; ONE seek commits on release
             so a drag cannot flood the player (or, via heartbeats, the server). */}
         <div className="flex items-center gap-3">
-          <span className="font-label text-numeric text-xs text-white/80">{formatTime(time.currentTime)}</span>
+          <span className="text-numeric text-sm text-white/85">{formatTime(time.currentTime)}</span>
           <div className="relative h-6 flex-1">
             <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-white/20">
-              <div className="h-full rounded-full bg-[#ff7a17]" style={{ width: `${progress}%` }} />
+              <div className="h-full rounded-full bg-white" style={{ width: `${progress}%` }} />
             </div>
             <input
               type="range"
@@ -657,7 +661,7 @@ export default function NativePlayerControls(props: Props) {
               className="absolute inset-0 w-full cursor-pointer opacity-0"
             />
           </div>
-          <span className="font-label text-numeric text-xs text-white/80">-{formatTime(Math.max(0, time.duration - (scrubTo ?? time.currentTime)))}</span>
+          <span className="text-numeric text-sm text-white/85">-{formatTime(Math.max(0, time.duration - (scrubTo ?? time.currentTime)))}</span>
         </div>
 
         {/* Buttons — play/pause only; ±10s is double-tap on the video. */}
@@ -666,9 +670,11 @@ export default function NativePlayerControls(props: Props) {
             {playing ? <Pause className="h-7 w-7" aria-hidden="true" /> : <Play className="h-7 w-7" aria-hidden="true" />}
           </IconButton>
           <div className="flex items-center gap-1">
-            <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
-              <HeartPulse className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
+            {!local ? (
+              <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
+                <HeartPulse className="h-6 w-6" aria-hidden="true" />
+              </IconButton>
+            ) : null}
             <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
               <Captions className="h-6 w-6" aria-hidden="true" />
             </IconButton>
@@ -680,7 +686,7 @@ export default function NativePlayerControls(props: Props) {
             </IconButton>
             {/* Scale sits LAST — the convention in mainstream players. */}
             <IconButton
-              label={scaleMode === 'fit' ? 'Switch to Fill (crop to display)' : 'Switch to Fit (show whole picture)'}
+              label={scaleMode === 'fit' ? 'Fill screen' : 'Fit to screen'}
               onClick={() => {
                 const next = scaleMode === 'fit' ? 'fill' : 'fit';
                 setScaleMode(next);
@@ -697,9 +703,9 @@ export default function NativePlayerControls(props: Props) {
           the video visible on the left and respects safe areas. */}
       {activeSheet === 'subtitles' ? (
         <Sheet title="Subtitles" onClose={() => setActiveSheet('none')}>
-          {subtitleError ? <p role="alert" className="mb-3 text-xs leading-5 text-red-200">{subtitleError}</p> : null}
+          {subtitleError ? <p role="alert" className="type-secondary mb-3 text-red-300">{subtitleError}</p> : null}
           {/* Compact track chips */}
-          <fieldset disabled={!!loadingSubtitleUrl || importing} className="flex flex-wrap gap-1.5 disabled:opacity-60">
+          <fieldset disabled={!!loadingSubtitleUrl || importing} className="flex flex-wrap gap-2 disabled:opacity-60">
             {/* Off only makes sense when something is actually active. */}
             {activeSubtitleUrl !== null || selectedEmbeddedSub !== null ? (
               <ChipButton active={false} onClick={disableSubtitles}>Off</ChipButton>
@@ -710,18 +716,21 @@ export default function NativePlayerControls(props: Props) {
               </ChipButton>
             ))}
           </fieldset>
-          <div className="mt-3.5 border-t border-white/[0.08] pt-3">
-            <p className="font-label text-[10px] uppercase tracking-wide text-white/45">Online subtitles</p>
-            <label className="mt-2 flex items-center justify-between gap-2 text-xs text-white/75">
+          {local ? (
+            embeddedSubs.length === 0 ? <p className="type-secondary text-white/60">No subtitles in this download.</p> : null
+          ) : <>
+          <div className="mt-4 border-t border-white/[0.08] pt-4">
+            <h3 className="text-sm font-semibold text-white">Online subtitles</h3>
+            <label className="type-secondary mt-3 flex items-center justify-between gap-2 text-white/75">
               Language
-              <select aria-label="Subtitle language" value={language} onChange={(event) => { setLanguage(event.target.value); setCatalog([]); setCatalogStatus('loading'); }} className="min-h-9 rounded-lg border border-white/15 bg-black px-2 text-sm text-white">
-                {Object.entries({ en: 'English', hi: 'Hindi', ja: 'Japanese', es: 'Spanish', fr: 'French', de: 'German', ar: 'Arabic', pt: 'Portuguese', ta: 'Tamil', te: 'Telugu' }).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+              <select aria-label="Subtitle language" value={language} onChange={(event) => { setLanguage(event.target.value); setCatalog([]); setCatalogStatus('loading'); }} className="min-h-12 rounded-lg border border-white/15 bg-black px-3 text-sm text-white">
+                {SUBTITLE_LANGUAGES.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
               </select>
             </label>
             {!providerConfigured ? (
-              <form onSubmit={(event) => void connectOpenSubtitles(event)} className="mt-2.5 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-                <label htmlFor="mobileOpenSubtitlesKey" className="text-xs text-white/75">OpenSubtitles API key</label>
-                <div className="mt-1.5 flex gap-1.5">
+              <form onSubmit={(event) => void connectOpenSubtitles(event)} className="mt-3">
+                <label htmlFor="mobileOpenSubtitlesKey" className="type-secondary text-white/75">OpenSubtitles API key</label>
+                <div className="mt-2 flex gap-2">
                   <input
                     id="mobileOpenSubtitlesKey"
                     type="password"
@@ -730,37 +739,38 @@ export default function NativePlayerControls(props: Props) {
                     disabled={savingApiKey}
                     placeholder="Paste API key"
                     onChange={(event) => setApiKeyInput(event.target.value)}
-                    className="min-h-9 min-w-0 flex-1 rounded-lg border border-white/15 bg-black px-2.5 text-sm text-white"
+                    className="min-h-12 min-w-0 flex-1 rounded-lg border border-white/15 bg-black px-3 text-base text-white"
                   />
-                  <button type="submit" disabled={savingApiKey} className="min-h-9 rounded-lg bg-white px-3 text-xs text-black transition hover:bg-white/85">
+                  <button type="submit" disabled={savingApiKey} className="min-h-12 rounded-lg bg-white px-4 text-sm font-medium text-black transition hover:bg-white/85 disabled:opacity-50">
                     {savingApiKey ? 'Connecting…' : 'Connect'}
                   </button>
                 </div>
                 <button
                   type="button"
                   onClick={() => window.open('https://www.opensubtitles.com/en/api-keys', '_blank', 'noopener')}
-                  className="mt-1.5 text-[11px] text-white/55 underline"
+                  className="type-secondary mt-1 min-h-12 text-white/70 underline"
                 >
                   Get an API key
                 </button>
               </form>
             ) : null}
-            {catalogStatus === 'loading' ? <p className="mt-2 flex items-center gap-2 text-xs text-white/60" role="status"><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Finding subtitles…</p> : null}
+            {catalogStatus === 'loading' ? <p className="type-secondary mt-3 flex items-center gap-2 text-white/70" role="status"><LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" /> Finding subtitles…</p> : null}
             {catalogStatus !== 'loading' && catalog.length === 0 ? (
-              <p className="mt-2 text-xs leading-5 text-white/55">{catalogMessage || 'No subtitle files were found for this language.'}</p>
+              <p className="type-secondary mt-3 text-white/60">{catalogMessage || 'No subtitles found.'}</p>
             ) : null}
-            {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="mt-1.5 min-h-8 text-xs text-white/70 underline transition hover:text-white">Search again</button> : null}
-            <div className="mt-2 space-y-1">
+            {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="type-secondary min-h-12 text-white/75 underline transition hover:text-white">Search again</button> : null}
+            <div className="mt-1 space-y-2">
               {catalog.map((track) => (
                 <button
                   key={track.url}
                   type="button"
                   onClick={() => void chooseCatalogSubtitle(track)}
                   disabled={!!loadingSubtitleUrl || importing}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${activeSubtitleUrl === track.url ? 'border-[#ff7a17]/60 bg-[#ff7a17]/10 text-white' : 'border-white/10 bg-white/[0.03] text-white/75 hover:border-white/25 hover:text-white'}`}
+                  aria-pressed={activeSubtitleUrl === track.url}
+                  className={`flex min-h-12 w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ${activeSubtitleUrl === track.url ? 'border-white bg-white text-black' : 'border-white/10 bg-white/[0.03] text-white/80 hover:border-white/25 hover:text-white'}`}
                 >
                   <span className="min-w-0 flex-1 truncate">{loadingSubtitleUrl === track.url ? 'Loading…' : track.fileName || track.label}</span>
-                  <span className="shrink-0 text-[10px] text-white/45">
+                  <span className="shrink-0 text-xs opacity-60">
                     {track.source === 'torrent' ? 'Torrent' : 'OpenSubtitles'}
                     {track.movieHashMatched ? ' · hash' : ''}
                   </span>
@@ -768,21 +778,22 @@ export default function NativePlayerControls(props: Props) {
               ))}
             </div>
           </div>
-          <div className="mt-3.5 border-t border-white/[0.08] pt-3">
-            <label className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border border-white/20 px-3 text-xs text-white/85 transition hover:border-white/40 hover:text-white">
-              <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+          <div className="mt-4 border-t border-white/[0.08] pt-4">
+            <label className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-lg border border-white/20 px-4 text-sm font-medium text-white transition hover:border-white/40 focus-within:ring-2 focus-within:ring-white">
+              <Upload className="h-4 w-4" aria-hidden="true" />
               {importing ? 'Importing…' : 'Import subtitle file'}
               <input type="file" accept=".srt,.vtt,.ass,.ssa" className="sr-only" onChange={(event) => void importLocalSubtitle(event)} disabled={importing || !!loadingSubtitleUrl} />
             </label>
-            <p className="mt-1.5 text-[11px] text-white/40">SRT, VTT, ASS or SSA up to 4 MiB.</p>
+            <p className="type-secondary mt-2 text-white/60">SRT, VTT, ASS or SSA · up to 4 MB</p>
           </div>
+          </>}
         </Sheet>
       ) : null}
 
       {activeSheet === 'audio' ? (
         <Sheet title="Audio" onClose={() => setActiveSheet('none')}>
           {embeddedAudio.length === 0 ? (
-            <p className="text-sm text-white/60">No embedded audio tracks were reported for this file.</p>
+            <p className="type-secondary text-white/60">No audio tracks found.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {embeddedAudio.map((track) => (
@@ -807,8 +818,7 @@ export default function NativePlayerControls(props: Props) {
             value={audioDelay}
             onAdjust={(value) => adjustDelay('audio', value)}
           />
-          <p className="mt-3 text-xs text-white/45">Negative shows audio/subtitles earlier; positive later. Applies instantly, no restart.</p>
-        </Sheet>
+                  </Sheet>
       ) : null}
 
       {activeSheet === 'stats' ? (
@@ -847,50 +857,43 @@ function TorrentHealthSheet({ health, speed }: { health: TorrentHealthStats | nu
   const completedBytes = Math.max(0, Number(health?.completedBytes) || 0);
   const bufferPct = targetBytes > 0 ? Math.min(100, Math.round((contiguousAhead / targetBytes) * 100)) : 0;
   const downloadedPct = fileLength > 0 ? Math.min(100, Math.round((completedBytes / fileLength) * 100)) : 0;
-  const tone = pollingError ? 'text-[#ffc285]' : activePeers > 0 ? 'text-emerald-400' : 'text-white/55';
-  const stateLabel = pollingError ? 'Updating' : activePeers > 0 ? 'Live' : 'Connecting';
-  const advice = pollingError
-    ? 'Waiting for the next torrent update…'
-    : activePeers > 0
-      ? speed > 0 ? 'Downloading while you watch.' : 'Connected with playback data buffered.'
-      : 'Connecting to the torrent network…';
+  const stateLabel = pollingError ? 'Waiting for update' : activePeers > 0 ? 'Connected' : 'Connecting';
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm text-white/70">{advice}</p>
-        <span className={`font-label shrink-0 rounded-full border border-white/15 px-2.5 py-1 text-xs ${tone}`}>{stateLabel}</span>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <Metric label="Connected peers" value={activePeers ? String(activePeers) : '—'} detail={totalPeers ? `${totalPeers} known, ${pendingPeers} pending` : 'Searching'} />
-        <Metric label="Connected seeders" value={seeders ? String(seeders) : '—'} detail="Sending complete pieces" />
-        <Metric label="Download speed" value={formatSpeed(speed)} detail="Current rate" />
-        <Metric label="Buffer ahead" value={`${bufferPct}%`} detail="Building buffer" />
+      <p className="type-secondary text-white/70" role="status">{stateLabel}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Metric label="Peers" value={activePeers ? String(activePeers) : '—'} detail={totalPeers ? `${totalPeers} known · ${pendingPeers} pending` : undefined} />
+        <Metric label="Seeders" value={seeders ? String(seeders) : '—'} />
+        <Metric label="Speed" value={formatSpeed(speed)} />
+        <Metric label="Buffer ahead" value={`${bufferPct}%`} />
       </div>
       <div className="mt-5">
-        <div className="flex items-center justify-between text-xs text-white/55">
-          <span>File available · live</span>
-          <output className="font-label text-numeric text-white/80">{downloadedPct}%</output>
+        <div className="type-secondary flex items-center justify-between text-white/70">
+          <span>Downloaded</span>
+          <output className="text-numeric text-white">{downloadedPct}%</output>
         </div>
-        <div className="mt-2 h-1.5 w-full rounded-full bg-white/15">
-          <div className="h-full rounded-full bg-[#ff7a17] transition-[width] duration-500" style={{ width: `${downloadedPct}%` }} />
+        <div className="mt-2 h-1 w-full rounded-full bg-white/15">
+          <div className="h-full rounded-full bg-white transition-[width] duration-500" style={{ width: `${downloadedPct}%` }} />
         </div>
       </div>
-      <p className="mt-4 text-xs text-white/40">Sampled from the TorWatch server every 4 seconds while this panel is open.</p>
     </div>
   );
 }
 
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+function Metric({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
-      <p className="font-label text-[10px] uppercase tracking-wide text-white/45">{label}</p>
-      <p className="font-label text-numeric mt-1 text-lg text-white">{value}</p>
-      <p className="mt-0.5 truncate text-xs text-white/45">{detail}</p>
+      <p className="type-secondary text-white/60">{label}</p>
+      <p className="font-mono text-numeric mt-1 text-lg text-white">{value}</p>
+      {detail ? <p className="mt-0.5 truncate text-xs text-white/60">{detail}</p> : null}
     </div>
   );
 }
 
+// Bare toolbar icons over the bottom scrim (design-system: icon-only tools,
+// 48px targets). Selection uses a filled surface plus aria-pressed, never
+// color alone.
 function IconButton({ label, onClick, children, active = false, accent = false }: {
   label: string;
   onClick: () => void;
@@ -902,8 +905,10 @@ function IconButton({ label, onClick, children, active = false, accent = false }
     <button
       type="button"
       aria-label={label}
+      title={label}
       onClick={onClick}
-      className={`inline-flex h-12 w-12 items-center justify-center rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${accent ? 'border-white/70 bg-white text-black hover:bg-white/85' : active ? 'border-[#ff7a17]/60 bg-[#ff7a17]/15 text-[#ffc285]' : 'border-white/20 bg-black/50 text-white hover:border-white/45'}`}
+      {...(accent ? {} : { 'aria-pressed': active })}
+      className={`inline-flex h-12 w-12 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${accent ? 'text-white [&_svg]:fill-current' : active ? 'bg-white text-black' : 'text-white hover:bg-white/10'} [filter:drop-shadow(0_1px_3px_rgb(0_0_0/60%))]`}
     >
       {children}
     </button>
@@ -915,7 +920,8 @@ function ChipButton({ active, onClick, children }: { active: boolean; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-9 max-w-full truncate rounded-full border px-3 text-xs transition ${active ? 'border-[#ff7a17]/60 bg-[#ff7a17]/15 text-[#ffc285]' : 'border-white/15 bg-white/[0.03] text-white/75 hover:border-white/35 hover:text-white'}`}
+      aria-pressed={active}
+      className={`min-h-12 max-w-full truncate rounded-lg border px-4 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${active ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/80 hover:border-white/35 hover:text-white'}`}
     >
       {children}
     </button>
@@ -927,21 +933,21 @@ function ChipButton({ active, onClick, children }: { active: boolean; onClick: (
 function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div
-      className="absolute inset-y-0 right-0 z-30 flex w-[42vw] min-w-[300px] max-w-[480px] flex-col rounded-l-2xl border-l border-white/10 bg-[#0a0a0a]/95 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-xl"
+      className="absolute inset-y-0 right-0 z-30 flex w-[42vw] min-w-[300px] max-w-[480px] flex-col border-l border-white/10 bg-[#0a0a0a]/95 pr-[env(safe-area-inset-right)] pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-xl"
       onPointerUp={(event) => event.stopPropagation()}
     >
-      <div className="flex items-center justify-between px-5">
-        <h2 className="font-label text-sm uppercase tracking-wide text-white/70">{title}</h2>
+      <div className="flex items-center justify-between pl-5 pr-2">
+        <h2 className="text-base font-semibold text-white">{title}</h2>
         <button
           type="button"
           onClick={onClose}
           aria-label={`Close ${title}`}
-          className="min-h-10 rounded-full px-3 text-sm text-white/70 transition hover:text-white"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/75 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
         >
-          Done
+          <X className="h-5 w-5" aria-hidden="true" />
         </button>
       </div>
-      <div className="app-scrollbar mt-3 flex-1 overflow-y-auto px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">{children}</div>
+      <div className="app-scrollbar mt-2 flex-1 overflow-y-auto px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">{children}</div>
     </div>
   );
 }
@@ -975,14 +981,15 @@ function BufferingLoader({ title, logoUrl, visible, progress }: {
 }
 
 function DelayRow({ label, value, onAdjust }: { label: string; value: number; onAdjust: (value: number) => void }) {
+  const stepClass = 'inline-flex h-12 w-12 items-center justify-center rounded-lg border border-white/20 text-white transition hover:border-white/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white';
   return (
-    <div className="flex items-center justify-between gap-4 py-2">
-      <span className="w-24 shrink-0 text-sm text-white/80">{label}</span>
-      <div className="flex items-center gap-3">
-        <button type="button" aria-label={`${label} earlier`} onClick={() => onAdjust(value - 0.1)} className="h-10 w-10 rounded-full border border-white/20 text-white/85 transition hover:border-white/45">−</button>
-        <output className="font-label text-numeric w-16 text-center text-sm text-white">{formatDelay(value)}</output>
-        <button type="button" aria-label={`${label} later`} onClick={() => onAdjust(value + 0.1)} className="h-10 w-10 rounded-full border border-white/20 text-white/85 transition hover:border-white/45">+</button>
-        <button type="button" aria-label={`Reset ${label.toLowerCase()} timing`} onClick={() => onAdjust(0)} className="min-h-11 px-2 text-sm text-white underline">Reset</button>
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
+      <span className="text-sm text-white/85">{label}</span>
+      <div className="flex items-center gap-2">
+        <button type="button" aria-label={`${label} earlier`} onClick={() => onAdjust(value - 0.1)} className={stepClass}><Minus className="h-4 w-4" aria-hidden="true" /></button>
+        <output className="text-numeric w-16 text-center text-sm text-white">{formatDelay(value)}</output>
+        <button type="button" aria-label={`${label} later`} onClick={() => onAdjust(value + 0.1)} className={stepClass}><Plus className="h-4 w-4" aria-hidden="true" /></button>
+        <button type="button" aria-label={`Reset ${label.toLowerCase()} timing`} onClick={() => onAdjust(0)} className="min-h-12 px-2 text-sm text-white/80 underline hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">Reset</button>
       </div>
     </div>
   );

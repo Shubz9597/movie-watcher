@@ -160,7 +160,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
       }}
       className="text-left"
     >
-      <label className="block text-xs font-medium uppercase tracking-wide text-white/45" htmlFor={inputId}>
+      <label className="type-secondary block font-medium text-white/70" htmlFor={inputId}>
         Server address
       </label>
       <input
@@ -196,7 +196,7 @@ function LaunchOriginField({ compat, onConnect }: { compat: ServerCompatibility;
       <button
         type="submit"
         disabled={pending || !origin.trim()}
-        className={`mt-5 min-h-12 w-full rounded-full bg-white text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black ${FOCUS_RING_CLASS}`}
+        className={`mt-5 min-h-12 w-full rounded-lg bg-white text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black ${FOCUS_RING_CLASS}`}
       >
         {pending ? (
           <span className="inline-flex items-center gap-2">

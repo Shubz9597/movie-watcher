@@ -5,7 +5,7 @@
 // D05 production gate: the Downloads destination is exposed only when the
 // native bridge exists. Source actions enqueue through download-queue.ts.
 import { registerPlugin } from '@capacitor/core';
-import type { DownloadsInventory, DownloadsPort } from '../platform/contracts.ts';
+import type { DownloadsInventory, DownloadsPort, DownloadsStorage } from '../platform/contracts.ts';
 import type { TorWatchDownloadsPluginInterface } from '../platform/native-downloads.ts';
 
 export const DOWNLOADS_UI_ENABLED = true;
@@ -85,6 +85,18 @@ export class NativeDownloadsAdapter implements DownloadsPort {
       console.error('[Downloads/Native] inventory read failed:', error);
       return { available: DOWNLOADS_UI_ENABLED, unreadable: true, items: [] };
     }
+  }
+
+  async remove(downloadId: string): Promise<void> {
+    const native = getPlugin();
+    if (!native) throw new Error('Downloads are unavailable on this device.');
+    await native.remove({ downloadId });
+  }
+
+  async storage(): Promise<DownloadsStorage> {
+    const native = getPlugin();
+    if (!native) throw new Error('Downloads are unavailable on this device.');
+    return native.storage();
   }
 }
 

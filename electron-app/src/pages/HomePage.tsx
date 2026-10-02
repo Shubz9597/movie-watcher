@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import CarouselRow from '../components/CarouselRow';
-import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Film, Pause, Play, X } from 'lucide-react';
 import { LibraryToggle } from '../components/shared/LibraryToggle';
 import type { MovieCard } from '../lib/types';
 import { getMovies, getTvShows, getTrendingAnime } from '../lib/services/catalog-gateway';
@@ -12,6 +12,7 @@ import { loadTitlePage } from '../lib/route-loaders';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { ContinueCarousel } from '../components/shared/ContinueCarousel';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 
 type ContinueItem = {
   seriesId: string;
@@ -177,7 +178,7 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
       });
     } catch (error) {
       console.error('[ContinueRail] Could not remove item:', error);
-      setDismissError('Could not remove that title. Check the backend connection and try again.');
+      setDismissError('Couldn’t remove that title. Try again.');
     } finally {
       dismissingRef.current = false;
       setDismissingKey(null);
@@ -213,7 +214,6 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
     return (
       <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
         <div className="mb-4">
-          <p className="type-secondary mb-2 font-medium text-white/65">Your library</p>
           <h2 className="type-section-title text-white">Continue watching</h2>
         </div>
         <div className="hide-scrollbar flex gap-4 overflow-x-auto pb-2">
@@ -236,7 +236,6 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
   return (
     <section className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
       <div className="mb-4">
-        <p className="type-secondary mb-2 font-medium text-white/65">Your library</p>
         <h2 className="type-section-title text-white">Continue watching</h2>
       </div>
       {dismissError ? (
@@ -281,19 +280,19 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
                     className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
                   />
                 ) : (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-                    <span className="text-4xl opacity-30">🎬</span>
+                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025] text-white/30">
+                    <Film className="h-8 w-8" aria-hidden="true" />
                   </div>
                 )}
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-90" />
 
                 <div className="absolute inset-x-0 bottom-0 h-1 bg-white/10">
-                  <div className="h-full bg-[#ff7a17] transition-all" style={{ width: `${pct}%` }} />
+                  <div className="h-full bg-white transition-all" style={{ width: `${pct}%` }} />
                 </div>
 
                 <div className="absolute left-2 top-2">
-                  <span className="font-label text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90 backdrop-blur-sm">
+                  <span className="type-caption text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90 backdrop-blur-sm">
                     {kind !== 'movie'
                       ? `S${String(it.season).padStart(2, '0')}E${String(it.episode).padStart(2, '0')}`
                       : `${pct}%`}
@@ -318,12 +317,12 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
 
               <button
                 type="button"
-                className="absolute right-2 top-2 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/70 text-white/70 backdrop-blur-sm transition hover:border-red-500 hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-wait disabled:opacity-50"
+                className="absolute right-0 top-0 z-20 flex h-12 w-12 items-center justify-center text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-wait disabled:opacity-50"
                 onClick={() => void dismiss(it)}
                 disabled={Boolean(dismissingKey)}
                 aria-label={`Remove ${displayTitle} from Continue watching`}
               >
-                <X className="h-4 w-4" aria-hidden="true" />
+                <X className="h-5 w-5 [filter:drop-shadow(0_1px_2px_rgb(0_0_0/90%))]" aria-hidden="true" />
               </button>
             </div>
           );
@@ -384,7 +383,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading movies:', err);
         setMovies([]);
-        setMoviesError('Movies could not be loaded. Check your connection or TMDb setting.');
+        setMoviesError('Couldn’t load movies.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setMoviesLoading(false);
@@ -414,7 +413,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading TV:', err);
         setSeries([]);
-        setSeriesError('Series could not be loaded. Check your connection or TMDb setting.');
+        setSeriesError('Couldn’t load series.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setSeriesLoading(false);
@@ -444,7 +443,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading anime:', err);
         setAnime([]);
-        setAnimeError('Anime could not be loaded. Check the AniList connection, then try again.');
+        setAnimeError('Couldn’t load anime.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setAnimeLoading(false);
@@ -553,7 +552,14 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
   const openAnime = useCallback((item: MovieCard) => openItem('anime', item), [openItem]);
   const prefetch = useCallback(() => void loadTitlePage(), []);
 
-  const openSetup = useCallback(() => void window.electronAPI?.openSetup(), []);
+  // Desktop opens the setup window; mobile/browser shells listen for the
+  // shared settings event (the Electron API is absent there).
+  const openSetup = useCallback(() => {
+    if (window.electronAPI) void window.electronAPI.openSetup();
+    else window.dispatchEvent(new CustomEvent('torwatch:open-settings'));
+  }, []);
+  const catalogUnavailable = !moviesLoading && !seriesLoading && !animeLoading
+    && Boolean(moviesError) && Boolean(seriesError) && (Boolean(animeError) || anime.length === 0);
   const retryCatalog = useCallback(() => {
     setCatalogReloadToken((token) => token + 1);
   }, []);
@@ -570,6 +576,9 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
   return (
     <div>
       {pullIndicator}
+      {/* No featured title (catalog failure): omit the hero rather than
+          show an empty placeholder. */}
+      {featuredLoading || featuredItem ? (
       <section
         className="relative isolate min-h-[520px] overflow-hidden border-b border-white/[0.08] md:min-h-[610px]"
         onMouseEnter={() => setFeaturedPointerPaused(true)}
@@ -599,11 +608,11 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
         <div className="mx-auto flex min-h-[520px] max-w-[1600px] items-end px-5 pb-12 pt-20 md:min-h-[610px] md:px-8 md:pb-16 xl:px-12">
           <div className="max-w-2xl">
-            <p className="type-secondary mb-5 font-medium text-white/70">
-              {featuredLoading
-                ? 'Loading highlights'
-                : `Trending now · ${featuredItem?.kind === 'tv' ? 'Series' : featuredItem?.kind === 'anime' ? 'Anime' : 'Film'}`}
-            </p>
+            {featuredItem && !featuredLoading ? (
+              <p className="type-secondary mb-5 font-medium text-white/70">
+                {`Trending · ${featuredItem.kind === 'tv' ? 'Series' : featuredItem.kind === 'anime' ? 'Anime' : 'Movie'}`}
+              </p>
+            ) : null}
             {featuredLoading ? (
               <div aria-label="Loading featured title">
                 <div className="h-16 w-3/4 animate-pulse rounded bg-white/10 md:h-20" />
@@ -621,7 +630,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                   className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 >
                   <h1 className="type-feature-title text-white transition hover:text-white/85">
-                    {featuredItem?.title || 'Find your next great watch.'}
+                    {featuredItem?.title || 'TorWatch'}
                   </h1>
                 </button>
                 <div className="type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
@@ -645,7 +654,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                 <button
                   type="button"
                   onClick={() => openItem(featuredItem.kind, featuredItem)}
-                  className="inline-flex min-h-12 items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-black transition hover:bg-[#e5e5e5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                  className={ACTION_PRIMARY_CLASS}
                 >
                   <Play className="h-4 w-4 fill-current" aria-hidden="true" />
                   Watch
@@ -669,13 +678,13 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         {featuredItems.length > 1 ? (
           <>
             <div className="absolute right-5 top-5 flex items-center gap-2 md:right-8 md:top-8 xl:right-12">
-              <span className="font-label text-numeric mr-1 text-white/70">
+              <span className="type-secondary text-numeric mr-1 text-white/70">
                 {String(featuredIndex + 1).padStart(2, '0')} / {String(featuredItems.length).padStart(2, '0')}
               </span>
               <button
                 type="button"
                 onClick={() => setFeaturedUserPaused((paused) => !paused)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-[#202020] text-white/75 transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label={featuredUserPaused ? 'Resume featured title rotation' : 'Pause featured title rotation'}
                 aria-pressed={featuredUserPaused}
               >
@@ -684,7 +693,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               <button
                 type="button"
                 onClick={() => void moveFeatured(-1)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-[#202020] text-white/75 transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label="Previous featured title"
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -692,7 +701,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
               <button
                 type="button"
                 onClick={() => void moveFeatured(1)}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-[#202020] text-white/75 transition hover:border-white/45 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label="Next featured title"
               >
                 <ChevronRight className="h-4 w-4" />
@@ -702,6 +711,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           </>
         ) : null}
       </section>
+      ) : null}
 
       <div className="mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
         <ContinueRail navigate={navigate} variant={continueVariant} onResumeRequest={onResumeRequest} reloadKey={continueReloadKey} />
@@ -710,10 +720,23 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
             rotating catalog shelves. Items remain mixed across title types. */}
         <RecommendationRow navigate={navigate} deps={recommendationDeps} />
 
-        <div>
+        {/* Spec C5: when every catalog shelf fails, show ONE recovery block
+            instead of repeating the same error per rail. */}
+        {catalogUnavailable ? (
+          <section className="py-10" role="alert">
+            <h2 className="type-panel-title text-white">Catalog unavailable</h2>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" onClick={retryCatalog} className={ACTION_PRIMARY_CLASS}>
+                Retry
+              </button>
+              <button type="button" onClick={openSetup} className={ACTION_SECONDARY_CLASS}>
+                Go to settings
+              </button>
+            </div>
+          </section>
+        ) : <div>
           <CarouselRow
           title="Movies – Trending"
-          subtitle="The films getting the most attention right now."
           items={movies}
           loading={moviesLoading}
           error={moviesError}
@@ -728,7 +751,6 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
           <CarouselRow
           title="Series – Trending"
-          subtitle="Current favorites, from premieres to returning seasons."
           items={series}
           loading={seriesLoading}
           error={seriesError}
@@ -743,19 +765,18 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
           <CarouselRow
           title="Anime – Trending this season"
-          subtitle="Current releases getting the most audience attention."
           items={anime}
           loading={animeLoading && !anime.length}
           error={animeError}
           onRetry={retryCatalog}
-          emptyMessage="Anime providers are temporarily unavailable. Reopen the app or try again shortly."
+          emptyMessage="Anime is unavailable right now."
           onOpen={openAnime}
           onPrefetch={prefetch}
           seeAllHref={`/see-all?title=${encodeURIComponent('Anime – Trending')}&api=${encodeURIComponent('anilist:trending:anime')}&kind=anime`}
           navigate={navigate}
           libraryKind="anime"
         />
-        </div>
+        </div>}
       </div>
     </div>
   );

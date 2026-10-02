@@ -93,7 +93,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
           back button is removed (M1.4 UI pass). */}
       <nav
         aria-label="Main destinations"
-        className="fixed inset-x-0 bottom-0 z-40 bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--hairline)] bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
       >
         <div className="flex items-stretch justify-around">
           {DESTINATIONS.map((destination) => {
@@ -105,8 +105,8 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
                 type="button"
                 onClick={() => navigate(destination.path)}
                 aria-current={current ? 'page' : undefined}
-                className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] transition ${FOCUS_RING_CLASS} ${
-                  current ? 'text-white' : 'text-white/55 hover:text-white/85'
+                className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-xs transition ${FOCUS_RING_CLASS} ${
+                  current ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
                 }`}
               >
                 <Icon className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
@@ -118,8 +118,8 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
             type="button"
             onClick={() => navigate('search')}
             aria-current={routePath === 'search' ? 'page' : undefined}
-            className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] transition ${FOCUS_RING_CLASS} ${
-              routePath === 'search' ? 'text-white' : 'text-white/55 hover:text-white/85'
+            className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-xs transition ${FOCUS_RING_CLASS} ${
+              routePath === 'search' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
             }`}
           >
             <Search className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
@@ -130,8 +130,8 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
               type="button"
               onClick={() => navigate('downloads')}
               aria-current={routePath === 'downloads' ? 'page' : undefined}
-              className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] transition ${FOCUS_RING_CLASS} ${
-                routePath === 'downloads' ? 'text-white' : 'text-white/55 hover:text-white/85'
+              className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-xs transition ${FOCUS_RING_CLASS} ${
+                routePath === 'downloads' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
               }`}
             >
               <Download className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />

@@ -4,7 +4,7 @@
 // state, and a shortcut into Server Settings.
 import * as React from 'react';
 import { useConnectionStatus } from '../../platform/PlatformProvider';
-import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
+import { ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../../lib/design-tokens';
 
 type ConnectionStatusChip = 'checking' | 'ready' | 'unreachable' | 'incompatible';
 
@@ -44,8 +44,8 @@ export function ConnectionChip({ onOpenSettings }: { onOpenSettings: () => void 
         type="button"
         onClick={() => setPanelOpen((open) => !open)}
         aria-expanded={panelOpen}
-        aria-label={`Connection: ${STATUS_LABEL[status]} ${host}. Tap for details`}
-        className={`inline-flex h-9 w-8 items-center justify-center rounded-full transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
+        aria-label={`Connection: ${STATUS_LABEL[status]}, ${host}`}
+        className={`-mx-2 inline-flex h-12 w-12 items-center justify-center rounded-lg transition hover:bg-white/[0.08] ${FOCUS_RING_CLASS}`}
       >
         {/* Dot-only (M1.4 UI pass): green = connected, red = not connected.
             Server details are in the tap-through panel. */}
@@ -67,23 +67,23 @@ export function ConnectionChip({ onOpenSettings }: { onOpenSettings: () => void 
           <div
             role="dialog"
             aria-label="Connection details"
-            className="absolute left-0 top-[calc(100%+8px)] z-50 w-72 rounded-xl border border-white/10 bg-[#151619] p-4 shadow-xl"
+            className="absolute left-0 top-[calc(100%+4px)] z-50 w-72 rounded-lg border border-white/10 bg-[var(--surface-raised)] p-4 shadow-xl"
           >
             <div className="flex items-center gap-2">
               <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${DOT_COLOR[status]}`} />
               <p className="text-sm font-medium text-white">{STATUS_LABEL[status]}</p>
             </div>
-            <p className="mt-2 break-all text-xs leading-5 text-white/60">
-              {compat.origin ? compat.origin : 'No server address configured yet.'}
+            <p className="type-secondary mt-2 break-all text-white/70">
+              {compat.origin ? compat.origin : 'No server set'}
             </p>
-            {status === 'incompatible' ? <p className="mt-2 text-xs text-[#ffc285]">Server update needed.</p> : null}
+            {status === 'incompatible' ? <p className="type-secondary mt-2 text-[#ffc285]">Server update needed</p> : null}
             <button
               type="button"
               onClick={() => {
                 setPanelOpen(false);
                 onOpenSettings();
               }}
-              className={`mt-3 flex min-h-11 w-full items-center justify-center rounded-full border border-white/20 text-sm text-white/85 transition hover:border-white/40 ${FOCUS_RING_CLASS}`}
+              className={`mt-3 w-full ${ACTION_SECONDARY_CLASS}`}
             >
               Server settings
             </button>

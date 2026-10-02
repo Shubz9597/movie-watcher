@@ -48,6 +48,9 @@
   --app-safe-bottom: env(safe-area-inset-bottom, 0px);
   --app-safe-left: env(safe-area-inset-left, 0px);
   --app-safe-right: env(safe-area-inset-right, 0px);
+  /* design-system.md surface roles */
+  --surface-raised: #191919;
+  --hairline: #212327;
   --font-ui: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-technical: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --text-caption: 0.75rem;
@@ -71,7 +74,7 @@
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

@@ -6,6 +6,8 @@ import { usePlatform } from '../platform/PlatformProvider';
 import { ChevronLeft } from 'lucide-react';
 import { resolveTorrentFile } from '../lib/services/resolve-service';
 import NativePlayerControls from '../mobile/NativePlayerControls';
+import { advancePackParams } from '../lib/pack-advance';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
 
 // Legacy provider metadata loads lazily: bff mode never imports them (T042.4).
 async function legacyMetadataProviders() {
@@ -39,8 +41,13 @@ export default function PlayerPage({ navigate, params }: Props) {
     nextSeason,
     nextEpisode,
     nextEpisodeRoute,
+    packFallbackRoute,
   } = params;
   const platform = usePlatform();
+  // Latest route params for auto-advance without re-creating callbacks (the
+  // params object is rebuilt on every render).
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
 
   const didStartPlaybackRef = useRef(false);
   const returningRef = useRef(false);
@@ -60,10 +67,20 @@ export default function PlayerPage({ navigate, params }: Props) {
     // M1.4.3: native players may report unrecoverable errors; surface the
     // actionable message on the transition state instead of a silent return.
     if (event?.reason === 'error') {
-      setPlaybackError(event.message || 'Playback was interrupted by an error. Choose another source and retry.');
+      setPlaybackError(event.message || 'Playback stopped unexpectedly.');
       return;
     }
     returningRef.current = true;
+
+    // Batch torrent: continue with the next episode from the same pack
+    // instead of returning to source selection (lib/pack-advance).
+    if (event?.reason === 'ended') {
+      const advanced = advancePackParams(paramsRef.current);
+      if (advanced) {
+        window.location.replace(`#player?${new URLSearchParams(advanced).toString()}`);
+        return;
+      }
+    }
 
     if (event?.reason === 'ended' && nextEpisodeRoute?.startsWith('#title?')) {
       window.location.replace(nextEpisodeRoute);
@@ -104,7 +121,7 @@ export default function PlayerPage({ navigate, params }: Props) {
   useEffect(() => {
     if (!downloadId && !magnet) {
       console.error('[PlayerPage] No magnet provided');
-      setPlaybackError('The selected source does not include a playable torrent. Return to the title and choose another source.');
+      setPlaybackError('This source can’t be played.');
       return;
     }
 
@@ -120,7 +137,7 @@ export default function PlayerPage({ navigate, params }: Props) {
       try {
         if (downloadId) {
           if (!platform.player?.startLocal) {
-            throw new Error('Offline playback is unavailable on this device.');
+            throw new Error('Downloads can’t be played on this device.');
           }
           const localTitle = paramTitle || 'Downloaded video';
           setPlaybackMeta({
@@ -209,15 +226,25 @@ export default function PlayerPage({ navigate, params }: Props) {
           fileIndex,
         });
         if (!platform.player) {
-          throw new Error('Playback is unavailable on this device. Reconnect to the TorWatch server and try again.');
+          throw new Error('Playback isn’t available on this device.');
         }
         let resolvedFileIndex = fileIndex != null ? Number(fileIndex) : undefined;
         if (resolveEpisodeFile === '1' && resolvedFileIndex == null) {
-          const resolved = await resolveTorrentFile({
-            magnetUri: magnet, cat, season: Number(season), episode: Number(episode),
-            absolute: absoluteEpisode ? Number(absoluteEpisode) : Number(episode),
-          });
-          resolvedFileIndex = resolved.fileIndex;
+          try {
+            const resolved = await resolveTorrentFile({
+              magnetUri: magnet, cat, season: Number(season), episode: Number(episode),
+              absolute: absoluteEpisode ? Number(absoluteEpisode) : Number(episode),
+            });
+            resolvedFileIndex = resolved.fileIndex;
+          } catch (error) {
+            // Auto-advance past the end of a batch: let the viewer pick a
+            // source for this episode instead of showing an error.
+            if (!cancelled && packFallbackRoute?.startsWith('#title?')) {
+              window.location.replace(packFallbackRoute);
+              return;
+            }
+            throw error;
+          }
           if (cancelled) return;
         }
         setPlaybackMeta({
@@ -256,7 +283,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         didStartPlaybackRef.current = true;
       } catch (err) {
         console.error('[PlayerPage] Playback initialization failed:', err);
-        if (!cancelled) setPlaybackError(err instanceof Error ? err.message : 'Playback could not be started.');
+        if (!cancelled) setPlaybackError(err instanceof Error ? err.message : 'Couldn’t start playback.');
       }
     }
 
@@ -271,7 +298,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         console.error('[PlayerPage] Error stopping MPV on unmount:', err);
       });
     };
-  }, [downloadId, localPosterUrl, magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, resolveEpisodeFile, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, returnToSource, retryToken]);
+  }, [downloadId, localPosterUrl, magnet, paramTitle, cat, tmdbId, paramImdbId, anilistId, malId, fileIndex, resolveEpisodeFile, seriesId, season, episode, absoluteEpisode, sourceName, nextSeason, nextEpisode, nextEpisodeRoute, packFallbackRoute, returnToSource, retryToken]);
 
   // M1.4.7: on native mobile the VLC surface sits BEHIND the WebView; this
   // page must stay transparent so the video shows through (LoadingScreen is
@@ -295,12 +322,28 @@ export default function PlayerPage({ navigate, params }: Props) {
     }
   };
 
+  const errorPanel = playbackError ? (
+    <div className="type-body measure-compact mx-auto mt-6 text-white/85" role="alert">
+      <p>{playbackError}</p>
+      <div className="mt-6 flex flex-wrap justify-center gap-3">
+        {magnet || downloadId ? (
+          <button type="button" onClick={() => setRetryToken((token) => token + 1)} className={ACTION_PRIMARY_CLASS}>
+            Try again
+          </button>
+        ) : null}
+        <button type="button" onClick={() => returnToSource()} className={ACTION_SECONDARY_CLASS}>
+          {downloadId ? 'Back to Downloads' : 'Choose another source'}
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className={`player-transition fixed inset-x-0 bottom-0 ${opaque ? 'bg-black' : 'bg-transparent'} ${platform.desktop ? 'top-10 z-40' : 'top-0 z-[60]'}`}>
       {!nativeSurface ? (
         <div>
           {!platform.desktop ? (
-            <button type="button" aria-label="Close player" onClick={() => returnToSource()} className="absolute left-5 top-[calc(var(--app-safe-top)+0.5rem)] z-10 inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/20 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+            <button type="button" aria-label="Close player" onClick={() => returnToSource()} className={`absolute left-3 top-[calc(var(--app-safe-top)+0.5rem)] z-10 inline-flex h-12 w-12 items-center justify-center rounded-lg text-white ${FOCUS_RING_CLASS}`}>
               <ChevronLeft className="h-6 w-6" aria-hidden="true" />
             </button>
           ) : null}
@@ -308,75 +351,30 @@ export default function PlayerPage({ navigate, params }: Props) {
               on desktop, native HTML5 video in the mobile browser. */}
           <div className="absolute inset-0 flex items-center justify-center px-6">
             <div className="w-full max-w-lg text-center">
-              <p className="font-label text-white/65">{playbackError ? 'Playback interrupted' : 'Preparing playback'}</p>
-              <h1 className="type-page-title mt-5 line-clamp-2 break-words text-white">
-                {paramTitle || 'Starting player'}
+              <h1 className="type-section-title line-clamp-2 break-words text-white">
+                {paramTitle || 'Player'}
               </h1>
-              {playbackError ? (
-                <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
-                  <p>{playbackError}</p>
-                  <div className="mt-5 flex flex-wrap justify-center gap-3">
-                    {magnet || downloadId ? (
-                      <button
-                        type="button"
-                        onClick={() => setRetryToken((token) => token + 1)}
-                        className="min-h-11 rounded-full bg-white px-5 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                      >
-                        Try again
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => returnToSource()}
-                      className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                    >
-                      {downloadId ? 'Back to Downloads' : 'Choose another source'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
+              {errorPanel ?? (
                 <>
-                  <div className="mx-auto mt-7 h-px w-36 overflow-hidden bg-white/10">
-                    <div className="animate-shimmer h-full w-1/2 bg-[#ff7a17]" />
+                  <div className="mx-auto mt-6 h-px w-36 overflow-hidden bg-white/10">
+                    <div className="animate-shimmer h-full w-1/2 bg-white" />
                   </div>
-                  <p className="type-body mt-4 text-white/70" role="status">Connecting to the video stream…</p>
+                  <p className="type-secondary mt-4 text-white/70" role="status">Starting…</p>
                 </>
               )}
             </div>
           </div>
         </div>
       ) : playbackError ? (
-        <div>
-          <div className="absolute inset-0 flex items-center justify-center px-6">
-            <div className="w-full max-w-lg text-center">
-              <p className="font-label text-white/65">Playback interrupted</p>
-              <div className="type-body measure-compact mt-7 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
-                <p>{playbackError}</p>
-                <div className="mt-5 flex flex-wrap justify-center gap-3">
-                  {magnet || downloadId ? (
-                    <button
-                      type="button"
-                      onClick={() => setRetryToken((token) => token + 1)}
-                      className="min-h-11 rounded-full bg-white px-5 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                    >
-                      Try again
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => returnToSource()}
-                    className="min-h-11 rounded-full border border-white/20 px-5 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                  >
-                    {downloadId ? 'Back to Downloads' : 'Choose another source'}
-                  </button>
-                </div>
-              </div>
-            </div>
+        <div className="absolute inset-0 flex items-center justify-center px-6">
+          <div className="w-full max-w-lg text-center">
+            <h1 className="type-section-title line-clamp-2 break-words text-white">{playbackMeta.title}</h1>
+            {errorPanel}
           </div>
         </div>
       ) : (
         <NativePlayerControls
-          key={`${downloadId || magnet}:${fileIndex ?? ''}:${retryToken}`}
+          key={`${downloadId || magnet}:${season}:${episode}:${fileIndex ?? ''}:${retryToken}`}
           player={platform.player as unknown as Parameters<typeof NativePlayerControls>[0]['player']}
           title={playbackMeta.title}
           year={playbackMeta.year}

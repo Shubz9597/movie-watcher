@@ -96,16 +96,16 @@ function StartupFailure(): React.ReactElement {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white" role="alert">
       <div className="w-full max-w-md">
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">Startup failed</p>
+        <p className="type-secondary font-medium text-white/60">Startup failed</p>
         <h1 className="type-section-title mt-3">TorWatch could not start</h1>
         <p className="type-body mt-3 text-white/70">
           The app could not finish loading. Reload it first, or reset only the saved server address and connect again.
         </p>
         <div className="mt-7 grid gap-3">
-          <button type="button" onClick={() => window.location.reload()} className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black">
+          <button type="button" onClick={() => window.location.reload()} className="min-h-12 rounded-lg bg-white px-5 py-2.5 text-sm font-medium text-black">
             Reload app
           </button>
-          <button type="button" onClick={resetServer} className="min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white">
+          <button type="button" onClick={resetServer} className="min-h-12 rounded-lg border border-white/20 px-5 py-2.5 text-sm font-medium text-white">
             Reset server address
           </button>
         </div>

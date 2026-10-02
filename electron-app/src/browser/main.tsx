@@ -7,6 +7,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactElement, ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
+import { X } from 'lucide-react';
 import '../globals.css';
 import HomePage from '../pages/HomePage';
 import { LibraryCategoryPage, LibraryPage } from '../pages/LibraryPage';
@@ -300,6 +301,9 @@ function BrowserApp({
   }, [route.path, storage]);
 
   const onOpenSettings = useCallback(() => window.dispatchEvent(new CustomEvent('torwatch:open-settings')), []);
+  // WF02/spec C2: unreachable and incompatible servers both collapse Home
+  // into the recovery block; Downloads stays an ordinary local page.
+  const serverDown = compat.status === 'unreachable' || compat.status === 'incompatible';
   const onRetry = useCallback(() => {
     if (retrying) return;
     setRetrying(true);
@@ -375,31 +379,31 @@ function BrowserApp({
           recovery block (Server unavailable / Retry / Go to settings) instead
           of repeating errors per rail. Other routes keep the slim banner
           (WF07: stay on the current route; local media stays playable). */}
-      {route.path === 'home' && compat.status === 'unreachable' ? (
-        <HomeRecovery retrying={retrying} onRetry={onRetry} onOpenSettings={onOpenSettings} />
+      {route.path === 'home' && serverDown ? (
+        <HomeRecovery incompatible={compat.status === 'incompatible'} retrying={retrying} onRetry={onRetry} onOpenSettings={onOpenSettings} />
       ) : null}
-      {route.path !== 'home' && (compat.status === 'unreachable' || compat.status === 'incompatible') ? (
+      {route.path !== 'home' && route.path !== 'downloads' && serverDown ? (
         <div className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-[#ffc285]/10 px-4 py-2 text-sm text-[#ffc285]" role="status">
-          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[#ffc285]" aria-hidden="true" />
-          Reconnecting to the TorWatch server-
+          <span className="inline-block h-2 w-2 rounded-full bg-[#ffc285] motion-safe:animate-pulse" aria-hidden="true" />
+          {compat.status === 'incompatible' ? 'Server needs an update' : 'Reconnecting…'}
         </div>
       ) : null}
       {resumeNotice ? (
-        <div className="sticky top-0 z-30 mx-5 mt-3 flex items-start justify-between gap-3 rounded-xl border border-white/15 bg-[#151515] px-4 py-3 md:mx-8" role="status">
+        <div className="sticky top-0 z-30 mx-5 mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/15 bg-[var(--surface-raised)] py-1 pl-4 pr-1 md:mx-8" role="status">
           <p className="text-sm text-white/85">{resumeNotice}</p>
           <button
             type="button"
             onClick={() => setResumeNotice(null)}
-            className="min-h-8 shrink-0 rounded-full px-2 text-sm text-white/60 hover:text-white"
+            className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/70 hover:text-white"
             aria-label="Dismiss notice"
           >
-            ----------
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
       ) : null}
 
       <Suspense fallback={<RouteFallback />}>
-        {route.path === 'home' && compat.status !== 'unreachable' && (
+        {route.path === 'home' && !serverDown && (
           <>
             <HomePage
               navigate={navigate}
@@ -474,7 +478,7 @@ function BrowserApp({
             <button
               type="button"
               onClick={() => navigate('home')}
-              className="mt-7 min-h-11 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              className="mt-7 min-h-12 rounded-lg bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
             >
               Back to TorWatch
             </button>
@@ -504,23 +508,20 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: bool
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white">
         <div className="w-full max-w-md">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">App view failed</p>
-          <h1 className="type-section-title mt-3 text-white">TorWatch couldn-t open this screen</h1>
-          <p className="type-body mt-3 text-white/70">
-            The server connected, but the app hit an unexpected display error. Your library data is safe.
-          </p>
+          <p className="type-secondary font-medium text-white/60">App view failed</p>
+          <h1 className="type-section-title mt-3 text-white">TorWatch couldn’t open this screen</h1>
           <div className="mt-7 grid gap-3">
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              className="min-h-12 rounded-lg bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               Reload app
             </button>
             <button
               type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('torwatch:open-settings'))}
-              className="min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              className="min-h-12 rounded-lg border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               Server settings
             </button>
@@ -545,7 +546,8 @@ function RouteFallback() {
 // WF02: Home under a server failure is exactly this block — no explanatory
 // paragraphs, no rail repetition. The header, destinations and Settings stay
 // reachable (spec C4/C6).
-function HomeRecovery({ retrying, onRetry, onOpenSettings }: {
+function HomeRecovery({ incompatible, retrying, onRetry, onOpenSettings }: {
+  incompatible: boolean;
   retrying: boolean;
   onRetry: () => void;
   onOpenSettings: () => void;
@@ -555,20 +557,20 @@ function HomeRecovery({ retrying, onRetry, onOpenSettings }: {
       className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-6 text-center"
       aria-live="polite"
     >
-      <p className="text-sm text-white/60">Server unavailable</p>
-      <div className="mt-7 flex flex-col gap-3">
+      <h1 className="type-section-title text-white">{incompatible ? 'Server needs an update' : 'Server unavailable'}</h1>
+      <div className="mt-6 flex w-full max-w-xs flex-col gap-3">
         <button
           type="button"
           onClick={onRetry}
           disabled={retrying}
-          className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="min-h-12 rounded-lg bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
         >
           {retrying ? 'Checking…' : 'Retry'}
         </button>
         <button
           type="button"
           onClick={onOpenSettings}
-          className="min-h-12 rounded-full border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="min-h-12 rounded-lg border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
         >
           Go to settings
         </button>
@@ -584,13 +586,13 @@ function ConfigErrorScreen() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-center text-white" role="alert">
       <div className="w-full max-w-md">
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/45">Storage problem</p>
-        <h1 className="type-section-title mt-3">TorWatch couldn-t read its saved settings</h1>
+        <p className="type-secondary font-medium text-white/60">Storage problem</p>
+        <h1 className="type-section-title mt-3">TorWatch couldn’t read its saved settings</h1>
         <div className="mt-7">
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="min-h-12 rounded-full bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+            className="min-h-12 rounded-lg bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
           >
             Retry
           </button>
@@ -671,7 +673,7 @@ if (!(window as unknown as { __TORWATCH_MOBILE_ENTRY?: boolean }).__TORWATCH_MOB
           <div className="max-w-md">
             <h1 className="type-section-title">TorWatch could not start</h1>
             <p className="type-body mt-3 text-white/70">Reload the app. If this continues, verify the saved server address.</p>
-            <button type="button" onClick={() => window.location.reload()} className="mt-7 min-h-12 rounded-full bg-white px-6 text-sm text-black">Reload app</button>
+            <button type="button" onClick={() => window.location.reload()} className="mt-7 min-h-12 rounded-lg bg-white px-6 text-sm text-black">Reload app</button>
           </div>
         </main>,
       );

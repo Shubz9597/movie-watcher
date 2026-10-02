@@ -7,6 +7,7 @@ import { selectAniListCatalog } from '../lib/anime-catalog';
 import { loadTitlePage } from '../lib/route-loaders';
 import { CatalogFilters } from '../components/shared/CatalogFilters';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 
 export default function SeeAllPage({
   navigate,
@@ -61,7 +62,7 @@ export default function SeeAllPage({
     async function load() {
       if (!api) {
         setLoading(false);
-        setError('This collection link is incomplete. Return home and choose a library again.');
+        setError('This collection link is incomplete.');
         return;
       }
       setLoading(true);
@@ -118,9 +119,7 @@ export default function SeeAllPage({
       } catch (err) {
         if (cancelled) return;
         console.error('[SeeAllPage] Load failed:', err);
-        setError(api.startsWith('tmdb:')
-          ? 'This collection could not be loaded. Check your connection or TMDb setting.'
-          : 'This collection could not be loaded. Check your connection and try again.');
+        setError('Couldn’t load this collection.');
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -157,14 +156,10 @@ export default function SeeAllPage({
   });
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-10 px-5 py-10 md:px-8 md:py-14 xl:px-12">
+    <div className="mx-auto max-w-[1600px] space-y-8 px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
-      <div className="flex flex-col gap-6 border-b border-white/[0.08] pb-10 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="type-secondary mb-3 font-medium text-white/65">Browse library</p>
-          <h1 className="type-page-title text-white">{title}</h1>
-          <p className="type-body mt-3 text-white/70">Explore the full collection.</p>
-        </div>
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <h1 className="type-section-title text-white">{title}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <CatalogFilters kind={kind} api={api} navigate={navigate} />
           <PageBackButton />
@@ -186,23 +181,23 @@ export default function SeeAllPage({
         ))}
       </ul>
 
-      {loading && <div className="type-body py-8 text-center text-white/65">Loading more titles…</div>}
+      {loading && <div className="type-body py-8 text-center text-white/65" role="status">Loading…</div>}
       {!loading && error ? (
-        <div className="type-body rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-5 py-6 text-center text-amber-100/90" role="alert">
+        <div className="type-body py-6 text-center text-white/85" role="alert">
           <p>{error}</p>
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <div className="mt-4 flex flex-wrap justify-center gap-3">
             <button
               type="button"
               onClick={() => setReloadToken((token) => token + 1)}
-              className="min-h-11 rounded-full border border-amber-100/25 px-4 py-2 text-sm text-amber-50 transition hover:border-amber-100/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-100/70"
+              className={ACTION_PRIMARY_CLASS}
             >
               Try again
             </button>
-            {api.startsWith('tmdb:') ? (
+            {api.startsWith('tmdb:') && window.electronAPI ? (
               <button
                 type="button"
                 onClick={() => void window.electronAPI?.openSetup()}
-                className="min-h-11 rounded-full bg-white px-4 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className={ACTION_SECONDARY_CLASS}
               >
                 Open settings
               </button>

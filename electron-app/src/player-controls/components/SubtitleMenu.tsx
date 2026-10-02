@@ -51,10 +51,7 @@ export function SubtitleMenu({ activeSubtitleUrl, loadingSubtitleUrl, state, onC
   return (
     <div className="track-menu subtitle-menu" id="subtitleMenu" role="dialog" aria-label="Subtitle selection">
       <div className="subtitle-browser-head">
-        <div>
-          <div className="subtitle-browser-title">Subtitles</div>
-          <div className="subtitle-browser-note">Choose a subtitle for this video</div>
-        </div>
+        <div className="subtitle-browser-title">Subtitles</div>
         <button
           className={`subtitle-off${activeSubtitleUrl ? '' : ' active'}`}
           id="subtitleOff"
@@ -81,7 +78,7 @@ export function SubtitleMenu({ activeSubtitleUrl, loadingSubtitleUrl, state, onC
           </div>
           {!providerConfigured && state.status !== 'loading' && tracks.length > 0 ? (
             <div className="subtitle-provider-callout">
-              <span>Showing subtitles included with the torrent.</span>
+              <span>From the torrent only</span>
               {configureButton}
             </div>
           ) : null}
@@ -108,10 +105,10 @@ export function SubtitleMenu({ activeSubtitleUrl, loadingSubtitleUrl, state, onC
             </form>
           ) : null}
           <div className="subtitle-options" id="subtitleOptions" aria-busy={state.status === 'loading'}>
-            {state.status === 'loading' ? <div className="track-empty">Finding English subtitles...</div> : null}
+            {state.status === 'loading' ? <div className="track-empty">Finding subtitles…</div> : null}
             {state.status !== 'loading' && tracks.length === 0 ? (
               <div className="track-empty">
-                <span>{state.message || 'No English subtitle files were found.'}</span>
+                <span>{state.message || 'No English subtitles found.'}</span>
                 {!providerConfigured && !isConfiguring ? configureButton : null}
               </div>
             ) : null}

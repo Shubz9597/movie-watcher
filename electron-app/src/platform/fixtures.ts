@@ -4,7 +4,7 @@
 // carries `fixtures=1`; no production entry imports it, and no code falls
 // back to it silently. The fetch shim scopes itself to backend-URL paths so
 // non-backend traffic (CDN artwork etc.) is untouched.
-import type { ConnectionConfig, DeviceStorage, DownloadsInventory, DownloadsPort, ServerCompatibility } from './contracts.ts'
+import type { ConnectionConfig, DeviceStorage, DownloadsInventory, DownloadsPort, DownloadsStorage, ServerCompatibility } from './contracts.ts'
 import { setBackendOrigin } from '../lib/connection-service.ts'
 
 export type FixtureScenario = 'ok' | 'unreachable' | 'incompatible' | 'provider-failure';
@@ -297,10 +297,21 @@ export class FixtureStorage implements DeviceStorage {
 // this; a normal browser must not imply it can save files offline.
 export class FixtureDownloads implements DownloadsPort {
   private readonly mode: 'items' | 'empty' | 'storage-error';
+  private readonly removed = new Set<string>();
   constructor(mode: 'items' | 'empty' | 'storage-error' = 'items') {
     this.mode = mode;
   }
+  async remove(downloadId: string): Promise<void> {
+    this.removed.add(downloadId);
+  }
+  async storage(): Promise<DownloadsStorage> {
+    return { usedBytes: 2_629_828_608, freeBytes: 51_539_607_552 };
+  }
   async inventory(): Promise<DownloadsInventory> {
+    const snapshot = await this.snapshot();
+    return { ...snapshot, items: snapshot.items.filter((item) => !this.removed.has(item.downloadId)) };
+  }
+  private async snapshot(): Promise<DownloadsInventory> {
     if (this.mode === 'storage-error') {
       return { available: true, unreadable: true, items: [] };
     }

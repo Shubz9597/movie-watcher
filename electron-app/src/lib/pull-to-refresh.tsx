@@ -55,7 +55,7 @@ const PullIndicator = memo(function PullIndicator({ handles }: { handles: RefObj
           ref={(node: SVGSVGElement | null) => {
             handles.current.icon = node;
           }}
-          className="h-5 w-5 text-[#ffc285]"
+          className="h-5 w-5 text-white/80"
           aria-hidden="true"
         />
       </span>

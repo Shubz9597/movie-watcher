@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bookmark, Download, ExternalLink, Heart, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { Download, ExternalLink, Play, SlidersHorizontal, Youtube } from 'lucide-react';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
@@ -101,7 +101,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
   // library publish (toggle taps, 15s sync polls) just to read availability.
   const libraryAvailability = useLibrarySelector(library, (snapshot) => snapshot?.availability);
   const libraryAvailable = Boolean(libraryAvailability === 'available' && libraryCanonicalId);
-  const saveUnavailableCopy = 'Library saving arrives with library sync (M3) — nothing is saved yet.';
   const resumeContext = useMemo<ResumeSourceContext | null>(() => {
     const subjectId = params?.resumeSubjectId?.trim();
     const seriesId = params?.resumeSeriesId?.trim();
@@ -573,14 +572,14 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
         }
       } catch (err) {
         console.error('[TitlePage] Failed to load title:', err);
-        setLoadError(err instanceof Error ? err.message : 'The title details could not be loaded.');
+        setLoadError(err instanceof Error ? err.message : 'Couldn’t load this title.');
       } finally {
         setLoading(false);
       }
     }
     if (!id) {
       setDetail(null);
-      setLoadError('This title link is incomplete. Return to the catalog and choose the title again.');
+      setLoadError('This title link is incomplete.');
       setLoading(false);
       return;
     }
@@ -634,8 +633,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
   if (!detail) {
     return (
       <div className="flex min-h-[70vh] flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="type-body text-white/70">Could not load this title.</p>
-        {loadError ? <p className="measure-compact type-body text-white/65">{loadError}</p> : null}
+        <p className="measure-compact type-body text-white/75">{loadError || 'Couldn’t load this title.'}</p>
         <PageBackButton />
       </div>
     );
@@ -724,63 +722,45 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             two-column layout unchanged (WF09). */}
         <div className={`flex items-center justify-between gap-2 ${platform.desktop ? 'lg:hidden' : ''}`}>
           <PageBackButton />
-          <div aria-label="Title actions" className="ml-auto flex items-center gap-1 rounded-2xl border border-white/10 bg-black/25 p-1">
-            {canDirectResume ? (
-              <button
-                type="button"
-                onClick={playResume}
-                className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-              >
-                <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-                Resume
-              </button>
-            ) : null}
+          <div aria-label="Title actions" className="ml-auto flex flex-wrap items-center justify-end gap-1">
+            {/* design-system.md: Play/Resume is the primary action. Without a
+                resumable source, Play opens source selection below. */}
+            <button
+              type="button"
+              onClick={canDirectResume ? playResume : scrollToSources}
+              className="mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+            >
+              <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+              {canDirectResume ? 'Resume' : 'Play'}
+            </button>
+            {/* Save toggles appear only when the server library can persist
+                them — never as unexplained disabled controls. */}
             {libraryAvailable && libraryCanonicalId ? (
               <>
                 <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" />
                 <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" />
               </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled
-                  aria-label="Save to Watch Later (unavailable: library sync not implemented)"
-                  title={saveUnavailableCopy}
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                >
-                  <Bookmark className="h-5 w-5" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  aria-label="Mark as Favourite (unavailable: library sync not implemented)"
-                  title={saveUnavailableCopy}
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                >
-                  <Heart className="h-5 w-5" aria-hidden="true" />
-                </button>
-              </>
-            )}
+            ) : null}
             {nativeDownloadsSupported() ? (
               <button
                 type="button"
                 onClick={scrollToSources}
-                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/15 px-4 text-sm text-white/90 transition hover:border-white/35 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                aria-label="Download"
+                title="Download"
+                className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               >
-                <Download className="h-4 w-4" aria-hidden="true" />
-                Download
+                <Download className="h-5 w-5" aria-hidden="true" />
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={scrollToSources}
-                aria-label="Find sources"
-                className="inline-flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              >
-                <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
-              </button>
-            )}
+            ) : null}
+            <button
+              type="button"
+              onClick={scrollToSources}
+              aria-label="Sources"
+              title="Sources"
+              className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            >
+              <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
+            </button>
           </div>
         </div>
 
@@ -790,9 +770,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">
               {kind === 'tv' ? 'Series' : kind === 'anime' ? (isAnimeMovie ? 'Anime Movie' : 'Anime Series') : 'Movie'}
             </span>
-            {detail.year ? (
-              <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">{detail.year}</span>
-            ) : null}
             {languageName ? (
               <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">{languageName}</span>
             ) : null}
@@ -813,7 +790,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
-              <p className="type-secondary font-medium text-white/65">{kind === 'tv' ? 'Series' : kind === 'anime' ? 'Anime' : 'Film'}</p>
               <h1 className="type-feature-title text-white">{detail.title}</h1>
               {detail.tagline ? <p className="measure-compact type-body text-white/70">{detail.tagline}</p> : null}
               <div className="type-secondary text-numeric flex flex-wrap items-center gap-2 text-white/70">
@@ -863,7 +839,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
 
             {detail.trailerKey ? (
               <div className="flex flex-wrap gap-3">
-                <Button asChild className="rounded-full bg-white px-5 text-black hover:bg-white/85">
+                <Button asChild className="min-h-12 rounded-lg border border-white/20 bg-transparent px-5 text-white hover:bg-white/[0.06]">
                   <a
                     href={`https://www.youtube.com/watch?v=${detail.trailerKey}`}
                     target="_blank"

@@ -87,13 +87,13 @@ function PosterCardBase({
         {typeof rank === 'number' ? (
           // No backdrop blur: one blur layer per rail card is a mobile-GPU
           // scroll killer; the solid scrim is equally readable.
-          <span className="font-label absolute left-2.5 top-2.5 rounded bg-black/80 px-2 py-1 text-xs text-white/90">
+          <span className="type-caption text-numeric absolute left-2.5 top-2.5 rounded bg-black/80 px-2 py-1 font-medium text-white/90">
             {String(rank).padStart(2, '0')}
           </span>
         ) : null}
 
         {movie.isNew ? (
-          <span className="font-label absolute bottom-2.5 left-2.5 rounded bg-[#ff7a17] px-2 py-1 text-xs text-black">
+          <span className="type-caption absolute bottom-2.5 left-2.5 rounded bg-white px-2 py-1 font-medium text-black">
             New
           </span>
         ) : null}
@@ -117,7 +117,7 @@ function PosterCardBase({
           {movie.year && typeof score === 'number' ? <span aria-hidden="true">·</span> : null}
           {typeof score === 'number' ? <span>{score}%</span> : null}
           {movie.originalLanguage && movie.originalLanguage.toLowerCase() !== 'en' ? (
-            <span className="font-label ml-auto">{movie.originalLanguage}</span>
+            <span className="ml-auto uppercase">{movie.originalLanguage}</span>
           ) : null}
         </div>
       </div>

@@ -101,7 +101,7 @@ export function ServerSettings(props: {
       </header>
 
       <section className="mx-auto w-full max-w-md px-5 pb-[max(32px,env(safe-area-inset-bottom))] pt-6">
-        <label className="block text-left text-xs font-medium uppercase tracking-wide text-white/50" htmlFor="mobile-origin">
+        <label className="type-secondary block text-left font-medium text-white/70" htmlFor="mobile-origin">
           Server address
         </label>
         <input
@@ -117,7 +117,7 @@ export function ServerSettings(props: {
           // text-base (16px): iOS auto-zooms the viewport when focusing any
           // input below 16px — 16px is the mobile-correct size, not a style
           // preference.
-          className="mt-2 w-full min-h-12 rounded-lg border border-white/15 bg-black/30 px-3.5 text-base text-white placeholder:text-base placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          className="mt-2 w-full min-h-12 rounded-lg border border-white/15 bg-black/30 px-3.5 text-base text-white placeholder:text-base placeholder:text-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
         />
 
         {(state.kind !== 'idle' || savedOrigin || error) ? (
@@ -139,7 +139,7 @@ export function ServerSettings(props: {
             type="button"
             onClick={() => void save()}
             disabled={!normalized || !changed || saving}
-            className="flex min-h-12 w-full items-center justify-center rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex min-h-12 w-full items-center justify-center rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -147,7 +147,7 @@ export function ServerSettings(props: {
             type="button"
             onClick={() => void probe()}
             disabled={!normalized || saving || state.kind === 'probing'}
-            className="flex min-h-12 w-full items-center justify-center rounded-full border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex min-h-12 w-full items-center justify-center rounded-lg border border-white/20 px-5 text-sm text-white/85 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {state.kind === 'probing' ? 'Testing…' : 'Test'}
           </button>

@@ -5,7 +5,7 @@
 // AniList selection + IMDb-free Basic mapping) and the same recent-searches
 // storage key, so nothing is duplicated server-side.
 import * as React from 'react';
-import { Search, X } from 'lucide-react';
+import { History, Search, X } from 'lucide-react';
 import PosterCard from '../components/PosterCard';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
 import { PageBack } from '../components/shared/PageBack';
@@ -218,7 +218,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
       <PageBack label="Home" onBack={() => navigate('home')} />
 
       {/* Search field: always visible, 16px (iOS no-zoom), clearable. */}
-      <div className="mt-3 flex min-h-13 shrink-0 items-center gap-3 rounded-2xl border border-white/15 bg-white/[0.05] px-4 py-3 focus-within:border-white/40">
+      <div className="mt-3 flex min-h-12 shrink-0 items-center gap-3 rounded-lg border border-white/15 bg-white/[0.05] pl-4 pr-1 focus-within:border-white/40">
         <Search className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />
         <input
           ref={inputRef}
@@ -230,14 +230,14 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Movies, series, anime…"
           aria-label="Search titles"
-          className="w-full bg-transparent text-base text-white placeholder:text-white/35 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+          className="min-h-12 w-full bg-transparent text-base text-white placeholder:text-white/50 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
         />
         {query ? (
           <button
             type="button"
             aria-label="Clear search"
             onClick={() => setQuery('')}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/60 hover:bg-white/10 hover:text-white"
+            className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/70 hover:text-white ${FOCUS_RING_CLASS}`}
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -257,7 +257,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
                     setRecent([]);
                     saveRecent([]);
                   }}
-                  className="text-sm text-white/55 underline decoration-white/25 underline-offset-4 hover:text-white"
+                  className={`min-h-12 rounded-lg px-2 text-sm text-white/70 hover:text-white ${FOCUS_RING_CLASS}`}
                 >
                   Clear
                 </button>
@@ -268,9 +268,9 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
                     <button
                       type="button"
                       onClick={() => openTitle(entry.kind, entry.item)}
-                      className={`flex min-h-11 items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white ${FOCUS_RING_CLASS}`}
+                      className={`flex min-h-12 items-center gap-2 rounded-lg border border-white/15 bg-white/[0.04] px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white ${FOCUS_RING_CLASS}`}
                     >
-                      <Search className="h-3.5 w-3.5 text-white/45" aria-hidden="true" />
+                      <History className="h-4 w-4 text-white/50" aria-hidden="true" />
                       <span className="max-w-[14rem] truncate">{entry.item.title}</span>
                     </button>
                   </li>
@@ -289,13 +289,13 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
             {/* Progressive: partial results show while the slower source is
                 still in flight — the fast source never waits behind it. */}
             {searching ? <span className="text-white/60">{results.length ? 'Showing more results…' : 'Searching…'}</span> : null}
-            {!searching && failedCount === 2 ? <span className="text-[#ffc285]">Search is unavailable right now. Check the connection and retry.</span> : null}
-            {!searching && failedCount === 1 ? <span className="text-[#ffc285]">Some sources could not be reached — showing what is available.</span> : null}
+            {!searching && failedCount === 2 ? <span className="text-[#ffc285]">Search is unavailable.</span> : null}
+            {!searching && failedCount === 1 ? <span className="text-[#ffc285]">Some results are missing.</span> : null}
             {!searching && failedCount === 0 && results.length ? (
-              <span className="text-white/55">{results.length} results for “{debounced}”</span>
+              <span className="text-white/60">{results.length} results for “{debounced}”</span>
             ) : null}
             {!searching && failedCount === 0 && !results.length ? (
-              <span className="text-white/55">No results for “{debounced}”. Try a different spelling.</span>
+              <span className="text-white/60">No results for “{debounced}”</span>
             ) : null}
           </div>
           <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">

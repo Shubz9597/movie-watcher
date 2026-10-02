@@ -12,9 +12,9 @@
 //      browser entry), always labelled on screen.
 // With neither, the page shows the truthful unavailable state.
 import { useEffect, useState } from 'react';
-import { ChevronRight, Film, Ghost, ListFilter, Tv } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Film, Ghost, ListFilter, Tv } from 'lucide-react';
 import { SelectionSurface, UnderlineTabs } from '../components/primitives';
-import { FOCUS_RING_CLASS } from '../lib/design-tokens';
+import { ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { useLibrary, useLibrarySelector } from '../lib/library-react';
 import type { LibraryController } from '../lib/library-store.ts';
 import { overviewKey, pageKey } from '../lib/library-store.ts';
@@ -120,7 +120,7 @@ function SortButton({ current, onSelect }: { current: LibrarySort; onSelect: (so
         onClick={() => setOpen(true)}
         aria-label="Sort library"
         aria-haspopup="dialog"
-        className={`inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full px-2 text-white/70 transition hover:text-white ${FOCUS_RING_CLASS}`}
+        className={`inline-flex min-h-12 min-w-12 items-center justify-center gap-2 rounded-lg px-2 text-white/70 transition hover:text-white ${FOCUS_RING_CLASS}`}
       >
         <ListFilter className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
         <span className="text-sm">Sort by</span>
@@ -137,12 +137,12 @@ function SortButton({ current, onSelect }: { current: LibrarySort; onSelect: (so
                 setOpen(false);
                 onSelect(option.id);
               }}
-              className={`flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left text-sm transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS} ${
+              className={`flex min-h-12 w-full items-center justify-between rounded-lg px-3 text-left text-sm transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS} ${
                 option.id === current ? 'text-white' : 'text-white/70'
               }`}
             >
               {option.label}
-              {option.id === current ? <span aria-hidden="true" className="font-label text-[#ffc285]">{'\u2713'}</span> : null}
+              {option.id === current ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
             </button>
           ))}
         </div>
@@ -153,13 +153,13 @@ function SortButton({ current, onSelect }: { current: LibrarySort; onSelect: (so
 
 function UnavailableState({ onRetry }: { onRetry?: () => void }) {
   return (
-    <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-6 text-center" role="status">
+    <div className="mt-8" role="status">
       <p className="type-body text-white/75">{UNAVAILABLE_COPY}</p>
       {onRetry ? (
         <button
           type="button"
           onClick={onRetry}
-          className={`mt-4 min-h-11 rounded-full border border-white/15 px-5 text-sm text-white/85 hover:border-white/35 ${FOCUS_RING_CLASS}`}
+          className={`mt-4 ${ACTION_SECONDARY_CLASS}`}
         >
           Retry
         </button>
@@ -170,13 +170,13 @@ function UnavailableState({ onRetry }: { onRetry?: () => void }) {
 
 function ErrorState({ message, onRetry, label }: { message: string; onRetry: () => void; label: string }) {
   return (
-    <div className="mt-8 rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3" role="alert">
-      <p className="text-sm text-red-100">{message}</p>
+    <div className="mt-8" role="alert">
+      <p className="type-body text-white/85">{message}</p>
       <button
         type="button"
         onClick={onRetry}
         aria-label={`Retry ${label}`}
-        className={`mt-3 min-h-11 rounded-full border border-white/15 px-5 text-sm text-white/85 hover:border-white/35 ${FOCUS_RING_CLASS}`}
+        className={`mt-3 ${ACTION_SECONDARY_CLASS}`}
       >
         Retry
       </button>
@@ -219,7 +219,7 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
     return <ShelfSkeleton />;
   }
   if (overview.status === 'error') {
-    return <ErrorState message={overview.error ?? 'The library could not be loaded.'} onRetry={() => void library.loadOverview(collection, sort)} label="library overview" />;
+    return <ErrorState message={overview.error ?? 'Couldn’t load the library.'} onRetry={() => void library.loadOverview(collection, sort)} label="library overview" />;
   }
 
   const empty = overview.shelves.every((shelf) => shelf.count === 0);
@@ -227,12 +227,12 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
   return (
     <div className="mt-4 space-y-8">
       {overview.stale ? (
-        <p className="text-xs text-white/45" role="note">
+        <p className="type-secondary text-white/60" role="note">
           Offline · Last synced
         </p>
       ) : null}
       {empty ? (
-        <p className="pt-3 text-xs text-white/45">No saved titles.</p>
+        <p className="pt-3 type-secondary text-white/60">No saved titles.</p>
       ) : overview.shelves.map((shelf) => (
         <ServerShelfRow
           key={shelf.kind}
@@ -279,7 +279,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
         ) : null}
       </div>
       {count === 0 ? (
-        <p className="text-xs text-white/40">No titles</p>
+        <p className="type-secondary text-white/60">No titles</p>
       ) : (
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
           {previews.map((row) => (
@@ -377,9 +377,9 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
   const empty = overview.shelves.every((shelf) => shelf.count === 0);
   return (
     <div className="mt-4 space-y-8">
-      <p className="text-xs text-white/45" role="note">{overview.sourceLabel}</p>
+      <p className="type-secondary text-white/60" role="note">{overview.sourceLabel}</p>
       {empty ? (
-        <p className="text-xs text-white/45">No saved titles.</p>
+        <p className="type-secondary text-white/60">No saved titles.</p>
       ) : overview.shelves.map((shelf) => (
         <section key={shelf.kind} aria-label={`${SHELF_META[shelf.kind].label} shelf`}>
           <div className="shelf-heading mb-3">
@@ -399,7 +399,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
             </button> : null}
           </div>
           {shelf.count === 0 ? (
-            <p className="text-xs text-white/40">No titles</p>
+            <p className="type-secondary text-white/60">No titles</p>
           ) : (
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
               {shelf.previews.map((card) => (
@@ -472,9 +472,9 @@ export function LibraryCategoryPage({ navigate, provider, collection, kind, sort
         <button
           type="button"
           onClick={() => navigate('library', { collection, sort })}
-          className={`inline-flex min-h-11 items-center rounded-full text-sm text-white/65 hover:text-white ${FOCUS_RING_CLASS}`}
+          className={`-ml-2 inline-flex min-h-12 items-center gap-1 rounded-lg pl-1 pr-3 text-sm text-white/70 hover:text-white ${FOCUS_RING_CLASS}`}
         >
-          {'\u2039'} Library
+          <ChevronLeft className="h-5 w-5" aria-hidden="true" /> Library
         </button>
         <SortButton current={sort} onSelect={setSort} />
       </div>
@@ -523,13 +523,13 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
     return <ShelfSkeleton />;
   }
   if (page.status === 'error') {
-    return <ErrorState message={page.error ?? 'This collection could not be loaded.'} onRetry={() => void library.loadPage(collection, kind, sort)} label="this collection" />;
+    return <ErrorState message={page.error ?? 'Couldn’t load this collection.'} onRetry={() => void library.loadPage(collection, kind, sort)} label="this collection" />;
   }
 
   return (
     <>
       {page.stale ? (
-        <p className="mt-2 text-xs text-white/45" role="note">
+        <p className="mt-2 type-secondary text-white/60" role="note">
           Offline · {page.total} {page.total === 1 ? 'title' : 'titles'}
         </p>
       ) : null}
@@ -539,15 +539,15 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
         ))}
       </div>
       {page.items.length === 0 ? (
-        <p className="mt-6 text-xs text-white/40">No titles</p>
+        <p className="mt-6 type-secondary text-white/60">No titles</p>
       ) : null}
       {page.error ? (
-        <div className="mt-4 rounded-lg border border-red-300/20 bg-red-950/30 px-4 py-3" role="alert">
-          <p className="text-sm text-red-100">{page.error}</p>
+        <div className="mt-4" role="alert">
+          <p className="type-body text-white/85">{page.error}</p>
           <button
             type="button"
             onClick={() => (page.cursor ? void library.loadMore(collection, kind, sort) : void library.loadPage(collection, kind, sort))}
-            className={`mt-3 min-h-11 rounded-full border border-white/15 px-5 text-sm text-white/85 hover:border-white/35 ${FOCUS_RING_CLASS}`}
+            className={`mt-3 ${ACTION_SECONDARY_CLASS}`}
           >
             Retry
           </button>
@@ -560,7 +560,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
             onClick={() => void library.loadMore(collection, kind, sort)}
             disabled={page.loadingMore}
             aria-label={`Load more titles (${page.items.length} of ${page.total} shown)`}
-            className={`min-h-11 rounded-full border border-white/15 px-6 text-sm text-white/85 transition hover:border-white/35 disabled:opacity-50 ${FOCUS_RING_CLASS}`}
+            className={ACTION_SECONDARY_CLASS}
           >
             {page.loadingMore ? 'Loading\u2026' : 'Load more'}
           </button>
@@ -593,7 +593,7 @@ function PreviewLibraryGrid({ provider, collection, kind }: {
   }
   return (
     <>
-      <p className="mt-2 text-xs text-white/45" role="note">{state.sourceLabel} · {state.count} titles</p>
+      <p className="mt-2 type-secondary text-white/60" role="note">{state.sourceLabel} · {state.count} titles</p>
       <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
         {state.items.map((card) => (
           <button

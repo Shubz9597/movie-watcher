@@ -45,7 +45,7 @@ export default function TmdbConnectionGate({ state }: TmdbConnectionGateProps) {
         <header className="flex items-center gap-4 border-b border-white/10 px-6 py-6 sm:px-8">
           <img className="h-12 w-12 rounded-lg" src={appIcon} alt="" />
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-white/45">Catalog connection</p>
+            <p className="type-secondary font-medium text-white/60">Catalog connection</p>
             <h1 className="mt-1 text-3xl font-normal tracking-tight text-white">Connect TMDb</h1>
           </div>
         </header>
@@ -91,7 +91,7 @@ export default function TmdbConnectionGate({ state }: TmdbConnectionGateProps) {
               Get a TMDb credential
             </button>
             <button
-              className="min-h-11 rounded-full bg-white px-6 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-wait disabled:opacity-55"
+              className="min-h-12 rounded-lg bg-white px-6 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-wait disabled:opacity-55"
               type="submit"
               disabled={busy}
             >

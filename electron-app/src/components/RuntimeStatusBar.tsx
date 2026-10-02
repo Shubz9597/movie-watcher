@@ -1,6 +1,7 @@
 import { AlertCircle, LoaderCircle, Settings2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { RuntimeState } from '../types/electron';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 
 export default function RuntimeStatusBar() {
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
@@ -37,7 +38,7 @@ export default function RuntimeStatusBar() {
 
   return (
     <section
-      className="sticky top-[104px] z-30 border-b border-white/[0.09] bg-[#151619]"
+      className="sticky top-[104px] z-30 border-b border-white/[0.09] bg-[var(--surface-raised)]"
       role={runtime.status === 'error' ? 'alert' : 'status'}
       aria-live="polite"
     >
@@ -59,7 +60,7 @@ export default function RuntimeStatusBar() {
               <button
                 type="button"
                 onClick={() => void retry()}
-                className="min-h-10 rounded-full border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className={ACTION_SECONDARY_CLASS}
               >
                 Try again
               </button>
@@ -67,7 +68,7 @@ export default function RuntimeStatusBar() {
             <button
               type="button"
               onClick={() => void window.electronAPI?.openSetup()}
-              className="inline-flex min-h-10 items-center gap-2 rounded-full bg-white px-4 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#151619]"
+              className={ACTION_PRIMARY_CLASS}
             >
               <Settings2 className="h-4 w-4" aria-hidden="true" />
               Open settings

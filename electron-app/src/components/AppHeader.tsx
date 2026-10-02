@@ -124,7 +124,7 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
           >
             <Search className="h-4 w-4" strokeWidth={1.7} />
             <span className="hidden md:inline">Search titles</span>
-            <kbd className="font-label ml-auto hidden text-white/65 md:inline">Ctrl K</kbd>
+            <kbd className="type-caption ml-auto hidden font-sans text-white/65 md:inline">Ctrl K</kbd>
           </button>
           {searchOpen ? (
             <Suspense fallback={<span className="sr-only" role="status">Opening search…</span>}>

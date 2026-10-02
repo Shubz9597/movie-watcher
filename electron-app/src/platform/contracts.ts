@@ -139,6 +139,11 @@ export type DownloadsInventory = {
   items: DownloadItemSnapshot[];
 };
 
+export type DownloadsStorage = { usedBytes: number; freeBytes: number };
+
 export interface DownloadsPort {
   inventory(): Promise<DownloadsInventory>;
+  /** Deletes this device's files for one download; library state is untouched. */
+  remove?(downloadId: string): Promise<void>;
+  storage?(): Promise<DownloadsStorage>;
 }

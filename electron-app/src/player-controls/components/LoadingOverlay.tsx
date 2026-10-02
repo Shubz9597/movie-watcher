@@ -76,7 +76,6 @@ export function LoadingOverlay({
           <div className="poster-shade" />
         </div>
         <div className="loader-copy">
-          <div className="loader-eyebrow">Preparing playback</div>
           <div className="loader-title">
             <span id="loadingTitle">{identity.title || 'Preparing video'}</span>
             <span className="loader-year" id="loadingYear">{identity.year ? ` ${identity.year}` : ''}</span>

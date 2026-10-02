@@ -457,7 +457,6 @@ export function PlayerControlsApp({ bridge }: Props) {
           <div className="now-playing">
             <button className="icon-btn back-to-title tooltip" id="closeBtn" data-tooltip="Back to title" aria-label="Stop playback and return to title" onClick={stopPlayback}><ArrowLeft aria-hidden="true" /></button>
             <div className="now-playing-copy">
-              <div className="eyebrow">Now playing</div>
               <div className="title-line">
                 <div className="title" id="titleText">{identity.title || 'TorWatch'}</div>
                 <div className="episode-code" id="episodeCode" hidden={!episodeCode} aria-label={episodeLabel}>{episodeCode}</div>

@@ -26,13 +26,13 @@ const DESTINATIONS: BrowseDestination[] = [
 export function BrowseRail({ navigate }: { navigate: (path: string, params?: Record<string, string>) => void }) {
   return (
     <nav aria-label="Browse categories" className="border-b border-white/[0.06] md:hidden">
-      <div className="hide-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5 py-3 md:mx-0 md:flex-wrap md:px-0">
+      <div className="hide-scrollbar -mx-5 flex overflow-x-auto px-3 py-1 md:mx-0 md:flex-wrap md:px-0">
         {DESTINATIONS.map((destination) => (
           <button
             key={destination.key}
             type="button"
             onClick={() => navigate('see-all', destination.params)}
-            className={`inline-flex min-h-[var(--touch-target)] shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-white/75 transition hover:border-white/25 hover:text-white ${FOCUS_RING_CLASS}`}
+            className={`relative inline-flex min-h-[var(--touch-target)] shrink-0 items-center gap-2 rounded-lg px-4 text-sm text-white/80 transition hover:text-white [&:not(:first-child)]:before:absolute [&:not(:first-child)]:before:inset-y-3.5 [&:not(:first-child)]:before:left-0 [&:not(:first-child)]:before:w-px [&:not(:first-child)]:before:bg-white/[0.12] ${FOCUS_RING_CLASS}`}
           >
             {destination.icon}
             <span>{destination.label}</span>

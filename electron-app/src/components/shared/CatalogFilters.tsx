@@ -131,7 +131,7 @@ function GenreButton({ label, selected, onClick }: { label: string; selected: bo
       type="button"
       onClick={onClick}
       aria-pressed={selected}
-      className={`flex min-h-11 items-center justify-between gap-2 rounded-xl px-3 text-left text-sm transition ${selected ? 'bg-white text-black' : 'bg-white/[0.05] text-white/70 hover:bg-white/[0.1] hover:text-white'} ${FOCUS_RING_CLASS}`}
+      className={`flex min-h-12 items-center justify-between gap-2 rounded-lg px-3 text-left text-sm transition ${selected ? 'bg-white text-black' : 'bg-white/[0.05] text-white/70 hover:bg-white/[0.1] hover:text-white'} ${FOCUS_RING_CLASS}`}
     >
       <span>{label}</span>
       {selected ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
@@ -151,7 +151,7 @@ export function CatalogFilters({ kind, api, navigate }: { kind: string; api: str
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
-        className={`inline-flex min-h-11 items-center gap-2 rounded-full border border-white/15 px-4 text-sm text-white/75 transition hover:border-white/35 hover:text-white md:hidden ${FOCUS_RING_CLASS}`}
+        className={`inline-flex min-h-12 items-center gap-2 rounded-lg border border-white/15 px-4 text-sm text-white/75 transition hover:border-white/35 hover:text-white md:hidden ${FOCUS_RING_CLASS}`}
         aria-haspopup="dialog"
       >
         <ListFilter className="h-4 w-4" aria-hidden="true" />
@@ -159,7 +159,7 @@ export function CatalogFilters({ kind, api, navigate }: { kind: string; api: str
       </button>
 
       <details className="group relative hidden md:block">
-        <summary className={`inline-flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-full border border-white/15 px-4 text-sm text-white/75 transition marker:hidden hover:border-white/35 hover:text-white [&::-webkit-details-marker]:hidden ${FOCUS_RING_CLASS}`}>
+        <summary className={`inline-flex min-h-12 cursor-pointer list-none items-center gap-2 rounded-lg border border-white/15 px-4 text-sm text-white/75 transition marker:hidden hover:border-white/35 hover:text-white [&::-webkit-details-marker]:hidden ${FOCUS_RING_CLASS}`}>
           <ListFilter className="h-4 w-4" aria-hidden="true" />
           {buttonLabel}
           <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true" />

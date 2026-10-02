@@ -98,9 +98,9 @@ export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canoni
         aria-busy={pending || undefined}
         title={label}
         onClick={onClick}
-        className={`relative inline-flex ${variant === 'label' ? 'min-h-12 gap-2 border border-white/20 bg-[#202020] px-4 text-sm font-medium hover:bg-[#2b2b2b]' : variant === 'overlay' ? 'h-11 w-11 border border-white/15 bg-black/60' : TOUCH_TARGET_CLASS} items-center justify-center rounded-full transition ${FOCUS_RING_CLASS} ${
+        className={`relative inline-flex ${variant === 'label' ? 'min-h-12 gap-2 border border-white/20 bg-black/30 px-4 text-sm font-medium hover:border-white/40 hover:bg-white/[0.06]' : variant === 'overlay' ? 'h-11 w-11 border border-white/15 bg-black/60' : TOUCH_TARGET_CLASS} items-center justify-center ${variant === 'label' ? 'rounded-lg' : 'rounded-full'} transition ${FOCUS_RING_CLASS} ${
           error
-            ? 'text-red-300 after:absolute after:inset-0 after:rounded-full after:ring-2 after:ring-red-400/70'
+            ? 'text-red-300 after:absolute after:inset-0 after:rounded-[inherit] after:ring-2 after:ring-red-400/70'
             : active
               ? 'text-white'
               : 'text-white/75 hover:text-white'

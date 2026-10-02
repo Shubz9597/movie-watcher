@@ -115,7 +115,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // Durable local progress: resume where the device left off.
         let saved = DownloadCoordinator.shared.store.loadProgress(downloadId)
         let seekTo = call.getDouble("seekTo") ?? saved?.positionS
-        let subtitleLang = call.getString("subtitleLang") ?? saved?.subtitleLang ?? ""
+        // Subtitle choice: an explicit request wins, then the viewer's last
+        // choice ("" = they turned subtitles off), and on FIRST play the
+        // language requested when the download was created.
+        let subtitleLang = call.getString("subtitleLang")
+            ?? saved?.subtitleLang
+            ?? files.subtitles.first?.lang
+            ?? ""
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let bridge = self.bridge, let rootVC = bridge.viewController else {
@@ -124,11 +130,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             }
             self.localDownloadId = downloadId
             self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId)
-            // Attach the download's own sidecar files as playback slaves.
+            // Attach EVERY sidecar so the viewer can switch languages; only
+            // the chosen one is enforced (selected) on start.
             for sidecar in files.subtitles {
-                if subtitleLang.isEmpty || sidecar.lang == subtitleLang {
-                    _ = self.mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: false)
-                }
+                let selected = !subtitleLang.isEmpty && sidecar.lang == subtitleLang
+                _ = self.mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: selected)
             }
             call.resolve(["resumedPositionS": seekTo ?? 0])
         }

@@ -3,6 +3,7 @@ import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import PosterCard from './PosterCard';
 import { LibraryToggle } from './shared/LibraryToggle';
 import type { MovieCard } from '../lib/types';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 
 type Props = {
   title: string;
@@ -166,7 +167,6 @@ function CarouselRow({
                   <span className="mt-3 block text-base font-medium leading-6 text-white/90 transition group-hover:text-white">
                     View all
                   </span>
-                  <span className="type-caption mt-1 block text-white/60">Complete list</span>
                 </button>
               </li>
             ) : null}
@@ -194,14 +194,14 @@ function CarouselRow({
           ) : null}
         </div>
       ) : error ? (
-        <div className="flex min-h-56 flex-col items-center justify-center border border-dashed border-amber-200/20 px-6 text-center" role="alert">
-          <p className="measure-compact type-body text-amber-100/90">{error}</p>
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
+        <div className="flex min-h-56 flex-col items-start justify-center" role="alert">
+          <p className="measure-compact type-body text-white/85">{error}</p>
+          <div className="mt-4 flex flex-wrap gap-3">
             {onRetry ? (
               <button
                 type="button"
                 onClick={onRetry}
-                className="min-h-11 rounded-full border border-white/20 px-4 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className={ACTION_PRIMARY_CLASS}
               >
                 Try again
               </button>
@@ -210,7 +210,7 @@ function CarouselRow({
               <button
                 type="button"
                 onClick={onOpenSettings}
-                className="min-h-11 rounded-full bg-white px-4 py-2 text-sm text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className={ACTION_SECONDARY_CLASS}
               >
                 Open settings
               </button>
@@ -218,7 +218,7 @@ function CarouselRow({
           </div>
         </div>
       ) : (
-        <div className="type-body flex h-56 items-center justify-center border border-dashed border-white/15 text-white/70">
+        <div className="type-body flex h-56 items-center text-white/70">
           {emptyMessage}
         </div>
       )}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pause, Play, Square } from 'lucide-react';
+import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 
 const POLL_INTERVAL_MS = 500;
 
@@ -34,12 +35,12 @@ export default function WatchPage({
     const finalUrl = streamUrl || magnet;
     if (!finalUrl) {
       setStarting(false);
-      setError('This playback link does not include a stream or torrent source.');
+      setError('This link has no playable source.');
       return;
     }
     if (!api) {
       setStarting(false);
-      setError('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
+      setError('Playback isn’t available. Restart TorWatch.');
       return;
     }
 
@@ -64,7 +65,7 @@ export default function WatchPage({
       } catch (pollError) {
         if (!cancelled) {
           console.error('[WatchPage] Could not read playback state:', pollError);
-          setError('Playback state could not be updated. The video may still be playing.');
+          setError('Couldn’t update playback.');
         }
       } finally {
         pollInFlight = false;
@@ -158,21 +159,20 @@ export default function WatchPage({
     <div className="fixed inset-0 bg-black px-6">
       <div className="flex h-full items-center justify-center">
         <div className="w-full max-w-xl text-center text-white">
-          <p className="font-label text-white/65">{starting ? 'Preparing playback' : 'Now playing'}</p>
-          <h1 className="type-section-title mt-4 break-words text-white">
+          <h1 className="type-section-title break-words text-white">
             {params.title || 'Playing'}
           </h1>
 
           {error ? (
-            <div className="type-body measure-compact mt-6 rounded-lg border border-red-300/20 bg-red-950/30 px-5 py-4 text-red-100" role="alert">
+            <div className="type-body measure-compact mx-auto mt-6 text-white/85" role="alert">
               <p>{error}</p>
               {!starting ? (
                 <button
                   type="button"
                   onClick={() => setRetryToken((token) => token + 1)}
-                  className="mt-4 min-h-11 rounded-full border border-red-100/25 px-4 py-2 text-sm text-red-50 transition hover:border-red-100/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-100/70"
+                  className={`mt-4 ${ACTION_PRIMARY_CLASS}`}
                 >
-                  Try playback again
+                  Try again
                 </button>
               ) : null}
             </div>
@@ -183,7 +183,7 @@ export default function WatchPage({
               type="button"
               onClick={() => void togglePause()}
               disabled={starting || actionBusy || Boolean(error)}
-              className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex h-12 w-12 items-center justify-center rounded-lg text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-45"
               aria-label={paused ? 'Resume playback' : 'Pause playback'}
             >
               {paused ? <Play className="h-5 w-5" /> : <Pause className="h-5 w-5" />}
@@ -192,20 +192,20 @@ export default function WatchPage({
               type="button"
               onClick={() => void stopPlayback()}
               disabled={actionBusy}
-              className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-wait disabled:opacity-45"
+              className="flex h-12 w-12 items-center justify-center rounded-lg text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-wait disabled:opacity-45"
               aria-label="Stop playback and return home"
             >
               <Square className="h-5 w-5" />
             </button>
           </div>
 
-          <p className="text-numeric mt-5 font-mono text-base text-white/75">
+          <p className="text-numeric mt-5 text-base text-white/75">
             {formatTime(time)} / {formatTime(duration)}
           </p>
           <button
             type="button"
             onClick={() => navigate('home')}
-            className="mt-8 min-h-11 rounded-full border border-white/20 px-6 py-2 text-sm text-white/80 transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+            className={`mt-8 ${ACTION_SECONDARY_CLASS}`}
           >
             Back to browse
           </button>
