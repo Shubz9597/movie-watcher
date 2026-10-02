@@ -105,6 +105,19 @@ func (a CatalogSeedSimilar) SeedSimilar(ctx context.Context, canonicalID string,
 	return a.Provider.SeedSimilar(ctx, canonicalID, limit)
 }
 
+// TMDbCrossSimilar adapts TMDb crossover discovery (other media type, shared
+// keywords and mapped genres) for tmdb: seeds; other namespaces have none.
+type TMDbCrossSimilar struct {
+	Provider *catalog.TMDb
+}
+
+func (a TMDbCrossSimilar) SeedSimilar(ctx context.Context, canonicalID string, limit int) ([]catalog.Title, error) {
+	if !strings.HasPrefix(canonicalID, "tmdb:") {
+		return nil, catalog.ErrNotFound
+	}
+	return a.Provider.CrossTypeSimilar(ctx, canonicalID, limit)
+}
+
 // AniListSeedSimilar adapts the AniList provider to per-seed "more like this"
 // candidate resolution for anilist: seeds.
 type AniListSeedSimilar struct {
@@ -180,6 +193,10 @@ type Deps struct {
 	// favourites contribute their TMDb/AniList "more like this" titles to the
 	// pool, ranked ahead of the global trending pool.
 	SeedSimilar           SeedSimilarSource
+	// Optional crossover: titles of the OTHER media type sharing the seed's
+	// themes (movies for a series, series for a movie), mixed into the
+	// seed's own similar list.
+	CrossSimilar SeedSimilarSource
 	// Optional household taste signals (v2): when wired, scoring uses the
 	// WEIGHTED taste profile (favourites + Watch Later + watch progress +
 	// opened titles) instead of the legacy favourites-only binary points.
@@ -235,6 +252,7 @@ type Service struct {
 	candidates   CandidateSource
 	seedGenres   SeedGenreSource
 	seedSimilar  SeedSimilarSource
+	crossSimilar SeedSimilarSource
 	taste        TasteSource
 	candidateVn  int
 	now          func() time.Time
@@ -249,14 +267,35 @@ type Service struct {
 	lastSimilar map[string][]catalog.Title
 }
 
+// mixCross interleaves crossover titles into a seed's same-type list: two
+// same-type picks, then one crossover, so both appear near the top.
+func mixCross(same, cross []catalog.Title) []catalog.Title {
+	if len(cross) == 0 {
+		return same
+	}
+	mixed := make([]catalog.Title, 0, len(same)+len(cross))
+	for i, j := 0, 0; i < len(same) || j < len(cross); {
+		for k := 0; k < 2 && i < len(same); k++ {
+			mixed = append(mixed, same[i])
+			i++
+		}
+		if j < len(cross) {
+			mixed = append(mixed, cross[j])
+			j++
+		}
+	}
+	return mixed
+}
+
 // similarFor returns the seed's similar titles, falling back to the last
 // successful list when the provider call fails.
-func (s *Service) similarFor(ctx context.Context, seedID string) ([]catalog.Title, error) {
-	similar, err := s.seedSimilar.SeedSimilar(ctx, seedID, seedSimilarLimit)
+func (s *Service) similarFor(ctx context.Context, source SeedSimilarSource, cacheKey, seedID string) ([]catalog.Title, error) {
+	similar, err := source.SeedSimilar(ctx, seedID, seedSimilarLimit)
 	s.similarMu.Lock()
 	defer s.similarMu.Unlock()
+	key := cacheKey + "\x00" + seedID
 	if err != nil {
-		if last, ok := s.lastSimilar[seedID]; ok {
+		if last, ok := s.lastSimilar[key]; ok {
 			return last, nil
 		}
 		return nil, err
@@ -264,7 +303,7 @@ func (s *Service) similarFor(ctx context.Context, seedID string) ([]catalog.Titl
 	if s.lastSimilar == nil {
 		s.lastSimilar = map[string][]catalog.Title{}
 	}
-	s.lastSimilar[seedID] = similar
+	s.lastSimilar[key] = similar
 	return similar, nil
 }
 
@@ -280,6 +319,7 @@ func New(deps Deps) *Service {
 		candidates:  deps.Candidates,
 		seedGenres:  deps.SeedGenres,
 		seedSimilar: deps.SeedSimilar,
+		crossSimilar: deps.CrossSimilar,
 		taste:       deps.Taste,
 		candidateVn: deps.CandidateCacheVersion,
 		now:         now,
@@ -560,10 +600,12 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	// Candidate pool: per-seed "more like this" for the strongest signals
 	// FIRST (genuinely personal), then the global weekly trending pool.
 	pool := make([]catalog.Title, 0, candidateLimit)
-	// fromSeed remembers which signal's "more like this" list produced a
-	// candidate: that signal is its truthful reason, not whichever signal
-	// happens to weigh most among shared genres.
-	fromSeed := map[string]*signalInfoWithKeys{}
+	// seedsFor lists every signal whose "more like this" lists contain a
+	// candidate — its truthful reason, not whichever signal weighs most among
+	// shared genres. A title
+	// that several of the household's titles point at is a consensus pick
+	// about the household as a whole, not one title's provider list.
+	seedsFor := map[string][]*signalInfoWithKeys{}
 	if s.seedSimilar != nil {
 		ordered := append([]signalInfoWithKeys(nil), resolved...)
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].weight > ordered[j].weight })
@@ -571,14 +613,28 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			if i >= seedSimilarSeeds {
 				break
 			}
-			similar, err := s.similarFor(ctx, ordered[i].id)
+			similar, err := s.similarFor(ctx, s.seedSimilar, "same", ordered[i].id)
 			if err != nil {
 				log.Printf("[recommendations] similar titles for %s unavailable: %v", ordered[i].id, err)
+			}
+			if s.crossSimilar != nil {
+				if cross, crossErr := s.similarFor(ctx, s.crossSimilar, "cross", ordered[i].id); crossErr == nil {
+					similar = mixCross(similar, cross)
+				}
+			}
+			if len(similar) == 0 {
 				continue
 			}
 			for _, candidate := range similar {
-				if _, taken := fromSeed[candidate.ID]; !taken {
-					fromSeed[candidate.ID] = &ordered[i]
+				listed := false
+				for _, existing := range seedsFor[candidate.ID] {
+					if existing.id == ordered[i].id {
+						listed = true
+						break
+					}
+				}
+				if !listed {
+					seedsFor[candidate.ID] = append(seedsFor[candidate.ID], &ordered[i])
 				}
 			}
 			pool = append(pool, similar...)
@@ -603,6 +659,7 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		rank       int
 		score      float64
 		reasonSeed *signalInfoWithKeys
+		alsoSeed   *signalInfoWithKeys // second supporting title (consensus picks)
 	}
 	scored_ := make([]scored, 0, len(pool))
 	for rank, candidate := range pool {
@@ -631,11 +688,21 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				}
 			}
 		}
-		if seed := fromSeed[candidate.ID]; seed != nil {
-			score += seed.weight // "more like this" outranks genre overlap alone
-			reasonSeed = seed
+		// "More like this" support from each listing title outranks genre
+		// overlap alone, and accumulates across titles (consensus).
+		var alsoSeed *signalInfoWithKeys
+		if supporters := seedsFor[candidate.ID]; len(supporters) > 0 {
+			ranked := append([]*signalInfoWithKeys(nil), supporters...)
+			sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].weight > ranked[j].weight })
+			for _, seed := range ranked {
+				score += seed.weight
+			}
+			reasonSeed = ranked[0]
+			if len(ranked) > 1 {
+				alsoSeed = ranked[1]
+			}
 		}
-		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed})
+		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed})
 	}
 
 	// Deterministic ordering: score desc, provider popularity rank, canonical id.
@@ -655,7 +722,12 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	{
 		groups := map[string][]scored{}
 		order := []string{}
+		var consensus []scored
 		for _, entry := range scored_ {
+			if entry.alsoSeed != nil {
+				consensus = append(consensus, entry) // already score-ordered
+				continue
+			}
 			key := ""
 			if entry.score > 0 && entry.reasonSeed != nil {
 				key = entry.reasonSeed.id
@@ -665,7 +737,8 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			}
 			groups[key] = append(groups[key], entry)
 		}
-		interleaved := make([]scored, 0, len(scored_))
+		// Consensus picks (backed by several household titles) lead.
+		interleaved := append(make([]scored, 0, len(scored_)), consensus...)
 		for progress := true; progress; {
 			progress = false
 			for _, key := range order {
@@ -699,9 +772,13 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			Reason:      Reason{Code: reasonPopular, Text: "Popular pick"},
 		}
 		if entry.score > 0 && entry.reasonSeed != nil {
+			text := reasonText[entry.reasonSeed.label](entry.reasonSeed.title)
+			if entry.alsoSeed != nil {
+				text = fmt.Sprintf("Because you like %s and %s", entry.reasonSeed.title, entry.alsoSeed.title)
+			}
 			item.Reason = Reason{
 				Code:            reasonSeedGenre,
-				Text:            reasonText[entry.reasonSeed.label](entry.reasonSeed.title),
+				Text:            text,
 				SeedCanonicalID: entry.reasonSeed.id,
 			}
 		}

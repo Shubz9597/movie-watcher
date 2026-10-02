@@ -76,3 +76,59 @@ func TestTasteRecommendationsCreditSourceAndRotate(t *testing.T) {
 		t.Fatalf("the first picks must rotate between shows, got %v (%v)", order[:3], reasons)
 	}
 }
+
+// A title several household titles point at is a consensus pick: it leads,
+// and its reason names both titles. Crossover lists mix in the other media
+// type for a seed.
+func TestTasteConsensusLeadsAndCrossoverMixes(t *testing.T) {
+	shared := title("tmdb:tv:shared", "Drama", "Mystery")
+	svc := New(Deps{
+		Library:    &fakeLibrary{revision: 1},
+		Candidates: &fakeCandidates{},
+		SeedGenres: &fakeSeedGenres{genres: map[string][]string{
+			"tmdb:tv:1438":  {"Drama", "Crime"},
+			"tmdb:tv:95396": {"Drama", "Mystery"},
+		}},
+		SeedSimilar: fakeSimilar{
+			"tmdb:tv:1438":  {title("tmdb:tv:wire-a", "Crime"), shared},
+			"tmdb:tv:95396": {title("tmdb:tv:sev-a", "Mystery"), shared},
+		},
+		CrossSimilar: fakeSimilar{
+			"tmdb:tv:95396": {title("tmdb:movie:memento", "Mystery")},
+		},
+		Taste: fakeTaste{signals: []TasteSignal{
+			{CanonicalID: "tmdb:tv:1438", Label: "watch-later", Weight: 3, Title: "The Wire"},
+			{CanonicalID: "tmdb:tv:95396", Label: "watched", Weight: 4, Title: "Severance"},
+		}},
+		Now: func() time.Time { return time.Unix(1_000_000, 0) },
+	})
+	result, err := svc.Recommend(context.Background())
+	if err != nil || len(result.Items) == 0 {
+		t.Fatalf("recommend: %v items=%d", err, len(result.Items))
+	}
+	first := result.Items[0]
+	if first.CanonicalID != "tmdb:tv:shared" || first.Reason.Text != "Because you like Severance and The Wire" {
+		t.Fatalf("consensus pick must lead with a joint reason, got %s %q", first.CanonicalID, first.Reason.Text)
+	}
+	found := false
+	for _, item := range result.Items {
+		if item.CanonicalID == "tmdb:movie:memento" {
+			found = item.Reason.Text == "Because you watched Severance"
+		}
+	}
+	if !found {
+		t.Fatalf("crossover movie must be recommended for the series: %+v", result.Items)
+	}
+}
+
+func TestMixCrossInterleavesTwoToOne(t *testing.T) {
+	same := []catalog.Title{title("a"), title("b"), title("c")}
+	cross := []catalog.Title{title("x"), title("y")}
+	var ids []string
+	for _, item := range mixCross(same, cross) {
+		ids = append(ids, item.ID)
+	}
+	if strings.Join(ids, ",") != "a,b,x,c,y" {
+		t.Fatalf("mix = %v", ids)
+	}
+}

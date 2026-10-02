@@ -238,6 +238,11 @@ func main() {
 					SeedSimilar:           recommendations.CatalogSeedSimilar{Provider: candidateProvider},
 					CandidateCacheVersion: recommendations.CandidatePoolVersion,
 				}
+				// Crossover (movies for series, series for movies) by shared
+				// keywords and mapped genres.
+				if tmdbProvider, ok := candidateProvider.(*catalog.TMDb); ok {
+					deps.CrossSimilar = recommendations.TMDbCrossSimilar{Provider: tmdbProvider}
+				}
 				for _, p := range catalogProviders {
 					if anilistProvider, ok := p.(*catalog.AniList); ok {
 						deps.SeedSimilar = recommendations.NamespaceSeedSimilar{

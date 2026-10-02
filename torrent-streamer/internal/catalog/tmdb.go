@@ -663,3 +663,145 @@ func (p *TMDb) SeedSimilar(ctx context.Context, canonicalID string, limit int) (
 	}
 	return titles, nil
 }
+
+// genericKeywords carries no taste signal (production/format trivia) and
+// would match half the catalog in a keyword discovery.
+var genericKeywords = map[string]bool{
+	"based on novel or book": true, "based on comic": true, "based on true story": true,
+	"woman director": true, "duringcreditsstinger": true, "aftercreditsstinger": true,
+	"miniseries": true, "sequel": true, "remake": true, "anime": true, "live action remake": true,
+	"based on manga": true, "based on video game": true, "duplicate": true, "short film": true,
+}
+
+// tvToMovieGenre maps TMDb TV genres onto the closest movie genres (and back)
+// for the keyword-less fallback; same-named genres share ids.
+var tvToMovieGenre = map[int][]int{
+	10759: {28, 12},  // Action & Adventure → Action, Adventure
+	10765: {878, 14}, // Sci-Fi & Fantasy → Science Fiction, Fantasy
+	10768: {10752},   // War & Politics → War
+	18:    {18}, 80: {80}, 9648: {9648}, 35: {35}, 16: {16}, 99: {99}, 10751: {10751}, 37: {37},
+}
+
+var movieToTVGenre = map[int][]int{
+	28: {10759}, 12: {10759}, 878: {10765}, 14: {10765}, 10752: {10768}, 53: {9648, 80}, 27: {9648},
+	18: {18}, 80: {80}, 9648: {9648}, 35: {35}, 16: {16}, 99: {99}, 10751: {10751}, 37: {37},
+}
+
+// CrossTypeSimilar returns titles of the OTHER media type that share the
+// seed's themes: movies for a series, series for a movie. It discovers by the
+// seed's TMDb keywords (OR-joined, well-rated, most-voted first) and falls
+// back to mapped genres when the seed has no useful keywords.
+func (p *TMDb) CrossTypeSimilar(ctx context.Context, canonicalID string, limit int) ([]Title, error) {
+	if p.apiKey == "" {
+		return nil, errProviderUnavailable
+	}
+	mediaType, externalID := splitTMDbExternalID(strings.TrimPrefix(canonicalID, "tmdb:"))
+	if externalID == "" || (mediaType != "tv" && mediaType != "movie") {
+		return nil, ErrNotFound
+	}
+	other := "movie"
+	if mediaType == "movie" {
+		other = "tv"
+	}
+	genreName, err := p.genreNameMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var keywordPayload struct {
+		Keywords []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"keywords"` // movie shape
+		Results []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"results"` // tv shape
+	}
+	params := map[string]string{
+		"sort_by": "vote_count.desc", "vote_average.gte": "6.5", "vote_count.gte": "150", "page": "1",
+	}
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/"+mediaType+"/"+externalID+"/keywords", nil), &keywordPayload); err == nil {
+		ids := []string{}
+		for _, keyword := range append(keywordPayload.Keywords, keywordPayload.Results...) {
+			if len(ids) >= 8 {
+				break
+			}
+			if !genericKeywords[strings.ToLower(strings.TrimSpace(keyword.Name))] {
+				ids = append(ids, strconv.FormatInt(keyword.ID, 10))
+			}
+		}
+		if len(ids) > 0 {
+			params["with_keywords"] = strings.Join(ids, "|")
+		}
+	}
+	// The seed's genres, mapped onto the other media type, both drive the
+	// keyword-less fallback and FILTER keyword matches: a result must share
+	// a mapped genre (Drama only counts when it is the seed's sole genre), so
+	// incidental keywords ("office", "friendship") don't pull in off-taste
+	// titles.
+	var detail struct {
+		Genres []struct {
+			ID int `json:"id"`
+		} `json:"genres"`
+	}
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/"+mediaType+"/"+externalID, nil), &detail); err != nil {
+		return nil, err
+	}
+	mapping := tvToMovieGenre
+	if mediaType == "movie" {
+		mapping = movieToTVGenre
+	}
+	mapped := map[int]bool{}
+	genreIDs := []string{}
+	for _, genre := range detail.Genres {
+		for _, target := range mapping[genre.ID] {
+			if !mapped[target] {
+				mapped[target] = true
+				genreIDs = append(genreIDs, strconv.Itoa(target))
+			}
+		}
+	}
+	if len(mapped) == 0 {
+		return nil, ErrNotFound
+	}
+	const dramaGenre = 18
+	if len(mapped) > 1 {
+		delete(mapped, dramaGenre)
+	}
+	if params["with_keywords"] == "" {
+		params["with_genres"] = strings.Join(genreIDs, "|")
+	}
+
+	var payload tmdbSearchResponse
+	if err := fetchJSON(ctx, p.http, p.endpoint("/3/discover/"+other, params), &payload); err != nil {
+		return nil, err
+	}
+	titles := make([]Title, 0, limit)
+	for _, result := range payload.Results {
+		if len(titles) >= limit {
+			break
+		}
+		shares := false
+		for _, genreID := range result.GenreIDs {
+			if mapped[genreID] {
+				shares = true
+				break
+			}
+		}
+		if !shares {
+			continue
+		}
+		title := p.titleFromMedia(other, result.ID,
+			result.Title, result.Name, result.OriginalTitle, result.OriginalName,
+			result.ReleaseDate, result.FirstAirDate, result.Overview,
+			result.PosterPath, result.BackdropPath, result.OriginalLanguage, result.GenreIDs)
+		for _, genreID := range result.GenreIDs {
+			if name, ok := genreName[genreID]; ok && name != "" {
+				title.Genres = append(title.Genres, name)
+			}
+		}
+		titles = append(titles, title)
+	}
+	return titles, nil
+}
