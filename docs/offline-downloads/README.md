@@ -12,7 +12,6 @@ This packet defines the requested changes, architecture, wireframes, tasks, and 
 4. [Architecture and change map](plan.md): current owners, changes, interfaces, migration, and native feasibility gate.
 5. [Implementation tasks](tasks.md): ordered milestones, checks, and rollback.
 6. [Definition of done](acceptance.md): individual pass/fail cases and evidence requirements.
-7. [OpenCode prompt](OPENCODE-PROMPT.md): copy into the implementation task.
 
 Static previews: [Existing app references](captures/reference.png), [Connection](captures/connection.png), [Downloads](captures/downloads.png), [iOS surfaces](captures/system.png). The HTML board also adapts to a narrow viewport. Recreate the captures from the repository root with `node docs/offline-downloads/render-wireframes.mjs` (uses the existing Electron project's Puppeteer dependency).
 

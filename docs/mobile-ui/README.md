@@ -16,7 +16,7 @@ Planning revision: five boards now cover icon controls without capsule chrome, a
 
 ## Skills and tools for the coding agent
 
-In the authoring Codex session, **Impeccable**, Spec Kit and Gophers skills are available. Availability is not assumed in OpenCode: its prompt is self-contained, and optional missing skills do not block implementation. Repository `.opencode/commands/speckit.*.md` files are available for supported OpenCode workflows. If used, analyze first, implement tasks, then converge on missing work. Explicitly set `SPECIFY_FEATURE_DIRECTORY=specs/002-mobile-shared-ui`; the resolver also reads saved feature state and must not silently target feature 001.
+In the authoring Codex session, **Impeccable**, Spec Kit and Gophers skills are available. Availability is not assumed in OpenCode: its prompt is self-contained, and optional missing skills do not block implementation.
 
 A multimodal model must have screenshot-reading tools and browser automation for shared web surfaces, plus simulator/device capture for native checks. A skill alone does not provide a Mac, Xcode, simulator, signing identity, or Radxa. No extra plugin or image-generation skill is required to implement these vector wireframes. If the next agent lacks these tools, it must report the missing evidence, not certify mobile support.
 

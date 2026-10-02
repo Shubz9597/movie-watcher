@@ -6,12 +6,12 @@ The owner rejected the first wireframe draft's explanatory copy and generic shel
 
 | Reference | Keep / interpretation |
 |---|---|
-| [Library](../../specs/002-mobile-shared-ui/evidence/captures/m25/library-390x844.png) | Existing TV logo, connection indicator, search and Settings2 icons, dark header, title scale, separators, bottom destinations |
-| [Title](../../specs/002-mobile-shared-ui/evidence/captures/m25/title-390x844.png) | Existing title backdrop, metadata, saved-item/source controls and content hierarchy; add Download locally rather than replace title design |
-| [Search](../../specs/002-mobile-shared-ui/evidence/captures/m25/search-sheet-390x844.png) | Existing poster/content styling; reference imagery for the download mockup only |
-| [Home](../../specs/002-mobile-shared-ui/evidence/captures/m25/home-390x844.png) | Home/Library/Search navigation and media hierarchy; this capture does not prove current connected content or header behavior |
-| [Connection failure](../../specs/002-mobile-shared-ui/evidence/captures/live-switch-unreachable-gate-phone.png) | Existing centered URL form and Connect treatment; do not preserve raw TypeError diagnostics or use this gate for returning-user outages |
-| [Earlier title](../../specs/002-mobile-shared-ui/evidence/captures/fixture-title-phone.png) and [source selection](../../specs/002-mobile-shared-ui/evidence/captures/fixture-source-selected-phone.png) | Existing feature organization; earlier logo differs, so use current source asset rather than copying obsolete branding |
+| [Library](captures/reference/m25/library-390x844.png) | Existing TV logo, connection indicator, search and Settings2 icons, dark header, title scale, separators, bottom destinations |
+| [Title](captures/reference/m25/title-390x844.png) | Existing title backdrop, metadata, saved-item/source controls and content hierarchy; add Download locally rather than replace title design |
+| [Search](captures/reference/m25/search-sheet-390x844.png) | Existing poster/content styling; reference imagery for the download mockup only |
+| [Home](captures/reference/m25/home-390x844.png) | Home/Library/Search navigation and media hierarchy; this capture does not prove current connected content or header behavior |
+| [Connection failure](captures/reference/live-switch-unreachable-gate-phone.png) | Existing centered URL form and Connect treatment; do not preserve raw TypeError diagnostics or use this gate for returning-user outages |
+| [Earlier title](captures/reference/fixture-title-phone.png) and [source selection](captures/reference/fixture-source-selected-phone.png) | Existing feature organization; earlier logo differs, so use current source asset rather than copying obsolete branding |
 
 Source cross-check: `electron-app/src/components/shared/AppShell.tsx` currently imports `torwatch-app-icon.png`, Search and Settings2, and orders Home, Library, Search. `LaunchScreen.tsx` now includes the centered logo/splash, URL field and Connect button. This newer source wins over an older capture's missing logo or raw exception text. The mockup uses the actual current logo asset. Evidence screenshots remain untouched.
 

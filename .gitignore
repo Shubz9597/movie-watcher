@@ -134,8 +134,11 @@ deploy/torwatch-server/.deploy-state/
 !deploy/torwatch-server/.env.example
 
 
-# Local agent/runtime state (the tracked .opencode command catalog remains visible).
+# Local agent/runtime state.
 .codex/
 .codex-*/
 session-ses_*.md
 /torrent-streamer/tools/stub-extract.mjs
+
+# Screenshot output of the electron-app capture scripts.
+specs/*/evidence/captures/

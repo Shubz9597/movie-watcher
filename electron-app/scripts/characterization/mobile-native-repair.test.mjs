@@ -40,7 +40,6 @@ test("source hygiene: mobile/shared sources and M1.4 docs contain no mojibake", 
     join(repoRoot, "docs", "mobile-ui"),
   ];
   const milestoneDocs = [
-    "HANDOFF.md",
     "plan.md",
     "spec.md",
     "tasks.md",

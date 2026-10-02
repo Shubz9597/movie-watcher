@@ -108,7 +108,7 @@ powershell -ExecutionPolicy Bypass -File m02-smoke.ps1            # builds rende
 powershell -ExecutionPolicy Bypass -File m02-smoke.ps1 -SkipBuild # reuse existing dist
 `
 
-Starts a DEDICATED backend on 127.0.0.1:4002 + provider stub on 127.0.0.1:4498 sharing the staging PostgreSQL (persistent data preserved; nothing is wiped), then drives a REAL Electron window through Home/search/title/Library/restart checks. Stops only the processes it started. Catalog evidence is STUB-BACKED; playback is not exercised (M1.3/M1.4). Screenshots land in electron-app\release\m02\ (copies in specs/002-mobile-shared-ui/evidence/captures/m02-*).
+Starts a DEDICATED backend on 127.0.0.1:4002 + provider stub on 127.0.0.1:4498 sharing the staging PostgreSQL (persistent data preserved; nothing is wiped), then drives a REAL Electron window through Home/search/title/Library/restart checks. Stops only the processes it started. Catalog evidence is STUB-BACKED; playback is not exercised (M1.3/M1.4). Screenshots land in electron-app\release\m02\.
 
 ## Live source discovery (-WithProwlarr)
 
