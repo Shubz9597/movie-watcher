@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 )
 
 // Signal is one household taste signal.
@@ -31,6 +32,7 @@ type Signal struct {
 	Label       string  // favourited | watch-later | watched | started | downloaded | completed | opened
 	Weight      float64
 	Title       string  // display title when a snapshot/name is available
+	At          time.Time // when the signal last happened (recency decay)
 }
 
 // Store is the SQL-backed taste signal store (migrations/008).
@@ -80,7 +82,8 @@ func (s *Store) HouseholdSignals(ctx context.Context) ([]Signal, error) {
 	// Library signals: favourites (5) and Watch Later (3).
 	libRows, err := s.DB.QueryContext(ctx, `
 SELECT canonical_id, media_kind, COALESCE(NULLIF(snapshot_title, ''), canonical_id),
-       watch_later, favourite
+       watch_later, favourite,
+       COALESCE(watch_later_added_at, updated_at), COALESCE(favourite_added_at, updated_at)
 FROM library_memberships
 WHERE household_id = $1 AND (watch_later OR favourite)`, householdID)
 	if err != nil {
@@ -90,14 +93,15 @@ WHERE household_id = $1 AND (watch_later OR favourite)`, householdID)
 	for libRows.Next() {
 		var canonicalID, mediaKind, title string
 		var watchLater, favourite bool
-		if err := libRows.Scan(&canonicalID, &mediaKind, &title, &watchLater, &favourite); err != nil {
+		var watchLaterAt, favouriteAt time.Time
+		if err := libRows.Scan(&canonicalID, &mediaKind, &title, &watchLater, &favourite, &watchLaterAt, &favouriteAt); err != nil {
 			return nil, err
 		}
 		if favourite {
-			signals = append(signals, Signal{CanonicalID: canonicalID, Kind: mediaKind, Label: "favourited", Weight: 5, Title: title})
+			signals = append(signals, Signal{CanonicalID: canonicalID, Kind: mediaKind, Label: "favourited", Weight: 5, Title: title, At: favouriteAt})
 		}
 		if watchLater {
-			signals = append(signals, Signal{CanonicalID: canonicalID, Kind: mediaKind, Label: "watch-later", Weight: 3, Title: title})
+			signals = append(signals, Signal{CanonicalID: canonicalID, Kind: mediaKind, Label: "watch-later", Weight: 3, Title: title, At: watchLaterAt})
 		}
 	}
 	if err := libRows.Err(); err != nil {
@@ -114,7 +118,8 @@ WHERE household_id = $1 AND (watch_later OR favourite)`, householdID)
 	progRows, err := s.DB.QueryContext(ctx, `
 SELECT series_id,
        max(percent) AS best,
-       count(*) FILTER (WHERE percent >= 90) AS finished
+       count(*) FILTER (WHERE percent >= 90) AS finished,
+       max(updated_at) AS last_at
 FROM watch_progress
 WHERE percent > 0
 GROUP BY series_id`)
@@ -126,7 +131,8 @@ GROUP BY series_id`)
 		var seriesID string
 		var best float64
 		var finished int
-		if err := progRows.Scan(&seriesID, &best, &finished); err != nil {
+		var lastAt time.Time
+		if err := progRows.Scan(&seriesID, &best, &finished, &lastAt); err != nil {
 			return nil, err
 		}
 		signals = append(signals, Signal{CanonicalID: seriesID, Label: "completed", Weight: 0, Title: seriesID})
@@ -135,9 +141,9 @@ GROUP BY series_id`)
 			if bonus > 2 {
 				bonus = 2
 			}
-			signals = append(signals, Signal{CanonicalID: seriesID, Label: "watched", Weight: 4 + bonus, Title: seriesID})
+			signals = append(signals, Signal{CanonicalID: seriesID, Label: "watched", Weight: 4 + bonus, Title: seriesID, At: lastAt})
 		} else {
-			signals = append(signals, Signal{CanonicalID: seriesID, Label: "started", Weight: 2, Title: seriesID})
+			signals = append(signals, Signal{CanonicalID: seriesID, Label: "started", Weight: 2, Title: seriesID, At: lastAt})
 		}
 	}
 	if err := progRows.Err(); err != nil {
@@ -147,18 +153,20 @@ GROUP BY series_id`)
 	// Download signals: preparing a title for offline viewing is strong
 	// interest (weight 3) and, like progress, excludes the title itself.
 	dlRows, err := s.DB.QueryContext(ctx, `
-SELECT DISTINCT series_id FROM download_jobs
-WHERE state IN ('preparing', 'ready', 'expired')`)
+SELECT series_id, max(created_at) FROM download_jobs
+WHERE state IN ('preparing', 'ready', 'expired')
+GROUP BY series_id`)
 	if err == nil {
 		defer dlRows.Close()
 		for dlRows.Next() {
 			var seriesID string
-			if err := dlRows.Scan(&seriesID); err != nil {
+			var createdAt time.Time
+			if err := dlRows.Scan(&seriesID, &createdAt); err != nil {
 				return nil, err
 			}
 			signals = append(signals,
 				Signal{CanonicalID: seriesID, Label: "completed", Weight: 0, Title: seriesID},
-				Signal{CanonicalID: seriesID, Label: "downloaded", Weight: 3, Title: seriesID})
+				Signal{CanonicalID: seriesID, Label: "downloaded", Weight: 3, Title: seriesID, At: createdAt})
 		}
 		if err := dlRows.Err(); err != nil {
 			return nil, err
@@ -168,21 +176,23 @@ WHERE state IN ('preparing', 'ready', 'expired')`)
 	// Visited signals (recent window only): title resolved from any library
 	// snapshot when one exists.
 	visitRows, err := s.DB.QueryContext(ctx, `
-SELECT DISTINCT te.canonical_id, te.kind, COALESCE(NULLIF(lm.snapshot_title, ''), te.canonical_id)
+SELECT te.canonical_id, te.kind, COALESCE(NULLIF(lm.snapshot_title, ''), te.canonical_id), max(te.created_at)
 FROM taste_events te
 LEFT JOIN library_memberships lm
        ON lm.household_id = $1 AND lm.canonical_id = te.canonical_id
-WHERE te.created_at > now() - interval '60 days'`, householdID)
+WHERE te.created_at > now() - interval '60 days'
+GROUP BY te.canonical_id, te.kind, lm.snapshot_title`, householdID)
 	if err != nil {
 		return nil, err
 	}
 	defer visitRows.Close()
 	for visitRows.Next() {
 		var canonicalID, kind, title string
-		if err := visitRows.Scan(&canonicalID, &kind, &title); err != nil {
+		var visitedAt time.Time
+		if err := visitRows.Scan(&canonicalID, &kind, &title, &visitedAt); err != nil {
 			return nil, err
 		}
-		signals = append(signals, Signal{CanonicalID: canonicalID, Kind: kind, Label: "opened", Weight: 1, Title: title})
+		signals = append(signals, Signal{CanonicalID: canonicalID, Kind: kind, Label: "opened", Weight: 1, Title: title, At: visitedAt})
 	}
 	if err := visitRows.Err(); err != nil {
 		return nil, err

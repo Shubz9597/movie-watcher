@@ -132,3 +132,56 @@ func TestMixCrossInterleavesTwoToOne(t *testing.T) {
 		t.Fatalf("mix = %v", ids)
 	}
 }
+
+func TestRecencyFactorDecaysWithFloor(t *testing.T) {
+	now := time.Unix(10_000_000, 0)
+	if f := recencyFactor(now, time.Time{}); f != 1 {
+		t.Fatalf("undated signals keep full weight, got %v", f)
+	}
+	if f := recencyFactor(now, now.Add(-60*24*time.Hour)); f < 0.49 || f > 0.51 {
+		t.Fatalf("60 days halves the weight, got %v", f)
+	}
+	if f := recencyFactor(now, now.Add(-400*24*time.Hour)); f != 0.25 {
+		t.Fatalf("old signals floor at a quarter, got %v", f)
+	}
+}
+
+func TestDailyJitterIsStablePerDayAndVaries(t *testing.T) {
+	day := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	if dailyJitter(day, "a") != dailyJitter(day.Add(3*time.Hour), "a") {
+		t.Fatal("jitter must be stable within a day")
+	}
+	changed := false
+	for i := 1; i <= 7 && !changed; i++ {
+		changed = dailyJitter(day.AddDate(0, 0, i), "a") != dailyJitter(day, "a")
+	}
+	if !changed {
+		t.Fatal("jitter must vary across days")
+	}
+}
+
+// Titles not listed by any household title fill exploration slots (one
+// after every four personal picks), labelled as such.
+func TestExplorationSlotsFollowPersonalPicks(t *testing.T) {
+	personal := []catalog.Title{}
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		personal = append(personal, title("tmdb:tv:"+id, "Drama"))
+	}
+	svc := New(Deps{
+		Library:     &fakeLibrary{revision: 1},
+		Candidates:  &fakeCandidates{titles: []catalog.Title{title("tmdb:movie:pop", "Comedy")}},
+		SeedGenres:  &fakeSeedGenres{genres: map[string][]string{"tmdb:tv:1438": {"Drama"}}},
+		SeedSimilar: fakeSimilar{"tmdb:tv:1438": personal},
+		Taste: fakeTaste{signals: []TasteSignal{
+			{CanonicalID: "tmdb:tv:1438", Label: "watched", Weight: 4, Title: "The Wire"},
+		}},
+		Now: func() time.Time { return time.Unix(1_000_000, 0) },
+	})
+	result, err := svc.Recommend(context.Background())
+	if err != nil || len(result.Items) < 5 {
+		t.Fatalf("recommend: %v items=%d", err, len(result.Items))
+	}
+	if result.Items[4].CanonicalID != "tmdb:movie:pop" || result.Items[4].Reason.Text != "Something different" {
+		t.Fatalf("5th slot must be the exploration pick, got %s %q", result.Items[4].CanonicalID, result.Items[4].Reason.Text)
+	}
+}

@@ -12,7 +12,9 @@ package recommendations
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -159,9 +161,10 @@ func (n NamespaceSeedSimilar) SeedSimilar(ctx context.Context, canonicalID strin
 type TasteSignal struct {
 	CanonicalID string
 	Kind        string
-	Label       string // favourited | watch-later | watched | started | completed | opened
+	Label       string // favourited | watch-later | watched | started | downloaded | completed | opened
 	Weight      float64
 	Title       string
+	At          time.Time // when it happened; zero = undated (no decay)
 }
 
 // TasteSource supplies the household-wide taste signals (favourites, Watch
@@ -541,11 +544,12 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			completed = append(completed, signal.CanonicalID)
 			continue
 		}
+		weight := signal.Weight * recencyFactor(s.now(), signal.At)
 		current, exists := best[signal.CanonicalID]
-		if !exists || signal.Weight > current.weight {
+		if !exists || weight > current.weight {
 			best[signal.CanonicalID] = signalInfo{
 				id: signal.CanonicalID, kind: signal.Kind, title: signal.Title,
-				label: signal.Label, weight: signal.Weight,
+				label: signal.Label, weight: weight,
 			}
 		}
 	}
@@ -660,6 +664,8 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		score      float64
 		reasonSeed *signalInfoWithKeys
 		alsoSeed   *signalInfoWithKeys // second supporting title (consensus picks)
+		supported  bool                // listed by at least one household title
+		explore    bool                // exploration slot (not tied to one title)
 	}
 	scored_ := make([]scored, 0, len(pool))
 	for rank, candidate := range pool {
@@ -702,7 +708,10 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				alsoSeed = ranked[1]
 			}
 		}
-		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed})
+		// Daily variety: a small, date-seeded jitter reorders near-equal
+		// picks each day without overturning clear preferences.
+		score += dailyJitter(s.now(), candidate.ID) * 0.3
+		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed, supported: len(seedsFor[candidate.ID]) > 0})
 	}
 
 	// Deterministic ordering: score desc, provider popularity rank, canonical id.
@@ -722,23 +731,28 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	{
 		groups := map[string][]scored{}
 		order := []string{}
-		var consensus []scored
+		var consensus, explore []scored
 		for _, entry := range scored_ {
-			if entry.alsoSeed != nil {
+			switch {
+			case entry.alsoSeed != nil:
 				consensus = append(consensus, entry) // already score-ordered
-				continue
+			case entry.supported && entry.reasonSeed != nil:
+				key := entry.reasonSeed.id
+				if _, seen := groups[key]; !seen {
+					order = append(order, key)
+				}
+				groups[key] = append(groups[key], entry)
+			default:
+				// Not listed by any household title: exploration pool,
+				// already ordered by profile genre affinity, then popularity.
+				entry.explore = true
+				explore = append(explore, entry)
 			}
-			key := ""
-			if entry.score > 0 && entry.reasonSeed != nil {
-				key = entry.reasonSeed.id
-			}
-			if _, seen := groups[key]; !seen && key != "" {
-				order = append(order, key)
-			}
-			groups[key] = append(groups[key], entry)
 		}
-		// Consensus picks (backed by several household titles) lead.
+		// Consensus picks (backed by several household titles) lead; then
+		// titles rotate, with one exploration pick after every four.
 		interleaved := append(make([]scored, 0, len(scored_)), consensus...)
+		sinceExplore := 0
 		for progress := true; progress; {
 			progress = false
 			for _, key := range order {
@@ -748,9 +762,15 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				interleaved = append(interleaved, groups[key][0])
 				groups[key] = groups[key][1:]
 				progress = true
+				sinceExplore++
+				if sinceExplore >= exploreEvery && len(explore) > 0 {
+					interleaved = append(interleaved, explore[0])
+					explore = explore[1:]
+					sinceExplore = 0
+				}
 			}
 		}
-		scored_ = append(interleaved, groups[""]...)
+		scored_ = append(interleaved, explore...)
 	}
 
 	reasonText := map[string]func(string) string{
@@ -771,7 +791,10 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			Artwork:     entry.title.Artwork,
 			Reason:      Reason{Code: reasonPopular, Text: "Popular pick"},
 		}
-		if entry.score > 0 && entry.reasonSeed != nil {
+		if entry.explore {
+			// Exploration: well-regarded outside the household's own lists.
+			item.Reason = Reason{Code: reasonPopular, Text: "Something different"}
+		} else if entry.score > 0 && entry.reasonSeed != nil {
 			text := reasonText[entry.reasonSeed.label](entry.reasonSeed.title)
 			if entry.alsoSeed != nil {
 				text = fmt.Sprintf("Because you like %s and %s", entry.reasonSeed.title, entry.alsoSeed.title)
@@ -804,4 +827,30 @@ func genreKey(namespace, genre string) string {
 		return ""
 	}
 	return namespace + ":" + normalized
+}
+
+// exploreEvery places one exploration pick after this many personal picks.
+const exploreEvery = 4
+
+// recencyFactor decays a signal's weight with age: half every 60 days, never
+// below a quarter (old favourites still count). Undated signals keep full
+// weight.
+func recencyFactor(now, at time.Time) float64 {
+	if at.IsZero() || !at.Before(now) {
+		return 1
+	}
+	days := now.Sub(at).Hours() / 24
+	factor := math.Pow(0.5, days/60)
+	if factor < 0.25 {
+		return 0.25
+	}
+	return factor
+}
+
+// dailyJitter is a stable per-day pseudo-random value in [0,1) for a title,
+// so the list varies from day to day but not between requests.
+func dailyJitter(now time.Time, id string) float64 {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(now.UTC().Format("2006-01-02") + "\x00" + id))
+	return float64(hash.Sum32()%1000) / 1000
 }

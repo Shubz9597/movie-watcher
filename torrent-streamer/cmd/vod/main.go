@@ -62,6 +62,7 @@ func (a tasteAdapter) HouseholdSignals(ctx context.Context) ([]recommendations.T
 			Label:       signal.Label,
 			Weight:      signal.Weight,
 			Title:       signal.Title,
+			At:          signal.At,
 		})
 	}
 	return out, nil

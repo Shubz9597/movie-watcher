@@ -99,7 +99,7 @@ function RecommendationCard({ item, navigate, index }: {
       <button
         type="button"
         onClick={() => navigate('title', titleRouteParams(item.canonicalId))}
-        aria-label={`${item.title}${item.reason.code === 'seed_genre' ? `, ${item.reason.text}` : ', popular pick'}`}
+        aria-label={`${item.title}, ${item.reason.text || 'Popular pick'}`}
         className={`group block w-full rounded-lg text-left ${FOCUS_RING_CLASS}`}
       >
         <span className="relative block aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[var(--surface-raised)]">
