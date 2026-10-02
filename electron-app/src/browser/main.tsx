@@ -457,6 +457,7 @@ function BrowserApp({
         {route.path === 'search' && <SearchPage navigate={navigate} />}
         {/* WF06: the direct route to local media — works without a server. */}
         {route.path === 'downloads' && <DownloadsPage navigate={navigate} />}
+        {route.path === 'downloads-series' && <DownloadsPage navigate={navigate} seriesId={route.params.get('series')} />}
         {/* Dev-only (fixture entry): the REAL recommendations surfaces driven
             by the deterministic fixture fetch (?recs=<scenario>), so the
             M4.2 states are capturable without a backend. */}
@@ -471,7 +472,7 @@ function BrowserApp({
             <SharedRecommendationsAllPage navigate={navigate} deps={recommendationDeps} />
           </div>
         ) : null}
-        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations', 'search', 'downloads'].includes(route.path) && (
+        {!['home', 'library', 'library-category', 'library-states', 'recommendations-states', 'title', 'see-all', 'player', 'recommendations', 'search', 'downloads', 'downloads-series'].includes(route.path) && (
           <section className="mx-auto flex min-h-[70vh] max-w-xl flex-col items-center justify-center px-6 text-center">
             <p className="text-sm text-white/60">This page is not available.</p>
             <h1 className="type-section-title mt-3 text-white">Return to your library</h1>

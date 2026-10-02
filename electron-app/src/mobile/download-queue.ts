@@ -127,7 +127,7 @@ function preparationFailure(reasonCode?: string): string {
     case 'retention_expired':
       return 'Download expired. Start it again.';
     case 'subtitles_unavailable':
-      return 'Subtitles not found.';
+      return 'Couldn’t get subtitles.';
     default:
       return 'Could not prepare this source.';
   }

@@ -66,9 +66,12 @@ export class NativeDownloadsAdapter implements DownloadsPort {
           downloadId: item.downloadId,
           title: item.title,
           posterUrl: item.posterUrl || undefined,
-          subtitle: [item.subtitleLabel, item.season > 0 ? `S${item.season} E${item.episode}` : null]
+          subtitle: Array.from(new Set([item.subtitleLabel, item.season > 0 ? `S${item.season} E${item.episode}` : null]))
             .filter(Boolean)
             .join(' · '),
+          seriesId: item.seriesId,
+          season: item.season,
+          episode: item.episode,
           state: item.state === 'ready' ? 'ready' : 'needs-repair',
           transferState: item.state,
           sizeBytes: item.totalBytes > 0 ? item.totalBytes : undefined,

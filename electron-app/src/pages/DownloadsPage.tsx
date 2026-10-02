@@ -6,7 +6,7 @@
 // downloads". Ready items play locally; server preparation and native
 // transfer states are merged into one concise queue.
 import { useEffect, useState } from 'react';
-import { Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
+import { ChevronRight, Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from '../platform/contracts';
 import { SelectionSurface } from '../components/primitives';
@@ -24,6 +24,8 @@ import {
 } from '../mobile/download-queue';
 type DownloadsPageProps = {
   navigate: (path: string, params?: Record<string, string>) => void;
+  /** downloads-series route: show one show's episodes by season. */
+  seriesId?: string | null;
 };
 
 const EMPTY_INVENTORY: DownloadsInventory = { available: false, unreadable: false, items: [] };
@@ -126,11 +128,83 @@ function transferStatus(item: DownloadItemSnapshot): string {
   }
 }
 
+type EpisodeLike = { seriesId?: string; season?: number; episode?: number };
+
+function isEpisode(item: EpisodeLike): boolean {
+  return Boolean(item.seriesId) && ((item.season ?? 0) > 0 || (item.episode ?? 0) > 0);
+}
+
+function byEpisode(left: EpisodeLike, right: EpisodeLike): number {
+  return (left.episode ?? 0) - (right.episode ?? 0);
+}
+
+type DownloadGroup =
+  | { kind: 'pending'; item: PendingDownload }
+  | { kind: 'item'; item: DownloadItemSnapshot }
+  | {
+    kind: 'show';
+    seriesId: string;
+    title: string;
+    posterUrl?: string | null;
+    count: number;
+    bytes: number;
+    summary: string | null;
+    needsAttention: boolean;
+  };
+
+// Episodes collapse into one entry per show (first-seen order); movies and
+// anything without series identity stay individual rows.
+function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[]): DownloadGroup[] {
+  const groups: DownloadGroup[] = [];
+  const shows = new Map<string, Extract<DownloadGroup, { kind: 'show' }> & { downloading: number; preparing: number; failed: number }>();
+  const showFor = (seriesId: string, title: string, posterUrl?: string | null) => {
+    let show = shows.get(seriesId);
+    if (!show) {
+      show = { kind: 'show', seriesId, title, posterUrl, count: 0, bytes: 0, summary: null, needsAttention: false, downloading: 0, preparing: 0, failed: 0 };
+      shows.set(seriesId, show);
+      groups.push(show);
+    }
+    if (!show.posterUrl && posterUrl) show.posterUrl = posterUrl;
+    return show;
+  };
+  for (const item of pending) {
+    if (!isEpisode(item)) {
+      groups.push({ kind: 'pending', item });
+      continue;
+    }
+    const show = showFor(item.seriesId, item.title, item.posterUrl);
+    show.count += 1;
+    if (item.state === 'failed') show.failed += 1;
+    else show.preparing += 1;
+  }
+  for (const item of items) {
+    if (!isEpisode(item) || !item.seriesId) {
+      groups.push({ kind: 'item', item });
+      continue;
+    }
+    const show = showFor(item.seriesId, item.title, item.posterUrl);
+    show.count += 1;
+    show.bytes += item.sizeBytes ?? 0;
+    if (item.transferState === 'failed' || (item.transferState == null && item.state === 'needs-repair')) show.failed += 1;
+    else if (item.transferState && item.transferState !== 'ready') show.downloading += 1;
+  }
+  for (const show of shows.values()) {
+    const parts = [
+      show.downloading ? `${show.downloading} downloading` : null,
+      show.preparing ? `${show.preparing} preparing` : null,
+      show.failed ? `${show.failed} need${show.failed === 1 ? 's' : ''} repair` : null,
+    ].filter(Boolean);
+    show.summary = parts.length ? parts.join(' · ') : null;
+    show.needsAttention = show.failed > 0;
+  }
+  return groups;
+}
+
 const ROW_CLASS = 'flex gap-4 rounded-lg bg-[var(--surface-raised)] p-3 sm:p-4';
 const CANCEL_CLASS = `inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white disabled:text-white/35 ${FOCUS_RING_CLASS}`;
 const ROW_ACTION_CLASS = `${ACTION_SECONDARY_CLASS} px-4`;
 
-export default function DownloadsPage({ navigate }: DownloadsPageProps) {
+export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps) {
   const { downloads } = usePlatform();
   const onOpenSettings = () => window.dispatchEvent(new CustomEvent('torwatch:open-settings'));
   const compat = useConnectionStatus();
@@ -251,11 +325,255 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   };
 
   const online = compat.status === 'ready';
+  const seriesTitle = seriesId
+    ? ((inventory?.items ?? []).find((item) => item.seriesId === seriesId)?.title
+      ?? pending.find((item) => item.seriesId === seriesId)?.title
+      ?? 'Downloads')
+    : 'Downloads';
+
+  // Rows are shared by the overview and a show's episode screen; the
+  // episode view drops the repeated poster and leads with "Episode N".
+  const renderPending = (item: PendingDownload, episodeView = false) => {
+    const failed = item.state === 'failed';
+    const elapsed = formatElapsed(item.queuedAt, now);
+    return (
+      <li key={`pending-${item.jobId}`} className={ROW_CLASS}>
+        {episodeView ? null : <DownloadPoster src={item.posterUrl} />}
+        <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 pt-1">
+              <p className="truncate text-base font-medium text-white">{episodeView ? `Episode ${item.episode}` : item.title}</p>
+              <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
+                {[episodeView ? null : item.subtitleLabel, formatSize(item.sizeBytes), subtitleSummary(item.subtitles)].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void cancelPendingDownload(item)}
+              aria-label={`Cancel download of ${item.title}`}
+              title="Cancel download"
+              className={CANCEL_CLASS}
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2" aria-live="polite">
+            <span className={`type-secondary inline-flex min-w-0 items-center gap-2 ${failed ? 'text-red-300' : 'text-white/70'}`}>
+              {!failed ? <LoaderCircle className="h-4 w-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
+              <span>{failed ? item.reason || 'Couldn’t prepare this source.' : `Preparing${elapsed ? ` · ${elapsed}` : ''}`}</span>
+            </span>
+            {failed ? (
+              <div className="flex flex-wrap gap-2">
+                {item.reasonCode === 'subtitles_unavailable' ? (
+                  // Explicit choice (spec D3): never drop the
+                  // requested subtitles silently.
+                  <button
+                    type="button"
+                    onClick={() => void retryPendingDownload(item, { subtitles: [] })}
+                    aria-label={`Download ${item.title} without subtitles`}
+                    className={ROW_ACTION_CLASS}
+                  >
+                    Without subtitles
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => void retryPendingDownload(item)} aria-label={`Retry ${item.title}`} className={ROW_ACTION_CLASS}>
+                  <RotateCcw className="h-4 w-4" aria-hidden="true" /> Retry
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </li>
+    );
+  };
+
+  const renderItem = (item: DownloadItemSnapshot, episodeView = false) => {
+    const size = formatSize(item.sizeBytes);
+    const received = formatSize(item.receivedBytes);
+    const percent = progressPercent(item.receivedBytes, item.sizeBytes);
+    const inTransfer = item.transferState === 'queued'
+      || item.transferState === 'downloading'
+      || item.transferState === 'paused'
+      || item.transferState === 'verifying'
+      || (item.transferState == null && item.waitingForServer === true);
+    const needsRepair = item.transferState === 'failed'
+      || (item.transferState == null && item.state === 'needs-repair');
+    const ready = !inTransfer && !needsRepair;
+    const busy = acting.has(item.downloadId);
+    const rate = item.transferState === 'downloading' ? formatRate(item.bytesPerSecond) : null;
+    const eta = item.transferState === 'downloading' ? formatEta(item.etaSeconds) : null;
+    const amount = size
+      ? `${received || '0 MB'} of ${size}${typeof percent === 'number' ? ` · ${percent}%` : ''}`
+      : received;
+    return (
+      <li key={item.downloadId} className={ROW_CLASS}>
+        {episodeView ? null : <DownloadPoster src={item.posterUrl} />}
+        <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 pt-1">
+              <p className="truncate text-base font-medium text-white">{episodeView ? `Episode ${item.episode ?? ''}` : item.title}</p>
+              <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
+                {[episodeView ? null : item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+            {!ready && item.transferState !== 'verifying' ? (
+              <button
+                type="button"
+                onClick={() => void runNativeAction(item.downloadId, 'cancel')}
+                disabled={busy}
+                aria-label={`Cancel download of ${item.title}`}
+                title="Cancel download"
+                className={CANCEL_CLASS}
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            ) : ready && downloads?.remove ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setRemoveError(null);
+                  setPendingRemoval(item);
+                }}
+                aria-label={`Remove ${item.title}`}
+                title="Remove download"
+                className={CANCEL_CLASS}
+              >
+                <Trash2 className="h-5 w-5" aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+
+          {ready ? (
+            <div>
+              <button type="button" onClick={() => playLocal(item)} className={`${ACTION_PRIMARY_CLASS} px-4`}>
+                <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Play
+              </button>
+            </div>
+          ) : (
+            <div aria-live="polite">
+              <div className={`type-secondary mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${needsRepair ? 'text-red-300' : 'text-white/70'}`}>
+                <span>{transferStatus(item)}</span>
+                {inTransfer && amount ? <span className="text-numeric shrink-0 text-white/60">{amount}</span> : null}
+              </div>
+              {inTransfer ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
+              {repairErrors[item.downloadId] ? (
+                <p className="type-secondary mt-2 text-red-300" role="status">{repairErrors[item.downloadId]}</p>
+              ) : null}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                {rate || eta ? (
+                  <div className="type-secondary text-numeric flex items-center gap-4 text-white/60">
+                    {rate ? <span>Speed <span className="text-white/85">{rate}</span></span> : null}
+                    {eta ? <span>ETA <span className="text-white/85">{eta}</span></span> : null}
+                  </div>
+                ) : <span />}
+                {item.transferState === 'downloading' ? (
+                  <button
+                    type="button"
+                    onClick={() => void runNativeAction(item.downloadId, 'pause')}
+                    disabled={busy}
+                    aria-label={`Pause ${item.title}`}
+                    className={ROW_ACTION_CLASS}
+                  >
+                    <Pause className="h-4 w-4 fill-current" aria-hidden="true" /> Pause
+                  </button>
+                ) : item.transferState === 'paused' ? (
+                  <button
+                    type="button"
+                    onClick={() => void runNativeAction(item.downloadId, 'resume')}
+                    disabled={busy}
+                    aria-label={`Resume ${item.title}`}
+                    className={ROW_ACTION_CLASS}
+                  >
+                    <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Resume
+                  </button>
+                ) : needsRepair ? (
+                  <button
+                    type="button"
+                    onClick={() => void runNativeAction(item.downloadId, 'resume')}
+                    disabled={busy}
+                    aria-label={`Retry download of ${item.title}`}
+                    className={`${ROW_ACTION_CLASS} disabled:cursor-wait`}
+                  >
+                    <RotateCcw className="h-4 w-4" aria-hidden="true" /> {busy ? 'Retrying…' : 'Retry'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+      </li>
+    );
+  };
+
+  // Overview: movies as rows, episodes grouped into one row per show.
+  const renderOverview = () => {
+    const groups = groupDownloads(pending, inventory?.items ?? []);
+    return (
+      <ul className="space-y-3">
+        {groups.map((group) => {
+          if (group.kind === 'pending') return renderPending(group.item);
+          if (group.kind === 'item') return renderItem(group.item);
+          return (
+            <li key={`show-${group.seriesId}`}>
+              <button
+                type="button"
+                onClick={() => navigate('downloads-series', { series: group.seriesId })}
+                className={`${ROW_CLASS} w-full items-center text-left transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
+              >
+                <DownloadPoster src={group.posterUrl} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-base font-medium text-white">{group.title}</p>
+                  <p className="type-secondary text-numeric mt-0.5 text-white/60">
+                    {[`${group.count} ${group.count === 1 ? 'episode' : 'episodes'}`, formatSize(group.bytes)].filter(Boolean).join(' · ')}
+                  </p>
+                  {group.summary ? (
+                    <p className={`type-secondary mt-2 ${group.needsAttention ? 'text-red-300' : 'text-white/70'}`}>{group.summary}</p>
+                  ) : null}
+                </div>
+                <ChevronRight className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+
+  // A show's screen: episodes grouped by season, newest season last.
+  const renderSeries = (id: string) => {
+    const showPending = pending.filter((item) => item.seriesId === id && isEpisode(item));
+    const showItems = (inventory?.items ?? []).filter((item) => item.seriesId === id && isEpisode(item));
+    if (!showPending.length && !showItems.length) {
+      return (
+        <div>
+          <p className="type-body text-white">No episodes downloaded</p>
+          <button type="button" onClick={() => navigate('downloads')} className={`mt-4 ${ACTION_SECONDARY_CLASS}`}>
+            Back to Downloads
+          </button>
+        </div>
+      );
+    }
+    const seasons = Array.from(new Set([...showPending, ...showItems].map((item) => item.season ?? 0))).sort((a, b) => a - b);
+    return (
+      <div>
+        {seasons.map((season, index) => (
+          <section key={season} className={index ? 'mt-6' : ''} aria-label={`Season ${season}`}>
+            <h3 className="type-secondary mb-3 font-medium text-white/70">Season {season}</h3>
+            <ul className="space-y-3">
+              {showPending.filter((item) => item.season === season).sort(byEpisode).map((item) => renderPending(item, true))}
+              {showItems.filter((item) => (item.season ?? 0) === season).sort(byEpisode).map((item) => renderItem(item, true))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    );
+  };
+
 
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
-      <h1 className="type-section-title text-white">Downloads</h1>
-      {storage && inventory?.items.length ? (
+      <h1 className="type-section-title text-white">{seriesId ? seriesTitle : 'Downloads'}</h1>
+      {!seriesId && storage && inventory?.items.length ? (
         <p className="type-secondary text-numeric mt-1 text-white/60">
           {formatSize(storage.usedBytes) ?? '0 MB'} used · {formatSize(storage.freeBytes) ?? '0 MB'} free
         </p>
@@ -299,178 +617,9 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
           </div>
         </div>
       ) : (
-        <ul className="mt-6 max-w-4xl space-y-3">
-          {pending.map((item) => {
-            const failed = item.state === 'failed';
-            const elapsed = formatElapsed(item.queuedAt, now);
-            return (
-              <li key={`pending-${item.jobId}`} className={ROW_CLASS}>
-                <DownloadPoster src={item.posterUrl} />
-                <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 pt-1">
-                      <p className="truncate text-base font-medium text-white">{item.title}</p>
-                      <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
-                        {[item.subtitleLabel, formatSize(item.sizeBytes), subtitleSummary(item.subtitles)].filter(Boolean).join(' · ')}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void cancelPendingDownload(item)}
-                      aria-label={`Cancel download of ${item.title}`}
-                      title="Cancel download"
-                      className={CANCEL_CLASS}
-                    >
-                      <X className="h-5 w-5" aria-hidden="true" />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2" aria-live="polite">
-                    <span className={`type-secondary inline-flex min-w-0 items-center gap-2 ${failed ? 'text-red-300' : 'text-white/70'}`}>
-                      {!failed ? <LoaderCircle className="h-4 w-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
-                      <span>{failed ? item.reason || 'Couldn’t prepare this source.' : `Preparing${elapsed ? ` · ${elapsed}` : ''}`}</span>
-                    </span>
-                    {failed ? (
-                      <div className="flex flex-wrap gap-2">
-                        {item.reasonCode === 'subtitles_unavailable' ? (
-                          // Explicit choice (spec D3): never drop the
-                          // requested subtitles silently.
-                          <button
-                            type="button"
-                            onClick={() => void retryPendingDownload(item, { subtitles: [] })}
-                            aria-label={`Download ${item.title} without subtitles`}
-                            className={ROW_ACTION_CLASS}
-                          >
-                            Without subtitles
-                          </button>
-                        ) : null}
-                        <button type="button" onClick={() => void retryPendingDownload(item)} aria-label={`Retry ${item.title}`} className={ROW_ACTION_CLASS}>
-                          <RotateCcw className="h-4 w-4" aria-hidden="true" /> Retry
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-          {(inventory?.items ?? []).map((item) => {
-            const size = formatSize(item.sizeBytes);
-            const received = formatSize(item.receivedBytes);
-            const percent = progressPercent(item.receivedBytes, item.sizeBytes);
-            const inTransfer = item.transferState === 'queued'
-              || item.transferState === 'downloading'
-              || item.transferState === 'paused'
-              || item.transferState === 'verifying'
-              || (item.transferState == null && item.waitingForServer === true);
-            const needsRepair = item.transferState === 'failed'
-              || (item.transferState == null && item.state === 'needs-repair');
-            const ready = !inTransfer && !needsRepair;
-            const busy = acting.has(item.downloadId);
-            const rate = item.transferState === 'downloading' ? formatRate(item.bytesPerSecond) : null;
-            const eta = item.transferState === 'downloading' ? formatEta(item.etaSeconds) : null;
-            const amount = size
-              ? `${received || '0 MB'} of ${size}${typeof percent === 'number' ? ` · ${percent}%` : ''}`
-              : received;
-            return (
-              <li key={item.downloadId} className={ROW_CLASS}>
-                <DownloadPoster src={item.posterUrl} />
-                <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 pt-1">
-                      <p className="truncate text-base font-medium text-white">{item.title}</p>
-                      <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
-                        {[item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
-                      </p>
-                    </div>
-                    {!ready && item.transferState !== 'verifying' ? (
-                      <button
-                        type="button"
-                        onClick={() => void runNativeAction(item.downloadId, 'cancel')}
-                        disabled={busy}
-                        aria-label={`Cancel download of ${item.title}`}
-                        title="Cancel download"
-                        className={CANCEL_CLASS}
-                      >
-                        <X className="h-5 w-5" aria-hidden="true" />
-                      </button>
-                    ) : ready && downloads?.remove ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRemoveError(null);
-                          setPendingRemoval(item);
-                        }}
-                        aria-label={`Remove ${item.title}`}
-                        title="Remove download"
-                        className={CANCEL_CLASS}
-                      >
-                        <Trash2 className="h-5 w-5" aria-hidden="true" />
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {ready ? (
-                    <div>
-                      <button type="button" onClick={() => playLocal(item)} className={`${ACTION_PRIMARY_CLASS} px-4`}>
-                        <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Play
-                      </button>
-                    </div>
-                  ) : (
-                    <div aria-live="polite">
-                      <div className={`type-secondary mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${needsRepair ? 'text-red-300' : 'text-white/70'}`}>
-                        <span>{transferStatus(item)}</span>
-                        {inTransfer && amount ? <span className="text-numeric shrink-0 text-white/60">{amount}</span> : null}
-                      </div>
-                      {inTransfer ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
-                      {repairErrors[item.downloadId] ? (
-                        <p className="type-secondary mt-2 text-red-300" role="status">{repairErrors[item.downloadId]}</p>
-                      ) : null}
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                        {rate || eta ? (
-                          <div className="type-secondary text-numeric flex items-center gap-4 text-white/60">
-                            {rate ? <span>Speed <span className="text-white/85">{rate}</span></span> : null}
-                            {eta ? <span>ETA <span className="text-white/85">{eta}</span></span> : null}
-                          </div>
-                        ) : <span />}
-                        {item.transferState === 'downloading' ? (
-                          <button
-                            type="button"
-                            onClick={() => void runNativeAction(item.downloadId, 'pause')}
-                            disabled={busy}
-                            aria-label={`Pause ${item.title}`}
-                            className={ROW_ACTION_CLASS}
-                          >
-                            <Pause className="h-4 w-4 fill-current" aria-hidden="true" /> Pause
-                          </button>
-                        ) : item.transferState === 'paused' ? (
-                          <button
-                            type="button"
-                            onClick={() => void runNativeAction(item.downloadId, 'resume')}
-                            disabled={busy}
-                            aria-label={`Resume ${item.title}`}
-                            className={ROW_ACTION_CLASS}
-                          >
-                            <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Resume
-                          </button>
-                        ) : needsRepair ? (
-                          <button
-                            type="button"
-                            onClick={() => void runNativeAction(item.downloadId, 'resume')}
-                            disabled={busy}
-                            aria-label={`Retry download of ${item.title}`}
-                            className={`${ROW_ACTION_CLASS} disabled:cursor-wait`}
-                          >
-                            <RotateCcw className="h-4 w-4" aria-hidden="true" /> {busy ? 'Retrying…' : 'Retry'}
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="mt-6 max-w-4xl">
+          {seriesId ? renderSeries(seriesId) : renderOverview()}
+        </div>
       )}
       {/* Deletion is deliberate (wireframes "Deletion"): state what is
           removed and what is kept before the destructive action. */}
