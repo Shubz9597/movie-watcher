@@ -369,7 +369,9 @@ func isSafeExt(ext string) bool {
 	return true
 }
 
-// copyTo streams one torrent file into dest with SHA-256 computed on the fly.
+// copyTo streams exactly one torrent file into dest with SHA-256 computed on
+// the fly. Some multi-file torrents expose a reader that can continue into the
+// next file, so the declared file length is an explicit hard boundary here.
 // Context cancellation closes the reader to unblock a stalled read.
 func (p *Prepper) copyTo(ctx context.Context, file *torrent.File, dest string) (int64, string, error) {
 	reader := file.NewReader()
@@ -390,26 +392,35 @@ func (p *Prepper) copyTo(ctx context.Context, file *torrent.File, dest string) (
 		return 0, "", err
 	}
 	defer out.Close()
+	return copyExact(ctx, out, reader, file.Length(), filepath.Base(dest))
+}
+
+func copyExact(ctx context.Context, out io.Writer, reader io.Reader, expected int64, name string) (int64, string, error) {
 	hasher := sha256.New()
 	var lastLog int64
 	buf := make([]byte, 512<<10)
 	var written int64
+	reader = io.LimitReader(reader, expected)
 	for {
 		if err := ctx.Err(); err != nil {
 			return written, "", err
 		}
 		n, rerr := reader.Read(buf)
 		if n > 0 {
-			if _, werr := out.Write(buf[:n]); werr != nil {
+			nw, werr := out.Write(buf[:n])
+			if nw > 0 {
+				_, _ = hasher.Write(buf[:nw])
+				written += int64(nw)
+			}
+			if werr != nil {
 				return written, "", werr
 			}
-			if _, werr := hasher.Write(buf[:n]); werr != nil {
-				return written, "", werr
+			if nw != n {
+				return written, "", io.ErrShortWrite
 			}
-			written += int64(n)
 			if written/(256<<20) > lastLog {
 				lastLog = written / (256 << 20)
-				log.Printf("[downloads] staging %s: %d MB", filepath.Base(dest), written>>20)
+				log.Printf("[downloads] staging %s: %d MB", name, written>>20)
 			}
 		}
 		if rerr == io.EOF {
@@ -423,6 +434,9 @@ func (p *Prepper) copyTo(ctx context.Context, file *torrent.File, dest string) (
 			// busy spin (same treatment as torrentx.Prebuffer).
 			time.Sleep(200 * time.Millisecond)
 		}
+	}
+	if written != expected {
+		return written, "", fmt.Errorf("incomplete copy: %d of %d bytes", written, expected)
 	}
 	return written, hex.EncodeToString(hasher.Sum(nil)), nil
 }

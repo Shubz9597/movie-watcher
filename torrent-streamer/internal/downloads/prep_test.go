@@ -1,11 +1,50 @@
 package downloads
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCopyExactDoesNotCrossTorrentFileBoundary(t *testing.T) {
+	video := []byte("selected video bytes")
+	trailing := []byte("adjacent torrent file bytes")
+	var dest bytes.Buffer
+
+	size, hash, err := copyExact(
+		context.Background(),
+		&dest,
+		bytes.NewReader(append(append([]byte{}, video...), trailing...)),
+		int64(len(video)),
+		"video.mp4",
+	)
+	if err != nil {
+		t.Fatalf("copyExact: %v", err)
+	}
+	if size != int64(len(video)) {
+		t.Fatalf("copied %d bytes, want %d", size, len(video))
+	}
+	if !bytes.Equal(dest.Bytes(), video) {
+		t.Fatalf("copied bytes crossed the selected file boundary: %q", dest.Bytes())
+	}
+	wantHash := sha256.Sum256(video)
+	if hash != hex.EncodeToString(wantHash[:]) {
+		t.Fatalf("hash = %s, want %s", hash, hex.EncodeToString(wantHash[:]))
+	}
+}
+
+func TestCopyExactRejectsTruncatedSource(t *testing.T) {
+	var dest bytes.Buffer
+	_, _, err := copyExact(context.Background(), &dest, strings.NewReader("short"), 10, "video.mp4")
+	if err == nil || !strings.Contains(err.Error(), "incomplete copy") {
+		t.Fatalf("expected incomplete-copy error, got %v", err)
+	}
+}
 
 func TestBuildManifestShapesTheReadyPackage(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
