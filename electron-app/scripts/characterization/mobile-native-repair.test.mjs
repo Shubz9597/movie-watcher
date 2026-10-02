@@ -116,7 +116,13 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   assert.match(activity, /Image\("TorWatchActivityIcon"\)/u);
   assert.match(activity, /compactTrailing:[\s\S]+ActivityProgressRing/u);
   assert.match(activity, /minimal:[\s\S]+TorWatchActivityIcon/u);
-  assert.match(activity, /Color\(red: 0\.12, green: 0\.84, blue: 0\.49\)/u);
+  // Design system (WF09/WF10): white progress, no invented totals, stale
+  // content labelled, and the episode shown with the title.
+  assert.match(activity, /default: return \.white/u);
+  assert.match(activity, /var hasKnownTotal: Bool \{ totalBytes > 0 \}/u);
+  assert.match(activity, /"Last update"/u);
+  assert.match(activity, /attributes\.title\) · \\\(attributes\.subtitle\)/u);
+  assert.doesNotMatch(activity, /—\/s/u, "unmeasured speed is omitted, never a dash placeholder");
   assert.match(coordinator, /DownloadLiveActivity\.refresh\([\s\S]+bytesPerSecond: metrics\.bytesPerSecond/u);
   assert.match(coordinator, /setAssetReceivedBytes\([\s\S]+emitChange\(\)/u);
   assert.match(store, /poster_url TEXT NOT NULL DEFAULT ''/u);

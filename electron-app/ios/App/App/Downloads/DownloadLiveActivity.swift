@@ -20,7 +20,7 @@ enum DownloadLiveActivity {
             if #available(iOS 16.2, *) {
                 _ = try? Activity.request(
                     attributes: attributes,
-                    content: ActivityContent(state: state, staleDate: nil),
+                    content: ActivityContent(state: state, staleDate: staleDate(for: state)),
                     pushType: nil)
             } else {
                 _ = try? Activity.request(attributes: attributes, contentState: state, pushType: nil)
@@ -65,6 +65,13 @@ enum DownloadLiveActivity {
         }
     }
 
+    /// Live transfer numbers go stale if iOS stops delivering updates (the
+    /// app is suspended); the widget then shows "Last update" instead of a
+    /// frozen speed and time left (spec N2). Settled states never go stale.
+    private static func staleDate(for state: DownloadActivityAttributes.ContentState) -> Date? {
+        state.status == "Downloading" ? Date().addingTimeInterval(3 * 60) : nil
+    }
+
     private static func activity(downloadId: String) -> Activity<DownloadActivityAttributes>? {
         Activity<DownloadActivityAttributes>.activities.first {
             $0.attributes.downloadId == downloadId
@@ -90,7 +97,7 @@ enum DownloadLiveActivity {
         state: DownloadActivityAttributes.ContentState
     ) async {
         if #available(iOS 16.2, *) {
-            await activity.update(ActivityContent(state: state, staleDate: nil))
+            await activity.update(ActivityContent(state: state, staleDate: staleDate(for: state)))
         } else {
             await activity.update(using: state)
         }

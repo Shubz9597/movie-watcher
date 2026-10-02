@@ -573,7 +573,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
     private func failDownload(_ downloadId: String, reason: String) {
         try? store.setState(downloadId, .failed, reason: reason)
         if #available(iOS 16.1, *), let record = try? store.get(downloadId) {
-            DownloadLiveActivity.finish(record, status: "Needs attention")
+            DownloadLiveActivity.finish(record, status: "Needs repair")
         }
         resetTransferMetrics(downloadId)
         emitChange()
