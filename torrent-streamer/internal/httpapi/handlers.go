@@ -50,6 +50,7 @@ type fileEntry struct {
 	Name   string `json:"name"`
 	Length int64  `json:"length"`
 }
+
 func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/files", handleFiles)
 	mux.HandleFunc("/stream", handleStream)

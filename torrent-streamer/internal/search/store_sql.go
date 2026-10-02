@@ -23,6 +23,15 @@ func (s SQLReleaseStore) LoadReleases(ctx context.Context, key string) ([]byte, 
 	return payload, fetchedAt, true, nil
 }
 
+// PurgeOtherVersions deletes cached rows written under another key version.
+func (s SQLReleaseStore) PurgeOtherVersions(ctx context.Context, version string) (int64, error) {
+	result, err := s.DB.ExecContext(ctx, `DELETE FROM search_cache WHERE key NOT LIKE $1`, version+"|%")
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s SQLReleaseStore) SaveReleases(ctx context.Context, key string, payload []byte) error {
 	_, err := s.DB.ExecContext(ctx, `
 INSERT INTO search_cache (key, candidates, fetched_at) VALUES ($1, $2::jsonb, now())

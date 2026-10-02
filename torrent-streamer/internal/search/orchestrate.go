@@ -32,6 +32,10 @@ type ReleaseStore interface {
 	SaveReleases(ctx context.Context, key string, payload []byte) error
 }
 
+// CacheVersion prefixes persisted search keys; rows from other versions are
+// purged at startup (see SQLReleaseStore.PurgeOtherVersions).
+const CacheVersion = "v4"
+
 const (
 	storeFreshTTL = 30 * time.Minute
 	storeStaleTTL = 72 * time.Hour
@@ -108,7 +112,7 @@ func searchKey(request Request) string {
 		return strconv.Itoa(*pointer)
 	}
 	return strings.Join([]string{
-		"v3", string(request.Kind), normalizeAnimeTitle(request.Title), strconv.Itoa(request.Year),
+		CacheVersion, string(request.Kind), normalizeAnimeTitle(request.Title), strconv.Itoa(request.Year),
 		value(request.Season), value(request.Episode), value(request.Absolute),
 		string(normalizeLanguage(request.OriginalLanguage)), normalizeIMDBID(request.IMDBID),
 	}, "|")
@@ -134,9 +138,8 @@ func (s *Service) loadStored(ctx context.Context, key string) ([]prowlarrRelease
 		return nil, time.Time{}, false
 	}
 	for index := range releases {
-		if releases[index].DownloadURL != "" {
-			releases[index].DownloadURL = s.withAPIKey(releases[index].DownloadURL)
-		}
+		releases[index].MagnetURL = s.withAPIKey(releases[index].MagnetURL)
+		releases[index].DownloadURL = s.withAPIKey(releases[index].DownloadURL)
 	}
 	return releases, fetchedAt, true
 }
@@ -163,7 +166,24 @@ func (s *Service) withoutAPIKey(raw string) (string, bool) {
 	return parsed.String(), true
 }
 
+// storableLink keeps magnets as they are and Prowlarr grab URLs without the
+// API key; anything else is dropped.
+func (s *Service) storableLink(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.HasPrefix(strings.ToLower(raw), "magnet:?") {
+		return raw
+	}
+	stripped, ok := s.withoutAPIKey(raw)
+	if !ok {
+		return ""
+	}
+	return stripped
+}
+
 func (s *Service) withAPIKey(raw string) string {
+	if raw == "" || strings.HasPrefix(strings.ToLower(raw), "magnet:?") {
+		return raw
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return raw
@@ -180,13 +200,12 @@ func (s *Service) saveStored(key string, releases []prowlarrRelease) {
 	}
 	keep := make([]prowlarrRelease, 0, len(releases))
 	for _, release := range releases {
-		if release.DownloadURL != "" {
-			stripped, ok := s.withoutAPIKey(release.DownloadURL)
-			hasMagnet := normalizeHash(release.InfoHash) != "" || strings.HasPrefix(strings.ToLower(release.MagnetURL), "magnet:?")
-			if !ok && !hasMagnet {
-				continue // nothing safe to fetch it with later
-			}
-			release.DownloadURL = stripped
+		// Indexers put grab URLs in either field (Knaben uses magnetUrl);
+		// both lose the API key before they are written.
+		release.MagnetURL = s.storableLink(release.MagnetURL)
+		release.DownloadURL = s.storableLink(release.DownloadURL)
+		if normalizeHash(release.InfoHash) == "" && release.MagnetURL == "" && release.DownloadURL == "" {
+			continue // nothing safe to fetch it with later
 		}
 		keep = append(keep, release)
 	}

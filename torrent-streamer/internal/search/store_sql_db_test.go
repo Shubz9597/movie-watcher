@@ -35,4 +35,10 @@ func TestSQLReleaseStoreRoundTrip(t *testing.T) {
 	if err != nil || !ok || fetchedAt.IsZero() || string(payload) != `[{"title": "b"}]` {
 		t.Fatalf("load = %s, %v, %t, %v; want the latest payload", payload, fetchedAt, ok, err)
 	}
+	if _, err := store.PurgeOtherVersions(ctx, "other-version"); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if _, _, ok, _ := store.LoadReleases(ctx, key); ok {
+		t.Fatal("rows from another key version must be purged")
+	}
 }

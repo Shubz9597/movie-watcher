@@ -149,4 +149,3 @@ func TestSessionContinueContract(t *testing.T) {
 		t.Fatalf("missing ids dismiss = %d %q", recorder.Code, recorder.Body.String())
 	}
 }
-

@@ -94,7 +94,8 @@ func TestSearchReturnsEarlyAndFinishesSlowIndexersInBackground(t *testing.T) {
 		default:
 			<-release
 			_ = json.NewEncoder(w).Encode([]prowlarrRelease{{Title: "Dune 2021 2160p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", InfoHash: idHex('b'), Seeders: 50,
-				DownloadURL: "http://indexer/download?apikey=secret"}, {Title: "Dune 2021 720p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", DownloadURL: server.URL + "/2/download?apikey=test-api-key&link=abc"}})
+				DownloadURL: "http://indexer/download?apikey=secret"}, {Title: "Dune 2021 720p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", DownloadURL: server.URL + "/2/download?apikey=test-api-key&link=abc"},
+				{Title: "Dune 2021 1080p WEB-DL", Indexer: "Slow Tracker", Protocol: "torrent", Seeders: 20, MagnetURL: server.URL + "/7/download?apikey=test-api-key&link=def"}})
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -130,16 +131,18 @@ func TestSearchReturnsEarlyAndFinishesSlowIndexersInBackground(t *testing.T) {
 	if !strings.Contains(saved, "2160p") || !strings.Contains(saved, "720p") || strings.Contains(saved, "test-api-key") || strings.Contains(saved, "indexer/download") {
 		t.Fatalf("stored releases = %s, want the full set, grab URLs without the API key, foreign hosts dropped", saved)
 	}
-	if cached, ok := service.cached(key); !ok || len(cached) != 3 {
-		t.Fatalf("cached results = %d, want the completed set of 3", len(cached))
+	if cached, ok := service.cached(key); !ok || len(cached) != 4 {
+		t.Fatalf("cached results = %d, want the completed set of 4", len(cached))
 	}
 	reloaded, _, ok := service.loadStored(context.Background(), key)
-	if !ok || len(reloaded) != 3 {
-		t.Fatalf("reloaded = %d releases, want 3", len(reloaded))
+	if !ok || len(reloaded) != 4 {
+		t.Fatalf("reloaded = %d releases, want 4", len(reloaded))
 	}
 	for _, release := range reloaded {
-		if release.DownloadURL != "" && !strings.Contains(release.DownloadURL, "apikey=test-api-key") {
-			t.Fatalf("reloaded grab URL %q lost its in-memory API key", release.DownloadURL)
+		for _, link := range []string{release.DownloadURL, release.MagnetURL} {
+			if link != "" && !strings.Contains(link, "apikey=test-api-key") {
+				t.Fatalf("reloaded grab URL %q lost its in-memory API key", link)
+			}
 		}
 	}
 }

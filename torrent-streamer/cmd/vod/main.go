@@ -164,7 +164,15 @@ func main() {
 	if err != nil {
 		exitOnError("Prowlarr configuration failed", err)
 	}
-	torrentSearch.SetStore(search.SQLReleaseStore{DB: db})
+	releaseStore := search.SQLReleaseStore{DB: db}
+	purgeCtx, cancelPurge := context.WithTimeout(context.Background(), 10*time.Second)
+	if purged, err := releaseStore.PurgeOtherVersions(purgeCtx, search.CacheVersion); err != nil {
+		log.Printf("[search] purge old release cache: %v", err)
+	} else if purged > 0 {
+		log.Printf("[search] purged %d release cache rows from older versions", purged)
+	}
+	cancelPurge()
+	torrentSearch.SetStore(releaseStore)
 
 	// prepare torrentx (root dirs, initial state)
 	torrentx.Init()

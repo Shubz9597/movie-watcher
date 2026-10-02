@@ -59,21 +59,21 @@ func (h *SessionHandlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		SubjectID       string  `json:"subjectId"`
-		SeriesID        string  `json:"seriesId"`
-		Season          int     `json:"season"`
-		Episode         int     `json:"episode"`
-		PositionS       int     `json:"position_s"`
-		DurationS       int     `json:"duration_s"`
-		SourceURI       string  `json:"sourceUri"`
-		SourceName      string  `json:"sourceName"`
-		SourceKind      string  `json:"sourceKind"`
-		SourceFileIndex *int    `json:"sourceFileIndex"`
-		NextSeason      *int    `json:"nextSeason"`
-		NextEpisode     *int    `json:"nextEpisode"`
-		ClientID        string  `json:"clientId"`
-		SessionID       string  `json:"sessionId"`
-		Seq             int64   `json:"seq"`
+		SubjectID       string `json:"subjectId"`
+		SeriesID        string `json:"seriesId"`
+		Season          int    `json:"season"`
+		Episode         int    `json:"episode"`
+		PositionS       int    `json:"position_s"`
+		DurationS       int    `json:"duration_s"`
+		SourceURI       string `json:"sourceUri"`
+		SourceName      string `json:"sourceName"`
+		SourceKind      string `json:"sourceKind"`
+		SourceFileIndex *int   `json:"sourceFileIndex"`
+		NextSeason      *int   `json:"nextSeason"`
+		NextEpisode     *int   `json:"nextEpisode"`
+		ClientID        string `json:"clientId"`
+		SessionID       string `json:"sessionId"`
+		Seq             int64  `json:"seq"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -390,4 +390,3 @@ func (h *SessionHandlers) WatchedSync(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]int{"applied": applied})
 }
-
