@@ -142,6 +142,7 @@ async function start(): Promise<void> {
       // session client. The browser staging player object is discarded.
       composed.platform.player = new native.NativePlayer();
       void import('./download-queue').then(({ resumePendingDownloads }) => resumePendingDownloads());
+      void import('./offline-progress-sync').then(({ startOfflineProgressSync }) => startOfflineProgressSync(composed.platform.connection));
     }
     root.render(<MobileShell composed={composed} browser={browser} />);
     // Live Activity / notification taps (torwatch://downloads) open the

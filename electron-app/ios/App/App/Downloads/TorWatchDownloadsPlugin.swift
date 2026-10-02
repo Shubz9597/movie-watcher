@@ -112,6 +112,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
                 if let progress = coordinator.store.loadProgress(record.downloadId) {
                     body["positionS"] = progress.positionS
                     body["durationS"] = progress.durationS
+                    body["progressUpdatedAt"] = progress.updatedAt
                     body["subtitleLang"] = progress.subtitleLang
                 }
                 return body

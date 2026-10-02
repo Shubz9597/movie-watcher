@@ -25,6 +25,8 @@ export type NativeDownloadItem = {
   etaSeconds?: number;
   positionS?: number;
   durationS?: number;
+  /** When local playback last saved the position (epoch seconds). */
+  progressUpdatedAt?: number;
   subtitleLang?: string;
 };
 

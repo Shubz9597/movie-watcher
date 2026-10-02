@@ -10,6 +10,7 @@ import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCi
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
+import { offlineSkipSegments } from '../lib/offline-skip-segments';
 
 export type NativeTrackInfo = { id: number; label?: string; language?: string };
 
@@ -73,6 +74,8 @@ type Props = {
   posterUrl: string | null;
   logoUrl: string | null;
   magnet: string;
+  /** Local download playback: offline skip timestamps are read for it. */
+  downloadId?: string;
   cat: string;
   fileIndex: number | undefined;
   tmdbId: number | undefined;
@@ -100,7 +103,7 @@ function formatDelay(seconds: number): string {
 }
 
 export default function NativePlayerControls(props: Props) {
-  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, onClose } = props;
+  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, downloadId, onClose } = props;
   // Offline downloads play without a magnet: no server catalog, torrent
   // telemetry or import — only the tracks inside the downloaded package.
   const local = !magnet;
@@ -220,7 +223,13 @@ export default function NativePlayerControls(props: Props) {
   }, [hasVideo, buffering.active, playing]);
 
   // --- Skip segments (where timestamps exist) ---
+  // Downloads use the timestamps stored when they were downloaded.
   useEffect(() => {
+    if (!downloadId) return;
+    setSkipSegments(offlineSkipSegments(downloadId));
+  }, [downloadId]);
+  useEffect(() => {
+    if (downloadId) return;
     const duration = time.duration;
     if (!duration || duration <= 0) return;
     if (skipSegments.length > 0) return;
@@ -248,7 +257,7 @@ export default function NativePlayerControls(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [time.duration, skipSegments.length, cat, tmdbId, imdbId, malId, season, episode, absoluteEpisode]);
+  }, [downloadId, time.duration, skipSegments.length, cat, tmdbId, imdbId, malId, season, episode, absoluteEpisode]);
 
   const activeSkipSegment = useMemo(() => {
     return skipSegments.find((segment) => time.currentTime >= segment.start && time.currentTime <= segment.end && segment.type === 'intro') ?? null;

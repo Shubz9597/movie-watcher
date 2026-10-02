@@ -2,7 +2,7 @@
 // This wraps the original but handles API calls through services
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
-import { ArrowLeft, ChevronRight, Clock3, Loader2, Play } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronRight, Circle, Clock3, Loader2, Play } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { getTvSeason } from '../lib/services/catalog-gateway';
@@ -23,6 +23,7 @@ import {
 import type { EpisodeSummary, SeasonSummary } from '../lib/title-types';
 import { getDeviceId } from '../lib/device-id';
 import { NativeDownloadButton } from './NativeDownloadButton';
+import { fetchWatched, setWatched, watchedKey, type WatchedItem } from '../lib/services/watched-service';
 import type { DownloadSelection } from '../mobile/download-queue';
 
 type Props = {
@@ -240,6 +241,44 @@ export default function EpisodePanel({
   // O(1) id→index lookup (perf): the previous per-episode findIndex made the
   // episode list render O(n²) — up to ~1M steps per render pass for a
   // 1000-episode anime back-catalogue.
+  // Watched state for this show on this device (/v1/watched). Re-read when
+  // the panel mounts, i.e. also after returning from the player.
+  const watchedSeriesId = kind === 'anime' && anilistId ? `anilist:${anilistId}` : tmdbId ? `tmdb:tv:${tmdbId}` : null;
+  const [watchedMap, setWatchedMap] = useState<Map<string, WatchedItem>>(() => new Map());
+  const [watchedError, setWatchedError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!watchedSeriesId) return;
+    let cancelled = false;
+    void fetchWatched(watchedSeriesId)
+      .then((map) => { if (!cancelled) setWatchedMap(map); })
+      .catch(() => { /* offline or older server: no watched marks */ });
+    return () => { cancelled = true; };
+  }, [watchedSeriesId]);
+
+  const toggleWatched = async (episode: EpisodeSummary) => {
+    if (!watchedSeriesId) return;
+    const season = episode.seasonNumber || selectedSeason;
+    const key = watchedKey(season, episode.episodeNumber);
+    const wasWatched = watchedMap.get(key)?.watched === true;
+    const optimistic = new Map(watchedMap);
+    if (wasWatched) optimistic.delete(key);
+    else optimistic.set(key, { season, episode: episode.episodeNumber, percent: 100, watched: true });
+    setWatchedMap(optimistic);
+    setWatchedError(null);
+    // Marking watched moves Continue watching on to the following episode.
+    const index = episodes.findIndex((candidate) => candidate.id === episode.id);
+    const following = index >= 0 ? episodes[index + 1] : undefined;
+    const next = !wasWatched && following && isEpisodeAvailableForContinuation(following)
+      ? { season: following.seasonNumber || selectedSeason, episode: following.episodeNumber }
+      : null;
+    try {
+      await setWatched(watchedSeriesId, [{ season, episode: episode.episodeNumber }], !wasWatched, next);
+    } catch {
+      setWatchedMap(watchedMap);
+      setWatchedError('Couldn’t update watched. Check the connection.');
+    }
+  };
+
   const episodeIndexById = useMemo(() => new Map(episodes.map((episode, index) => [episode.id, index])), [episodes]);
   const isEpisodeUpcoming = (episode: EpisodeSummary) => {
     const releaseTime = episodeReleaseTime(episode);
@@ -791,8 +830,34 @@ export default function EpisodePanel({
     sizeBytes: torrent.seasonPack ? undefined : torrent.size,
   });
 
-  const downloadSelectionFor = async (torrent: TorrentRow): Promise<DownloadSelection> => {
+  const downloadSelectionFor = (torrent: TorrentRow): Promise<DownloadSelection> => {
+    if (!activeEpisode) return Promise.reject(new Error('Choose an episode first.'));
+    return downloadSelectionForEpisode(torrent, activeEpisode);
+  };
+
+  // Batch torrents carry the following episodes too: the next released
+  // episodes after the active one (for "this + next N" downloads).
+  const followingEpisodes = (): EpisodeSummary[] => {
+    if (!activeEpisode) return [];
+    const index = episodes.findIndex((episode) => episode.id === activeEpisode.id);
+    if (index < 0) return [];
+    const following: EpisodeSummary[] = [];
+    for (const episode of episodes.slice(index + 1)) {
+      if (!isEpisodeAvailableForContinuation(episode)) break;
+      following.push(episode);
+    }
+    return following;
+  };
+
+  const batchSelectionsFor = async (torrent: TorrentRow, extra: number): Promise<DownloadSelection[]> => {
     if (!activeEpisode) throw new Error('Choose an episode first.');
+    const targets = [activeEpisode, ...followingEpisodes().slice(0, extra)];
+    const selections: DownloadSelection[] = [];
+    for (const episode of targets) selections.push(await downloadSelectionForEpisode(torrent, episode));
+    return selections;
+  };
+
+  const downloadSelectionForEpisode = async (torrent: TorrentRow, activeEpisode: EpisodeSummary): Promise<DownloadSelection> => {
     let fileIndex = torrent.fileIndex;
     let selectedSize = torrent.size;
     if (torrent.seasonPack) {
@@ -828,6 +893,9 @@ export default function EpisodePanel({
       posterUrl,
       subtitleLabel: `S${season} E${episode}`,
       subtitleHints: { title, year, imdbId },
+      skipQuery: kind === 'anime'
+        ? { kind: 'anime', ...(malId ? { malId: String(malId) } : {}), episode: String(activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber) }
+        : { kind: 'tv', ...(tmdbId ? { tmdbId: String(tmdbId) } : {}), ...(imdbId ? { imdbId } : {}), season: String(season), episode: String(episode) },
       // A season pack can be tens of gigabytes, but offline download stores
       // only the resolved episode. Use that file for storage checks and copy.
       sizeBytes: selectedSize,
@@ -902,14 +970,18 @@ export default function EpisodePanel({
               info naturally). Desktop keeps the bounded, internally-scrolling
               card. */}
           <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
+            {watchedError ? <p className="type-secondary px-4 py-2 text-red-300" role="alert">{watchedError}</p> : null}
             {episodes.map((episode) => {
               const artwork = episodeArtwork(episode);
               const isUpcoming = isEpisodeUpcoming(episode);
               const releaseLabel = formatAirDate(episode.availableAt || episode.airDate);
+              const watchState = watchedMap.get(watchedKey(episode.seasonNumber || selectedSeason, episode.episodeNumber));
+              const watched = watchState?.watched === true;
+              const partial = !watched && watchState && watchState.percent > 0 ? Math.min(100, watchState.percent) : 0;
               return (
+                <div key={episode.id} className="content-auto-row flex items-center border-b border-white/[0.08] last:border-b-0">
                 <button
                   type="button"
-                  key={episode.id}
                   ref={(element) => {
                     if (element) episodeButtons.current.set(episode.episodeNumber, element);
                     else episodeButtons.current.delete(episode.episodeNumber);
@@ -918,7 +990,7 @@ export default function EpisodePanel({
                   aria-label={isUpcoming
                     ? `${episode.name}, coming soon${releaseLabel ? ` on ${releaseLabel}` : ''}`
                     : episode.name}
-                  className="content-auto-row group flex w-full items-center gap-3 border-b border-white/[0.08] px-4 py-3 text-left transition last:border-b-0 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
+                  className="group flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
                   onClick={() => void fetchTorrentsForEpisode(episode)}
                 >
                   <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] sm:w-32">
@@ -933,6 +1005,11 @@ export default function EpisodePanel({
                     <span className="type-caption text-numeric absolute bottom-1.5 left-2 font-medium text-white/90">
                       EP {String(episode.episodeNumber).padStart(2, '0')}
                     </span>
+                    {partial ? (
+                      <div className="absolute inset-x-0 bottom-0 h-1 bg-white/20" aria-hidden="true">
+                        <div className="h-full bg-white" style={{ width: `${partial}%` }} />
+                      </div>
+                    ) : null}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
@@ -947,16 +1024,32 @@ export default function EpisodePanel({
                       <p className="type-secondary mt-1 line-clamp-2 text-white/65">{episode.overview}</p>
                     ) : null}
                     <div className="type-caption text-numeric mt-1.5 flex flex-wrap gap-x-2 text-white/65">
+                      {watched ? <span className="text-white/85">Watched</span> : null}
                       {releaseLabel ? <span>{releaseLabel}</span> : null}
                       {episode.runtime ? <span>{episode.runtime} min</span> : null}
                     </div>
                   </div>
                   {isUpcoming ? (
                     <Clock3 className="h-4 w-4 shrink-0 text-white/35" aria-hidden="true" />
-                  ) : (
+                  ) : watchedSeriesId ? null : (
                     <ChevronRight className="h-4 w-4 shrink-0 text-white/20 transition group-hover:translate-x-0.5 group-hover:text-white/55" aria-hidden="true" />
                   )}
                 </button>
+                {!isUpcoming && watchedSeriesId ? (
+                  <button
+                    type="button"
+                    onClick={() => void toggleWatched(episode)}
+                    aria-pressed={watched}
+                    aria-label={`${watched ? 'Mark unwatched' : 'Mark watched'}: episode ${episode.episodeNumber}`}
+                    title={watched ? 'Mark unwatched' : 'Mark watched'}
+                    className="mr-2 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  >
+                    {watched
+                      ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
+                      : <Circle className="h-6 w-6 text-white/35" aria-hidden="true" />}
+                  </button>
+                ) : null}
+              </div>
               );
             })}
             {!seasonLoading && episodes.length === 0 ? (
@@ -1089,6 +1182,7 @@ export default function EpisodePanel({
                         <NativeDownloadButton
                           selection={() => downloadSelectionFor(torrent)}
                           details={downloadDetailsFor(torrent)}
+                          {...(torrent.seasonPack ? { batch: { maxExtra: followingEpisodes().length, selections: (extra: number) => batchSelectionsFor(torrent, extra) } } : {})}
                           onError={setTorrentError}
                         />
                       </div>
@@ -1097,6 +1191,7 @@ export default function EpisodePanel({
                       className="mt-3 w-full sm:hidden"
                       selection={() => downloadSelectionFor(torrent)}
                       details={downloadDetailsFor(torrent)}
+                      {...(torrent.seasonPack ? { batch: { maxExtra: followingEpisodes().length, selections: (extra: number) => batchSelectionsFor(torrent, extra) } } : {})}
                       onError={setTorrentError}
                     />
                   </div>

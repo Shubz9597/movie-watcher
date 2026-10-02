@@ -2,6 +2,7 @@ import type { ConnectionConfig } from '../platform/contracts.ts';
 import type { NativeManifestAsset } from '../platform/native-downloads.ts';
 import { getDeviceId } from '../lib/device-id.ts';
 import { DOWNLOADS_UI_ENABLED, getNativeDownloads } from './downloads-adapter.ts';
+import { cacheOfflineSkipSegments } from '../lib/offline-skip-segments.ts';
 
 const STORAGE_KEY = 'torwatch_pending_downloads_v1';
 const CHANGE_EVENT = 'torwatch:downloads-changed';
@@ -23,6 +24,8 @@ export type DownloadSelection = {
   subtitles?: string[];
   /** Catalog metadata that lets the server find provider subtitles. */
   subtitleHints?: { title?: string; year?: number; imdbId?: string };
+  /** /skip-segments query (minus duration) so skip-intro works offline. */
+  skipQuery?: Record<string, string>;
 };
 
 export type PendingDownload = DownloadSelection & {
@@ -345,6 +348,9 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
         subtitles: manifest.subtitles || [],
       });
       removePendingDownload(pending.jobId);
+      if (pending.skipQuery) {
+        void cacheOfflineSkipSegments(pending.origin, pending.jobId, pending.skipQuery).catch(() => {});
+      }
       return;
     }
   } catch (error) {

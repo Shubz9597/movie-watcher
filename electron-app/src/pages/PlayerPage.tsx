@@ -42,6 +42,7 @@ export default function PlayerPage({ navigate, params }: Props) {
     nextEpisode,
     nextEpisodeRoute,
     packFallbackRoute,
+    localSeriesId,
   } = params;
   const platform = usePlatform();
   // Latest route params for auto-advance without re-creating callbacks (the
@@ -59,6 +60,36 @@ export default function PlayerPage({ navigate, params }: Props) {
     title: string; year?: number; posterUrl: string | null; logoUrl: string | null; imdbId?: string; malId?: number; fileIndex?: number;
   }>({ title: paramTitle || 'Playing', posterUrl: null, logoUrl: null, fileIndex: fileIndex != null ? Number(fileIndex) : undefined });
 
+  // The next ready download of this show after the current episode (season,
+  // then episode order), as player route params.
+  const nextDownloadedEpisode = async (): Promise<Record<string, string> | null> => {
+    void import('../mobile/offline-progress-sync').then(({ syncOfflineProgressNow }) => syncOfflineProgressNow(platform.connection));
+    try {
+      const inventory = await platform.downloads?.inventory();
+      const currentSeason = Number(season) || 0;
+      const currentEpisode = Number(episode) || 0;
+      const next = (inventory?.items ?? [])
+        .filter((item) => item.seriesId === localSeriesId
+          && item.downloadId !== downloadId
+          && (item.transferState === 'ready' || (item.transferState == null && item.state === 'ready' && !item.waitingForServer))
+          && ((item.season ?? 0) > currentSeason
+            || ((item.season ?? 0) === currentSeason && (item.episode ?? 0) > currentEpisode)))
+        .sort((left, right) => ((left.season ?? 0) - (right.season ?? 0)) || ((left.episode ?? 0) - (right.episode ?? 0)))[0];
+      if (!next || !next.seriesId) return null;
+      return {
+        downloadId: next.downloadId,
+        title: next.title,
+        ...(next.posterUrl ? { posterUrl: next.posterUrl } : {}),
+        ...(next.subtitle ? { subtitle: next.subtitle } : {}),
+        localSeriesId: next.seriesId,
+        season: String(next.season ?? 0),
+        episode: String(next.episode ?? 0),
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const returnToSource = useCallback((event?: { reason?: 'stopped' | 'ended' | 'error'; message?: string }) => {
     if (returningRef.current) return;
     // MPV has already been torn down when this is called from mpv:stopped, so
@@ -71,6 +102,20 @@ export default function PlayerPage({ navigate, params }: Props) {
       return;
     }
     returningRef.current = true;
+
+    // Offline: continue with the next downloaded episode of the same show.
+    if (event?.reason === 'ended' && downloadId && localSeriesId) {
+      void nextDownloadedEpisode().then((next) => {
+        if (next) {
+          window.location.replace(`#player?${new URLSearchParams(next).toString()}`);
+        } else if (window.history.length > 1) {
+          window.history.back();
+        } else {
+          navigate('downloads');
+        }
+      });
+      return;
+    }
 
     // Batch torrent: continue with the next episode from the same pack
     // instead of returning to source selection (lib/pack-advance).
@@ -92,7 +137,7 @@ export default function PlayerPage({ navigate, params }: Props) {
     } else {
       navigate('home');
     }
-  }, [navigate, nextEpisodeRoute]);
+  }, [navigate, nextEpisodeRoute, downloadId, localSeriesId]);
 
   useEffect(() => {
     const unsubscribe = platform.player?.onStopped((event) => {
@@ -381,6 +426,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           posterUrl={playbackMeta.posterUrl}
           logoUrl={playbackMeta.logoUrl}
           magnet={magnet || ''}
+          downloadId={downloadId}
           cat={cat}
           fileIndex={playbackMeta.fileIndex}
           tmdbId={tmdbId ? Number(tmdbId) : undefined}

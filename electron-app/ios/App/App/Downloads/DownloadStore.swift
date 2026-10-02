@@ -66,6 +66,9 @@ final class DownloadStore {
         var positionS: Double
         var durationS: Double
         var subtitleLang: String
+        /// When this device last saved the position (epoch seconds); used to
+        /// sync offline watching to the server on reconnect.
+        var updatedAt: Double = 0
     }
 
     /// A task↔asset mapping for OS-task reconciliation after relaunch.
@@ -485,14 +488,15 @@ final class DownloadStore {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             guard sqlite3_prepare_v2(db, """
-            SELECT position_s, duration_s, subtitle_lang FROM download_progress WHERE download_id=?
+            SELECT position_s, duration_s, subtitle_lang, updated_at FROM download_progress WHERE download_id=?
             """, -1, &stmt, nil) == SQLITE_OK else { return nil }
             sqlite3_bind_text(stmt, 1, downloadId, -1, sqliteTransientDestructor)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return Progress(
                 positionS: sqlite3_column_double(stmt, 0),
                 durationS: sqlite3_column_double(stmt, 1),
-                subtitleLang: String(cString: sqlite3_column_text(stmt, 2)))
+                subtitleLang: String(cString: sqlite3_column_text(stmt, 2)),
+                updatedAt: sqlite3_column_double(stmt, 3))
         }
     }
 

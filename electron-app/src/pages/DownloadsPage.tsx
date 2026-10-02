@@ -14,6 +14,7 @@ import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '
 import { getNativeDownloads } from '../mobile/downloads-adapter';
 import { getDeviceId } from '../lib/device-id';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
+import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
 import {
   cancelPendingDownload,
   pendingDownloads,
@@ -278,6 +279,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       title: item.title,
       ...(item.posterUrl ? { posterUrl: item.posterUrl } : {}),
       ...(item.subtitle ? { subtitle: item.subtitle } : {}),
+      // Show identity lets offline playback continue with the next
+      // downloaded episode.
+      ...(item.seriesId ? { localSeriesId: item.seriesId, season: String(item.season ?? 0), episode: String(item.episode ?? 0) } : {}),
     });
   };
 
@@ -315,6 +319,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     setRemoveError(null);
     try {
       await downloads.remove(item.downloadId);
+      forgetOfflineSkipSegments(item.downloadId);
       setPendingRemoval(null);
       setReloadKey((key) => key + 1);
     } catch {

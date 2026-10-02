@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, ExternalLink, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { CheckCircle2, Circle, Download, ExternalLink, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
 import EpisodePanel from '../components/EpisodePanelWrapper';
@@ -617,6 +618,28 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
     }).catch(() => {});
   }, [visitedCanonicalId, kind, isTmdbBackedAnime, tmdbAnimeMediaKind]);
 
+  // Movies: one watched toggle (season 0 / episode 0 on the progress record).
+  const movieWatchId = (kind === 'movie' || isAnimeMovie) ? libraryCanonicalId : null;
+  const [movieWatched, setMovieWatched] = useState(false);
+  useEffect(() => {
+    if (!movieWatchId) return;
+    let cancelled = false;
+    void fetchWatched(movieWatchId)
+      .then((map) => { if (!cancelled) setMovieWatched(map.get(watchedKey(0, 0))?.watched === true); })
+      .catch(() => { /* offline or older server: no watched mark */ });
+    return () => { cancelled = true; };
+  }, [movieWatchId]);
+  const toggleMovieWatched = async () => {
+    if (!movieWatchId) return;
+    const next = !movieWatched;
+    setMovieWatched(next);
+    try {
+      await setWatched(movieWatchId, [{ season: 0, episode: 0 }], next);
+    } catch {
+      setMovieWatched(!next);
+    }
+  };
+
   if (loading) {
     return (
       <div className="mx-auto flex min-h-[70vh] max-w-[1600px] items-center px-5 md:px-8 lg:px-12">
@@ -800,6 +823,20 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" />
                   <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" />
                 </>
+              ) : null}
+              {movieWatchId ? (
+                <button
+                  type="button"
+                  onClick={() => void toggleMovieWatched()}
+                  aria-pressed={movieWatched}
+                  aria-label={movieWatched ? 'Mark unwatched' : 'Mark watched'}
+                  title={movieWatched ? 'Watched' : 'Mark watched'}
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                >
+                  {movieWatched
+                    ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
+                    : <Circle className="h-6 w-6 text-white/70" aria-hidden="true" />}
+                </button>
               ) : null}
               {nativeDownloadsSupported() ? (
                 <button
