@@ -72,11 +72,11 @@ var (
 	seasonListPattern    = regexp.MustCompile(`(?i)\bs(\d{1,2})((?:\s*(?:,|&|and)\s*s?\d{1,2}\b|\s*-\s*s\d{1,2}\b)+)`)
 	seasonPairPattern    = regexp.MustCompile(`(?i)\bs(\d{1,3})\s*e(\d{1,4})(?:\s*-?\s*e?(\d{1,4}))?\b`)
 	seasonOnlyPattern    = regexp.MustCompile(`(?i)\bs(\d{1,3})\b`)
-	seasonWordPattern    = regexp.MustCompile(`(?i)\bseasons?\s*(\d{1,2})(?:\s*(?:-|~|to|&|and)\s*(\d{1,2}))?\b`)
-	seasonOrdinalPattern = regexp.MustCompile(`(?i)\b(\d{1,2})(?:st|nd|rd|th)\s*season\b`)
+	seasonWordPattern    = regexp.MustCompile(`(?i)\bseasons?[\s-]*(\d{1,2})(?:[\s-]*(?:-|~|to|&|and)[\s-]*(\d{1,2}))?\b`)
+	seasonOrdinalPattern = regexp.MustCompile(`(?i)\b(\d{1,2})(?:st|nd|rd|th)[\s-]*season\b`)
 	crossPattern         = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`)
 	episodeWordPattern   = regexp.MustCompile(`(?i)\b(?:e|ep|episodes?)\s*(\d{1,4})(?:\s*(?:-|~|to)\s*(?:e|ep)?\s*(\d{1,4}))?\b`)
-	absoluteRangePattern = regexp.MustCompile(`(?:^|[\s\[(])(\d{1,4})\s*(?:-|~|to)\s*(\d{1,4})(?:v\d)?(?:$|[\s\])])`)
+	absoluteRangePattern = regexp.MustCompile(`(?:^|[\s\[(-])(\d{1,4})\s*(?:-|~|to)\s*(\d{1,4})(?:v\d)?(?:$|[\s\])-])`)
 	completeSeriesPatt   = regexp.MustCompile(`(?i)\b(?:complete[\s-]*series|all[\s-]*seasons|complete[\s-]*collection|full[\s-]*series)\b`)
 	packWordPattern      = regexp.MustCompile(`(?i)\b(?:complete|batch|collection|season[\s-]*pack|full[\s-]*season|box[\s-]*set)\b`)
 
@@ -351,6 +351,7 @@ func parseSeasonsAndEpisodes(parsed *parsedRelease, rest string) {
 		head = head[:cut]
 	}
 	head = seasonPairPattern.ReplaceAllString(head, " ")
+	head = seasonListPattern.ReplaceAllString(head, " ")
 	head = seasonWordPattern.ReplaceAllString(head, " ")
 	head = seasonOrdinalPattern.ReplaceAllString(head, " ")
 	head = seasonRangePattern.ReplaceAllString(head, " ")

@@ -454,7 +454,9 @@ func indexerServes(name string, request Request) bool {
 func primaryIndexer(name string, request Request) bool {
 	switch request.Kind {
 	case KindAnime:
-		return indexerMatches(name, []string{"nyaa", "animetosho"})
+		// Anime Tosho mirrors Nyaa and stays reachable where nyaa.si is
+		// filtered, so a search never waits on a blocked Nyaa.
+		return indexerMatches(name, []string{"animetosho"})
 	case KindMovie:
 		return indexerMatches(name, movieOnlyIndexers)
 	}
