@@ -36,6 +36,19 @@ function getPlugin(): TorWatchDownloadsPluginInterface | null {
   return plugin;
 }
 
+function repairMessage(reason: string): string {
+  switch (reason) {
+    case 'network_failed':
+      return 'Connection interrupted';
+    case 'server_error':
+      return 'Server unavailable';
+    case 'verification_failed':
+      return 'File check failed';
+    default:
+      return 'Download interrupted';
+  }
+}
+
 export class NativeDownloadsAdapter implements DownloadsPort {
   async inventory(): Promise<DownloadsInventory> {
     const native = getPlugin();
@@ -55,6 +68,7 @@ export class NativeDownloadsAdapter implements DownloadsPort {
             .join(' · '),
           state: item.state === 'ready' ? 'ready' : 'needs-repair',
           sizeBytes: item.totalBytes > 0 ? item.totalBytes : undefined,
+          repairReason: item.state === 'failed' ? repairMessage(item.reason) : undefined,
           waitingForServer: item.state === 'queued' || item.state === 'downloading' || item.state === 'paused',
         })),
       };

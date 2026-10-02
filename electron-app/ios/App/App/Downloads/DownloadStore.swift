@@ -315,6 +315,12 @@ final class DownloadStore {
         try onQueue { try exec("DELETE FROM download_tasks WHERE task_id=\(taskId)") }
     }
 
+    func removeTasks(_ downloadId: String) throws {
+        try onQueue {
+            try exec("DELETE FROM download_tasks WHERE download_id='\(_esc(downloadId))'")
+        }
+    }
+
     /// All live task mappings for reconciliation after relaunch.
     func allTaskMappings() -> [TaskMapping] {
         onQueue {

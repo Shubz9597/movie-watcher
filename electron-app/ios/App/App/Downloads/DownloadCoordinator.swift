@@ -137,6 +137,7 @@ final class DownloadCoordinator: NSObject {
         let staging = try DownloadStore.stagingDirectory(downloadId: record.downloadId)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try store.setState(record.downloadId, .downloading)
+        var startedTask = false
         for asset in record.assets {
             let done = try isAssetDone(record.downloadId, asset)
             if done { continue }
@@ -148,6 +149,13 @@ final class DownloadCoordinator: NSObject {
             let task = session.downloadTask(with: url)
             try store.recordTask(Int(task.taskIdentifier), downloadId: record.downloadId, urlPath: asset.urlPath)
             task.resume()
+            startedTask = true
+        }
+        // A relaunch can leave every verified asset in staging after the OS
+        // completed its tasks but before the atomic finalize ran. Do not leave
+        // that record stuck in "downloading" with no live task.
+        if !startedTask {
+            tryMaybeFinalize(record)
         }
     }
 
@@ -169,11 +177,21 @@ final class DownloadCoordinator: NSObject {
         // death are re-created (a disclosed restart-from-zero, contracts §3).
         liveTasks(downloadId: downloadId) { tasks in
             do {
-                if tasks.isEmpty {
-                    guard let record = try self.store.get(downloadId) else {
-                        completion(nil)
-                        return
-                    }
+                guard let record = try self.store.get(downloadId) else {
+                    completion(nil)
+                    return
+                }
+                if record.state == .failed {
+                    // A failed file may still exist in staging with the right
+                    // length but a bad hash. A repair must not trust or reuse
+                    // it, and stale URLSession mappings must not suppress the
+                    // replacement task.
+                    for task in tasks { task.cancel() }
+                    try self.store.removeTasks(downloadId)
+                    try? FileManager.default.removeItem(
+                        at: try DownloadStore.stagingDirectory(downloadId: downloadId))
+                    try self.startTasks(for: record)
+                } else if tasks.isEmpty {
                     try self.startTasks(for: record)
                 } else {
                     for task in tasks { task.resume() }
@@ -260,9 +278,11 @@ final class DownloadCoordinator: NSObject {
     }
 
     private func isAssetDone(_ downloadId: String, _ asset: DownloadStore.Asset) throws -> Bool {
-        // An asset is done when its finalized file exists with the exact
-        // recorded size (fresh enqueues start at zero).
-        let dir = try DownloadStore.readyDirectory(downloadId: downloadId)
+        // In-flight assets live in staging until every file has passed its
+        // size and hash checks. Looking in ready here prevents the last task
+        // from ever reaching atomic finalize and leaves a completed transfer
+        // stuck indefinitely.
+        let dir = try DownloadStore.stagingDirectory(downloadId: downloadId)
         let url = dir.appendingPathComponent(asset.diskName)
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]) else { return false }
         return (values.fileSize ?? 0) == Int(asset.sizeBytes)

@@ -89,6 +89,33 @@ test("iOS target compiles and registers the native downloads plugin", () => {
   );
 });
 
+test("native download repair resumes failed work and finalizes staged assets", () => {
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const coordinator = readFileSync(
+    join(repoRoot, "electron-app", "ios", "App", "App", "Downloads", "DownloadCoordinator.swift"),
+    "utf8",
+  );
+  const page = readFileSync(join(repoRoot, "electron-app", "src", "pages", "DownloadsPage.tsx"), "utf8");
+
+  assert.match(
+    coordinator,
+    /isAssetDone[\s\S]+stagingDirectory\(downloadId:/u,
+    "completed native assets must be detected in staging before atomic finalize",
+  );
+  assert.match(
+    coordinator,
+    /if !startedTask \{\s*tryMaybeFinalize\(record\)/u,
+    "reconciliation must finalize a fully staged download even when no task needs restarting",
+  );
+  assert.match(
+    coordinator,
+    /record\.state == \.failed[\s\S]+removeTasks\(downloadId\)[\s\S]+stagingDirectory\(downloadId:/u,
+    "repair must discard stale task mappings and damaged staged bytes before retrying",
+  );
+  assert.match(page, /native\.resume\(\{ downloadId \}\)/u, "repair must restart the native transfer");
+  assert.match(page, /'Retry download'/u, "the failed state must expose an actionable retry control");
+});
+
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }

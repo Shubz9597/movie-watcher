@@ -118,6 +118,8 @@ export type DownloadItemSnapshot = {
   subtitle?: string;
   state: DownloadItemState;
   sizeBytes?: number;
+  /** Short, user-facing explanation for a failed local transfer. */
+  repairReason?: string;
   /** Interrupted/partial transfer: shows Waiting for server, never Play (WF06). */
   waitingForServer?: boolean;
 };

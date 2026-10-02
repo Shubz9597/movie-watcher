@@ -40,6 +40,8 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<PendingDownload[]>(() => pendingDownloads());
+  const [repairing, setRepairing] = useState<Set<string>>(() => new Set());
+  const [repairErrors, setRepairErrors] = useState<Record<string, string>>({});
   // D03 device-test hook: explicitly activated with ?downloads=native.
   const nativeHookActive = new URLSearchParams(window.location.search).get('downloads') === 'native'
     && getNativeDownloads() != null;
@@ -89,6 +91,29 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
     if (!native) return;
     const { getTorWatchNativePlugin } = await import('../platform/native-player');
     await getTorWatchNativePlugin().playLocal?.({ downloadId, playId: `local-${Date.now()}` });
+  };
+
+  const repairLocal = async (downloadId: string): Promise<void> => {
+    const native = getNativeDownloads();
+    if (!native || repairing.has(downloadId)) return;
+    setRepairing((ids) => new Set(ids).add(downloadId));
+    setRepairErrors((errors) => {
+      const next = { ...errors };
+      delete next[downloadId];
+      return next;
+    });
+    try {
+      await native.resume({ downloadId });
+      setReloadKey((key) => key + 1);
+    } catch {
+      setRepairErrors((errors) => ({ ...errors, [downloadId]: 'Couldn’t restart. Try again.' }));
+    } finally {
+      setRepairing((ids) => {
+        const next = new Set(ids);
+        next.delete(downloadId);
+        return next;
+      });
+    }
   };
 
   const online = compat.status === 'ready';
@@ -192,18 +217,25 @@ export default function DownloadsPage({ navigate }: DownloadsPageProps) {
                 <div className="min-w-0">
                   <p className="truncate text-sm text-white">{item.title}</p>
                   <p className="mt-0.5 truncate text-xs text-white/55">
-                    {[item.subtitle, size].filter(Boolean).join(' · ')}
-                    {item.state === 'needs-repair' ? ' · Needs repair' : ''}
+                    {[item.subtitle, size, item.state === 'needs-repair' ? item.repairReason : null].filter(Boolean).join(' · ')}
                   </p>
+                  {repairErrors[item.downloadId] ? (
+                    <p className="mt-1 text-xs text-red-300" role="status">{repairErrors[item.downloadId]}</p>
+                  ) : null}
                 </div>
                 {item.waitingForServer ? (
                   <span className="min-h-11 shrink-0 rounded-full border border-white/15 px-4 py-2.5 text-xs text-white/60">
                     In progress
                   </span>
                 ) : item.state === 'needs-repair' ? (
-                  <span className="min-h-11 shrink-0 rounded-full border border-white/15 px-4 py-2.5 text-xs text-white/60">
-                    Needs repair
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void repairLocal(item.downloadId)}
+                    disabled={repairing.has(item.downloadId)}
+                    className={`min-h-11 shrink-0 rounded-full border border-white/20 px-4 text-xs text-white transition hover:bg-white/10 disabled:cursor-wait disabled:text-white/45 ${FOCUS_RING_CLASS}`}
+                  >
+                    {repairing.has(item.downloadId) ? 'Retrying…' : 'Retry download'}
+                  </button>
                 ) : (
                   <button
                     type="button"
