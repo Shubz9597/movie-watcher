@@ -390,7 +390,7 @@ final class DownloadStore {
     /// Downloads whose assets are not all done — reconciliation resets these
     /// to queued so their missing tasks re-enqueue.
     func incompleteDownloads() -> [Record] {
-        (try? list()) ?? []
+        ((try? list()) ?? [])
             .filter { $0.state != .ready && $0.state != .failed }
     }
 

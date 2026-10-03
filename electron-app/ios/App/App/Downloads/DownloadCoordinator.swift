@@ -42,6 +42,9 @@ final class DownloadCoordinator: NSObject {
     private var lastProgressSample: [Int: (date: Date, bytes: Int64)] = [:]
     private var transferSpeeds: [String: Double] = [:]
     private var lastActivityRefresh: [String: Date] = [:]
+    /// Automatic retries per asset ("downloadId|urlPath") in this process.
+    private var retryAttempts: [String: Int] = [:]
+    private static let maxRetries = 6
     private let stateLock = NSLock()
 
     /// Emitted (on the main queue) whenever durable state changed; the
@@ -292,6 +295,13 @@ final class DownloadCoordinator: NSObject {
                 try? self.store.removeTask(mapping.taskId)
                 affected.insert(mapping.downloadId)
             }
+            // A download marked active with no mapped task at all (its
+            // transfer ended while the app was not running) is restarted too.
+            let mapped = Set(mappings.map { $0.downloadId })
+            for record in self.store.incompleteDownloads()
+            where (record.state == .downloading || record.state == .queued) && !mapped.contains(record.downloadId) {
+                affected.insert(record.downloadId)
+            }
             for downloadId in affected {
                 guard let record = try? self.store.get(downloadId), record.state == .downloading || record.state == .queued else { continue }
                 try? self.store.setState(downloadId, .queued)
@@ -455,7 +465,13 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         // validate the status BEFORE trusting the file.
         if let http = downloadTask.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             try? FileManager.default.removeItem(at: location)
-            failDownload(mapping.downloadId, reason: "server_error")
+            let taskId = Int(downloadTask.taskIdentifier)
+            try? store.removeTask(taskId)
+            clearTaskMetrics(taskId)
+            // 5xx (server restarting) is worth retrying; 4xx is final.
+            if http.statusCode < 500 || !scheduleRetry(downloadId: mapping.downloadId, urlPath: mapping.urlPath, resumeData: nil) {
+                failDownload(mapping.downloadId, reason: "server_error")
+            }
             return
         }
         do {
@@ -469,6 +485,9 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
             try store.markAssetDone(record.downloadId, urlPath: asset.urlPath)
+            stateLock.lock()
+            retryAttempts.removeValue(forKey: record.downloadId + "|" + asset.urlPath)
+            stateLock.unlock()
             let taskId = Int(downloadTask.taskIdentifier)
             try store.removeTask(taskId)
             clearTaskMetrics(taskId)
@@ -484,16 +503,58 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         guard let mapping = store.taskOwner(taskId) else { return }
         guard let error = error as NSError? else { return } // nil error = success path
         clearTaskMetrics(taskId)
+        try? store.removeTask(taskId)
         if error.code == NSURLErrorCancelled {
             // pause()/remove() initiated this; durable state already reflects it.
-            try? store.removeTask(taskId)
             return
         }
-        failDownload(mapping.downloadId, reason: "network_failed")
+        // Connection drops and server restarts are routine on a home server:
+        // continue from the bytes already received instead of failing.
+        let resumeData = error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+        if !scheduleRetry(downloadId: mapping.downloadId, urlPath: mapping.urlPath, resumeData: resumeData) {
+            failDownload(mapping.downloadId, reason: "network_failed")
+        }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         finishBackgroundEvents()
+    }
+
+    // MARK: - Retry
+
+    /// Re-creates one asset's transfer after a backoff (15s, 30s, ... 4min).
+    /// earliestBeginDate lets the system start it later even while the app
+    /// is suspended. Returns false once the retries are spent.
+    private func scheduleRetry(downloadId: String, urlPath: String, resumeData: Data?) -> Bool {
+        let key = downloadId + "|" + urlPath
+        stateLock.lock()
+        let attempt = (retryAttempts[key] ?? 0) + 1
+        retryAttempts[key] = attempt
+        stateLock.unlock()
+        guard attempt <= Self.maxRetries,
+              let record = try? store.get(downloadId),
+              record.state == .downloading || record.state == .queued else { return false }
+        let task: URLSessionDownloadTask
+        if let resumeData = resumeData {
+            task = session.downloadTask(withResumeData: resumeData)
+        } else if let url = Self.assetURL(origin: record.origin, urlPath: urlPath, clientId: record.clientId) {
+            task = session.downloadTask(with: url)
+        } else {
+            return false
+        }
+        task.earliestBeginDate = Date().addingTimeInterval(min(240, 15 * pow(2, Double(attempt - 1))))
+        do {
+            try store.recordTask(Int(task.taskIdentifier), downloadId: downloadId, urlPath: urlPath)
+        } catch {
+            task.cancel()
+            return false
+        }
+        task.resume()
+        if #available(iOS 16.1, *) {
+            DownloadLiveActivity.refresh(record, status: "Reconnecting")
+        }
+        emitChange()
+        return true
     }
 
     // MARK: - Finalize

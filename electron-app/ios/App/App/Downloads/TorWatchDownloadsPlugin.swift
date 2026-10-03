@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Capacitor
 
 /**
@@ -69,9 +70,19 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             self?.emitPendingRoute()
         }
         emitPendingRoute()
+        // iOS drops transfers when the app is force-quit or the phone
+        // restarts; reconcile on launch and on every return to the app so
+        // such downloads resume instead of sitting at "Downloading" forever.
+        coordinator.reconcile()
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.coordinator.reconcile()
+        }
     }
 
     private var routeObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
 
     /// Retained until the web listener attaches (cold launch ordering).
     private func emitPendingRoute() {

@@ -91,7 +91,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // download — no server session, no metadata fetch, no heartbeat; progress
     // persists in the device store (pause/seek/checkpoint/exit).
     private var localDownloadId: String?
-    private var localProgressSaveDue = false
+    private var lastLocalProgressSave = Date.distantPast
     private var localStopObserver: NSObjectProtocol?
 
     // MARK: - Local download playback (offline-downloads D04)
@@ -134,14 +134,21 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 return
             }
             self.videoScaleMode = "fit" // each video starts fitted, matching the controls
+            self.currentMediaURL = files.video
             self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId)
-            // Attach EVERY sidecar so the viewer can switch languages; only
-            // the chosen one is enforced (selected) on start.
-            for sidecar in files.subtitles {
-                let selected = !subtitleLang.isEmpty && sidecar.lang == subtitleLang
-                _ = self.mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: selected)
-            }
+            self.attachLocalSidecars(selecting: subtitleLang)
             call.resolve(["resumedPositionS": seekTo ?? 0])
+        }
+    }
+
+    /// Attaches EVERY downloaded subtitle so the viewer can switch languages;
+    /// only the chosen one is enforced (selected).
+    private func attachLocalSidecars(selecting lang: String) {
+        guard let downloadId = localDownloadId,
+              let files = try? DownloadCoordinator.shared.store.readyFileURLs(downloadId) else { return }
+        for sidecar in files.subtitles {
+            let selected = !lang.isEmpty && sidecar.lang == lang
+            _ = mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: selected)
         }
     }
 
@@ -222,8 +229,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// at the current position with a ~1s hiccup).
     private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String, localDownloadId newLocalDownloadId: String?) {
         // Replacement safety: tear the previous player down BEFORE creating
-        // the new one; late events from it are ignored via terminalSent.
-        teardown()
+        // the new one; late events from it are ignored via terminalSent. The
+        // orientation stays landscape: restoring portrait here rotated every
+        // new video portrait-then-landscape.
+        teardown(restoreOrientation: false)
         // Set after teardown, which clears it: a download played with this id
         // unset never saved progress (always resumed at 0, never synced).
         localDownloadId = newLocalDownloadId
@@ -452,9 +461,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         currentSubTextScale = percent
         let positionMs = mediaPlayer?.time.intValue ?? 0
         let currentLocalDownload = localDownloadId
+        let currentLocalLang = mediaPlayer.map { currentLocalSubtitleLang($0) } ?? ""
         // Same session continues server-side: no terminal event, just an
         // in-place engine rebuild at the current position (playback resumes).
-        teardown()
+        teardown(restoreOrientation: false)
         playId = requestPlayId
         terminalSent = false
         guard let bridge = self.bridge, let rootVC = bridge.viewController else {
@@ -462,6 +472,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId, localDownloadId: currentLocalDownload)
+        // Downloaded subtitles are playback slaves: a rebuilt engine has none
+        // until they are attached again (resizing used to make them vanish).
+        if currentLocalDownload != nil { attachLocalSidecars(selecting: currentLocalLang) }
         call.resolve()
     }
 
@@ -538,10 +551,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         guard !terminalSent, let player = notification.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
         applyPendingSeek(player)
-        // D04: periodic local-progress checkpoints (~10s cadence).
-        if localDownloadId != nil {
-            localProgressSaveDue.toggle()
-            if localProgressSaveDue { persistLocalProgress(state: "checkpoint") }
+        // D04: periodic local-progress checkpoints every 10s (VLC reports
+        // time several times a second; each save is a database write).
+        if localDownloadId != nil, Date().timeIntervalSince(lastLocalProgressSave) >= 10 {
+            lastLocalProgressSave = Date()
+            persistLocalProgress(state: "checkpoint")
         }
         let duration = player.media?.length.intValue ?? 0
         notifyListeners("timeUpdate", data: [
@@ -656,8 +670,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
     }
 
-    /** Full teardown: bounded, idempotent, surface + background restored. */
-    private func teardown() {
+    /** Full teardown: bounded, idempotent, surface + background restored.
+     *  restoreOrientation is false when a new engine replaces this one. */
+    private func teardown(restoreOrientation: Bool = true) {
         if localDownloadId != nil { persistLocalProgress(state: "stopped") }
         localDownloadId = nil
         terminalSent = true
@@ -679,6 +694,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         surfaceView?.removeFromSuperview()
         surfaceView = nil
         makeWebViewTransparent(false)
+        guard restoreOrientation else { return }
+        // Let music or podcasts the player interrupted resume.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         if TorWatchPlaybackState.videoAttached {
             requestOrientation(false)
         }
