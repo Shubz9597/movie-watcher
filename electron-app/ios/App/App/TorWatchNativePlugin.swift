@@ -84,7 +84,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var currentSubTextScale: Int = 75
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
-    private var rotationObserver: NSObjectProtocol?
+    private var activeObserver: NSObjectProtocol?
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -129,6 +129,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 return
             }
             self.localDownloadId = downloadId
+            self.videoScaleMode = "fit" // each video starts fitted, matching the controls
             self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId)
             // Attach EVERY sidecar so the viewer can switch languages; only
             // the chosen one is enforced (selected) on start.
@@ -204,6 +205,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 call.reject("The player surface is unavailable.")
                 return
             }
+            self.videoScaleMode = "fit" // each video starts fitted, matching the controls
             self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId)
             call.resolve()
         }
@@ -230,7 +232,15 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         ])
         player.delegate = self
 
-        let surface = UIView(frame: rootVC.view.bounds)
+        let surface = VideoSurfaceView(frame: rootVC.view.bounds)
+        // Fill crops to the surface's shape: re-apply whenever its size
+        // changes. Software rotation (requestGeometryUpdate) does not post a
+        // device-orientation notification, so a rotation observer missed it
+        // and kept a portrait-shaped crop: the "very zoomed" picture.
+        surface.onResize = { [weak self] in
+            guard let self = self, let player = self.mediaPlayer else { return }
+            self.applyVideoScale(player)
+        }
         surface.backgroundColor = .black
         surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         // Index 0: BEHIND the WebView. The WebView becomes transparent
@@ -253,14 +263,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             if self?.mediaPlayer?.isPlaying == true { self?.mediaPlayer?.pause() }
-        }
-        // Fill mode crops to the DRAWABLE's aspect ratio: recompute when
-        // the device rotates or the window resizes (tablet multitasking).
-        rotationObserver = NotificationCenter.default.addObserver(
-            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            guard let self = self, let player = self.mediaPlayer else { return }
-            self.applyVideoScale(player)
         }
         mediaPlayer = player
         pendingSeek = seekTo
@@ -615,10 +617,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         webView.scrollView.backgroundColor = transparent ? .clear : .black
     }
 
-    /// Video plays landscape; the web app underneath stays portrait.
+    /// Video plays landscape; the web app underneath stays portrait. The flag
+    /// is recorded even when the window is not active (app in background):
+    /// it is re-applied when the app becomes active again.
     private func requestOrientation(_ landscape: Bool) {
-        guard let scene = bridge?.viewController?.view.window?.windowScene else { return }
         TorWatchPlaybackState.videoAttached = landscape
+        observeActivation()
+        guard let scene = bridge?.viewController?.view.window?.windowScene else { return }
         if #available(iOS 16.0, *) {
             bridge?.viewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait)) { _ in
@@ -629,6 +634,17 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             let value: UIDeviceOrientation = landscape ? .landscapeRight : .portrait
             UIDevice.current.setValue(value.rawValue, forKey: "orientation")
             UIViewController.attemptRotationToDeviceOrientation()
+        }
+    }
+
+    /// Rotation requests made while the app is inactive are dropped by iOS;
+    /// returning to the app re-asserts landscape (playing) or portrait.
+    private func observeActivation() {
+        guard activeObserver == nil else { return }
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.requestOrientation(TorWatchPlaybackState.videoAttached)
         }
     }
 
@@ -643,8 +659,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
         backgroundObserver = nil
-        if let observer = rotationObserver { NotificationCenter.default.removeObserver(observer) }
-        rotationObserver = nil
         UIApplication.shared.isIdleTimerDisabled = false
         if let player = mediaPlayer {
             player.delegate = nil
@@ -660,6 +674,19 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if TorWatchPlaybackState.videoAttached {
             requestOrientation(false)
         }
+    }
+}
+
+/// The VLC drawable; reports size changes so Fill can re-crop to its shape.
+final class VideoSurfaceView: UIView {
+    var onResize: (() -> Void)?
+    private var lastSize: CGSize = .zero
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.size != lastSize else { return }
+        lastSize = bounds.size
+        onResize?()
     }
 }
 

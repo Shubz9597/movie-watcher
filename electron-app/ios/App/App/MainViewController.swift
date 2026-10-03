@@ -6,14 +6,21 @@ import VLCSupport
  * App bridge view controller (M1.4.4): registers the app-local native
  * plugins with the Capacitor bridge.
  *
- * M1.4.7: the app UI stays PORTRAIT; when VLC video is attached
- * (TorWatchPlaybackState.videoAttached) landscape is permitted so playback
- * runs fullscreen, and the portrait lock resumes on detach.
+ * M1.4.7: the app UI stays PORTRAIT; while VLC video is attached
+ * (TorWatchPlaybackState.videoAttached) the app is landscape only, and the
+ * portrait lock resumes on detach.
  */
 class MainViewController: CAPBridgeViewController {
 
+    // Playback is landscape only: excluding portrait means neither the
+    // rotation lock nor returning from the background can show the video
+    // upright.
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
-        TorWatchPlaybackState.videoAttached ? .allButUpsideDown : .portrait
+        TorWatchPlaybackState.videoAttached ? .landscape : .portrait
+    }
+
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation {
+        TorWatchPlaybackState.videoAttached ? .landscapeRight : .portrait
     }
 
     override func capacitorDidLoad() {
