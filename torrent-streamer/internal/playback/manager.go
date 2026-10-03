@@ -319,6 +319,8 @@ func (m *Manager) Get(id string) (*SessionView, bool) {
 }
 
 // Lookup resolves a session for internal serving (media/HLS/subtitles).
+// Serving is activity: the TTL slides from the last request, so a long film
+// never expires mid-playback; an abandoned session still expires after TTL.
 func (m *Manager) Lookup(id string) (*session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -326,6 +328,8 @@ func (m *Manager) Lookup(id string) (*session, bool) {
 	if !ok || time.Now().After(sess.expires) {
 		return nil, false
 	}
+	sess.expires = time.Now().Add(m.cfg.SessionTTL)
+	sess.view.ExpiresAt = sess.expires
 	return sess, true
 }
 

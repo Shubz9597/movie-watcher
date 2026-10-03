@@ -38,6 +38,7 @@ type sourceEntry struct {
 	open    func() (io.ReadSeekCloser, error)
 	name    string
 	size    int64
+	ttl     time.Duration
 	expires time.Time
 }
 
@@ -86,7 +87,7 @@ func (ms *MediaSource) Issue(open func() (io.ReadSeekCloser, error), name string
 		return "", "", err
 	}
 	ms.mu.Lock()
-	ms.entries[token] = &sourceEntry{open: open, name: name, size: size, expires: time.Now().Add(ttl)}
+	ms.entries[token] = &sourceEntry{open: open, name: name, size: size, ttl: ttl, expires: time.Now().Add(ttl)}
 	ms.mu.Unlock()
 	return token, fmt.Sprintf("http://127.0.0.1:%d/f/%s", ms.Port(), token), nil
 }
@@ -109,6 +110,11 @@ func (ms *MediaSource) handle(w http.ResponseWriter, r *http.Request) {
 	if ok && time.Now().After(entry.expires) {
 		delete(ms.entries, token)
 		ok = false
+	}
+	if ok {
+		// Sliding expiry: a film longer than the TTL (or one paused and
+		// resumed) keeps its link while the player is still reading it.
+		entry.expires = time.Now().Add(entry.ttl)
 	}
 	ms.mu.Unlock()
 	if !ok {
