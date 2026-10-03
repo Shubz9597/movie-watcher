@@ -275,8 +275,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         UIApplication.shared.isIdleTimerDisabled = true
+        // Pause only when the app really leaves the screen: willResignActive
+        // also fires for Control Center, Notification Center and Siri, which
+        // paused the film every time the viewer adjusted brightness.
         backgroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
             if self?.mediaPlayer?.isPlaying == true { self?.mediaPlayer?.pause() }
         }
