@@ -70,6 +70,8 @@ export class NativeDownloadsAdapter implements DownloadsPort {
             .filter(Boolean)
             .join(' · '),
           seriesId: item.seriesId,
+          positionS: item.positionS,
+          durationS: item.durationS,
           season: item.season,
           episode: item.episode,
           state: item.state === 'ready' ? 'ready' : 'needs-repair',

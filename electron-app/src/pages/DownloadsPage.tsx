@@ -60,6 +60,15 @@ function formatElapsed(startedAt: number | undefined, now: number): string {
   return `${Math.floor(seconds / 60)}m`;
 }
 
+// How far this download has been watched on the device (2..100%), or
+// undefined when it has not been started.
+function watchedPercent(item: { positionS?: number; durationS?: number }): number | undefined {
+  const position = item.positionS ?? 0;
+  const duration = item.durationS ?? 0;
+  if (position <= 0 || duration <= 0) return undefined;
+  return Math.max(2, Math.min(100, Math.round((position / duration) * 100)));
+}
+
 function progressPercent(received = 0, total = 0): number | undefined {
   if (total <= 0) return undefined;
   return Math.max(0, Math.min(100, Math.round((received / total) * 100)));
@@ -475,8 +484,14 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
 
           {ready ? (
             <div>
+              {watchedPercent(item) !== undefined ? (
+                // Saved on the device, so it shows offline too.
+                <div className="mb-3 h-1 overflow-hidden rounded-full bg-white/15" role="progressbar" aria-label={`${item.title} watched`} aria-valuenow={watchedPercent(item)} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="h-full bg-white" style={{ width: `${watchedPercent(item)}%` }} />
+                </div>
+              ) : null}
               <button type="button" onClick={() => playLocal(item)} className={`${ACTION_PRIMARY_CLASS} px-4`}>
-                <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Play
+                <Play className="h-4 w-4 fill-current" aria-hidden="true" /> {watchedPercent(item) !== undefined && (watchedPercent(item) ?? 0) < 90 ? 'Resume' : 'Play'}
               </button>
             </div>
           ) : (

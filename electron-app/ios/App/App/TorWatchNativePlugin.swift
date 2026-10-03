@@ -112,9 +112,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.reject("The playback identifier is missing.")
             return
         }
-        // Durable local progress: resume where the device left off.
+        // Durable local progress: resume 15s before where the device left
+        // off (same as streamed Continue watching); a finished episode
+        // (90%+) starts over.
         let saved = DownloadCoordinator.shared.store.loadProgress(downloadId)
-        let seekTo = call.getDouble("seekTo") ?? saved?.positionS
+        let seekTo = call.getDouble("seekTo") ?? saved.flatMap { progress -> Double? in
+            if progress.durationS > 0 && progress.positionS >= progress.durationS * 0.9 { return nil }
+            return progress.positionS > 15 ? progress.positionS - 15 : nil
+        }
         // Subtitle choice: an explicit request wins, then the viewer's last
         // choice ("" = they turned subtitles off), and on FIRST play the
         // language requested when the download was created.
@@ -128,9 +133,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 call.reject("The player surface is unavailable.")
                 return
             }
-            self.localDownloadId = downloadId
             self.videoScaleMode = "fit" // each video starts fitted, matching the controls
-            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId)
+            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId)
             // Attach EVERY sidecar so the viewer can switch languages; only
             // the chosen one is enforced (selected) on start.
             for sidecar in files.subtitles {
@@ -206,7 +210,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 return
             }
             self.videoScaleMode = "fit" // each video starts fitted, matching the controls
-            self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId)
+            self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId, localDownloadId: nil)
             call.resolve()
         }
     }
@@ -216,10 +220,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// recreation when embedded subtitles are active and the user pinch-
     /// resizes — libvlc has no runtime text-scale API, so the engine rebuilds
     /// at the current position with a ~1s hiccup).
-    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String) {
+    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String, localDownloadId newLocalDownloadId: String?) {
         // Replacement safety: tear the previous player down BEFORE creating
         // the new one; late events from it are ignored via terminalSent.
         teardown()
+        // Set after teardown, which clears it: a download played with this id
+        // unset never saved progress (always resumed at 0, never synced).
+        localDownloadId = newLocalDownloadId
         playId = newPlayId
         terminalSent = false
 
@@ -444,6 +451,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
         currentSubTextScale = percent
         let positionMs = mediaPlayer?.time.intValue ?? 0
+        let currentLocalDownload = localDownloadId
         // Same session continues server-side: no terminal event, just an
         // in-place engine rebuild at the current position (playback resumes).
         teardown()
@@ -453,7 +461,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId)
+        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId, localDownloadId: currentLocalDownload)
         call.resolve()
     }
 

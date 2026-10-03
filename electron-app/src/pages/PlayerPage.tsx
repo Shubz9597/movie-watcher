@@ -147,6 +147,18 @@ export default function PlayerPage({ navigate, params }: Props) {
   // Restore on unmount (close/back) and on startup failure; re-lock on retry.
   // OS-denied requests resolve harmlessly — playback continues unrotated.
   const nativeSurface = !platform.desktop && !!platform.player && 'subscribeTime' in platform.player;
+
+  // Downloaded playback saves progress on the device; leaving the player
+  // uploads it so Continue watching moves right away. The native save
+  // happens during teardown, so the upload waits a moment for it.
+  useEffect(() => {
+    if (!downloadId) return;
+    return () => {
+      window.setTimeout(() => {
+        void import('../mobile/offline-progress-sync').then(({ syncOfflineProgressNow }) => syncOfflineProgressNow(platform.connection));
+      }, 1500);
+    };
+  }, [downloadId, platform.connection]);
   useEffect(() => {
     if (!nativeSurface) return;
     const setLandscape = (landscape: boolean) => {

@@ -132,6 +132,9 @@ export type DownloadItemSnapshot = {
   seriesId?: string;
   season?: number;
   episode?: number;
+  /** Watch position saved on the device (works offline). */
+  positionS?: number;
+  durationS?: number;
 };
 
 export type DownloadsInventory = {
