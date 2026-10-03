@@ -317,7 +317,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
           </div>
           <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
             {cards.map((entry) => ('more' in entry && entry.more ? (
-              <li key={entry.key} className="col-span-full">
+              <li key={entry.key} className="search-more col-span-full">
                 <button
                   type="button"
                   onClick={() => setExpandedFranchises((current) => new Set(current).add(entry.more.groupKey))}

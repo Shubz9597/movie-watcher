@@ -258,6 +258,12 @@ type tmdbDetailResponse struct {
 	} `json:"genres"`
 	Homepage         string `json:"homepage"`
 	OriginalLanguage string `json:"original_language"`
+	// IMDb ids feed the rating lookup: movies carry imdb_id directly, TV
+	// only through external_ids (append_to_response).
+	IMDbID      string `json:"imdb_id"`
+	ExternalIDs struct {
+		IMDbID string `json:"imdb_id"`
+	} `json:"external_ids"`
 	Seasons          []struct {
 		SeasonNumber int    `json:"season_number"`
 		Name         string `json:"name"`
@@ -304,7 +310,7 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 	var payload tmdbDetailResponse
 	// Images ride along with every detail fetch (logo artwork for the player
 	// buffering overlay); one extra upstream field, no second request.
-	detailParams := map[string]string{"append_to_response": "images,alternative_titles", "include_image_language": "en,null"}
+	detailParams := map[string]string{"append_to_response": "images,alternative_titles,external_ids", "include_image_language": "en,null"}
 	if mediaType == "" {
 		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, detailParams), &payload)
 		if movieErr == nil {
@@ -352,6 +358,17 @@ func (p *TMDb) detailToTitle(mediaType, externalID string, payload tmdbDetailRes
 	}
 	if fallbackLogo != "" {
 		title.Artwork["logo"] = "https://image.tmdb.org/t/p/w500" + fallbackLogo
+	}
+	imdbID := strings.TrimSpace(payload.IMDbID)
+	if imdbID == "" {
+		imdbID = strings.TrimSpace(payload.ExternalIDs.IMDbID)
+	}
+	if strings.HasPrefix(imdbID, "tt") {
+		title.IMDBID = imdbID
+		if title.ProviderIDs == nil {
+			title.ProviderIDs = map[string]string{}
+		}
+		title.ProviderIDs["imdb"] = imdbID
 	}
 	// Alternative titles feed torrent search: anime indexers file releases
 	// under the romaji title, which usually differs from the display title.
