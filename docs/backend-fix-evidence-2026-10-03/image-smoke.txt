@@ -1,0 +1,14 @@
+{
+  "healthExit": 0,
+  "health": "{\"status\":\"ok\"}",
+  "shutdownSeconds": 0.107,
+  "containerExit": "0",
+  "shutdownLogged": true
+}
+2026/10/03 12:09:21.001975 main.go:133: [boot] server instance 6c2117da-05ec-4f70-8a87-23513cd495fb
+2026/10/03 12:09:21.004639 main.go:231: [boot] downloads.offline.v1 ready (root=/tmp/torwatch-data/downloads maxConcurrent=1)
+2026/10/03 12:09:21.103528 main.go:321: [boot] playback.compat.v1 ready (transcodes<=1 ttl=2h0m0s root=/tmp/torwatch-data/playback-sessions transcodeMode=auto)
+2026/10/03 12:09:21.104106 main.go:339: [boot] opaque origin "null" allowed on read-only versioned surfaces (packaged file:// renderer compatibility; override TORWATCH_ALLOWED_CLIENT_ORIGINS to harden)
+2026/10/03 12:09:21.106106 main.go:414: [boot] VOD listening on 127.0.0.1:4011 root=/tmp/torwatch-data prebuffer=1048576B/15s waitMetadata=25s trackersMode=all
+2026/10/03 12:09:21.168775 main.go:439: [boot] shutdown requested
+2026/10/03 12:09:21.168962 main.go:456: [boot] shutdown complete

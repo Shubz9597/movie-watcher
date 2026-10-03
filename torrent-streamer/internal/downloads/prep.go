@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/anacrolix/torrent"
 
+	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/torrentx"
 )
 
@@ -38,11 +41,13 @@ type Prepper struct {
 	MaxConcurrent int           // bounded admission (default 1)
 	InfoTimeout   time.Duration // metadata wait per job (default 10m)
 	PrepTimeout   time.Duration // whole-pipeline budget per job (default 6h)
-	StaleClaim    time.Duration // crash-claim recovery window (default 15m)
 
-	workerID string
-	mu       sync.Mutex
-	running  int
+	workerID    string
+	mu          sync.Mutex
+	running     int
+	reserved    int64
+	admissionMu sync.Mutex
+	workers     sync.WaitGroup
 }
 
 // SubtitleQuery describes one provider lookup for a prepared video.
@@ -76,7 +81,6 @@ func NewPrepper(store *Store, repo *torrentx.Repo, downloadRoot string, maxConcu
 		MaxConcurrent: maxConcurrent,
 		InfoTimeout:   10 * time.Minute,
 		PrepTimeout:   6 * time.Hour,
-		StaleClaim:    15 * time.Minute,
 		workerID:      randomWorkerID(),
 	}
 }
@@ -92,12 +96,39 @@ func randomWorkerID() string {
 // ReconcileStartup releases claims held by a previous process (contracts.md
 // §3). Returns how many claims were released.
 func (p *Prepper) ReconcileStartup(ctx context.Context) (int64, error) {
+	// Staging is never published; restart recovery rebuilds it from the pick.
+	if err := os.RemoveAll(filepath.Join(p.DownloadRoot, "staging")); err != nil {
+		return 0, fmt.Errorf("remove abandoned staging: %w", err)
+	}
+	// A crash after rename but before MarkReady leaves an unpublished ready
+	// directory. Recover it alongside packages whose retention has expired.
+	entries, err := os.ReadDir(filepath.Join(p.DownloadRoot, "ready"))
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		var state string
+		err := p.Store.DB.QueryRowContext(ctx, `SELECT state FROM download_jobs WHERE id::text=$1`, entry.Name()).Scan(&state)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if state == StateReady {
+			continue
+		}
+		if err := os.RemoveAll(p.readyDir(entry.Name())); err != nil {
+			return 0, err
+		}
+	}
 	return p.Store.ReconcileStartup(ctx)
 }
 
 // Run is the maintenance loop: fill admission capacity, then periodically
-// sweep stale claims and expired retention. It returns when ctx is done.
+// sweep expired retention. It returns when ctx is done.
 func (p *Prepper) Run(ctx context.Context) {
+	defer p.workers.Wait()
 	pump := time.NewTicker(5 * time.Second)
 	defer pump.Stop()
 	sweep := time.NewTicker(5 * time.Minute)
@@ -116,6 +147,8 @@ func (p *Prepper) Run(ctx context.Context) {
 
 // Pump claims and starts as many jobs as admission capacity allows.
 func (p *Prepper) Pump(ctx context.Context) {
+	p.admissionMu.Lock()
+	defer p.admissionMu.Unlock()
 	for {
 		p.mu.Lock()
 		capacity := p.MaxConcurrent - p.running
@@ -141,7 +174,8 @@ func (p *Prepper) Pump(ctx context.Context) {
 			p.running++
 			p.mu.Unlock()
 			started++
-			go p.prepare(ctx, job)
+			p.workers.Add(1)
+			go func() { defer p.workers.Done(); p.prepare(ctx, job) }()
 		}
 		if started == 0 {
 			return
@@ -149,28 +183,28 @@ func (p *Prepper) Pump(ctx context.Context) {
 	}
 }
 
-// Sweep releases crashed claims and flips expired ready jobs, deleting their
+// Sweep flips expired ready jobs and retries unfinished cleanup, deleting their
 // files with containment checks. Bounded work per tick.
 func (p *Prepper) Sweep(ctx context.Context) {
-	if n, err := p.Store.ResetStaleClaims(ctx, p.StaleClaim); err != nil {
-		log.Printf("[downloads] stale claim sweep: %v", err)
-	} else if n > 0 {
-		log.Printf("[downloads] released %d stale claims", n)
-	}
-	ids, err := p.Store.ExpireDue(ctx, time.Now().UTC(), 50)
+	// Preparation can last hours. This process owns all workers; claims are
+	// released only at startup, never by elapsed time while a worker is live.
+	_, err := p.Store.ExpireDue(ctx, time.Now().UTC(), 50)
 	if err != nil {
 		log.Printf("[downloads] retention sweep: %v", err)
 		return
 	}
+	ids, err := p.Store.PendingCleanup(ctx, 50)
+	if err != nil {
+		log.Printf("[downloads] pending cleanup: %v", err)
+		return
+	}
 	for _, id := range ids {
-		if err := p.Store.DeleteAssets(ctx, id); err != nil {
-			log.Printf("[downloads] asset cleanup %s: %v", id, err)
-			continue
-		}
 		if err := os.RemoveAll(p.readyDir(id)); err != nil {
 			log.Printf("[downloads] file cleanup %s: %v", id, err)
-		} else {
-			log.Printf("[downloads] retention: removed expired job %s assets", id)
+			continue
+		}
+		if err := p.Store.CompleteCleanup(ctx, id); err != nil {
+			log.Printf("[downloads] asset cleanup %s: %v", id, err)
 		}
 	}
 }
@@ -230,7 +264,11 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	torrentx.IncActive(cat, ih)
 	defer torrentx.DecActive(cat, ih)
 
-	cl := torrentx.GetClientFor(cat)
+	cl, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		fail(ReasonSourceUnavailable, err)
+		return
+	}
 	t, err := torrentx.AddOrGetTorrent(cl, pick.Magnet)
 	if err != nil {
 		fail(ReasonSourceUnavailable, err)
@@ -243,6 +281,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		return
 	}
 	cancelInfo()
+	torrentx.TouchTorrent(cat, t)
 
 	// 3. Choose the video file: the validated pick's file index, else the
 	// engine's best-video heuristic. No silent source replacement.
@@ -262,6 +301,28 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		return
 	}
 	file := files[fileIdx]
+	if err := os.MkdirAll(p.DownloadRoot, 0o755); err != nil {
+		fail(ReasonInsufficientServerSpace, err)
+		return
+	}
+	p.mu.Lock()
+	var needed int64
+	var spaceErr error
+	if file.Length() <= 0 || file.Length() > (math.MaxInt64-(256<<20)-p.reserved)/2 {
+		spaceErr = errors.New("invalid video size for preparation")
+	} else {
+		needed = file.Length()*2 + (256 << 20)
+		spaceErr = checkPreparationSpace(config.DataRoot(), p.DownloadRoot, needed+p.reserved)
+	}
+	if spaceErr == nil {
+		p.reserved += needed
+	}
+	p.mu.Unlock()
+	if spaceErr != nil {
+		fail(ReasonInsufficientServerSpace, spaceErr)
+		return
+	}
+	defer func() { p.mu.Lock(); p.reserved -= needed; p.mu.Unlock() }()
 	file.Download()
 
 	// 4. Subtitle sidecars, resolved BEFORE the long video copy so a missing
@@ -426,20 +487,11 @@ func isSafeExt(ext string) bool {
 // copyTo streams exactly one torrent file into dest with SHA-256 computed on
 // the fly. Some multi-file torrents expose a reader that can continue into the
 // next file, so the declared file length is an explicit hard boundary here.
-// Context cancellation closes the reader to unblock a stalled read.
+// The reader context interrupts waits for unavailable torrent pieces.
 func (p *Prepper) copyTo(ctx context.Context, file *torrent.File, dest string) (int64, string, error) {
 	reader := file.NewReader()
 	defer reader.Close()
-	// Unblock on cancellation: closing the reader makes a stalled Read fail.
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = reader.Close()
-		case <-stop:
-		}
-	}()
+	reader.SetContext(ctx)
 	reader.SetResponsive()
 	out, err := os.Create(dest)
 	if err != nil {

@@ -49,6 +49,34 @@ clients (trusted LAN) ──> gateway (Caddy, only LAN port) ──> vod :4001
 - Secrets live exclusively in `.env` (gitignored); preflight rejects
   placeholders and world-readable files.
 
+## Backend runtime requirements
+
+Build the backend with Go 1.27.1 or newer; the Docker build pins 1.27.1.
+Run one backend process per database and persistent data tree. Download
+preparation uses process-owned claims and releases abandoned claims at
+startup; multiple backend replicas sharing that state are unsupported.
+
+Torrent source caching defaults to a 20 GiB budget and 24-hour idle expiry.
+`CACHE_MAX_BYTES` and `CACHE_EVICT_TTL` override these defaults; zero explicitly
+disables the respective limit. The budget counts movie/TV/anime/misc source
+payloads, while prepared packages retain their own renewable expiry. Admission
+checks free space for the source and prepared copy plus a 256 MiB reserve,
+including reservations for other workers. External disk writers can still
+consume that space during preparation.
+
+`TORRENT_LISTEN_PORT=0` chooses free ports independently for each category.
+A positive value specifies the first of four consecutive ports (movie, TV,
+anime, misc), with a maximum base of 65532. Client initialization failures
+return an availability error and can be retried.
+
+Migration 011 adds a cleanup-completion timestamp and an index. It is additive
+and is applied automatically on startup. Expired package files are removed
+before asset records; deletion failures remain pending for the next sweep.
+Source reclamation includes both final and incomplete `.part` files, including
+source manifests from older releases.
+Startup removes abandoned staging and unpublished ready directories while
+preserving published ready packages.
+
 ## Runbook
 
 1. **Preflight** — copy `.env.example` to `.env` (mode 600), set

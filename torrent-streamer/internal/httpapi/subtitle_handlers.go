@@ -150,7 +150,13 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 			torrentCh <- part
 			return
 		}
-		t, addErr := torrentx.AddOrGetTorrent(torrentx.GetClientFor(cat), src)
+		cl, clientErr := torrentx.GetClientFor(cat)
+		if clientErr != nil {
+			log.Printf("[subtitles] torrent client unavailable: %v", clientErr)
+			torrentCh <- part
+			return
+		}
+		t, addErr := torrentx.AddOrGetTorrent(cl, src)
 		if addErr != nil {
 			log.Printf("[subtitles] torrent unavailable: %v", addErr)
 			torrentCh <- part
@@ -261,7 +267,12 @@ func handleSubtitleTorrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cl := torrentx.GetClientFor(cat)
+	cl, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		log.Printf("[torrent] client unavailable: %v", err)
+		http.Error(w, "torrent engine unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	t, err := torrentx.AddOrGetTorrent(cl, src)
 	if err != nil {
 		http.Error(w, "add torrent: "+err.Error(), http.StatusBadRequest)
@@ -292,13 +303,17 @@ func handleSubtitleTorrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound both prebuffering and the subsequent complete read.
+	readCtx, cancelRead := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancelRead()
 	// Read the subtitle file
 	reader := f.NewReader()
 	defer reader.Close()
+	reader.SetContext(readCtx)
 	reader.SetResponsive()
 
 	// Prebuffer the entire subtitle (they're small)
-	_ = torrentx.Prebuffer(reader, f.Length(), 30*time.Second)
+	_ = torrentx.Prebuffer(readCtx, reader, f.Length(), 30*time.Second)
 	_, _ = reader.Seek(0, io.SeekStart)
 
 	data, err := io.ReadAll(io.LimitReader(reader, 5<<20)) // 5MB limit

@@ -229,21 +229,8 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 		}()
 
 		rd := f.NewReader()
-		readerDone := make(chan struct{})
-		readerWatcherDone := make(chan struct{})
-		defer func() {
-			close(readerDone)
-			<-readerWatcherDone
-			rd.Close()
-		}()
-		go func() {
-			defer close(readerWatcherDone)
-			select {
-			case <-ctx.Done():
-				rd.Close()
-			case <-readerDone:
-			}
-		}()
+		defer rd.Close()
+		rd.SetContext(ctx)
 
 		for {
 			st, pos, target := c.warmState()
@@ -281,7 +268,7 @@ func (c *Controller) StartWarm(cat string, t *torrent.Torrent, f *torrent.File, 
 			}
 
 			start := time.Now()
-			got := torrentx.Prebuffer(rd, chunk, 5*time.Second)
+			got := torrentx.Prebuffer(ctx, rd, chunk, 5*time.Second)
 			c.UpdateThroughput(got, int64(time.Since(start).Milliseconds()))
 
 			if !waitWarm(ctx, 150*time.Millisecond) {

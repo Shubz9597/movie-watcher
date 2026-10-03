@@ -123,6 +123,10 @@ services:
       LISTEN: 0.0.0.0:4001
       TORRENT_DATA_ROOT: /data/torrents
       SUB_CACHE_DIR: /data/subcache
+      # Source payloads also created by offline preparation are reclaimable.
+      CACHE_MAX_BYTES: ${CACHE_MAX_BYTES:-21474836480}
+      CACHE_EVICT_TTL: ${CACHE_EVICT_TTL:-24h}
+      TORRENT_LISTEN_PORT: ${TORRENT_LISTEN_PORT:-0}
       LOG_FILE: /data/logs/backend.log
       ERROR_LOG_FILE: /data/logs/errors.log
       # Direct VLC playback on small hosts; video conversion is opt-in.

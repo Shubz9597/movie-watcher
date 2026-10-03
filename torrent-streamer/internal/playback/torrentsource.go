@@ -36,7 +36,10 @@ func (r *TorrentResolver) Resolve(ctx context.Context, cat, sourceID string, fil
 		waitMetadata = 25 * time.Second
 	}
 
-	client := torrentx.GetClientFor(cat)
+	client, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		return ResolvedSource{}, &Error{Code: ReasonMediaInspectionFail, Message: "The torrent engine is temporarily unavailable."}
+	}
 	t, err := torrentx.AddOrGetTorrent(client, "magnet:?xt=urn:btih:"+strings.ToUpper(strings.TrimSpace(sourceID)))
 	if err != nil {
 		return ResolvedSource{}, &Error{Code: ReasonMalformedSource, Message: "The source could not be opened."}
@@ -79,11 +82,11 @@ func (r *TorrentResolver) Resolve(ctx context.Context, cat, sourceID string, fil
 	reader := chosen.NewReader()
 	reader.SetResponsive()
 	prebufferBytes := int64(2 << 20) // 2 MiB — enough for ffprobe headers
-	prebuffered := torrentx.Prebuffer(reader, prebufferBytes, 30*time.Second)
+	prebuffered := torrentx.Prebuffer(ctx, reader, prebufferBytes, 30*time.Second)
 	if prebuffered == 0 {
 		reader.Close()
 		return ResolvedSource{}, &Error{
-			Code:  ReasonMediaInspectionFail,
+			Code:    ReasonMediaInspectionFail,
 			Message: "Not enough peers to start streaming. Try a different source or wait for more seeders.",
 		}
 	}

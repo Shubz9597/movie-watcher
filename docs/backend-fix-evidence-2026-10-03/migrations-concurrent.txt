@@ -1,0 +1,8 @@
+=== RUN   TestConcurrentApply
+=== RUN   TestConcurrentApply/empty
+=== RUN   TestConcurrentApply/upgrading
+--- PASS: TestConcurrentApply (0.95s)
+    --- PASS: TestConcurrentApply/empty (0.44s)
+    --- PASS: TestConcurrentApply/upgrading (0.51s)
+PASS
+ok  	torrent-streamer/migrations	1.969s

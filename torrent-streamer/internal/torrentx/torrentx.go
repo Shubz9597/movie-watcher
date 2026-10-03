@@ -60,6 +60,7 @@ func CloseAllClients() {
 			log.Printf("[boot] closing client[%s]", cat)
 			c.Close()
 		}
+		delete(clients, cat)
 	}
 }
 
@@ -285,16 +286,18 @@ func ParseSrc(q url.Values) (string, error) {
 	return "", errors.New("missing magnet/src/infoHash")
 }
 
-func GetClientFor(cat string) *torrent.Client {
+func GetClientFor(cat string) (*torrent.Client, error) {
 	cat = validCat(cat)
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
 	if c, ok := clients[cat]; ok {
-		return c
+		return c, nil
 	}
 	dir := filepath.Join(config.DataRoot(), cat)
-	_ = os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create torrent data directory: %w", err)
+	}
 	dir = winLongPath(dir)
 
 	cfg := torrent.NewDefaultClientConfig()
@@ -303,22 +306,26 @@ func GetClientFor(cat string) *torrent.Client {
 	cfg.DisableUTP = true
 	cfg.Seed = false
 	cfg.NoUpload = false
-	// TORRENT_LISTEN_PORT overrides the library's fixed default listen port
-	// (42069). 0 = pick a random free port — used by the test binaries so
-	// they never collide with a running backend. Unset keeps the default.
+	// Each category owns a client. Random ports avoid collisions by default;
+	// a configured port is the base of four consecutive category ports.
+	cfg.ListenPort = 0
 	if raw := strings.TrimSpace(os.Getenv("TORRENT_LISTEN_PORT")); raw != "" {
-		if port, err := strconv.Atoi(raw); err == nil && port >= 0 && port <= 65535 {
-			cfg.ListenPort = port
+		port, err := strconv.Atoi(raw)
+		if err != nil || port < 0 || port > 65532 {
+			return nil, errors.New("TORRENT_LISTEN_PORT must be 0 or a base port from 1 to 65532")
+		}
+		if port > 0 {
+			cfg.ListenPort = port + map[string]int{"movie": 0, "tv": 1, "anime": 2, "misc": 3}[cat]
 		}
 	}
 
 	c, err := torrent.NewClient(cfg)
 	if err != nil {
-		log.Fatalf("client(%s) init: %v", cat, err)
+		return nil, fmt.Errorf("initialize torrent client for %s: %w", cat, err)
 	}
 	clients[cat] = c
 	log.Printf("[init] client(%s) dataDir=%s trackersMode=%s", cat, dir, config.TrackersMode())
-	return c
+	return c, nil
 }
 
 func AddOrGetTorrent(cl *torrent.Client, src string) (*torrent.Torrent, error) {
@@ -384,26 +391,23 @@ func ContentTypeForName(name string) string {
 	return "application/octet-stream"
 }
 
-func Prebuffer(r torrent.Reader, want int64, timeout time.Duration) int64 {
+func Prebuffer(ctx context.Context, r torrent.Reader, want int64, timeout time.Duration) int64 {
 	if want <= 0 {
 		return 0
 	}
+	readCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	r.SetContext(readCtx)
+	defer r.SetContext(ctx)
+	r.SetResponsive()
 	buf := make([]byte, 256<<10)
 	var done int64
-	deadline := time.Now().Add(timeout)
-	r.SetResponsive()
-	for done < want && time.Now().Before(deadline) {
-		toRead := len(buf)
-		if rem := int(want - done); rem < toRead {
-			toRead = rem
-		}
+	for done < want && readCtx.Err() == nil {
+		toRead := min(int64(len(buf)), want-done)
 		n, err := r.Read(buf[:toRead])
-		if n > 0 {
-			done += int64(n)
-			continue
-		}
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
+		done += int64(n)
+		if err != nil || n == 0 {
+			break
 		}
 	}
 	return done
@@ -570,11 +574,11 @@ func EvictTorrentData(cat string, t *torrent.Torrent) (int64, error) {
 	}
 	paths := make([]string, 0, len(t.Files()))
 	for _, file := range t.Files() {
-		path, pathErr := safeCachePath(root, file.Path())
+		filePaths, pathErr := cacheStoragePaths(root, file.Path())
 		if pathErr != nil {
 			return 0, pathErr
 		}
-		paths = append(paths, path)
+		paths = append(paths, filePaths...)
 	}
 
 	t.Drop()
@@ -617,11 +621,11 @@ func EvictCachedInfoHash(cat string, ih metainfo.Hash) (int64, error) {
 		}
 		paths := make([]string, 0, len(entry.Paths))
 		for _, raw := range entry.Paths {
-			path, safeErr := safeCachePath(root, raw)
+			filePaths, safeErr := cacheStoragePaths(root, raw)
 			if safeErr != nil {
 				return 0, safeErr
 			}
-			paths = append(paths, path)
+			paths = append(paths, filePaths...)
 		}
 		freed, removeErr := removeTorrentFiles(root, paths)
 		if removeErr != nil {
@@ -631,6 +635,20 @@ func EvictCachedInfoHash(cat string, ih metainfo.Hash) (int64, error) {
 		return freed, removeCacheManifest(cat, ih)
 	}
 	return 0, errors.New("cache manifest not found")
+}
+
+// Default torrent storage renames incomplete data to <path>.part. Both forms
+// belong to the declared file, including manifests written by older releases.
+func cacheStoragePaths(root, relative string) ([]string, error) {
+	path, err := safeCachePath(root, relative)
+	if err != nil {
+		return nil, err
+	}
+	part, err := safeCachePath(root, relative+".part")
+	if err != nil {
+		return nil, err
+	}
+	return []string{path, part}, nil
 }
 
 func safeCachePath(root, relative string) (string, error) {

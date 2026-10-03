@@ -104,6 +104,7 @@ type session struct {
 	runner     sessionRunner
 	hls        bool // true when playbackUrl is the HLS master playlist
 	expires    time.Time
+	lifetime   context.Context
 	cancel     context.CancelFunc
 	createdDir bool
 	slotOnce   sync.Once
@@ -237,6 +238,7 @@ func (m *Manager) Create(ctx context.Context, cat, sourceID string, fileIndex in
 		createdDir: true,
 		holdsSlot:  decision.Mode == ModeRemux || decision.Mode == ModeTranscode,
 	}
+	sess.lifetime, sess.cancel = context.WithCancel(context.Background())
 	sess.view = SessionView{
 		SessionID:  id,
 		Mode:       decision.Mode,
@@ -248,10 +250,7 @@ func (m *Manager) Create(ctx context.Context, cat, sourceID string, fileIndex in
 	}
 
 	if decision.Mode == ModeRemux || decision.Mode == ModeTranscode {
-		runCtx, cancel := context.WithCancel(context.Background())
-		sess.cancel = cancel
-		if err := sess.runner.Start(runCtx, srcURL, decision, dir); err != nil {
-			cancel()
+		if err := sess.runner.Start(sess.lifetime, srcURL, decision, dir); err != nil {
 			m.destroy(sess)
 			return nil, &Error{Code: "internal", Message: "The conversion process could not be started."}
 		}
@@ -498,3 +497,12 @@ func (s *session) MediaOpen() func() (io.ReadSeekCloser, error) { return s.openM
 
 // MediaName is the sanitized direct-rendition display name.
 func (s *session) MediaName() string { return s.mediaName }
+
+// BindMediaReader cancels a direct media read on disconnect or session deletion.
+// The caller must release the returned cancellation registration after serving.
+func (s *session) BindMediaReader(ctx context.Context, reader io.ReadSeekCloser) func() {
+	readCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.lifetime, cancel)
+	BindReaderContext(readCtx, reader)
+	return func() { stop(); cancel() }
+}

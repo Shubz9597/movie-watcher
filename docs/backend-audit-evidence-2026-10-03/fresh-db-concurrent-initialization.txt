@@ -1,0 +1,38 @@
+?   	torrent-streamer/cmd/imdb-import	[no test files]
+ok  	torrent-streamer/cmd/vod	(cached)
+ok  	torrent-streamer/internal/bootstrap	(cached)
+ok  	torrent-streamer/internal/buffer	(cached)
+ok  	torrent-streamer/internal/buildinfo	(cached)
+ok  	torrent-streamer/internal/catalog	(cached)
+ok  	torrent-streamer/internal/config	(cached)
+--- FAIL: TestEnsureInstanceIDStable (0.01s)
+    instance_test.go:30: first EnsureInstanceID: read server instance identity: ERROR: relation "server_instance" does not exist (SQLSTATE 42P01)
+--- FAIL: TestStoreLifecycle (0.00s)
+    store_test.go:41: create: created=false err=insert job: ERROR: relation "download_jobs" does not exist (SQLSTATE 42P01)
+FAIL
+FAIL	torrent-streamer/internal/downloads	0.015s
+ok  	torrent-streamer/internal/httpapi	6.668s
+ok  	torrent-streamer/internal/imdb	(cached)
+?   	torrent-streamer/internal/janitor	[no test files]
+ok  	torrent-streamer/internal/library	9.563s
+ok  	torrent-streamer/internal/logx	(cached)
+?   	torrent-streamer/internal/middleware	[no test files]
+ok  	torrent-streamer/internal/playback	(cached)
+ok  	torrent-streamer/internal/recommendations	0.395s
+--- FAIL: TestSQLReleaseStoreRoundTrip (0.00s)
+    store_sql_db_test.go:27: empty load = false, ERROR: relation "search_cache" does not exist (SQLSTATE 42P01); want a miss
+FAIL
+FAIL	torrent-streamer/internal/search	3.014s
+ok  	torrent-streamer/internal/skipsegments	(cached)
+ok  	torrent-streamer/internal/subtitles	(cached)
+?   	torrent-streamer/internal/taste	[no test files]
+ok  	torrent-streamer/internal/torrentx	(cached)
+ok  	torrent-streamer/internal/watch	1.488s
+--- FAIL: TestMigration009DownloadsAdditive (0.02s)
+    009_downloads_test.go:31: apply migrations: create schema_migrations: ERROR: duplicate key value violates unique constraint "pg_type_typname_nsp_index" (SQLSTATE 23505)
+--- FAIL: TestMigration005Additive (0.16s)
+    migrate_test.go:31: configured test database failed: apply migration 001_core.sql: ERROR: duplicate key value violates unique constraint "pg_proc_proname_args_nsp_index" (SQLSTATE 23505)
+FAIL
+FAIL	torrent-streamer/migrations	0.953s
+ok  	torrent-streamer/tools/reference-client	(cached)
+FAIL

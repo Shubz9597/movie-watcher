@@ -304,6 +304,21 @@ func (s *Service) query(ctx context.Context, query prowlarrQuery) ([]prowlarrRel
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode prowlarr search for %q: %w", query.query, err)
 	}
+	// Prowlarr returns either an array (including a successful empty array)
+	// or a wrapper object. Decide the shape before decoding releases.
+	if trimmed := strings.TrimSpace(string(raw)); strings.HasPrefix(trimmed, "{") {
+		var wrapped struct {
+			Results []prowlarrRelease `json:"results"`
+			Data    []prowlarrRelease `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &wrapped); err != nil {
+			return nil, fmt.Errorf("decode wrapped prowlarr search: %w", err)
+		}
+		if wrapped.Results != nil {
+			return wrapped.Results, nil
+		}
+		return wrapped.Data, nil
+	}
 	var releases []prowlarrRelease
 	decodeErr := json.Unmarshal(raw, &releases)
 	if decodeErr != nil {
@@ -325,20 +340,7 @@ func (s *Service) query(ctx context.Context, query prowlarrQuery) ([]prowlarrRel
 		}
 		log.Printf("[search] lenient decode kept %d releases for %q (strict decode failed: %v)", len(releases), query.query, decodeErr)
 	}
-	if len(releases) > 0 {
-		return releases, nil
-	}
-	var wrapped struct {
-		Results []prowlarrRelease `json:"results"`
-		Data    []prowlarrRelease `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &wrapped); err != nil {
-		return nil, fmt.Errorf("decode wrapped prowlarr search for %q: %w", query.query, err)
-	}
-	if wrapped.Results != nil {
-		return wrapped.Results, nil
-	}
-	return wrapped.Data, nil
+	return releases, nil
 }
 
 func setEpisodeParams(params url.Values, request Request) {

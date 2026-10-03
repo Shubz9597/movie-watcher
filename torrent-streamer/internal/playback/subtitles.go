@@ -40,7 +40,7 @@ func (m *Manager) collectSubtitles(ctx context.Context, sess *session, resolved 
 		format := strings.ToLower(sidecar.Format)
 		profile := DefaultProfiles()[sess.view.Profile]
 		if !sess.hls && strings.HasSuffix(profile.Name, "-vlc") && containsFold(profile.SubtitleFormats, format) {
-			data, ok := readBounded(sidecar.Open)
+			data, ok := readBounded(ctx, sidecar.Open)
 			if !ok || len(data) == 0 {
 				continue
 			}
@@ -116,13 +116,13 @@ func (m *Manager) collectSubtitles(ctx context.Context, sess *session, resolved 
 func sidecarToVTT(ctx context.Context, runner sessionRunner, ffmpegPath string, srcURL string, sidecar Sidecar) (string, bool) {
 	switch strings.ToLower(sidecar.Format) {
 	case "vtt":
-		data, ok := readBounded(sidecar.Open)
+		data, ok := readBounded(ctx, sidecar.Open)
 		if !ok {
 			return "", false
 		}
 		return string(data), validWebVTT(string(data))
 	case "srt":
-		data, ok := readBounded(sidecar.Open)
+		data, ok := readBounded(ctx, sidecar.Open)
 		if !ok {
 			return "", false
 		}
@@ -138,7 +138,7 @@ func sidecarToVTT(ctx context.Context, runner sessionRunner, ffmpegPath string, 
 		// Write through a temp file inside the caller's session dir is done
 		// by the caller via ExtractSubtitle only for container streams; for
 		// sidecar files we convert the BYTES via stdin instead.
-		data, ok := readBounded(sidecar.Open)
+		data, ok := readBounded(ctx, sidecar.Open)
 		if !ok {
 			return "", false
 		}
@@ -148,12 +148,15 @@ func sidecarToVTT(ctx context.Context, runner sessionRunner, ffmpegPath string, 
 	}
 }
 
-func readBounded(open func() (io.ReadCloser, error)) ([]byte, bool) {
+func readBounded(ctx context.Context, open func() (io.ReadCloser, error)) ([]byte, bool) {
 	rc, err := open()
 	if err != nil {
 		return nil, false
 	}
 	defer rc.Close()
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	BindReaderContext(readCtx, rc)
 	data, err := io.ReadAll(io.LimitReader(rc, MaxSubtitleBytes+1))
 	if err != nil || len(data) > MaxSubtitleBytes {
 		return nil, false

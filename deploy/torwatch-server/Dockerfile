@@ -7,7 +7,7 @@
 #   TORWATCH_VERSION  semantic version of this image
 #   TORWATCH_REVISION git revision the image was built from
 #   TORWATCH_BUILT_AT UTC build timestamp
-FROM golang:1.24.2-alpine AS build
+FROM golang:1.27.1-alpine AS build
 ARG TORWATCH_VERSION=dev
 ARG TORWATCH_REVISION=unknown
 ARG TORWATCH_BUILT_AT=unknown

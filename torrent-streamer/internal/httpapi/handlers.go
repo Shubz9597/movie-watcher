@@ -92,7 +92,12 @@ func estimateDuration(sizeBytes int64) int {
 func handleFiles(w http.ResponseWriter, r *http.Request) {
 	middleware.EnableCORS(w)
 	cat := parseCat(r.URL.Query())
-	cl := torrentx.GetClientFor(cat)
+	cl, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		log.Printf("[torrent] client unavailable: %v", err)
+		http.Error(w, "torrent engine unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	src, err := torrentx.ParseSrc(r.URL.Query())
 	if err != nil {
@@ -130,7 +135,12 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 
 	middleware.EnableCORS(w)
 	cat := parseCat(r.URL.Query())
-	cl := torrentx.GetClientFor(cat)
+	cl, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		log.Printf("[torrent] client unavailable: %v", err)
+		http.Error(w, "torrent engine unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	src, err := torrentx.ParseSrc(r.URL.Query())
 	if err != nil {
@@ -283,6 +293,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 
 	reader := f.NewReader()
 	defer reader.Close()
+	reader.SetContext(r.Context())
 	if _, err := reader.Seek(start, io.SeekStart); err != nil {
 		http.Error(w, "seek error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -307,7 +318,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		warmWant = min64(target, localWarmMB<<20)
 		if warmWant > 256<<10 && length >= 512<<10 {
 			warmStart := time.Now()
-			got := torrentx.Prebuffer(reader, min64(warmWant, length), config.PrebufferTimeout())
+			got := torrentx.Prebuffer(r.Context(), reader, min64(warmWant, length), config.PrebufferTimeout())
 			ctl.UpdateThroughput(got, int64(time.Since(warmStart).Milliseconds()))
 			_, _ = reader.Seek(start, io.SeekStart)
 		}
@@ -459,7 +470,12 @@ func handleBufferState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cl := torrentx.GetClientFor(cat)
+	cl, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		log.Printf("[torrent] client unavailable: %v", err)
+		http.Error(w, "torrent engine unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	t, err := torrentx.AddOrGetTorrent(cl, src)
 	if err != nil {
 		http.Error(w, "add torrent: "+err.Error(), 400)
@@ -522,7 +538,12 @@ func handleBufferInfo(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	cat := parseCat(q)
 
-	cl := torrentx.GetClientFor(cat)
+	cl, err := torrentx.GetClientFor(cat)
+	if err != nil {
+		log.Printf("[torrent] client unavailable: %v", err)
+		http.Error(w, "torrent engine unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	src, err := torrentx.ParseSrc(q)
 	if err != nil {
 		http.Error(w, err.Error(), 400)

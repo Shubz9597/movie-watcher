@@ -1,0 +1,26 @@
+=== RUN   TestStopWarmerInterruptsMissingPieceWait
+[0.008s ERR github.com/anacrolix/torrent reader.go:318]
+  msg="initial read failed" err="context canceled" torrent.name=missing.mp4 torrent.ih=b4e1b143116e2fb30579c103bc83420722b14e18
+[0.008s ERR github.com/anacrolix/torrent reader.go:331]
+  msg="read failed after reader reset" err="context canceled" torrent.name=missing.mp4 torrent.ih=b4e1b143116e2fb30579c103bc83420722b14e18
+[0.008s ERR github.com/anacrolix/torrent reader.go:339]
+  msg="read failed after completion resync" err="context canceled" torrent.name=missing.mp4 torrent.ih=b4e1b143116e2fb30579c103bc83420722b14e18
+--- PASS: TestStopWarmerInterruptsMissingPieceWait (0.01s)
+PASS
+ok  	torrent-streamer/internal/buffer	1.027s
+=== RUN   TestClientInitializationFailureReturnsError
+2026/10/03 17:17:49 [init] client(movie) dataDir=/tmp/TestClientInitializationFailureReturnsError2808265018/001/movie trackersMode=all
+2026/10/03 17:17:49 [boot] closing client[movie]
+--- PASS: TestClientInitializationFailureReturnsError (0.00s)
+=== RUN   TestConfiguredCategoryPortsUseConsecutiveOffsets
+2026/10/03 17:17:49 [init] client(movie) dataDir=/tmp/TestConfiguredCategoryPortsUseConsecutiveOffsets1994425255/001/movie trackersMode=all
+2026/10/03 17:17:49 [init] client(tv) dataDir=/tmp/TestConfiguredCategoryPortsUseConsecutiveOffsets1994425255/001/tv trackersMode=all
+2026/10/03 17:17:49 [init] client(anime) dataDir=/tmp/TestConfiguredCategoryPortsUseConsecutiveOffsets1994425255/001/anime trackersMode=all
+2026/10/03 17:17:49 [init] client(misc) dataDir=/tmp/TestConfiguredCategoryPortsUseConsecutiveOffsets1994425255/001/misc trackersMode=all
+2026/10/03 17:17:49 [boot] closing client[movie]
+2026/10/03 17:17:49 [boot] closing client[tv]
+2026/10/03 17:17:49 [boot] closing client[anime]
+2026/10/03 17:17:49 [boot] closing client[misc]
+--- PASS: TestConfiguredCategoryPortsUseConsecutiveOffsets (0.02s)
+PASS
+ok  	torrent-streamer/internal/torrentx	1.052s

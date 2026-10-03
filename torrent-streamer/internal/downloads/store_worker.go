@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Worker-side store operations for the D02b prep pipeline (contracts.md §3–§5).
@@ -70,19 +69,6 @@ UPDATE download_jobs SET claimed_by='', claimed_at=NULL WHERE state=$1 AND claim
 	return n, nil
 }
 
-// ResetStaleClaims releases claims older than staleAfter whose worker has not
-// finalized (crash recovery while running).
-func (s *Store) ResetStaleClaims(ctx context.Context, staleAfter time.Duration) (int64, error) {
-	tag, err := s.DB.ExecContext(ctx, `
-UPDATE download_jobs SET claimed_by='', claimed_at=NULL
-WHERE state=$1 AND claimed_by<>'' AND claimed_at < $2`, StatePreparing, time.Now().UTC().Add(-staleAfter))
-	if err != nil {
-		return 0, fmt.Errorf("reset stale claims: %w", err)
-	}
-	n, _ := tag.RowsAffected()
-	return n, nil
-}
-
 // FailPreparing flips a still-preparing job to failed with a safe reason
 // (contracts.md §3). A job that is no longer preparing (client cancelled
 // concurrently) reports ErrNotCancellable; the worker then just cleans up.
@@ -138,8 +124,7 @@ WHERE a.job_id=$1 AND j.client_id=$2 AND j.state=$3 AND a.url_path=$4`,
 }
 
 // DeleteAssets removes the recorded assets of a job (retention cleanup,
-// contracts.md §5): rows first, then the caller deletes the files it still
-// finds on disk under the job's directory.
+// contracts.md §5). Delete files before rows so failed file cleanup is retryable.
 func (s *Store) DeleteAssets(ctx context.Context, jobID string) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM download_assets WHERE job_id=$1`, jobID)
 	if err != nil {

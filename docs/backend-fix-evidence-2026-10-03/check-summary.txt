@@ -1,0 +1,13 @@
+Go toolchain: 1.27.1
+Full race suite: PASS (fresh disposable PostgreSQL)
+Latest go vet ./...: PASS
+Linux AMD64 runtime Docker image: BUILD PASS
+Windows AMD64 cross-build: PASS
+Linux ARM64 cross-build: PASS
+Compose configuration: PASS
+Changed/new Go files: gofmt clean
+git diff --check: PASS
+Actual image health and SIGTERM shutdown: PASS
+FFmpeg integration in actual image (network disabled): PASS
+Source/unstripped binary security: zero affected symbols
+Stripped image security: one conservative OpenPGP module match; see README.md

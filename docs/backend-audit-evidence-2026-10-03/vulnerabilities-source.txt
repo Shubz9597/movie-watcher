@@ -1,0 +1,67 @@
+go: downloading golang.org/x/vuln v1.8.0
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6278
+    Gorilla WebSocket Uses Cryptographically Weak PRNG for WebSocket Mask Key in
+    github.com/gorilla/websocket
+  More info: https://pkg.go.dev/vuln/GO-2026-6278
+  Module: github.com/gorilla/websocket
+    Found in: github.com/gorilla/websocket@v1.5.0
+    Fixed in: github.com/gorilla/websocket@v1.5.3
+    Example traces found:
+      #1: cmd/vod/main.go:439:18: vod.main calls http.Server.Shutdown, which eventually calls websocket.Conn.Close
+      #2: internal/torrentx/torrentx.go:349:16: torrentx.AddOrGetTorrent calls torrent.Torrent.AddTrackers, which eventually calls websocket.Conn.ReadMessage
+      #3: internal/torrentx/torrentx.go:349:16: torrentx.AddOrGetTorrent calls torrent.Torrent.AddTrackers, which eventually calls websocket.Conn.WriteMessage
+      #4: internal/torrentx/torrentx.go:349:16: torrentx.AddOrGetTorrent calls torrent.Torrent.AddTrackers, which eventually calls websocket.Dialer.Dial
+      #5: internal/subtitles/subtitles.go:662:24: subtitles.DownloadOpenSubSubtitle calls io.ReadAll, which calls websocket.flateReadWrapper.Read
+      #6: internal/subtitles/subtitles.go:662:24: subtitles.DownloadOpenSubSubtitle calls io.ReadAll, which calls websocket.messageReader.Read
+      #7: internal/torrentx/torrentx.go:21:2: torrentx.init calls torrent.init, which eventually calls websocket.truncWriter.Write
+
+Vulnerability #2: GO-2026-6165
+    Panic while parsing crafted ECDHE_PSK ServerKeyExchange in
+    github.com/pion/dtls/v3
+  More info: https://pkg.go.dev/vuln/GO-2026-6165
+  Module: github.com/pion/dtls/v3
+    Found in: github.com/pion/dtls/v3@v3.0.3
+    Fixed in: github.com/pion/dtls/v3@v3.1.4
+    Example traces found:
+      #1: internal/torrentx/torrentx.go:315:29: torrentx.GetClientFor calls torrent.NewClient, which eventually calls handshake.Handshake.Unmarshal
+
+Vulnerability #3: GO-2026-6163
+    Panic on malformed XOR-MAPPED-ADDRESS attribute in github.com/pion/stun/v3
+  More info: https://pkg.go.dev/vuln/GO-2026-6163
+  Module: github.com/pion/stun/v3
+    Found in: github.com/pion/stun/v3@v3.0.0
+    Fixed in: github.com/pion/stun/v3@v3.1.5
+    Example traces found:
+      #1: internal/torrentx/torrentx.go:349:16: torrentx.AddOrGetTorrent calls torrent.Torrent.AddTrackers, which eventually calls stun.XORMappedAddress.GetFrom
+      #2: internal/torrentx/torrentx.go:349:16: torrentx.AddOrGetTorrent calls torrent.Torrent.AddTrackers, which eventually calls stun.XORMappedAddress.GetFromAs
+
+Vulnerability #4: GO-2026-5970
+    Infinite loop on invalid input in golang.org/x/text
+  More info: https://pkg.go.dev/vuln/GO-2026-5970
+  Module: golang.org/x/text
+    Found in: golang.org/x/text@v0.27.0
+    Fixed in: golang.org/x/text@v0.39.0
+    Example traces found:
+      #1: cmd/imdb-import/main.go:25:27: imdb.main calls sql.Open, which eventually calls norm.Form.Properties
+      #2: cmd/imdb-import/main.go:25:27: imdb.main calls sql.Open, which eventually calls norm.Form.Span
+      #3: internal/catalog/types.go:89:32: catalog.NormalizeTitle calls norm.Form.String
+      #4: cmd/imdb-import/main.go:25:27: imdb.main calls sql.Open, which eventually calls norm.Form.Transform
+
+Vulnerability #5: GO-2026-5004
+    SQL Injection via placeholder confusion with dollar quoted string literals
+    in github.com/jackc/pgx
+  More info: https://pkg.go.dev/vuln/GO-2026-5004
+  Module: github.com/jackc/pgx/v5
+    Found in: github.com/jackc/pgx/v5@v5.7.5
+    Fixed in: github.com/jackc/pgx/v5@v5.9.2
+    Example traces found:
+      #1: internal/watch/progress_sql.go:429:15: watch.Store.ListWatched calls sql.Rows.Next, which eventually calls sanitize.SanitizeSQL
+
+Your code is affected by 5 vulnerabilities from 5 modules.
+This scan also found 5 vulnerabilities in packages you import and 28
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+Use '-show verbose' for more details.
+exit status 3

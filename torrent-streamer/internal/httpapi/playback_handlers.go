@@ -162,6 +162,8 @@ func (h PlaybackHandlers) handleMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer reader.Close()
+	release := sess.BindMediaReader(r.Context(), reader)
+	defer release()
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", mediaContentType(sess.MediaName()))
 	http.ServeContent(w, r, sess.MediaName(), time.Time{}, reader)

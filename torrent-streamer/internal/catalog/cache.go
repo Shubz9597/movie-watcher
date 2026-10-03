@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -63,7 +65,7 @@ func MergeTitles(groups [][]Title) []Title {
 }
 
 func sortedByID(group []Title) []Title {
-	result := append([]Title(nil), group...)
+	result := cloneTitles(group)
 	sort.SliceStable(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
 }
@@ -164,7 +166,7 @@ func MergeEpisodes(groups [][]Episode) []Episode {
 }
 
 func sortedEpisodesByID(group []Episode) []Episode {
-	result := append([]Episode(nil), group...)
+	result := cloneEpisodes(group)
 	sort.SliceStable(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
 }
@@ -226,7 +228,7 @@ func (c *Cache) Set(provider, key string, value any, ttl time.Duration) {
 	if len(c.entries) >= c.maxEntries {
 		c.evictOldestLocked(now)
 	}
-	c.entries[provider+"\x00"+key] = &cacheEntry{value: value, fetched: now, expires: now.Add(ttl), provider: provider}
+	c.entries[provider+"\x00"+key] = &cacheEntry{value: cloneCacheValue(value), fetched: now, expires: now.Add(ttl), provider: provider}
 }
 
 func (c *Cache) evictOldestLocked(now time.Time) {
@@ -257,9 +259,9 @@ func (c *Cache) Get(provider, key string) (value any, state cacheState, ok bool)
 		return nil, cacheStateMissing, false
 	}
 	if time.Now().Before(entry.expires) {
-		return entry.value, cacheStateFresh, true
+		return cloneCacheValue(entry.value), cacheStateFresh, true
 	}
-	return entry.value, cacheStateStale, true
+	return cloneCacheValue(entry.value), cacheStateStale, true
 }
 
 func (c *Cache) FetchedAt(provider, key string) (time.Time, bool) {
@@ -279,3 +281,45 @@ const (
 	cacheStateFresh
 	cacheStateStale
 )
+
+// Cache values and merge inputs are owned by their callers. Copy every mutable
+// field so enrichment and JSON encoding never share writable provider data.
+func cloneTitle(t Title) Title {
+	t.Artwork = maps.Clone(t.Artwork)
+	t.ProviderIDs = maps.Clone(t.ProviderIDs)
+	t.ExternalLinks = maps.Clone(t.ExternalLinks)
+	t.MergedFrom = slices.Clone(t.MergedFrom)
+	t.Genres = slices.Clone(t.Genres)
+	t.Seasons = slices.Clone(t.Seasons)
+	t.AltTitles = slices.Clone(t.AltTitles)
+	return t
+}
+func cloneTitles(titles []Title) []Title {
+	result := slices.Clone(titles)
+	for i := range result {
+		result[i] = cloneTitle(result[i])
+	}
+	return result
+}
+func cloneEpisodes(episodes []Episode) []Episode {
+	result := slices.Clone(episodes)
+	for i := range result {
+		result[i].ProviderIDs = maps.Clone(result[i].ProviderIDs)
+	}
+	return result
+}
+func cloneCacheValue(value any) any {
+	switch v := value.(type) {
+	case Title:
+		return cloneTitle(v)
+	case []Title:
+		return cloneTitles(v)
+	case []Episode:
+		return cloneEpisodes(v)
+	case sectionCacheEntry:
+		v.Titles = cloneTitles(v.Titles)
+		return v
+	default:
+		return value
+	}
+}

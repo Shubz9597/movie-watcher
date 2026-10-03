@@ -14,7 +14,18 @@ var files embed.FS
 
 // Apply runs every not-yet-recorded SQL migration in filename order.
 func Apply(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migrations: %w", err)
+	}
+	defer tx.Rollback()
+	// Lock before even creating the ledger; concurrent IF NOT EXISTS DDL can
+	// otherwise collide in PostgreSQL's catalogs on an empty database.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(838439704199)`); err != nil {
+		return fmt.Errorf("lock migrations: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -36,7 +47,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 	for _, name := range names {
 		var applied bool
-		if err := db.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version=$1)`, name,
 		).Scan(&applied); err != nil {
 			return fmt.Errorf("check migration %s: %w", name, err)
@@ -49,10 +60,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin migration %s: %w", name, err)
-		}
 		if _, err = tx.ExecContext(ctx, string(sqlBytes)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
@@ -61,9 +68,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", name, err)
 		}
-		if err = tx.Commit(); err != nil {
-			return fmt.Errorf("commit migration %s: %w", name, err)
-		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migrations: %w", err)
 	}
 	return nil
 }

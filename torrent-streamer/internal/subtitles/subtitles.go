@@ -76,6 +76,7 @@ type cachedSub struct {
 type cachedSearch struct {
 	results []SubResult
 	fetched time.Time
+	bytes   int
 }
 
 func loadDiskSubtitle(fileID int) (string, bool) {
@@ -118,12 +119,15 @@ func saveDiskSubtitle(fileID int, vtt string) error {
 	}
 	dst := filepath.Join(root, fmt.Sprintf("opensub-%d.vtt", fileID))
 	if err = os.Rename(tmpName, dst); err == nil {
-		return nil
+		return pruneDiskSubtitles(root)
 	}
 	if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
 		return err
 	}
-	return os.Rename(tmpName, dst)
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	return pruneDiskSubtitles(root)
 }
 
 func newOpenSubTransport() *http.Transport {
@@ -521,7 +525,7 @@ func fetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string, min
 		} `json:"data"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode opensub response: %w", err)
 	}
 
@@ -589,7 +593,7 @@ func fetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string, min
 	})
 
 	searchCacheMu.Lock()
-	searchCache[cacheKey] = cachedSearch{results: cloneSubResults(subs), fetched: time.Now()}
+	putSearchLocked(cacheKey, subs, time.Now())
 	searchCacheMu.Unlock()
 
 	return subs, nil
@@ -616,7 +620,7 @@ func DownloadOpenSubSubtitle(ctx context.Context, fileID string, apiKey string) 
 	subCacheMu.RUnlock()
 	if cached, ok := loadDiskSubtitle(parsedFileID); ok {
 		subCacheMu.Lock()
-		subCache[cacheKey] = cachedSub{vtt: cached, fetched: time.Now()}
+		putSubtitleLocked(cacheKey, cached, time.Now())
 		subCacheMu.Unlock()
 		return cached, nil
 	}
@@ -632,7 +636,7 @@ func DownloadOpenSubSubtitle(ctx context.Context, fileID string, apiKey string) 
 	subCacheMu.RUnlock()
 	if cached, ok := loadDiskSubtitle(parsedFileID); ok {
 		subCacheMu.Lock()
-		subCache[cacheKey] = cachedSub{vtt: cached, fetched: time.Now()}
+		putSubtitleLocked(cacheKey, cached, time.Now())
 		subCacheMu.Unlock()
 		return cached, nil
 	}
@@ -713,7 +717,7 @@ func DownloadOpenSubSubtitle(ctx context.Context, fileID string, apiKey string) 
 
 	// Cache the result
 	subCacheMu.Lock()
-	subCache[cacheKey] = cachedSub{vtt: vtt, fetched: time.Now()}
+	putSubtitleLocked(cacheKey, vtt, time.Now())
 	subCacheMu.Unlock()
 	if err := saveDiskSubtitle(parsedFileID, vtt); err != nil {
 		log.Printf("[subtitles] persistent cache write failed for %d: %v", parsedFileID, err)
@@ -789,4 +793,106 @@ func langName(code string) string {
 		return name
 	}
 	return strings.ToUpper(code)
+}
+
+const subtitleCacheMaxBytes = 16 << 20
+const subtitleCacheMaxEntries = 128
+
+// These helpers run with the corresponding cache lock held. Expiry bounds
+// age, and capacity bounds memory even when every request uses a new key.
+func putSubtitleLocked(key, vtt string, now time.Time) {
+	if len(vtt) > subtitleCacheMaxBytes {
+		return
+	}
+	delete(subCache, key)
+	total := len(vtt)
+	for k, entry := range subCache {
+		if now.Sub(entry.fetched) >= cacheTTL {
+			delete(subCache, k)
+			continue
+		}
+		total += len(entry.vtt)
+	}
+	for len(subCache) >= subtitleCacheMaxEntries || total > subtitleCacheMaxBytes {
+		var oldestKey string
+		var oldest time.Time
+		for k, entry := range subCache {
+			if oldest.IsZero() || entry.fetched.Before(oldest) {
+				oldestKey, oldest = k, entry.fetched
+			}
+		}
+		total -= len(subCache[oldestKey].vtt)
+		delete(subCache, oldestKey)
+	}
+	subCache[key] = cachedSub{vtt: vtt, fetched: now}
+}
+func putSearchLocked(key string, results []SubResult, now time.Time) {
+	// Account for retained strings and slice elements as well as entry count.
+	bytes := len(key) + len(results)*160
+	for _, result := range results {
+		bytes += len(result.Source) + len(result.ID) + len(result.Lang) + len(result.Label) + len(result.URL) + len(result.FileName) + len(result.Release)
+	}
+	if bytes > subtitleCacheMaxBytes {
+		return
+	}
+	delete(searchCache, key)
+	total := bytes
+	for k, entry := range searchCache {
+		if now.Sub(entry.fetched) >= searchCacheTTL {
+			delete(searchCache, k)
+			continue
+		}
+		total += entry.bytes
+	}
+	for len(searchCache) >= subtitleCacheMaxEntries || total > subtitleCacheMaxBytes {
+		var oldestKey string
+		var oldest time.Time
+		for k, entry := range searchCache {
+			if oldest.IsZero() || entry.fetched.Before(oldest) {
+				oldestKey, oldest = k, entry.fetched
+			}
+		}
+		total -= searchCache[oldestKey].bytes
+		delete(searchCache, oldestKey)
+	}
+	searchCache[key] = cachedSearch{results: cloneSubResults(results), fetched: now, bytes: bytes}
+}
+
+// Only provider cache files are eligible; user imports have their own bounds.
+func pruneDiskSubtitles(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	var files []os.FileInfo
+	var total int64
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "opensub-") || !strings.HasSuffix(entry.Name(), ".vtt") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if time.Since(info.ModTime()) >= cacheTTL {
+			if err := os.Remove(filepath.Join(root, info.Name())); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			continue
+		}
+		files = append(files, info)
+		total += info.Size()
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].ModTime().Before(files[j].ModTime()) })
+	for _, info := range files {
+		if total <= 64<<20 && len(files) <= 512 {
+			break
+		}
+		if err := os.Remove(filepath.Join(root, info.Name())); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		total -= info.Size()
+		files = files[1:]
+	}
+	return nil
 }

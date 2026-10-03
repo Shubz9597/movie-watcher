@@ -13,6 +13,7 @@ import (
 // Fire-and-forget by contract: the client never surfaces failures.
 func RegisterTasteRoutes(mux *http.ServeMux, taste tasteVisitor) {
 	mux.HandleFunc("POST /v1/taste/visited", handleTasteVisited(taste))
+	mux.HandleFunc("OPTIONS /v1/taste/visited", handleTasteVisited(taste))
 }
 
 // tasteVisitor is the bounded interface the handler needs (internal/taste

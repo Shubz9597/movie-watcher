@@ -67,6 +67,14 @@ func plan(in PlanInput) Decision {
 		return Decision{Mode: ModeDirect, ReasonCode: ReasonCompatible, Message: "Plays directly without any conversion."}
 	}
 
+	if !hdrOK {
+		// The current FFmpeg runner has no verified HDR-to-SDR tone-map filter.
+		// Encoding HDR frames as ordinary H.264 would start successfully but
+		// produce materially wrong colours, so fail truthfully instead.
+		return unsupported(ReasonHDRUnsupported,
+			"This device profile cannot play HDR and server-side tone mapping is not available yet.")
+	}
+
 	if !in.FFmpegReady {
 		return unsupported(ReasonFFmpegMissing,
 			"The server cannot convert this source: FFmpeg is not configured. Direct-playing sources still work.")
@@ -79,13 +87,7 @@ func plan(in PlanInput) Decision {
 			Message:     fmt.Sprintf("The video codec (%s) is not supported on this device; the server will convert it to H.264.", in.Info.Video.Codec),
 		}
 	}
-	if !hdrOK {
-		// The current FFmpeg runner has no verified HDR-to-SDR tone-map filter.
-		// Encoding HDR frames as ordinary H.264 would start successfully but
-		// produce materially wrong colours, so fail truthfully instead.
-		return unsupported(ReasonHDRUnsupported,
-			"This device profile cannot play HDR and server-side tone mapping is not available yet.")
-	}
+
 	if !resOK {
 		return Decision{
 			Mode: ModeTranscode, ReasonCode: ReasonResolutionExceeds, CopyVideo: false, CopyAudio: audioOK,

@@ -1,0 +1,68 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.84kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/golang:1.27.1-alpine
+#2 ...
+
+#3 [internal] load metadata for docker.io/library/alpine:3.20.6
+#3 DONE 2.0s
+
+#2 [internal] load metadata for docker.io/library/golang:1.27.1-alpine
+#2 DONE 2.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 248B done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 DONE 0.0s
+
+#6 [stage-1 1/3] FROM docker.io/library/alpine:3.20.6@sha256:de4fe7064d8f98419ea6b49190df1abbf43450c1702eeb864fe9ced453c1cc5f
+#6 resolve docker.io/library/alpine:3.20.6@sha256:de4fe7064d8f98419ea6b49190df1abbf43450c1702eeb864fe9ced453c1cc5f 0.1s done
+#6 DONE 0.1s
+
+#7 [build 1/6] FROM docker.io/library/golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+#7 resolve docker.io/library/golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+#7 resolve docker.io/library/golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 0.1s done
+#7 DONE 0.1s
+
+#5 [internal] load build context
+#5 transferring context: 38.28kB 0.0s done
+#5 DONE 0.0s
+
+#8 [build 2/6] WORKDIR /src
+#8 CACHED
+
+#9 [build 3/6] COPY go.mod go.sum ./
+#9 CACHED
+
+#10 [build 4/6] RUN go mod download
+#10 CACHED
+
+#11 [build 5/6] COPY . .
+#11 DONE 0.1s
+
+#12 [build 6/6] RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags "-s -w       -X torrent-streamer/internal/buildinfo.AppVersion=dev       -X torrent-streamer/internal/buildinfo.Revision=unknown       -X torrent-streamer/internal/buildinfo.BuiltAt=unknown"     -o /out/torwatch-vod ./cmd/vod
+#12 DONE 35.8s
+
+#13 [stage-1 2/3] RUN apk add --no-cache ca-certificates tzdata curl ffmpeg     && addgroup -g 1000 torwatch     && adduser -D -u 1000 -G torwatch torwatch
+#13 CACHED
+
+#14 [stage-1 3/3] COPY --from=build /out/torwatch-vod /usr/local/bin/torwatch-vod
+#14 DONE 1.1s
+
+#15 exporting to image
+#15 exporting layers
+#15 exporting layers 7.3s done
+#15 exporting manifest sha256:460640bfb53cc9e3a4acd648551817e1bc380832548f306a1f613687407cfc91 0.0s done
+#15 exporting config sha256:df1237814835dc6f05081c8eef179fd065c528f20e6b30887db930374360d767 0.0s done
+#15 exporting attestation manifest sha256:a6206c4623109c46a04cd64dd0477f75a4c4c012cda3db7364b353f39866d740 0.0s done
+#15 exporting manifest list sha256:c15f9957057492645953ca66d1492b35b84b5cae5f78ae09b22221bc36e9913e 0.0s done
+#15 naming to docker.io/library/torwatch-backend-fixes:local
+#15 naming to docker.io/library/torwatch-backend-fixes:local done
+#15 unpacking to docker.io/library/torwatch-backend-fixes:local
+#15 unpacking to docker.io/library/torwatch-backend-fixes:local 0.2s done
+#15 DONE 7.6s

@@ -47,8 +47,8 @@ const (
 	reasonPopular   = "popular"
 	// Per-seed "more like this" bounds: the first few usable favourites each
 	// contribute one bounded similar-title page to the candidate pool.
-	seedSimilarLimit  = 12
-	seedSimilarSeeds  = 6
+	seedSimilarLimit = 12
+	seedSimilarSeeds = 6
 )
 
 // SeedSimilarSource resolves per-seed "more like this" candidates (TMDb
@@ -189,13 +189,13 @@ func (a CatalogCandidates) Candidates(ctx context.Context) ([]catalog.Title, err
 // library store; Candidates and SeedGenres come from the existing catalog
 // providers.
 type Deps struct {
-	Library               LibrarySource
-	Candidates            CandidateSource
-	SeedGenres            SeedGenreSource
+	Library    LibrarySource
+	Candidates CandidateSource
+	SeedGenres SeedGenreSource
 	// Optional per-seed personalization: when wired, the first few usable
 	// favourites contribute their TMDb/AniList "more like this" titles to the
 	// pool, ranked ahead of the global trending pool.
-	SeedSimilar           SeedSimilarSource
+	SeedSimilar SeedSimilarSource
 	// Optional crossover: titles of the OTHER media type sharing the seed's
 	// themes (movies for a series, series for a movie), mixed into the
 	// seed's own similar list.
@@ -318,14 +318,14 @@ func New(deps Deps) *Service {
 		now = time.Now
 	}
 	return &Service{
-		library:     deps.Library,
-		candidates:  deps.Candidates,
-		seedGenres:  deps.SeedGenres,
-		seedSimilar: deps.SeedSimilar,
+		library:      deps.Library,
+		candidates:   deps.Candidates,
+		seedGenres:   deps.SeedGenres,
+		seedSimilar:  deps.SeedSimilar,
 		crossSimilar: deps.CrossSimilar,
-		taste:       deps.Taste,
-		candidateVn: deps.CandidateCacheVersion,
-		now:         now,
+		taste:        deps.Taste,
+		candidateVn:  deps.CandidateCacheVersion,
+		now:          now,
 	}
 }
 
@@ -373,6 +373,10 @@ func (s *Service) compute(ctx context.Context, revision int64) (Result, error) {
 	if s.taste != nil {
 		return s.computeFromTaste(ctx, revision)
 	}
+	return s.computeFromFavourites(ctx, revision)
+}
+
+func (s *Service) computeFromFavourites(ctx context.Context, revision int64) (Result, error) {
 	seeds, err := s.library.FavouriteSeeds(ctx, seedLimit)
 	if err != nil {
 		return Result{}, fmt.Errorf("read favourite seeds: %w", err)
@@ -522,7 +526,12 @@ func (s *Service) compute(ctx context.Context, revision int64) (Result, error) {
 func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result, error) {
 	signals, err := s.taste.HouseholdSignals(ctx)
 	if err != nil {
-		return s.compute(ctx, revision) // legacy favourites-only path
+		if ctx.Err() != nil {
+			return Result{}, ctx.Err()
+		}
+		result, fallbackErr := s.computeFromFavourites(ctx, revision)
+		result.Degraded = true
+		return result, fallbackErr
 	}
 
 	// Deduplicate signals per canonical id (max weight wins: a favourited

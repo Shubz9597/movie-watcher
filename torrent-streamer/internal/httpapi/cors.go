@@ -39,7 +39,7 @@ const corsAllowedHeaders = "Content-Type, Range, X-Torwatch-Protocol, X-Torwatch
 // is reachable from allowlisted browser/mobile origins — omitting it here
 // made cross-origin library writes impossible from every browser (caught by
 // the desktop-staging two-client validation, repair pass).
-const corsAllowedMethods = "GET, HEAD, OPTIONS, PUT"
+const corsAllowedMethods = "GET, HEAD, OPTIONS, PUT, POST"
 
 // applyCORS sets the origin-scoped CORS headers for one request and reports
 // whether preflight handling should stop the handler chain (OPTIONS).

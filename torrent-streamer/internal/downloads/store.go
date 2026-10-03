@@ -38,12 +38,12 @@ type Service interface {
 
 // Sentinel errors mapped to safe HTTP responses by the handlers.
 var (
-	ErrNotFound         = errors.New("download job not found")
-	ErrNotCancellable   = errors.New("job is not cancellable in its current state")
-	ErrExpired          = errors.New("job retention has expired")
-	ErrInvalidSource    = errors.New("invalid source identity")
-	ErrInvalidRequest   = errors.New("invalid request")
-	ErrNotReady         = errors.New("job is not ready")
+	ErrNotFound       = errors.New("download job not found")
+	ErrNotCancellable = errors.New("job is not cancellable in its current state")
+	ErrExpired        = errors.New("job retention has expired")
+	ErrInvalidSource  = errors.New("invalid source identity")
+	ErrInvalidRequest = errors.New("invalid request")
+	ErrNotReady       = errors.New("job is not ready")
 )
 
 // CreateRequest is the validated payload of POST /v1/downloads/jobs
@@ -239,7 +239,15 @@ func (s *Store) Cancel(ctx context.Context, clientID, jobID string) (Job, error)
 
 // Renew extends retention per contracts.md §5.
 func (s *Store) Renew(ctx context.Context, clientID, jobID string, now time.Time) (Job, error) {
-	j, err := s.Get(ctx, clientID, jobID)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, fmt.Errorf("begin renewal: %w", err)
+	}
+	defer tx.Rollback()
+	j, err := scanJob(tx.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM download_jobs WHERE id=$1 AND client_id=$2 FOR UPDATE`, jobID, clientID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, ErrNotFound
+	}
 	if err != nil {
 		return Job{}, err
 	}
@@ -250,9 +258,14 @@ func (s *Store) Renew(ctx context.Context, clientID, jobID string, now time.Time
 	if err != nil {
 		return Job{}, ErrExpired
 	}
-	if _, err := s.DB.ExecContext(ctx, `
-UPDATE download_jobs SET expires_at=$1 WHERE id=$2`, extended, j.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `
+UPDATE download_jobs SET expires_at=$1,
+manifest=jsonb_set(manifest, '{expiresAt}', to_jsonb($3::text))
+WHERE id=$2`, extended, j.ID, extended.UTC().Format(time.RFC3339)); err != nil {
 		return Job{}, fmt.Errorf("renew job: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, fmt.Errorf("commit renewal: %w", err)
 	}
 	return s.Get(ctx, clientID, jobID)
 }
@@ -294,6 +307,7 @@ func (s *Store) MarkReady(ctx context.Context, jobID string, manifest Manifest, 
 		return err
 	}
 	expiresAt := InitialExpiry(now)
+	manifest.ExpiresAt = expiresAt.UTC().Format(time.RFC3339)
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
@@ -337,9 +351,10 @@ WHERE id=$5 AND state=$6`, StateReady, raw, now, expiresAt, jobID, StatePreparin
 // Manifest returns the validated manifest of a ready job owned by the client.
 func (s *Store) Manifest(ctx context.Context, clientID, jobID string) (Manifest, error) {
 	var raw []byte
+	var expires time.Time
 	err := s.DB.QueryRowContext(ctx, `
-SELECT manifest FROM download_jobs WHERE id=$1 AND client_id=$2 AND state=$3`,
-		jobID, clientID, StateReady).Scan(&raw)
+SELECT manifest, expires_at FROM download_jobs WHERE id=$1 AND client_id=$2 AND state=$3`,
+		jobID, clientID, StateReady).Scan(&raw, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Manifest{}, ErrNotFound
 	}
@@ -350,6 +365,7 @@ SELECT manifest FROM download_jobs WHERE id=$1 AND client_id=$2 AND state=$3`,
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
 	}
+	m.ExpiresAt = expires.UTC().Format(time.RFC3339) // repairs manifests renewed before this fix
 	// Defensive re-validation at read time: a stored manifest that no longer
 	// validates (e.g. past expiry) is not served.
 	now := time.Now().UTC()
@@ -373,7 +389,7 @@ WHERE id IN (
   WHERE state=$3 AND expires_at < $4
   ORDER BY expires_at
   LIMIT $5
-)
+) AND state=$3 AND expires_at < $4
 RETURNING id`, StateExpired, ReasonRetentionExpired, StateReady, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("expire due jobs: %w", err)
@@ -388,4 +404,37 @@ RETURNING id`, StateExpired, ReasonRetentionExpired, StateReady, now, limit)
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// PendingCleanup returns expired packages until filesystem and row cleanup
+// have both succeeded. The marker also handles a crash between those steps.
+func (s *Store) PendingCleanup(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM download_jobs WHERE state=$1 AND cleanup_completed_at IS NULL ORDER BY expires_at LIMIT $2`, StateExpired, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+func (s *Store) CompleteCleanup(ctx context.Context, jobID string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM download_assets WHERE job_id=$1`, jobID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE download_jobs SET cleanup_completed_at=now() WHERE id=$1 AND state=$2`, jobID, StateExpired); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

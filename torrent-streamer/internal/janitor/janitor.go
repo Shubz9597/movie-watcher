@@ -3,6 +3,7 @@ package janitor
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -61,7 +62,7 @@ func Run(ctx context.Context) {
 			if max <= 0 {
 				continue
 			}
-			used := torrentx.DirSize(config.DataRoot())
+			used := sourceCacheBytes(config.DataRoot())
 			for used > max {
 				var cands []cand
 				entries, err = torrentx.ListCacheEntries()
@@ -96,7 +97,7 @@ func Run(ctx context.Context) {
 					break
 				}
 				log.Printf("[janitor] reclaimed %d bytes [%s] %s", freed, best.cat, best.name)
-				used = torrentx.DirSize(config.DataRoot())
+				used = sourceCacheBytes(config.DataRoot())
 			}
 		}
 	}
@@ -116,4 +117,14 @@ func pickBest(cands []cand) cand {
 		}
 	}
 	return best
+}
+
+// Prepared downloads and playback output have separate retention policies.
+// Count only torrent payload categories against the source-cache budget.
+func sourceCacheBytes(root string) int64 {
+	var bytes int64
+	for _, category := range []string{"movie", "tv", "anime", "misc"} {
+		bytes += torrentx.DirSize(filepath.Join(root, category))
+	}
+	return bytes
 }

@@ -70,8 +70,8 @@ func Load() {
 	}
 	_ = os.MkdirAll(dataRoot, 0o755)
 
-	cacheMaxBytes = getenvInt64("CACHE_MAX_BYTES", 0)
-	evictTTL = getenvDuration("CACHE_EVICT_TTL", 0)
+	cacheMaxBytes = getenvInt64("CACHE_MAX_BYTES", 20<<30)
+	evictTTL = getenvDuration("CACHE_EVICT_TTL", 24*time.Hour)
 
 	waitMetadata = getenvDuration("WAIT_METADATA", waitMetadata)
 	if ms := getenvInt64("WAIT_METADATA_MS", 0); ms > 0 {

@@ -1,0 +1,29 @@
+--- FAIL: TestAuditTasteFailureFallback (0.00s)
+    z_audit_review_test.go:5: Recommend(taste failure) called taste 4 times, want one followed by legacy fallback
+FAIL
+FAIL	torrent-streamer/internal/recommendations	0.003s
+--- FAIL: TestAuditEmptyProwlarrResults (0.00s)
+    z_audit_review_test.go:3: query(empty successful response) got len=0 err=decode wrapped prowlarr search for "No Such Movie": json: cannot unmarshal array into Go value of type struct { Results []search.prowlarrRelease "json:\"results\""; Data []search.prowlarrRelease "json:\"data\"" }, want zero results with no error
+FAIL
+FAIL	torrent-streamer/internal/search	0.005s
+--- FAIL: TestAuditRenewManifest (0.04s)
+    z_audit_review_test.go:4: Renew expiry=2026-10-05 14:25:21.014619 +0530 IST but Manifest expiry=2026-10-03T09:55:21Z, want same expiry
+--- FAIL: TestAuditLiveClaimIsReset (0.05s)
+    z_audit_review_test.go:5: ResetStaleClaims reset 1 still-running claims, want zero
+    z_audit_review_test.go:5: ClaimPreparing admitted second worker for active job a25e2f60-847f-4aa8-a2f9-15c9b6c2ae36
+FAIL
+FAIL	torrent-streamer/internal/downloads	0.102s
+--- FAIL: TestAuditCategoryPortCollision (0.01s)
+    z_audit_review_test.go:3: GetClientFor(movie), GetClientFor(tv) terminated backend: 2026/10/03 14:25:20 [init] client(movie) dataDir=/tmp/TestAuditCategoryPortCollision1155043481/001/movie trackersMode=all
+        2026/10/03 14:25:20 client(tv) init: first listen: listen tcp4 :38145: bind: address already in use
+[0.409s ERR github.com/anacrolix/torrent reader.go:318]
+  msg="initial read failed" err="torrent closed" torrent.name=audit.mp4 torrent.ih=38bd5175fc4e8088ef7f0ab9a3378cac16deefda
+[0.409s ERR github.com/anacrolix/torrent reader.go:331]
+  msg="read failed after reader reset" err="torrent closed" torrent.name=audit.mp4 torrent.ih=38bd5175fc4e8088ef7f0ab9a3378cac16deefda
+[0.409s ERR github.com/anacrolix/torrent reader.go:339]
+  msg="read failed after completion resync" err="torrent closed" torrent.name=audit.mp4 torrent.ih=38bd5175fc4e8088ef7f0ab9a3378cac16deefda
+--- FAIL: TestAuditStalledReaderClose (0.60s)
+    z_audit_review_test.go:4: Prebuffer(50ms) still blocked after 400ms and Reader.Close; want bounded read
+FAIL
+FAIL	torrent-streamer/internal/torrentx	0.616s
+FAIL

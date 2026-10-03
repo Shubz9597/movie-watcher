@@ -103,10 +103,26 @@ func (w *Writer) writeFilteredLocked(line string) error {
 
 	key := strings.TrimRight(line, "\r\n")
 	now := time.Now()
-	if last, ok := w.lastSeen[key]; ok && now.Sub(last) < w.window {
-		return nil
+	if w.window > 0 && len(key) <= 4096 {
+		if last, ok := w.lastSeen[key]; ok && now.Sub(last) < w.window {
+			return nil
+		}
+		var oldestKey string
+		var oldest time.Time
+		for k, at := range w.lastSeen {
+			if now.Sub(at) >= w.window {
+				delete(w.lastSeen, k)
+				continue
+			}
+			if oldest.IsZero() || at.Before(oldest) {
+				oldestKey, oldest = k, at
+			}
+		}
+		if len(w.lastSeen) >= 4096 {
+			delete(w.lastSeen, oldestKey)
+		}
+		w.lastSeen[key] = now
 	}
-	w.lastSeen[key] = now
 
 	_, err := io.WriteString(w.dst, line)
 	return err

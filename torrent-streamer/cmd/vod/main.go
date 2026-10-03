@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -111,6 +112,8 @@ func mustOpenDB(dsn string) {
 }
 
 func main() {
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	_ = godotenv.Load(".env", "../infra/prowlarr.env")
 
 	// initialize config & logging
@@ -217,13 +220,16 @@ func main() {
 		// Requested subtitle languages missing from the torrent fall back to
 		// the OpenSubtitles credential the player already uses.
 		downloadPrepper.Subtitles = httpapi.DownloadSubtitleSource{}
-		if released, err := downloadPrepper.ReconcileStartup(context.Background()); err != nil {
-			log.Printf("[boot] download job reconciliation: %v", err)
-		} else if released > 0 {
-			log.Printf("[boot] reconciled %d preparing download jobs from a previous run", released)
+		if released, err := downloadPrepper.ReconcileStartup(rootCtx); err != nil {
+			log.Printf("[boot] downloads.offline.v1 unavailable: reconciliation failed: %v", err)
+			downloadPrepper = nil
+		} else {
+			if released > 0 {
+				log.Printf("[boot] reconciled %d preparing download jobs from a previous run", released)
+			}
+			capabilities = append(capabilities, "downloads.offline.v1", "downloads.subtitles.v1")
+			log.Printf("[boot] downloads.offline.v1 ready (root=%s maxConcurrent=%d)", downloadRootAbs, config.DownloadMaxConcurrent())
 		}
-		capabilities = append(capabilities, "downloads.offline.v1", "downloads.subtitles.v1")
-		log.Printf("[boot] downloads.offline.v1 ready (root=%s maxConcurrent=%d)", downloadRootAbs, config.DownloadMaxConcurrent())
 	} else {
 		log.Printf("[boot] downloads.offline.v1 unavailable: the download storage root is not writable")
 	}
@@ -372,8 +378,11 @@ func main() {
 		AllowedOrigins: allowedOrigins,
 		AssetRoot:      config.DownloadsRoot(),
 	}.Register(mux)
+	downloadDone := make(chan struct{})
 	if downloadPrepper != nil {
-		go downloadPrepper.Run(context.Background())
+		go func() { defer close(downloadDone); downloadPrepper.Run(rootCtx) }()
+	} else {
+		close(downloadDone)
 	}
 
 	sess := httpapi.NewSessionHandlers(httpapi.SessionDeps{Watch: progressDB})
@@ -405,11 +414,6 @@ func main() {
 	log.Printf("[boot] VOD listening on %s root=%s prebuffer=%dB/%s waitMetadata=%s trackersMode=%s",
 		addr, config.DataRoot(), config.PrebufferBytes(), config.PrebufferTimeout(), config.WaitMetadata(), config.TrackersMode())
 
-	// SIGTERM (docker stop / Compose stop) must trigger the same graceful
-	// shutdown as Ctrl+C: the 15 s srv.Shutdown window below only runs when
-	// the context is cancelled by a caught signal.
-	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go refreshIMDbRatings(rootCtx, imdbStore)
 
 	// start janitor
@@ -417,9 +421,10 @@ func main() {
 
 	// http server with recover middleware
 	srv := &http.Server{
-		Addr:     addr,
-		Handler:  middleware.Recover(mux),
-		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+		Addr:        addr,
+		BaseContext: func(net.Listener) context.Context { return rootCtx },
+		Handler:     middleware.Recover(mux),
+		ErrorLog:    slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
 	}
 
 	// serve
@@ -436,7 +441,14 @@ func main() {
 	// graceful shutdown window
 	shCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(shCtx)
+	if err := srv.Shutdown(shCtx); err != nil {
+		_ = srv.Close()
+	}
+	select {
+	case <-downloadDone:
+	case <-shCtx.Done():
+		log.Printf("[boot] download worker shutdown exceeded the grace period")
+	}
 
 	// close torrent clients
 	torrentx.CloseAllClients()

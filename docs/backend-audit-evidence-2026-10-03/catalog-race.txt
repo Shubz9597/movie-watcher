@@ -1,0 +1,167 @@
+--- FAIL: TestAuditCachedCatalogOwnership (0.00s)
+    z_audit_review_test.go:3: MergeTitles mutated cached provider input: ids=map[imdb:tt1 tmdb:movie:1] artwork=map[background:b poster:a], want input unchanged
+==================
+WARNING: DATA RACE
+Read at 0x00c000123710 by goroutine 14:
+  runtime.mapaccess2_faststr()
+      /usr/lib/golang/src/internal/runtime/maps/runtime_faststr.go:161 +0x0
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:97 +0x598
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Previous write at 0x00c000123710 by goroutine 19:
+  runtime.mapassign_faststr()
+      /usr/lib/golang/src/internal/runtime/maps/runtime_faststr.go:263 +0x0
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:98 +0x5ec
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Goroutine 14 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+
+Goroutine 19 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+==================
+==================
+WARNING: DATA RACE
+Read at 0x00c000200818 by goroutine 14:
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:97 +0x5a4
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Previous write at 0x00c000200818 by goroutine 19:
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:98 +0x5fb
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Goroutine 14 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+
+Goroutine 19 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+==================
+==================
+WARNING: DATA RACE
+Read at 0x00c0001236e0 by goroutine 14:
+  runtime.mapaccess2_faststr()
+      /usr/lib/golang/src/internal/runtime/maps/runtime_faststr.go:161 +0x0
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:105 +0x7f8
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Previous write at 0x00c0001236e0 by goroutine 19:
+  runtime.mapassign_faststr()
+      /usr/lib/golang/src/internal/runtime/maps/runtime_faststr.go:263 +0x0
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:106 +0x84c
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Goroutine 14 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+
+Goroutine 19 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+==================
+==================
+WARNING: DATA RACE
+Read at 0x00c0002006f8 by goroutine 14:
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:105 +0x804
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Previous write at 0x00c0002006f8 by goroutine 19:
+  torrent-streamer/internal/catalog.mergeTitle()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:106 +0x85b
+  torrent-streamer/internal/catalog.MergeTitles()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/cache.go:44 +0x404
+  torrent-streamer/internal/catalog.(*Service).Search()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/service.go:180 +0x1064
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog.func1()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0x144
+
+Goroutine 14 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+
+Goroutine 19 (running) created at:
+  torrent-streamer/internal/catalog.TestAuditConcurrentCachedCatalog()
+      /srv/movie-watcher/torrent-streamer/internal/catalog/z_audit_review_test.go:4 +0xe8d
+  testing.tRunner()
+      /usr/lib/golang/src/testing/testing.go:2036 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/lib/golang/src/testing/testing.go:2101 +0x38
+==================
+--- FAIL: TestAuditConcurrentCachedCatalog (0.18s)
+    testing.go:1712: race detected during execution of test
+FAIL
+FAIL	torrent-streamer/internal/catalog	0.194s
+FAIL

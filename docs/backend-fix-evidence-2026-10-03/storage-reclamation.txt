@@ -1,0 +1,11 @@
+=== RUN   TestDownloadSourceManifestAllowsSafeReclamation
+2026/10/03 17:39:41 [init] client(movie) dataDir=/tmp/TestDownloadSourceManifestAllowsSafeReclamation4255892029/001/movie trackersMode=all
+2026/10/03 17:39:41 [guard] skip drop (activeReaders=1) [movie] 5185f468ebf6ff6f1ab38586653347cf5533e440
+2026/10/03 17:39:41 [boot] closing client[movie]
+--- PASS: TestDownloadSourceManifestAllowsSafeReclamation (0.01s)
+PASS
+ok  	torrent-streamer/internal/torrentx	1.031s
+=== RUN   TestRegressionRenewManifest
+--- PASS: TestRegressionRenewManifest (0.04s)
+PASS
+ok  	torrent-streamer/internal/downloads	1.068s

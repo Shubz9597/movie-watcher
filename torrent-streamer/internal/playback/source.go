@@ -1,6 +1,7 @@
 package playback
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -35,11 +36,14 @@ type MediaSource struct {
 }
 
 type sourceEntry struct {
-	open    func() (io.ReadSeekCloser, error)
-	name    string
-	size    int64
-	ttl     time.Duration
-	expires time.Time
+	// Lifetime belongs to the token, rather than the request issuing it.
+	lifetime context.Context
+	cancel   context.CancelFunc
+	open     func() (io.ReadSeekCloser, error)
+	name     string
+	size     int64
+	ttl      time.Duration
+	expires  time.Time
 }
 
 // NewMediaSource starts the loopback listener. The zero value is not usable;
@@ -73,6 +77,9 @@ func (ms *MediaSource) Port() int { return ms.listener.Addr().(*net.TCPAddr).Por
 // Close shuts the listener down and revokes all tokens.
 func (ms *MediaSource) Close() error {
 	ms.mu.Lock()
+	for _, entry := range ms.entries {
+		entry.cancel()
+	}
 	ms.entries = map[string]*sourceEntry{}
 	ms.mu.Unlock()
 	return ms.server.Close()
@@ -86,8 +93,9 @@ func (ms *MediaSource) Issue(open func() (io.ReadSeekCloser, error), name string
 	if err != nil {
 		return "", "", err
 	}
+	lifetime, cancel := context.WithCancel(context.Background())
 	ms.mu.Lock()
-	ms.entries[token] = &sourceEntry{open: open, name: name, size: size, ttl: ttl, expires: time.Now().Add(ttl)}
+	ms.entries[token] = &sourceEntry{lifetime: lifetime, cancel: cancel, open: open, name: name, size: size, ttl: ttl, expires: time.Now().Add(ttl)}
 	ms.mu.Unlock()
 	return token, fmt.Sprintf("http://127.0.0.1:%d/f/%s", ms.Port(), token), nil
 }
@@ -95,6 +103,9 @@ func (ms *MediaSource) Issue(open func() (io.ReadSeekCloser, error), name string
 // Revoke removes one token (session delete / expiry).
 func (ms *MediaSource) Revoke(token string) {
 	ms.mu.Lock()
+	if entry := ms.entries[token]; entry != nil {
+		entry.cancel()
+	}
 	delete(ms.entries, token)
 	ms.mu.Unlock()
 }
@@ -108,6 +119,7 @@ func (ms *MediaSource) handle(w http.ResponseWriter, r *http.Request) {
 	ms.mu.Lock()
 	entry, ok := ms.entries[token]
 	if ok && time.Now().After(entry.expires) {
+		entry.cancel()
 		delete(ms.entries, token)
 		ok = false
 	}
@@ -128,6 +140,11 @@ func (ms *MediaSource) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer reader.Close()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	stop := context.AfterFunc(entry.lifetime, cancel)
+	defer stop()
+	BindReaderContext(ctx, reader)
 	// ServeContent provides Range/partial-content semantics for ffprobe and
 	// ffmpeg seeking. The name is sanitized and carries no path.
 	http.ServeContent(w, r, entry.name, time.Time{}, reader)
@@ -148,4 +165,12 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// BindReaderContext attaches an operation lifetime to readers that support
+// cancellation while waiting for torrent pieces. File readers need no binding.
+func BindReaderContext(ctx context.Context, reader any) {
+	if r, ok := reader.(interface{ SetContext(context.Context) }); ok {
+		r.SetContext(ctx)
+	}
 }

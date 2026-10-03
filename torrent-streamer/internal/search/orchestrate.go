@@ -81,7 +81,7 @@ func (s *Service) Search(ctx context.Context, request Request) (Response, error)
 			return nil, err
 		}
 		results := s.normalize(request, releases)
-		s.remember(key, results)
+		s.rememberInitial(key, results)
 		return results, nil
 	})
 	var flightResult singleflight.Result
@@ -122,6 +122,18 @@ func (s *Service) remember(key string, results []Result) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneExpiredLocked()
+	s.cache[key] = cacheEntry{expires: s.now().Add(s.cacheTTL), results: slices.Clone(results)}
+}
+
+// rememberInitial publishes an early response only if the collector has not
+// already published its completed result while this caller was normalizing.
+func (s *Service) rememberInitial(key string, results []Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
+	if _, exists := s.cache[key]; exists {
+		return
+	}
 	s.cache[key] = cacheEntry{expires: s.now().Add(s.cacheTTL), results: slices.Clone(results)}
 }
 
@@ -240,9 +252,9 @@ func (s *Service) refreshInBackground(request Request, key string) {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), searchBudget)
 		defer cancel()
-		if releases, err := s.searchAll(ctx, request, key); err == nil {
-			s.remember(key, s.normalize(request, releases))
-		}
+		// The collector publishes the completed result; publishing its early
+		// return here could overwrite the completed set with a partial set.
+		_, _ = s.searchAll(ctx, request, key)
 	}()
 }
 
@@ -378,8 +390,8 @@ func (s *Service) searchAll(ctx context.Context, request Request, key string) ([
 			releases, _ = collector.snapshot()
 		}
 		if len(releases) > 0 {
-			s.saveStored(key, releases)
 			s.remember(key, s.normalize(request, releases))
+			s.saveStored(key, releases)
 		}
 	}()
 

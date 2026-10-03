@@ -1,0 +1,15 @@
+--- FAIL: TestAuditDownloadPreflight (0.00s)
+    z_audit_extra_test.go:3: download POST preflight methods="GET, HEAD, OPTIONS, PUT", want POST allowed
+--- FAIL: TestAuditTastePreflight (0.00s)
+    z_audit_extra_test.go:4: taste preflight returned 405, want success
+FAIL
+FAIL	torrent-streamer/internal/httpapi	0.007s
+--- FAIL: TestAuditIncompatibleHDRPlan (0.00s)
+    z_audit_extra_test.go:3: AV1 HDR on SDR profile got transcode/video_codec_incompatible, want unsupported HDR because runner has no tone mapping
+FAIL
+FAIL	torrent-streamer/internal/playback	0.005s
+--- FAIL: TestAuditZeroWindowLogRetention (0.11s)
+    z_audit_extra_test.go:3: zero-window diagnostic writer retained 10000 unique records, want no dedup history
+FAIL
+FAIL	torrent-streamer/internal/logx	0.116s
+FAIL

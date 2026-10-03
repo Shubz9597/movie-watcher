@@ -1,0 +1,5 @@
+Exit code: 0
+=== RUN   TestIntegrationProbePlanRemuxTranscodeSubtitles
+    integration_test.go:53: integration evidence requires TORWATCH_PLAYBACK_INTEGRATION=1
+--- SKIP: TestIntegrationProbePlanRemuxTranscodeSubtitles (0.00s)
+PASS
