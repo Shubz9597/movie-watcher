@@ -189,25 +189,32 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		part := externalCatalog{}
-		if providerKey == "" {
-			part.err = errors.New("OpenSubtitles API key is not configured")
-			externalCh <- part
-			return
-		}
-		part.results, part.err = subtitles.FetchFromOpenSub(ctx, subtitles.SearchQuery{
+		query := subtitles.SearchQuery{
 			IMDBID: q.Get("imdbId"), TMDBID: q.Get("tmdbId"), Title: q.Get("title"),
 			Year: intParam(q, "year"), Season: intParam(q, "season"), Episode: intParam(q, "episode"),
 			Langs: langs,
-		}, providerKey)
+		}
+		if providerKey == "" {
+			part.err = errors.New("OpenSubtitles API key is not configured")
+		} else {
+			part.results, part.err = subtitles.FetchFromOpenSub(ctx, query, providerKey)
+		}
+		// Stremio's keyless OpenSubtitles addon covers a missing or refused
+		// key and searches that found nothing.
+		if part.err != nil || len(part.results) == 0 {
+			if fallback, err := subtitles.FetchFromStremio(ctx, query); err == nil && len(fallback) > 0 {
+				part.results, part.err = fallback, nil
+			}
+		}
 		if part.err == nil {
 			for i := range part.results {
-				part.results[i].URL = buildSubtitleExternalURL("opensub", part.results[i].ID, part.results[i].Lang)
+				part.results[i].URL = buildSubtitleExternalURL(part.results[i].Source, part.results[i].ID, part.results[i].Lang)
 				format := strings.TrimPrefix(strings.ToLower(filepath.Ext(part.results[i].FileName)), ".")
 				if format == "" {
 					format = "srt"
 				}
 				part.tracks = append(part.tracks, SubtitleTrack{
-					Source: "opensub", Lang: part.results[i].Lang, Label: part.results[i].Label,
+					Source: part.results[i].Source, Lang: part.results[i].Lang, Label: part.results[i].Label,
 					URL: part.results[i].URL, FileName: part.results[i].FileName, Format: format,
 					Release: part.results[i].Release, DownloadCount: part.results[i].DownloadCount,
 					HearingImpaired: part.results[i].HearingImpaired, Trusted: part.results[i].Trusted,
@@ -509,6 +516,8 @@ func handleSubtitleExternal(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	switch source {
+	case "stremio":
+		vtt, err = subtitles.DownloadStremioSubtitle(ctx, id)
 	case "opensub":
 		apiKey := openSubtitlesAPIKey()
 		if apiKey == "" {

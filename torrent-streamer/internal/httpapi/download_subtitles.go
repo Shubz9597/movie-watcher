@@ -46,9 +46,6 @@ func (s DownloadSubtitleSource) FetchSubtitle(ctx context.Context, q downloads.S
 
 func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.SubtitleQuery) ([]byte, string, error) {
 	apiKey := openSubtitlesAPIKey()
-	if apiKey == "" {
-		return nil, "", downloads.ErrSubtitleNotFound
-	}
 	query := subtitles.SearchQuery{
 		IMDBID: q.Hints.IMDBID,
 		Title:  q.Hints.Title,
@@ -65,15 +62,17 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	} else if q.Season > 0 || q.Episode > 0 {
 		query.Season, query.Episode = q.Season, q.Episode
 	}
-	results, err := subtitles.FetchFromOpenSub(ctx, query, apiKey)
-	if err != nil {
-		return nil, "", err
+	vtt, err := "", error(downloads.ErrSubtitleNotFound)
+	if apiKey != "" {
+		vtt, err = openSubForDownload(ctx, query, apiKey, q.Lang, q.VideoName)
 	}
-	best, ok := bestSubtitleRelease(results, q.Lang, q.VideoName)
-	if !ok {
-		return nil, "", downloads.ErrSubtitleNotFound
+	if err != nil || strings.TrimSpace(vtt) == "" {
+		// Keyless fallback: Stremio's OpenSubtitles addon finds episodes by
+		// IMDb id even when the key is refused or its download endpoint fails.
+		if fallback, fallbackErr := stremioForDownload(ctx, query, q.Lang, q.VideoName); fallbackErr == nil {
+			vtt, err = fallback, nil
+		}
 	}
-	vtt, err := subtitles.DownloadOpenSubSubtitle(ctx, best.ID, apiKey)
 	if err != nil {
 		return nil, "", err
 	}
@@ -81,6 +80,30 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 		return nil, "", downloads.ErrSubtitleNotFound
 	}
 	return []byte(vtt), "vtt", nil
+}
+
+func openSubForDownload(ctx context.Context, query subtitles.SearchQuery, apiKey, lang, videoName string) (string, error) {
+	results, err := subtitles.FetchFromOpenSub(ctx, query, apiKey)
+	if err != nil {
+		return "", err
+	}
+	best, ok := bestSubtitleRelease(results, lang, videoName)
+	if !ok {
+		return "", downloads.ErrSubtitleNotFound
+	}
+	return subtitles.DownloadOpenSubSubtitle(ctx, best.ID, apiKey)
+}
+
+func stremioForDownload(ctx context.Context, query subtitles.SearchQuery, lang, videoName string) (string, error) {
+	results, err := subtitles.FetchFromStremio(ctx, query)
+	if err != nil {
+		return "", err
+	}
+	best, ok := bestSubtitleRelease(results, lang, videoName)
+	if !ok {
+		return "", downloads.ErrSubtitleNotFound
+	}
+	return subtitles.DownloadStremioSubtitle(ctx, best.ID)
 }
 
 // bestSubtitleRelease picks the result whose release name shares the most
