@@ -809,7 +809,9 @@ function progressContext(request: PlayerRequest): ProgressContext | null {
 // and fails closed when absent.
 export function infoHashFromSource(request: PlayerRequest): string {
   for (const candidate of [request.magnet, request.url]) {
-    const match = /urn:btih:([0-9a-fA-F]{40})/i.exec(String(candidate || ''));
+    // Some magnets escape the colons ("urn%3Abtih%3A").
+    const text = String(candidate || '').replace(/%3A/gi, ':');
+    const match = /urn:btih:([0-9a-fA-F]{40})/i.exec(text);
     if (match) return match[1];
   }
   throw new PlaybackClientError('invalid', 'The selected source did not provide a valid torrent identifier for native playback.');

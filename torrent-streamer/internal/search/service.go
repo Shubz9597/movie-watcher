@@ -392,6 +392,8 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		}
 		if magnet == "" && hash != "" {
 			magnet = magnetFromHash(hash)
+		} else if magnet != "" && hash != "" {
+			magnet = canonicalMagnet(magnet, hash)
 		}
 		sourceID := ""
 		if magnet != "" {
@@ -719,4 +721,23 @@ func hashFromMagnet(magnet string) string {
 
 func magnetFromHash(hash string) string {
 	return "magnet:?xt=urn:btih:" + hash
+}
+
+// canonicalMagnet puts the info hash first in its literal form
+// ("xt=urn:btih:<hash>"), keeping the name and trackers. Clients look for
+// that exact text; magnets built with url.Values (Torrentio) or by some
+// indexers escape it as "urn%3Abtih%3A", which the native player rejected.
+func canonicalMagnet(raw, hash string) string {
+	query, err := url.ParseQuery(raw[len("magnet:?"):]) // callers checked the prefix
+	if err != nil {
+		return raw
+	}
+	var out strings.Builder
+	out.WriteString(magnetFromHash(hash))
+	for _, key := range []string{"dn", "tr", "ws", "xl"} {
+		for _, value := range query[key] {
+			out.WriteString("&" + key + "=" + url.QueryEscape(value))
+		}
+	}
+	return out.String()
 }

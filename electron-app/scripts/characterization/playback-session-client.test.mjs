@@ -9,6 +9,7 @@ import {
 } from "../../src/platform/playback-session-client.ts";
 import {
   NativePlaybackController,
+  infoHashFromSource,
 } from "../../src/platform/native-playback-controller.ts";
 
 const HEX = "0123456789abcdef0123456789abcdef01234567";
@@ -248,4 +249,11 @@ test("controller: unsupported plan surfaces a truthful typed error", async () =>
     (e) => e instanceof PlaybackClientError && e.kind === "planning" && /cannot inspect/.test(e.message),
   );
   assert.equal(fb.calls.play.length, 0, "nothing is handed to the native player");
+});
+
+test("infoHashFromSource reads literal and escaped magnets", () => {
+  const hash = "9B756EB0FD8A226FAA8607CFB04E8E268F7AFF52";
+  assert.equal(infoHashFromSource({ magnet: `magnet:?xt=urn:btih:${hash}&dn=Show` }), hash);
+  assert.equal(infoHashFromSource({ magnet: `magnet:?dn=Show&xt=urn%3Abtih%3A${hash}` }), hash);
+  assert.throws(() => infoHashFromSource({ magnet: "magnet:?dn=Show" }));
 });

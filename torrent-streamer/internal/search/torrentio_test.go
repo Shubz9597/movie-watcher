@@ -204,3 +204,26 @@ func TestTorrentioSendsUserAgent(t *testing.T) {
 		t.Fatalf("Releases with the TorWatch agent = %v", err)
 	}
 }
+
+// The native player reads the hash from the literal "xt=urn:btih:<hash>";
+// Torrentio magnets were escaped ("urn%3Abtih%3A") and every one failed.
+func TestNormalizedMagnetsCarryTheLiteralInfoHash(t *testing.T) {
+	t.Parallel()
+	stream := torrentioStream{
+		Title:    "Show S01E01 1080p WEB-DL\n👤 50 💾 1 GB ⚙️ EZTV",
+		InfoHash: "9b756eb0fd8a226faa8607cfb04e8e268f7aff52",
+		Sources:  []string{"tracker:udp://tracker.opentrackr.org:1337/announce"},
+	}
+	release, _ := releaseFromTorrentio(stream)
+	one := 1
+	request := Request{Kind: KindTV, Title: "Show", IMDBID: "tt1", Season: &one, Episode: &one, OriginalLanguage: "en"}
+	results := newTestService(t, "http://127.0.0.1:9696").normalize(request, []prowlarrRelease{release})
+	if len(results) != 1 {
+		t.Fatalf("results = %+v", results)
+	}
+	magnet := results[0].MagnetURI
+	if !strings.HasPrefix(magnet, "magnet:?xt=urn:btih:9B756EB0FD8A226FAA8607CFB04E8E268F7AFF52") ||
+		!strings.Contains(magnet, "&dn=Show+S01E01") || !strings.Contains(magnet, "&tr=udp%3A%2F%2Ftracker.opentrackr.org") {
+		t.Fatalf("magnet = %s", magnet)
+	}
+}
