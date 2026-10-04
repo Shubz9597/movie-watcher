@@ -4,7 +4,7 @@
 [verify] published ports (gateway-only on the LAN)
 [verify] data-root disk usage
 /dev/sda1       916G   19G  851G   3% /mnt/workspace
- Container torwatch-server-stream-fixture-1 Running 
+ Container torwatch-server-stream-fixture-1 Running
 [verify] /stream byte ranges and /buffer/info repeated SSE events
 {"check": "range", "range": "bytes=0-1023", "status": 206, "bytes": 1024, "sha256": "1663f6b7cb4ebb1018c497e07243c45fe77e5375f38d944b5565c2a2b0f636f3", "seconds": 0.004}
 {"check": "range", "range": "bytes=65536-66559", "status": 206, "bytes": 1024, "sha256": "ee7fd2c3fd40dd793a30cc1122dc03dd8ae575037807551eae75df905bc1e5f4", "seconds": 0.001}
