@@ -319,9 +319,19 @@ func GetClientFor(cat string) (*torrent.Client, error) {
 		}
 	}
 
+	// With a peer proxy, outgoing peer connections use only its dialer
+	// (the listen sockets would otherwise race it with direct dials).
+	peerDialer := configuredPeerProxy()
+	if peerDialer != nil {
+		cfg.DialForPeerConns = false
+	}
+
 	c, err := torrent.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("initialize torrent client for %s: %w", cat, err)
+	}
+	if peerDialer != nil {
+		c.AddDialer(peerDialer)
 	}
 	clients[cat] = c
 	log.Printf("[init] client(%s) dataDir=%s trackersMode=%s", cat, dir, config.TrackersMode())

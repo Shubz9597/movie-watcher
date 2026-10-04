@@ -127,6 +127,10 @@ services:
       CACHE_MAX_BYTES: ${CACHE_MAX_BYTES:-21474836480}
       CACHE_EVICT_TTL: ${CACHE_EVICT_TTL:-24h}
       TORRENT_LISTEN_PORT: ${TORRENT_LISTEN_PORT:-0}
+      # Optional SOCKS5 proxy for BitTorrent peer connections, e.g.
+      # socks5://warp:1080 (Cloudflare WARP; ISPs that throttle BitTorrent
+      # cannot see through it). Falls back to direct dials if it is down.
+      TORRENT_PEER_PROXY: ${TORRENT_PEER_PROXY:-}
       LOG_FILE: /data/logs/backend.log
       ERROR_LOG_FILE: /data/logs/errors.log
       # Direct VLC playback on small hosts; video conversion is opt-in.
