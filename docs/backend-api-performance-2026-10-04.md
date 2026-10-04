@@ -100,7 +100,7 @@ Validation and deployment:
 
 - Final full `go test -race -short -count=1 ./...` and `go vet ./...` passed on the clean release snapshot, with disposable PostgreSQL and applied migrations. The temporary database container was removed afterward.
 - Catalog tests cover simultaneous provider starts, deterministic priority, shared misses, caller cancellation, stale refreshes, cooldown expiry, Retry-After, client-error isolation, ID eligibility, shutdown joining, and merged episode cache ownership/repeat latency.
-- Production build passed. The binary scan found zero reachable vulnerable symbols; it also reported one required-module advisory in code this binary does not call.
+- Production build passed. The final source and unstripped build scans found zero affected symbols and one required-module OpenPGP advisory without affected calls. The stripped deployed-image scan reported that advisory conservatively; it is retained separately, rather than presented as a clean image scan. [Govulncheck documentation](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) describes the limitations when binary symbol information cannot be extracted.
 - Deployed image: `torwatch-server:git-e512ed5a8bd7`, revision `e512ed5a8bd7`, built from a clean pinned checkout. Other work in the shared checkout was preserved. The release also includes independently committed torrent-search/subtitle work that was covered by the final backend test suite.
 - Health/readiness/version and published-port checks passed. Fixture ranges returned exact expected bytes. Initial SSE data arrived in 1 ms, with the next event about 1.001 seconds later. Stream fixture timings do not measure playable-media decoding.
 
