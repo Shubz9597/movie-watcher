@@ -40,11 +40,16 @@ const MaxLimit = 20
 const CandidatePoolVersion = 2
 
 const (
-	seedLimit       = 20
-	candidateLimit  = 200
-	cacheTTL        = 15 * time.Minute
-	reasonSeedGenre = "seed_genre"
-	reasonPopular   = "popular"
+	seedLimit      = 20
+	candidateLimit = 200
+	cacheTTL       = 15 * time.Minute
+	// providerCallTimeout bounds each catalog/provider call made while
+	// computing; the shared provider client allows 25s plus a retry.
+	providerCallTimeout = 8 * time.Second
+	// providerConcurrency bounds parallel provider calls per computation.
+	providerConcurrency = 6
+	reasonSeedGenre     = "seed_genre"
+	reasonPopular       = "popular"
 	// Per-seed "more like this" bounds: the first few usable favourites each
 	// contribute one bounded similar-title page to the candidate pool.
 	seedSimilarLimit = 12
@@ -260,9 +265,11 @@ type Service struct {
 	candidateVn  int
 	now          func() time.Time
 
-	mu    sync.Mutex
-	cache *cacheEntry
-	stale *cacheEntry // last computed result, served degraded when providers fail
+	mu         sync.Mutex
+	cache      *cacheEntry
+	stale      *cacheEntry // last computed result, served degraded when providers fail
+	refreshing bool        // a background recompute is running
+	refreshWG  sync.WaitGroup
 
 	// Last successful "more like this" list per seed: a transient provider
 	// failure must not silently drop that title from recommendations.
@@ -344,6 +351,16 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 	if cached != nil && cached.candidateVn == s.candidateVn && cached.result.Revision == revision && s.now().Sub(cached.computedAt) < cacheTTL {
 		return cached.result, nil
 	}
+	// Stale-while-revalidate: once anything was computed, Home gets it at
+	// once and the recompute (dozens of provider calls) runs in the
+	// background. Only the very first computation is waited on.
+	s.mu.Lock()
+	stale := s.stale
+	s.mu.Unlock()
+	if stale != nil && stale.candidateVn == s.candidateVn {
+		s.refreshInBackground(revision)
+		return stale.result, nil
+	}
 
 	result, err := s.compute(ctx, revision)
 	if err != nil {
@@ -366,6 +383,50 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 	s.stale = entry
 	s.mu.Unlock()
 	return result, nil
+}
+
+// refreshInBackground recomputes once at a time and installs the result.
+func (s *Service) refreshInBackground(revision int64) {
+	s.mu.Lock()
+	if s.refreshing {
+		s.mu.Unlock()
+		return
+	}
+	s.refreshing = true
+	s.refreshWG.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.refreshWG.Done()
+		defer func() {
+			s.mu.Lock()
+			s.refreshing = false
+			s.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		result, err := s.compute(ctx, revision)
+		if err != nil {
+			log.Printf("[recommendations] background refresh failed: %v", err)
+			return
+		}
+		entry := &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn}
+		s.mu.Lock()
+		s.cache = entry
+		s.stale = entry
+		s.mu.Unlock()
+	}()
+}
+
+// Warm computes the first result in the background so the first Home load
+// after a server start does not wait for it.
+func (s *Service) Warm() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if _, err := s.Recommend(ctx); err != nil {
+			log.Printf("[recommendations] warm-up failed: %v", err)
+		}
+	}()
 }
 
 // compute builds one ranked result against the given revision.
@@ -572,10 +633,21 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		signalInfo
 		keys map[string]bool
 	}
-	resolved := make([]signalInfoWithKeys, 0, len(best))
+	// Each title needs its genres and display title (catalog detail calls);
+	// resolve them concurrently, each call bounded so one hung provider
+	// request cannot stall Home.
+	signalList := make([]signalInfo, 0, len(best))
 	for _, signal := range best {
+		signalList = append(signalList, signal)
+	}
+	sort.Slice(signalList, func(i, j int) bool { return signalList[i].id < signalList[j].id })
+	resolved := make([]signalInfoWithKeys, len(signalList))
+	forEachBounded(len(signalList), func(index int) {
+		signal := signalList[index]
+		callCtx, cancel := context.WithTimeout(ctx, providerCallTimeout)
+		defer cancel()
 		keys := map[string]bool{}
-		genres, err := s.seedGenres.SeedGenres(ctx, signal.id)
+		genres, err := s.seedGenres.SeedGenres(callCtx, signal.id)
 		if err == nil {
 			namespace := seedNamespace(signal.id)
 			for _, genre := range genres {
@@ -593,12 +665,12 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		if titled, ok := s.seedGenres.(interface {
 			SeedTitle(ctx context.Context, canonicalID string) (string, error)
 		}); ok {
-			if title, err := titled.SeedTitle(ctx, signal.id); err == nil && strings.TrimSpace(title) != "" {
+			if title, err := titled.SeedTitle(callCtx, signal.id); err == nil && strings.TrimSpace(title) != "" {
 				signal.title = title
 			}
 		}
-		resolved = append(resolved, signalInfoWithKeys{signalInfo: signal, keys: keys})
-	}
+		resolved[index] = signalInfoWithKeys{signalInfo: signal, keys: keys}
+	})
 	if len(resolved) == 0 {
 		return Result{Revision: revision, Fallback: true, GeneratedAt: s.now(), Items: []Item{}}, nil
 	}
@@ -625,19 +697,25 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	if s.seedSimilar != nil {
 		ordered := append([]signalInfoWithKeys(nil), resolved...)
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].weight > ordered[j].weight })
-		for i := range ordered {
-			if i >= seedSimilarSeeds {
-				break
-			}
-			similar, err := s.similarFor(ctx, s.seedSimilar, "same", ordered[i].id)
+		// Fetch every seed's lists concurrently, then merge in weight order.
+		seedCount := min(len(ordered), seedSimilarSeeds)
+		similarLists := make([][]catalog.Title, seedCount)
+		forEachBounded(seedCount, func(i int) {
+			callCtx, cancel := context.WithTimeout(ctx, providerCallTimeout)
+			defer cancel()
+			similar, err := s.similarFor(callCtx, s.seedSimilar, "same", ordered[i].id)
 			if err != nil {
 				log.Printf("[recommendations] similar titles for %s unavailable: %v", ordered[i].id, err)
 			}
 			if s.crossSimilar != nil {
-				if cross, crossErr := s.similarFor(ctx, s.crossSimilar, "cross", ordered[i].id); crossErr == nil {
+				if cross, crossErr := s.similarFor(callCtx, s.crossSimilar, "cross", ordered[i].id); crossErr == nil {
 					similar = mixCross(similar, cross)
 				}
 			}
+			similarLists[i] = similar
+		})
+		for i := 0; i < seedCount; i++ {
+			similar := similarLists[i]
 			if len(similar) == 0 {
 				continue
 			}
@@ -894,4 +972,20 @@ func shortTitle(title string) string {
 		return title
 	}
 	return short
+}
+
+// forEachBounded runs fn(0..n-1) with at most providerConcurrency at once.
+func forEachBounded(n int, fn func(int)) {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, providerConcurrency)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(index int) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			fn(index)
+		}(i)
+	}
+	wg.Wait()
 }

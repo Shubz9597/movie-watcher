@@ -352,13 +352,22 @@ func TestCacheInvalidationByRevisionAndNoOpStability(t *testing.T) {
 	if candidates.calls != 1 {
 		t.Fatalf("candidate builds = %d, want 1", candidates.calls)
 	}
-	// Effective mutation: revision advances → cache key changes → recompute.
+	// Effective mutation: revision advances → the previous result is served
+	// at once and a recompute runs in the background.
 	lib.revision = 8
-	if _, err := service.Recommend(ctx); err != nil {
+	stale, err := service.Recommend(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if stale.Revision != 7 {
+		t.Fatalf("revision change must serve the previous result while refreshing: %+v", stale)
+	}
+	service.refreshWG.Wait()
 	if candidates.calls != 2 {
 		t.Fatalf("candidate builds after revision change = %d, want 2", candidates.calls)
+	}
+	if fresh, _ := service.Recommend(ctx); fresh.Revision != 8 {
+		t.Fatalf("the refreshed result must be served next: %+v", fresh)
 	}
 	// No-op write: revision UNCHANGED → cached result served (no recompute).
 	if _, err := service.Recommend(ctx); err != nil {
@@ -406,6 +415,7 @@ func TestCacheExpiryAfterFifteenMinutes(t *testing.T) {
 	if _, err := service.Recommend(ctx); err != nil {
 		t.Fatal(err)
 	}
+	service.refreshWG.Wait() // expired entries are refreshed in the background
 	if candidates.calls != 2 {
 		t.Fatalf("entries older than 15 minutes must expire: builds = %d", candidates.calls)
 	}

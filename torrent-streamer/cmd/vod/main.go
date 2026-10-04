@@ -275,6 +275,9 @@ func main() {
 	}
 	if recommendationService != nil {
 		capabilities = append(capabilities, recommendations.Capability)
+		// Compute once at startup so the first Home load after a deploy
+		// does not wait for dozens of provider calls.
+		recommendationService.Warm()
 	}
 	// Playback compatibility service (M1.3.x): the shared mobile playback
 	// foundation. The capability is advertised ONLY when BOTH ffprobe and
