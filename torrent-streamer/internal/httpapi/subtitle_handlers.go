@@ -130,8 +130,9 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type torrentCatalog struct {
-		files  []torrentx.SubtitleFile
-		tracks []SubtitleTrack
+		files     []torrentx.SubtitleFile
+		tracks    []SubtitleTrack
+		videoName string // release + file name of what is playing
 	}
 	type externalCatalog struct {
 		results []subtitles.SubResult
@@ -171,6 +172,9 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 		videoIndex, parseIndexErr := strconv.Atoi(q.Get("fileIndex"))
 		if parseIndexErr != nil || videoIndex < 0 || videoIndex >= len(t.Files()) {
 			_, videoIndex = torrentx.ChooseBestVideoFile(t)
+		}
+		if videoIndex >= 0 && videoIndex < len(t.Files()) {
+			part.videoName = t.Name() + " " + t.Files()[videoIndex].Path()
 		}
 		part.files = filterTorrentLanguages(torrentx.FindSubtitleFilesForVideo(t, videoIndex), langs)
 		for i := range part.files {
@@ -233,6 +237,13 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	torrentPart, externalPart := <-torrentCh, <-externalCh
+	// Subtitles timed for the same release (group, source, resolution) stay
+	// in sync: list the closest match first, as offline downloads do.
+	videoName := torrentPart.videoName
+	if videoName == "" {
+		videoName = magnetDisplayName(q.Get("magnet"))
+	}
+	sortTracksByRelease(externalPart.tracks, videoName)
 	resp.Torrent, resp.External = torrentPart.files, externalPart.results
 	resp.Tracks = append(resp.Tracks, torrentPart.tracks...)
 	resp.Tracks = append(resp.Tracks, externalPart.tracks...)

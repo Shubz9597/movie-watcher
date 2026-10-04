@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -139,6 +141,34 @@ func bestSubtitleRelease(results []subtitles.SubResult, lang, videoName string) 
 		}
 	}
 	return best, found
+}
+
+// sortTracksByRelease orders subtitle tracks by how many release tokens they
+// share with the playing video; ties keep the provider's order.
+func sortTracksByRelease(tracks []SubtitleTrack, videoName string) {
+	videoTokens := releaseTokens(videoName)
+	if len(videoTokens) == 0 {
+		return
+	}
+	score := func(track SubtitleTrack) int {
+		matched := 0
+		for token := range releaseTokens(track.Release + " " + track.FileName) {
+			if videoTokens[token] {
+				matched++
+			}
+		}
+		return matched
+	}
+	sort.SliceStable(tracks, func(i, j int) bool { return score(tracks[i]) > score(tracks[j]) })
+}
+
+// magnetDisplayName returns a magnet's dn (release name), if any.
+func magnetDisplayName(magnet string) string {
+	parsed, err := url.Parse(strings.TrimSpace(magnet))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "magnet") {
+		return ""
+	}
+	return parsed.Query().Get("dn")
 }
 
 func releaseTokens(name string) map[string]bool {
