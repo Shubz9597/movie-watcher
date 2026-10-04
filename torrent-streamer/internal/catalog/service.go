@@ -230,7 +230,7 @@ func (s *Service) Detail(ctx context.Context, id string) DetailResult {
 		if !ok {
 			continue
 		}
-		title, err := s.detailFromProvider(ctx, detailer, ids)
+		title, err := s.detailFromProvider(ctx, detailer, ids, id)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				retryable = append(retryable, detailer)
@@ -249,7 +249,6 @@ func (s *Service) Detail(ctx context.Context, id string) DetailResult {
 			}
 			continue
 		}
-		s.cache.Set(provider.Name(), "detail:"+id, title, s.options.CacheTTL)
 		notFound = false
 		if merged.ID == "" {
 			merged = title
@@ -263,7 +262,7 @@ func (s *Service) Detail(ctx context.Context, id string) DetailResult {
 		if len(ids) <= idsAtAttempt[detailer.Name()] {
 			continue
 		}
-		title, err := s.detailFromProvider(ctx, detailer, ids)
+		title, err := s.detailFromProvider(ctx, detailer, ids, id)
 		if err != nil {
 			continue
 		}
@@ -284,12 +283,21 @@ func (s *Service) Detail(ctx context.Context, id string) DetailResult {
 	return DetailResult{Title: merged, Found: merged.ID != "", NotFound: notFound && len(degraded) == 0, DegradedProviders: degraded}
 }
 
-func (s *Service) detailFromProvider(ctx context.Context, detailer DetailProvider, ids map[string]string) (Title, error) {
-	title, err := callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) (Title, error) {
-		return detailer.Detail(ctx, DetailRequest{ProviderIDs: ids})
-	})
-	if err != nil {
-		return Title{}, err
+func (s *Service) detailFromProvider(ctx context.Context, detailer DetailProvider, ids map[string]string, id string) (Title, error) {
+	// Detail used to populate this cache but never read it. Episodes also
+	// resolves detail, so revisits unnecessarily repeated every upstream call.
+	var title Title
+	if cached, state, ok := s.cache.Get(detailer.Name(), "detail:"+id); ok && state == cacheStateFresh {
+		title = cached.(Title)
+	} else {
+		var err error
+		title, err = callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) (Title, error) {
+			return detailer.Detail(ctx, DetailRequest{ProviderIDs: ids})
+		})
+		if err != nil {
+			return Title{}, err
+		}
+		s.cache.Set(detailer.Name(), "detail:"+id, title, s.options.CacheTTL)
 	}
 	for namespace, value := range title.ProviderIDs {
 		if _, ok := ids[namespace]; !ok {
