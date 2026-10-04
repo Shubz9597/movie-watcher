@@ -203,15 +203,6 @@ func (h CatalogHandlers) handleEpisodes(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// catalogNamespace returns the namespace part of an opaque catalog id, or "".
-func catalogNamespace(id string) string {
-	namespace, _, err := catalog.ParseTitleID(id)
-	if err != nil {
-		return ""
-	}
-	return namespace
-}
-
 type sectionResponse struct {
 	ID                string           `json:"id"`
 	Kind              string           `json:"kind"`

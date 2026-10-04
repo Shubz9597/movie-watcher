@@ -189,10 +189,10 @@ func TestExplorationSlotsFollowPersonalPicks(t *testing.T) {
 func TestShortTitleKeepsTheMainName(t *testing.T) {
 	cases := map[string]string{
 		"Demon Slayer -Kimetsu no Yaiba- The Movie: Mugen Train": "Demon Slayer",
-		"Demon Slayer: Kimetsu no Yaiba Infinity Castle":          "Demon Slayer",
-		"Frieren: Beyond Journey’s End":                           "Frieren",
-		"The Wire":                                                "The Wire",
-		"M3GAN 2.0":                                               "M3GAN 2.0",
+		"Demon Slayer: Kimetsu no Yaiba Infinity Castle":         "Demon Slayer",
+		"Frieren: Beyond Journey’s End":                          "Frieren",
+		"The Wire":                                               "The Wire",
+		"M3GAN 2.0":                                              "M3GAN 2.0",
 	}
 	for in, want := range cases {
 		if got := shortTitle(in); got != want {

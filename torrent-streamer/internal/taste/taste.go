@@ -28,10 +28,10 @@ import (
 // Signal is one household taste signal.
 type Signal struct {
 	CanonicalID string
-	Kind        string  // movie | series | anime (may be empty for visits)
-	Label       string  // favourited | watch-later | watched | started | downloaded | completed | opened
+	Kind        string // movie | series | anime (may be empty for visits)
+	Label       string // favourited | watch-later | watched | started | downloaded | completed | opened
 	Weight      float64
-	Title       string  // display title when a snapshot/name is available
+	Title       string    // display title when a snapshot/name is available
 	At          time.Time // when the signal last happened (recency decay)
 }
 

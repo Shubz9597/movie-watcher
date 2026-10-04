@@ -38,13 +38,21 @@ func TestValidateManifestAcceptsContractPayload(t *testing.T) {
 func TestValidateManifestRejectsForeignAndUnsafePaths(t *testing.T) {
 	now := time.Date(2026, 9, 28, 9, 0, 0, 0, time.UTC)
 	cases := map[string]func(*Manifest){
-		"other job's asset path":   func(m *Manifest) { m.Video.Path = "/v1/downloads/jobs/other-job/assets/video" },
-		"absolute url":             func(m *Manifest) { m.Video.Path = "http://evil.example/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/video" },
-		"scheme-relative url":      func(m *Manifest) { m.Video.Path = "//evil.example/v1/x" },
-		"traversal":                func(m *Manifest) { m.Video.Path = "/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/../video" },
-		"query string (token)":     func(m *Manifest) { m.Video.Path = "/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/video?token=x" },
-		"backslash":                func(m *Manifest) { m.Video.Path = `/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets\v` },
-		"embedded credentials":     func(m *Manifest) { m.Video.Path = "/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/user:pass@video" },
+		"other job's asset path": func(m *Manifest) { m.Video.Path = "/v1/downloads/jobs/other-job/assets/video" },
+		"absolute url": func(m *Manifest) {
+			m.Video.Path = "http://evil.example/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/video"
+		},
+		"scheme-relative url": func(m *Manifest) { m.Video.Path = "//evil.example/v1/x" },
+		"traversal": func(m *Manifest) {
+			m.Video.Path = "/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/../video"
+		},
+		"query string (token)": func(m *Manifest) {
+			m.Video.Path = "/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/video?token=x"
+		},
+		"backslash": func(m *Manifest) { m.Video.Path = `/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets\v` },
+		"embedded credentials": func(m *Manifest) {
+			m.Video.Path = "/v1/downloads/jobs/3f2a9a1e-1111-4222-8333-444455556666/assets/user:pass@video"
+		},
 		"wrong version":            func(m *Manifest) { m.ManifestVersion = 2 },
 		"non-positive revision":    func(m *Manifest) { m.Revision = 0 },
 		"past expiry":              func(m *Manifest) { m.ExpiresAt = "2026-09-01T00:00:00Z" },

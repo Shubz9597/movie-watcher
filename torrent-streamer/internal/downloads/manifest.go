@@ -30,12 +30,12 @@ type Asset struct {
 // Revision is immutable for the job's lifetime; a different validator means a
 // different revision and resume data MUST be discarded.
 type Manifest struct {
-	ManifestVersion int      `json:"manifestVersion"`
-	JobID           string   `json:"jobId"`
-	Revision        int64    `json:"revision"`
-	ExpiresAt       string   `json:"expiresAt"` // RFC3339 UTC
-	Video           Asset    `json:"video"`
-	Subtitles       []Asset  `json:"subtitles"`
+	ManifestVersion int     `json:"manifestVersion"`
+	JobID           string  `json:"jobId"`
+	Revision        int64   `json:"revision"`
+	ExpiresAt       string  `json:"expiresAt"` // RFC3339 UTC
+	Video           Asset   `json:"video"`
+	Subtitles       []Asset `json:"subtitles"`
 }
 
 // assetPathPrefix is the required origin-relative prefix; the job id segment
