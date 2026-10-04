@@ -1,0 +1,2 @@
+curl: (28) Connection timed out after 4002 milliseconds
+Jikan IPv4 status=000 dns=0.009682s connect=0.000000s total=4.002964s

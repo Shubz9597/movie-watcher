@@ -1,0 +1,27 @@
+goos: linux
+goarch: amd64
+pkg: torrent-streamer/internal/catalog
+cpu: Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz
+                      │ /tmp/torwatch-api-performance/bench-detail-cache.txt │ /tmp/torwatch-api-performance/bench-parallel.txt │
+                      │                        sec/op                        │          sec/op            vs base               │
+CatalogSearchCold-8                                             4.774m ±  4%                1.506m ± 11%  -68.46% (p=0.002 n=6)
+CatalogSectionCold-8                                            4.760m ±  1%                1.555m ±  1%  -67.34% (p=0.002 n=6)
+CatalogDetailWarm-8                                             2.728µ ± 65%                1.079µ ± 77%  -60.47% (p=0.002 n=6)
+CatalogEpisodesCold-8                                           4.720m ±  1%                1.453m ±  3%  -69.22% (p=0.002 n=6)
+geomean                                                         735.5µ                      246.1µ        -66.54%
+
+                      │ /tmp/torwatch-api-performance/bench-detail-cache.txt │ /tmp/torwatch-api-performance/bench-parallel.txt │
+                      │                         B/op                         │           B/op            vs base                │
+CatalogSearchCold-8                                            9.628Ki ± 23%              12.431Ki ± 8%   +29.11% (p=0.002 n=6)
+CatalogSectionCold-8                                           8.260Ki ± 18%              14.549Ki ± 5%   +76.14% (p=0.002 n=6)
+CatalogDetailWarm-8                                             2768.0 ±  0%                 960.0 ± 0%   -65.32% (p=0.002 n=6)
+CatalogEpisodesCold-8                                          5.711Ki ±  0%              11.644Ki ± 0%  +103.89% (p=0.002 n=6)
+geomean                                                        5.919Ki                     6.666Ki        +12.61%
+
+                      │ /tmp/torwatch-api-performance/bench-detail-cache.txt │ /tmp/torwatch-api-performance/bench-parallel.txt │
+                      │                      allocs/op                       │        allocs/op          vs base                │
+CatalogSearchCold-8                                               113.0 ± 0%                 186.0 ± 1%   +64.60% (p=0.002 n=6)
+CatalogSectionCold-8                                              116.0 ± 0%                 205.0 ± 0%   +76.72% (p=0.002 n=6)
+CatalogDetailWarm-8                                              16.000 ± 0%                 9.000 ± 0%   -43.75% (p=0.002 n=6)
+CatalogEpisodesCold-8                                             80.00 ± 0%                162.00 ± 0%  +102.50% (p=0.002 n=6)
+geomean                                                           64.00                      86.35        +34.92%

@@ -1,0 +1,15 @@
+[verify] /healthz (retrying up to 90x2s for startup/rolling restarts)
+[verify] /readyz
+[verify] /v1/version
+[verify] published ports (gateway-only on the LAN)
+[verify] data-root disk usage
+[verify] /stream byte ranges and /buffer/info repeated SSE events
+{"check": "range", "range": "bytes=0-1023", "status": 206, "bytes": 1024, "sha256": "1663f6b7cb4ebb1018c497e07243c45fe77e5375f38d944b5565c2a2b0f636f3", "seconds": 0.052}
+{"check": "range", "range": "bytes=65536-66559", "status": 206, "bytes": 1024, "sha256": "ee7fd2c3fd40dd793a30cc1122dc03dd8ae575037807551eae75df905bc1e5f4", "seconds": 0.001}
+{"check": "range", "range": "bytes=-512", "status": 206, "bytes": 512, "sha256": "b58cceb0d33524c425d00b3cb38b304da54628f513e8198ca7ad3b6035f371fb", "seconds": 0.001}
+{"check": "unsatisfiable-range", "status": 416}
+{"check": "sse", "status": 200, "events": 2, "firstDataSeconds": 0.001, "nextDataSeconds": 1.001}
+VERIFY OK
+[update] new image digests: ["torwatch-server@sha256:ce0d21ceccdd7849a18be687b4902c63af555ca57bff0e1c56b8b71500ddf85a"]
+UPDATE OK (torwatch-server:git-e1641f958626 -> torwatch-server:git-e512ed5a8bd7)
+[git-deploy] deployment recorded at e512ed5a8bd7

@@ -1,0 +1,24 @@
+?   	torrent-streamer/cmd/imdb-import	[no test files]
+ok  	torrent-streamer/cmd/vod	1.460s
+ok  	torrent-streamer/internal/bootstrap	1.604s
+ok  	torrent-streamer/internal/buffer	1.038s
+ok  	torrent-streamer/internal/buildinfo	1.012s
+ok  	torrent-streamer/internal/catalog	1.335s
+ok  	torrent-streamer/internal/config	1.020s
+ok  	torrent-streamer/internal/downloads	1.292s
+ok  	torrent-streamer/internal/httpapi	8.540s
+ok  	torrent-streamer/internal/imdb	1.009s
+ok  	torrent-streamer/internal/janitor	1.017s
+ok  	torrent-streamer/internal/library	10.497s
+ok  	torrent-streamer/internal/logx	3.981s
+?   	torrent-streamer/internal/middleware	[no test files]
+ok  	torrent-streamer/internal/playback	1.342s
+ok  	torrent-streamer/internal/recommendations	1.643s
+ok  	torrent-streamer/internal/search	4.051s
+ok  	torrent-streamer/internal/skipsegments	1.009s
+ok  	torrent-streamer/internal/subtitles	2.222s
+?   	torrent-streamer/internal/taste	[no test files]
+ok  	torrent-streamer/internal/torrentx	1.144s
+ok  	torrent-streamer/internal/watch	5.484s
+ok  	torrent-streamer/migrations	4.420s
+ok  	torrent-streamer/tools/reference-client	1.039s

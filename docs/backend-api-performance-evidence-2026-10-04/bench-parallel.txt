@@ -1,0 +1,30 @@
+goos: linux
+goarch: amd64
+pkg: torrent-streamer/internal/catalog
+cpu: Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz
+BenchmarkCatalogSearchCold-8     	     199	   1516551 ns/op	   13706 B/op	     187 allocs/op
+BenchmarkCatalogSearchCold-8     	     196	   1494723 ns/op	   12652 B/op	     186 allocs/op
+BenchmarkCatalogSearchCold-8     	     242	   1333184 ns/op	   12806 B/op	     186 allocs/op
+BenchmarkCatalogSearchCold-8     	     198	   1530727 ns/op	   13430 B/op	     186 allocs/op
+BenchmarkCatalogSearchCold-8     	     195	   1433974 ns/op	   12653 B/op	     186 allocs/op
+BenchmarkCatalogSearchCold-8     	     194	   1537067 ns/op	   12575 B/op	     186 allocs/op
+BenchmarkCatalogSectionCold-8    	     193	   1552191 ns/op	   14535 B/op	     205 allocs/op
+BenchmarkCatalogSectionCold-8    	     192	   1554756 ns/op	   15515 B/op	     205 allocs/op
+BenchmarkCatalogSectionCold-8    	     190	   1567223 ns/op	   15662 B/op	     205 allocs/op
+BenchmarkCatalogSectionCold-8    	     192	   1555030 ns/op	   15262 B/op	     205 allocs/op
+BenchmarkCatalogSectionCold-8    	     192	   1556218 ns/op	   14481 B/op	     205 allocs/op
+BenchmarkCatalogSectionCold-8    	     194	   1537992 ns/op	   14498 B/op	     205 allocs/op
+BenchmarkCatalogDetailWarm-8     	  143793	      1911 ns/op	     960 B/op	       9 allocs/op
+BenchmarkCatalogDetailWarm-8     	  289256	      1075 ns/op	     960 B/op	       9 allocs/op
+BenchmarkCatalogDetailWarm-8     	  269366	      1082 ns/op	     960 B/op	       9 allocs/op
+BenchmarkCatalogDetailWarm-8     	  259765	      1082 ns/op	     960 B/op	       9 allocs/op
+BenchmarkCatalogDetailWarm-8     	  281712	      1074 ns/op	     960 B/op	       9 allocs/op
+BenchmarkCatalogDetailWarm-8     	  282955	      1075 ns/op	     960 B/op	       9 allocs/op
+BenchmarkCatalogEpisodesCold-8   	     217	   1419564 ns/op	   11928 B/op	     162 allocs/op
+BenchmarkCatalogEpisodesCold-8   	     205	   1455613 ns/op	   11920 B/op	     162 allocs/op
+BenchmarkCatalogEpisodesCold-8   	     205	   1456021 ns/op	   11920 B/op	     162 allocs/op
+BenchmarkCatalogEpisodesCold-8   	     206	   1450291 ns/op	   11921 B/op	     162 allocs/op
+BenchmarkCatalogEpisodesCold-8   	     212	   1408491 ns/op	   11958 B/op	     162 allocs/op
+BenchmarkCatalogEpisodesCold-8   	     201	   1480222 ns/op	   11926 B/op	     162 allocs/op
+PASS
+ok  	torrent-streamer/internal/catalog	7.200s

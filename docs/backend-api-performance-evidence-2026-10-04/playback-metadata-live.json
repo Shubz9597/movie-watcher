@@ -1,0 +1,34 @@
+[
+  {
+    "endpoint": "skip-anime",
+    "attempt": 1,
+    "status": 200,
+    "seconds": 0.666,
+    "count": 2,
+    "error": null
+  },
+  {
+    "endpoint": "skip-anime",
+    "attempt": 2,
+    "status": 200,
+    "seconds": 0.002,
+    "count": 2,
+    "error": null
+  },
+  {
+    "endpoint": "subtitles-movie",
+    "attempt": 1,
+    "status": 200,
+    "seconds": 2.172,
+    "count": 7,
+    "error": null
+  },
+  {
+    "endpoint": "subtitles-movie",
+    "attempt": 2,
+    "status": 200,
+    "seconds": 1.95,
+    "count": 7,
+    "error": null
+  }
+]

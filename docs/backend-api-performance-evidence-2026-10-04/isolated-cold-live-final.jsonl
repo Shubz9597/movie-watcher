@@ -1,0 +1,6 @@
+{"attempt":1,"count":6,"endpoint":"search-anime","found":false,"providers":["jikan"],"seconds":3.003527314}
+{"attempt":2,"count":6,"endpoint":"search-anime","found":false,"providers":["jikan"],"seconds":0.000122375}
+{"attempt":1,"count":0,"endpoint":"anime-detail","found":true,"providers":["jikan"],"seconds":3.001886431}
+{"attempt":2,"count":0,"endpoint":"anime-detail","found":true,"providers":["jikan"],"seconds":0.000010756}
+{"attempt":1,"count":28,"endpoint":"anime-episodes","found":false,"providers":["jikan"],"seconds":3.002565112}
+{"attempt":2,"count":28,"endpoint":"anime-episodes","found":false,"providers":["jikan"],"seconds":0.000010166}

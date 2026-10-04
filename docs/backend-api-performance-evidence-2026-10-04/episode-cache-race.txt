@@ -1,0 +1,2 @@
+ok  	torrent-streamer/internal/catalog	1.315s
+ok  	torrent-streamer/internal/httpapi	4.469s
