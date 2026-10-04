@@ -897,7 +897,8 @@ export default function EpisodePanel({
   });
 
   const downloadSelectionForEpisode = async (torrent: TorrentRow, activeEpisode: EpisodeSummary): Promise<DownloadSelection> => {
-    if (!torrent.seasonPack) return selectionForEpisode(torrent, activeEpisode, null);
+    // Torrentio names the searched episode's file inside a pack.
+    if (!torrent.seasonPack || torrent.fileIndex != null) return selectionForEpisode(torrent, activeEpisode, null);
     const magnet = await resolveTorrentSource(torrent);
     const resolved = await resolveTorrentFile({
       magnetUri: magnet,

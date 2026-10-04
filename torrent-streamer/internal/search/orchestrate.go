@@ -34,7 +34,7 @@ type ReleaseStore interface {
 
 // CacheVersion prefixes persisted search keys; rows from other versions are
 // purged at startup (see SQLReleaseStore.PurgeOtherVersions).
-const CacheVersion = "v4"
+const CacheVersion = "v5"
 
 const (
 	storeFreshTTL = 30 * time.Minute

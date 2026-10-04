@@ -122,8 +122,10 @@ func buildKnownTitles(request Request) knownTitles {
 					explained[token] = true
 				}
 			}
+			// A lone letter ("Dragon Ball Z Kai" next to "Dragon Ball Kai")
+			// is a spelling variant, never an arc name.
 			for token := range current.tokens {
-				if !parent.tokens[token] && !explained[token] {
+				if !parent.tokens[token] && !explained[token] && len([]rune(token)) > 1 {
 					return true
 				}
 			}
@@ -230,6 +232,9 @@ func decideRelease(request Request, known knownTitles, release prowlarrRelease) 
 	decision := releaseDecision{class: classAmbiguous, parsed: parsed}
 	reject := func() releaseDecision { return releaseDecision{reject: true} }
 
+	if release.IDMatched {
+		return decideIDMatched(request, parsed, release)
+	}
 	match := known.match(parsed)
 	imdbMatch := normalizeIMDBID(string(release.ImdbID)) != "" && request.IMDBID != "" &&
 		normalizeIMDBID(string(release.ImdbID)) == normalizeIMDBID(request.IMDBID)
@@ -290,6 +295,33 @@ func decideRelease(request Request, known knownTitles, release prowlarrRelease) 
 		return reject()
 	}
 	return decideEpisode(request, parsed, match, decision)
+}
+
+// decideIDMatched judges a release an id-keyed index (Torrentio) returned
+// for exactly this title and episode. Names there vary freely ("Dragon Ball
+// Z Kai", "Dragonball Z Kai Complete") and packs rarely list episode
+// numbers, so only quality and the language profile apply.
+func decideIDMatched(request Request, parsed parsedRelease, release prowlarrRelease) releaseDecision {
+	if parsed.junk {
+		return releaseDecision{reject: true}
+	}
+	rank, allowed := audioRank(request, parsed, release.Title)
+	if !allowed {
+		return releaseDecision{reject: true}
+	}
+	decision := releaseDecision{class: classVerified, parsed: parsed, languageRank: rank}
+	decision.qualityTier = qualityTier(parsed, release.Size, request.Kind == KindMovie)
+	if request.Kind == KindMovie {
+		return decision
+	}
+	decision.episodeMatch = request.Episode != nil || request.Absolute != nil
+	if release.PackFile != "" {
+		decision.pack, decision.packReason = packFor(parsed)
+		if decision.pack == packNone {
+			decision.pack, decision.packReason = packSeason, "season-pack"
+		}
+	}
+	return decision
 }
 
 func decideEpisode(request Request, parsed parsedRelease, match titleMatch, decision releaseDecision) releaseDecision {
@@ -421,7 +453,13 @@ func audioRank(request Request, parsed parsedRelease, fullName string) (int, boo
 				return 0, false // another language's dub
 			}
 		}
-		if parsed.multiAudio || parsed.dubbed || parsed.audio["en"] {
+		// Dual audio still carries the Japanese track: as good as subbed for
+		// ranking, so seeders decide between them. English-only dubs rank
+		// below.
+		if parsed.multiAudio {
+			return 2, true
+		}
+		if parsed.dubbed || parsed.audio["en"] {
 			return 1, true
 		}
 		return 3, true

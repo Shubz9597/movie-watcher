@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,16 +38,81 @@ func TestTorrentioStreamsBecomeReleases(t *testing.T) {
 		!strings.Contains(first.MagnetURL, "tr=udp%3A%2F%2Ftracker.opentrackr.org") {
 		t.Fatalf("first release = %+v", first)
 	}
-	if releases[1].FileIndex == nil || *releases[1].FileIndex != 3 || releases[1].Size != 996671488 {
+	if releases[1].FileIndex == nil || *releases[1].FileIndex != 3 || releases[1].Size != 996671488 || releases[1].PackFile != "S01/S01E01.mkv" {
 		t.Fatalf("pack release = %+v", releases[1])
 	}
+	if !releases[0].IDMatched || releases[0].PackFile != "" {
+		t.Fatalf("single-file release = %+v", releases[0])
+	}
 
-	// The language-flag line never reaches the audio rules, and the usual
-	// release decisions apply (Castle Rock is a different show).
+	// Torrentio matched every stream by IMDb id, so its names are trusted;
+	// the language-flag line never reaches the audio rules, and a pack with a
+	// known file ranks like a single episode (seeders decide).
 	service := newTestService(t, "http://127.0.0.1:9696")
 	results := service.normalize(request, releases)
-	if len(results) != 2 || results[0].Audio != "" {
+	if len(results) != 3 || results[0].Audio != "" || results[1].SeasonPack == nil || results[1].packTier != int(packNone) {
 		t.Fatalf("results = %+v", results)
+	}
+}
+
+// Dragon Ball Kai episode 1 as Torrentio returns it: names vary ("Dragon
+// Ball Z Kai", "Dragonball Z Kai Complete"), complete packs list no episode
+// numbers, and one Chinese pack is listed once per disc-menu file.
+func TestTorrentioAnimeKeepsIDMatchedPacksAndRanksBySeeders(t *testing.T) {
+	t.Parallel()
+	stream := func(title, hash string, fileIdx int) torrentioStream {
+		return torrentioStream{Title: title, InfoHash: hash, FileIdx: &fileIdx}
+	}
+	h := func(c string) string { return strings.Repeat(c, 40) }
+	streams := []torrentioStream{
+		stream("Dragon.Ball.Z.Kai.2009.S01.1080p.BluRay.Dual-Audio.Opus.2.0.AV1-Pi13\nDragon Ball Kai (2009) - S01E01.mkv\n👤 92 💾 977 MB ⚙️ NyaaSi", h("a"), 97),
+		stream("Dragonball Z Kai Complete [Blu Ray]\nDragonball Z Kai 01 - Prologue to Battle.mkv\n👤 4 💾 387 MB ⚙️ NyaaSi", h("b"), 2),
+		stream("Dragon Ball Kai: Completo - 1ª Parte (2011) HD 720p Dublado\nEpisodios/01.mkv\n👤 1 💾 500 MB ⚙️ Comando", h("c"), 16),
+		stream("[Deabound] Dragon Ball Kai Faulconer Edition - [Complete][1080p][BD]\nSeason 1/Dragon Ball Kai - S01E01.mkv\n👤 7 💾 1 GB ⚙️ NyaaSi", h("d"), 0),
+		stream("[Pack] Dragon Ball Kai BDRip\nmenu/[menu][D1][01].mkv\n👤 5 💾 10 MB ⚙️ NyaaSi", h("e"), 3),
+		stream("[Pack] Dragon Ball Kai BDRip\n[Pack][001][1080P].mkv\n👤 5 💾 900 MB ⚙️ NyaaSi", h("e"), 7),
+		stream("[Pack] Dragon Ball Kai BDRip\nmenu/[menu][D2][01].mkv\n👤 5 💾 10 MB ⚙️ NyaaSi", h("e"), 4),
+	}
+	var releases []prowlarrRelease
+	for _, s := range streams {
+		release, ok := releaseFromTorrentio(s)
+		if !ok {
+			t.Fatalf("stream %q rejected", s.Title)
+		}
+		releases = append(releases, release)
+	}
+	releases = dedupeTorrentioFiles(releases)
+	if len(releases) != 5 || releases[4].FileIndex == nil || *releases[4].FileIndex != 7 {
+		t.Fatalf("dedupe kept %+v; want the pack's episode file (7), not a menu", releases)
+	}
+
+	one := 1
+	request := Request{Kind: KindAnime, Title: "Dragon Ball Kai", AniListID: 6033, Year: 2009, Season: &one, Episode: &one, Absolute: &one, OriginalLanguage: "ja"}
+	results := newTestService(t, "http://127.0.0.1:9696").normalize(request, releases)
+	var got []int
+	for _, result := range results {
+		if strings.Contains(result.Title, "Dublado") {
+			t.Fatalf("a Portuguese dub must be dropped: %+v", result)
+		}
+		if result.SeasonPack == nil {
+			t.Fatalf("multi-file torrent %q must stay a pack for batch downloads", result.Title)
+		}
+		got = append(got, result.Seeders)
+	}
+	if want := []int{92, 7, 5, 4}; !slices.Equal(got, want) {
+		t.Fatalf("seeders order = %v, want %v", got, want)
+	}
+}
+
+func TestDedupeTorrentioDropsAmbiguousFileIndex(t *testing.T) {
+	t.Parallel()
+	a, b := 1, 2
+	releases := dedupeTorrentioFiles([]prowlarrRelease{
+		{Title: "Pack", InfoHash: "X", FileIndex: &a, PackFile: "Show - 01.mkv"},
+		{Title: "Pack", InfoHash: "X", FileIndex: &b, PackFile: "Show - 01v2.mkv"},
+	})
+	if len(releases) != 1 || releases[0].FileIndex != nil {
+		t.Fatalf("releases = %+v; two candidate files leave the choice to the client", releases)
 	}
 }
 

@@ -421,6 +421,8 @@ var releaseLanguageCodes = map[string]languageCode{
 	"catala": "ca", "basque": "eu", "greek": "el", "hebrew": "he", "romanian": "ro",
 	"bulgarian": "bg", "croatian": "hr", "serbian": "sr", "finnish": "fi", "norwegian": "no",
 	"danish": "da", "slovak": "sk", "lithuanian": "lt", "latvian": "lv", "estonian": "et",
+	// "Dubbed" in the dub's own language.
+	"dublado": "pt", "dublada": "pt", "doblado": "es", "doblada": "es", "dublaj": "tr", "doppiato": "it",
 }
 
 var subtitleWords = map[string]bool{

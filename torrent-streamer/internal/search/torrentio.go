@@ -189,7 +189,48 @@ func (t *Torrentio) Releases(ctx context.Context, request Request) ([]prowlarrRe
 			releases = append(releases, release)
 		}
 	}
-	return releases, nil
+	return dedupeTorrentioFiles(releases), nil
+}
+
+// torrentioExtras marks bonus files Torrentio sometimes maps to an episode
+// (disc menus, creditless openings, specials).
+var torrentioExtras = regexp.MustCompile(`(?i)(^|/)(menu|extras?|bonus|specials?|ncop|nced|sample|scans?|特典映像|特典)(/|[\s\[._-])`)
+
+// dedupeTorrentioFiles keeps one stream per torrent. When Torrentio lists a
+// torrent several times (one per candidate file), the single non-extras file
+// wins; if that is ambiguous the file index is dropped and the client picks
+// the episode from the file list.
+func dedupeTorrentioFiles(releases []prowlarrRelease) []prowlarrRelease {
+	byHash := map[string][]int{}
+	order := make([]string, 0, len(releases))
+	for index, release := range releases {
+		if _, seen := byHash[release.InfoHash]; !seen {
+			order = append(order, release.InfoHash)
+		}
+		byHash[release.InfoHash] = append(byHash[release.InfoHash], index)
+	}
+	out := make([]prowlarrRelease, 0, len(order))
+	for _, hash := range order {
+		indexes := byHash[hash]
+		if len(indexes) == 1 {
+			out = append(out, releases[indexes[0]])
+			continue
+		}
+		var episodes []int
+		for _, index := range indexes {
+			if !torrentioExtras.MatchString(releases[index].PackFile) {
+				episodes = append(episodes, index)
+			}
+		}
+		if len(episodes) == 1 {
+			out = append(out, releases[episodes[0]])
+			continue
+		}
+		release := releases[indexes[0]]
+		release.FileIndex = nil
+		out = append(out, release)
+	}
+	return out
 }
 
 // releaseFromTorrentio reads one stream. Its title is "release name" then,
@@ -203,7 +244,11 @@ func releaseFromTorrentio(stream torrentioStream) (prowlarrRelease, bool) {
 	if hash == "" || name == "" {
 		return prowlarrRelease{}, false
 	}
-	release := prowlarrRelease{Title: name, Protocol: "torrent", InfoHash: hash, Indexer: "Torrentio", FileIndex: stream.FileIdx}
+	release := prowlarrRelease{Title: name, Protocol: "torrent", InfoHash: hash, Indexer: "Torrentio", FileIndex: stream.FileIdx, IDMatched: true}
+	// Multi-file torrents name the episode's file on the second line.
+	if len(lines) > 2 && !strings.Contains(lines[1], "👤") {
+		release.PackFile = strings.TrimSpace(lines[1])
+	}
 	for _, line := range lines[1:] {
 		if !strings.Contains(line, "👤") {
 			continue

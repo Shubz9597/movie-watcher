@@ -117,3 +117,20 @@ func TestMoviesRankBySeedersWithTrustOnlyForNearTies(t *testing.T) {
 		t.Fatalf("order = %v, want most seeded first, then YTS winning the near tie", []int{results[0].Seeders, results[1].Seeders, results[2].Seeders})
 	}
 }
+
+// A one-letter difference is a spelling of the same show, not an arc: "Dragon
+// Ball Z Kai" releases belong to a "Dragon Ball Kai" season 1 search.
+func TestSingleLetterAliasIsNotAnArc(t *testing.T) {
+	t.Parallel()
+	number := func(value int) *int { return &value }
+	request := Request{Kind: KindAnime, Title: "Dragon Ball Kai", Aliases: []string{"Dragon Ball Z Kai"},
+		Season: number(1), Episode: number(1), Absolute: number(1), OriginalLanguage: "ja"}
+	known := buildKnownTitles(request)
+	if len(known.arcs) != 0 {
+		t.Fatalf("arcs = %v; want none", known.arcs)
+	}
+	decision := decideRelease(request, known, prowlarrRelease{Title: "[Chotab] Dragon Ball Z Kai (2009) - 01 (BD 720p) [Dual-Audio]"})
+	if decision.reject || !decision.episodeMatch {
+		t.Fatalf("decision = %+v; want an episode match", decision)
+	}
+}

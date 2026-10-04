@@ -137,6 +137,11 @@ type prowlarrRelease struct {
 	ImdbID      flexString         `json:"imdbId"`
 	// FileIndex is the episode's file inside a pack (Torrentio knows it).
 	FileIndex *int `json:"fileIndex,omitempty"`
+	// IDMatched releases were looked up by catalog id (Torrentio): the title
+	// and episode rules for free-text indexer results do not apply.
+	IDMatched bool `json:"idMatched,omitempty"`
+	// PackFile is the episode's path inside a multi-file torrent.
+	PackFile string `json:"packFile,omitempty"`
 }
 
 type prowlarrLanguage struct {
@@ -412,8 +417,13 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		if indexer == "" {
 			indexer = release.IndexerName
 		}
+		// A pack whose episode file is known streams like a single episode.
+		packTier := int(decision.pack)
+		if release.IDMatched && release.FileIndex != nil {
+			packTier = int(packNone)
+		}
 		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate, FileIndex: release.FileIndex,
-			languageRank: decision.languageRank, verified: decision.class == classVerified, packTier: int(decision.pack), qualityTier: decision.qualityTier}
+			languageRank: decision.languageRank, verified: decision.class == classVerified, packTier: packTier, qualityTier: decision.qualityTier}
 		applyBadges(&result, request, decision)
 		if episodeRequested {
 			matched := decision.episodeMatch

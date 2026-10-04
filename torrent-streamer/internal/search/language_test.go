@@ -55,8 +55,8 @@ func TestReleaseLanguageRankMovieAndTV(t *testing.T) {
 	}
 }
 
-// Anime takes Japanese with subtitles first (3) and also accepts dual audio
-// and English dubs (1); raws, Chinese-subtitle and other-language releases
+// Anime takes Japanese with subtitles first (3), dual audio (2, it carries
+// the Japanese track) and English dubs (1); raws, Chinese-subtitle and other-language releases
 // are dropped.
 func TestReleaseLanguageRankAnime(t *testing.T) {
 	t.Parallel()
@@ -73,8 +73,9 @@ func TestReleaseLanguageRankAnime(t *testing.T) {
 		{name: "unmarked anime is allowed", title: "[Group] Example - 02", wantRank: 3, wantAllowed: true},
 		{name: "english dub is allowed", title: "Example - 02 English Dubbed", wantRank: 1, wantAllowed: true},
 		{name: "japanese audio is accepted", title: "Example - 02 Japanese Audio Eng Subs", wantRank: 3, wantAllowed: true},
-		{name: "dual audio is allowed", title: "Example - 02 Dual Audio", wantRank: 1, wantAllowed: true},
-		{name: "bare multi tag is allowed", title: "Example - 02 [MULTi]", wantRank: 1, wantAllowed: true},
+		{name: "dual audio ranks with subbed", title: "Example - 02 Dual Audio", wantRank: 2, wantAllowed: true},
+		{name: "bare multi tag ranks with subbed", title: "Example - 02 [MULTi]", wantRank: 2, wantAllowed: true},
+		{name: "portuguese dub is rejected", title: "Example: Completo (2011) HD 720p Dublado", wantAllowed: false},
 		{name: "multiple subtitles are allowed", title: "Example - 02 Multi Subs", wantRank: 3, wantAllowed: true},
 		{name: "raw release is rejected", title: "[Ohys-Raws] Example - 02", wantAllowed: false},
 		{name: "chinese subtitles are rejected", title: "[Group][Example][02][1080P][CHS JPN]", wantAllowed: false},
