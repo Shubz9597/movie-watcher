@@ -104,3 +104,22 @@ func TestTorrentioPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicTrackerRejectsHomeNetwork(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]bool{
+		"udp://tracker.opentrackr.org:1337/announce": true,
+		"https://tracker.example.org/announce":       true,
+		"http://192.168.1.1/announce":                false,
+		"udp://127.0.0.1:6969":                       false,
+		"http://localhost:8080/announce":             false,
+		"http://[::1]/announce":                      false,
+		"http://printer.local/announce":              false,
+		"file:///etc/passwd":                         false,
+		"http://10.0.0.5/announce":                   false,
+	} {
+		if got := publicTracker(raw); got != want {
+			t.Errorf("publicTracker(%q) = %t, want %t", raw, got, want)
+		}
+	}
+}

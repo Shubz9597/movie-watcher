@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -215,12 +216,30 @@ func releaseFromTorrentio(stream torrentioStream) (prowlarrRelease, bool) {
 	magnet.Set("xt", "urn:btih:"+hash)
 	magnet.Set("dn", name)
 	for _, source := range stream.Sources {
-		if tracker, ok := strings.CutPrefix(source, "tracker:"); ok {
+		if tracker, ok := strings.CutPrefix(source, "tracker:"); ok && publicTracker(tracker) {
 			magnet.Add("tr", tracker)
 		}
 	}
 	release.MagnetURL = "magnet:?" + magnet.Encode()
 	return release, true
+}
+
+// publicTracker keeps tracker URLs the torrent engine may contact: udp/http/
+// https on a public host. A tampered response must not make the server
+// announce to localhost or devices on the home network.
+func publicTracker(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "udp" && parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast())
+	}
+	return true
 }
 
 func parseTorrentioSize(value, unit string) int64 {
