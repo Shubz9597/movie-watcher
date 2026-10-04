@@ -81,6 +81,8 @@ type Props = {
   tmdbId: number | undefined;
   imdbId: string | undefined;
   malId: number | undefined;
+  /** Anime: maps episodes to the show's IMDb season/episode for subtitles. */
+  anilistId?: number;
   season: number;
   episode: number;
   absoluteEpisode: number | undefined;
@@ -103,7 +105,7 @@ function formatDelay(seconds: number): string {
 }
 
 export default function NativePlayerControls(props: Props) {
-  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, season, episode, absoluteEpisode, downloadId, onClose } = props;
+  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, onClose } = props;
   // Offline downloads play without a magnet: no server catalog, torrent
   // telemetry or import — only the tracks inside the downloaded package.
   const local = !magnet;
@@ -368,6 +370,8 @@ export default function NativePlayerControls(props: Props) {
     if (fileIndex != null) params.set('fileIndex', String(fileIndex));
     if (imdbId) params.set('imdbId', imdbId);
     if (tmdbId) params.set('tmdbId', String(tmdbId));
+    if (cat === 'anime' && anilistId) params.set('anilistId', String(anilistId));
+    if (cat === 'anime' && malId) params.set('malId', String(malId));
     params.set('season', String(season));
     params.set('episode', String(episode));
     fetch(`${getVodBase()}/subtitles/list?${params.toString()}`, { signal: AbortSignal.timeout(20000) })

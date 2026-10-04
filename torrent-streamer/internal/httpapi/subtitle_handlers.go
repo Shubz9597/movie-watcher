@@ -196,7 +196,14 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 		}
 		// Stremio's keyless OpenSubtitles addon first (exact episode match by
 		// IMDb id, reliable downloads); the configured key is the fallback.
-		part.results, part.err = subtitles.FetchFromStremio(ctx, query)
+		// Anime episodes map to the show's IMDb season/episode via ani.zip.
+		stremioQuery := query
+		if anilistID, malID := intParam(q, "anilistId"), intParam(q, "malId"); anilistID > 0 || malID > 0 {
+			if imdb, season, episode, ok := subtitles.AnimeEpisodeIMDb(ctx, anilistID, malID, query.Episode); ok {
+				stremioQuery.IMDBID, stremioQuery.Season, stremioQuery.Episode = imdb, season, episode
+			}
+		}
+		part.results, part.err = subtitles.FetchFromStremio(ctx, stremioQuery)
 		if part.err != nil || len(part.results) == 0 {
 			if providerKey == "" {
 				if part.err == nil {

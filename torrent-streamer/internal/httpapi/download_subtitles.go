@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,7 +67,16 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	// IMDb id and its downloads work where the configured key's download
 	// endpoint keeps failing. The key is the fallback (and covers titles
 	// without an IMDb id).
-	vtt, err := stremioForDownload(ctx, query, q.Lang, q.VideoName)
+	// Anime ids (anilist:<id>) map to the show's IMDb season/episode.
+	stremioQuery := query
+	if parts := strings.Split(q.SeriesID, ":"); len(parts) == 2 && parts[0] == "anilist" {
+		if anilistID, err := strconv.Atoi(parts[1]); err == nil {
+			if imdb, season, episode, ok := subtitles.AnimeEpisodeIMDb(ctx, anilistID, 0, q.Episode); ok {
+				stremioQuery.IMDBID, stremioQuery.Season, stremioQuery.Episode = imdb, season, episode
+			}
+		}
+	}
+	vtt, err := stremioForDownload(ctx, stremioQuery, q.Lang, q.VideoName)
 	if (err != nil || strings.TrimSpace(vtt) == "") && apiKey != "" {
 		vtt, err = openSubForDownload(ctx, query, apiKey, q.Lang, q.VideoName)
 	}

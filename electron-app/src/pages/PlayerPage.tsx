@@ -416,6 +416,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           tmdbId={tmdbId ? Number(tmdbId) : undefined}
           imdbId={playbackMeta.imdbId}
           malId={playbackMeta.malId}
+          anilistId={anilistId ? Number(anilistId) : undefined}
           season={Number(season)}
           episode={Number(episode)}
           absoluteEpisode={absoluteEpisode ? Number(absoluteEpisode) : undefined}
