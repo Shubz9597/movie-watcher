@@ -373,3 +373,5 @@ func stripHTML(description string) string {
 func (p *AniList) SupportsSearchType(kind TitleType) bool {
 	return kind == "" || kind == "all" || kind == TypeAnime
 }
+
+func (p *AniList) SupportsIDs(ids map[string]string) bool { return ids["anilist"] != "" }

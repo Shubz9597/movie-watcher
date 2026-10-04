@@ -264,7 +264,7 @@ type tmdbDetailResponse struct {
 	ExternalIDs struct {
 		IMDbID string `json:"imdb_id"`
 	} `json:"external_ids"`
-	Seasons          []struct {
+	Seasons []struct {
 		SeasonNumber int    `json:"season_number"`
 		Name         string `json:"name"`
 		EpisodeCount int    `json:"episode_count"`
@@ -867,3 +867,5 @@ func (p *TMDb) CrossTypeSimilar(ctx context.Context, canonicalID string, limit i
 	}
 	return titles, nil
 }
+
+func (p *TMDb) SupportsIDs(ids map[string]string) bool { return ids["tmdb"] != "" }

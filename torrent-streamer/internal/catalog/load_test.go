@@ -278,3 +278,46 @@ func TestClientErrorDoesNotDisableOtherSearches(t *testing.T) {
 		t.Errorf("Search after unrelated client error = %d calls, %+v; want Valid", calls.Load(), result)
 	}
 }
+
+func TestCachedEpisodesDoNotRepeatMetadataTimeoutOrShareMaps(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var metadataCalls, episodeCalls atomic.Int32
+		slow := &fakeProvider{name: "slow", detailFn: func(ctx context.Context, _ DetailRequest) (Title, error) {
+			metadataCalls.Add(1)
+			<-ctx.Done()
+			return Title{}, ctx.Err()
+		}}
+		fast := &fakeProvider{name: "fast", episodeFn: func(context.Context, EpisodeRequest) ([]Episode, error) {
+			episodeCalls.Add(1)
+			return []Episode{{ID: "fast:1", Season: 1, Episode: 1, ProviderIDs: map[string]string{"fast": "1"}}}, nil
+		}}
+		s := NewService([]Provider{slow, fast}, Options{RequestTimeout: time.Second})
+		defer s.Close()
+		first := s.Episodes(t.Context(), "fast:1", 1)
+		if len(first.Episodes) != 1 {
+			t.Fatalf("Episodes first = %+v, want one usable episode", first)
+		}
+		first.Episodes[0].ProviderIDs["fast"] = "outside"
+		callsBefore := metadataCalls.Load()
+		start := time.Now()
+		second := s.Episodes(t.Context(), "fast:1", 1)
+		if time.Since(start) != 0 || metadataCalls.Load() != callsBefore || episodeCalls.Load() != 1 {
+			t.Errorf("Episodes repeat took %s, calls (%d,%d); want immediate cached response", time.Since(start), metadataCalls.Load(), episodeCalls.Load())
+		}
+		if len(second.Episodes) != 1 || second.Episodes[0].ProviderIDs["fast"] != "1" {
+			t.Errorf("Episodes cache = %+v, want original provider map", second)
+		}
+	})
+}
+
+func TestProviderCooldownDoesNotDegradeUnsupportedIDs(t *testing.T) {
+	jikan := NewJikan(JikanOptions{})
+	s := NewService([]Provider{jikan}, Options{})
+	defer s.Close()
+	s.failures.Set("jikan", "availability", providerFailure{err: ErrRateLimited}, time.Minute)
+	episodes := s.EpisodesWithIDs(t.Context(), map[string]string{"tmdb": "tv:1399"}, 1, "tmdb:tv:1399")
+	detail := s.Detail(t.Context(), "tmdb:tv:1399")
+	if len(episodes.DegradedProviders) != 0 || len(detail.DegradedProviders) != 0 || !detail.NotFound {
+		t.Errorf("Unsupported IDs during Jikan outage = episodes %+v, detail %+v; want clean unsupported result", episodes, detail)
+	}
+}

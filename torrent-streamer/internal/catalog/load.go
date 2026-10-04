@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 
 	"golang.org/x/sync/singleflight"
@@ -164,6 +165,34 @@ func (s *Service) refreshDetail(ctx context.Context, id string) {
 			result := s.computeDetail(callCtx, id)
 			if !errors.Is(callCtx.Err(), context.Canceled) {
 				s.rememberDetail(id, result)
+			}
+			return providerReply{value: result}
+		})
+		return reply, nil
+	})
+}
+
+func mergedEpisodesKey(id string, season int) string {
+	return "episodes:" + id + "\x00" + strconv.Itoa(season)
+}
+
+func (s *Service) rememberEpisodes(id string, season int, result EpisodeResult) {
+	if len(result.Episodes) == 0 {
+		return
+	}
+	ttl := s.options.CacheTTL
+	if len(result.DegradedProviders) > 0 {
+		ttl = min(ttl, s.options.FailureTTL)
+	}
+	s.cache.Set("merged", mergedEpisodesKey(id, season), result, ttl)
+}
+
+func (s *Service) refreshEpisodes(ctx context.Context, id string, season int) {
+	s.flights.DoChan("merged\x00"+mergedEpisodesKey(id, season), func() (any, error) {
+		reply := s.ownedCall(ctx, func(callCtx context.Context) providerReply {
+			result := s.computeEpisodes(callCtx, id, season)
+			if !errors.Is(callCtx.Err(), context.Canceled) {
+				s.rememberEpisodes(id, season, result)
 			}
 			return providerReply{value: result}
 		})

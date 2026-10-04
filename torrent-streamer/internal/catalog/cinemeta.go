@@ -224,3 +224,5 @@ func (p *Cinemeta) Episodes(ctx context.Context, request EpisodeRequest) ([]Epis
 	}
 	return episodes, nil
 }
+
+func (p *Cinemeta) SupportsIDs(ids map[string]string) bool { return ids["imdb"] != "" }

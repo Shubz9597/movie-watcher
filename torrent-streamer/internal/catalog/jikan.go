@@ -180,3 +180,5 @@ func (p *Jikan) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode
 func (p *Jikan) SupportsSearchType(kind TitleType) bool {
 	return kind == "" || kind == "all" || kind == TypeAnime
 }
+
+func (p *Jikan) SupportsIDs(ids map[string]string) bool { return ids["jikan"] != "" }

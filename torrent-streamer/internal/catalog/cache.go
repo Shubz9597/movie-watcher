@@ -306,6 +306,10 @@ func cloneEpisodes(episodes []Episode) []Episode {
 }
 func cloneCacheValue(value any) any {
 	switch v := value.(type) {
+	case EpisodeResult:
+		v.Episodes = cloneEpisodes(v.Episodes)
+		v.DegradedProviders = slices.Clone(v.DegradedProviders)
+		return v
 	case DetailResult:
 		v.Title = cloneTitle(v.Title)
 		v.DegradedProviders = slices.Clone(v.DegradedProviders)

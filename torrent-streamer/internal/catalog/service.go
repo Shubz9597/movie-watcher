@@ -58,6 +58,12 @@ type TypedSearchProvider interface {
 	SupportsSearchType(TitleType) bool
 }
 
+// IDProvider reports whether known ids can be used by Detail or Episodes.
+// Implementations must treat ids as read-only.
+type IDProvider interface {
+	SupportsIDs(ids map[string]string) bool
+}
+
 type DetailProvider interface {
 	Provider
 	Detail(ctx context.Context, request DetailRequest) (Title, error)
@@ -288,6 +294,9 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 			if !ok || attempted[i] == key || (attempted[i] != "" && !errors.Is(replies[i].err, ErrNotFound)) {
 				return replies[i]
 			}
+			if source, ok := detailer.(IDProvider); ok && !source.SupportsIDs(snapshot) {
+				return providerReply{err: ErrNotFound}
+			}
 			attempted[i] = key
 			return s.fetchCached(ctx, detailer.Name(), key, func(callCtx context.Context) (any, error) {
 				return detailer.Detail(callCtx, DetailRequest{ProviderIDs: maps.Clone(snapshot)})
@@ -342,6 +351,22 @@ type EpisodeResult struct {
 func (s *Service) Episodes(ctx context.Context, id string, season int) EpisodeResult {
 	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
 	defer cancel()
+	if _, _, err := ParseTitleID(id); err != nil {
+		return EpisodeResult{Episodes: []Episode{}}
+	}
+	key := mergedEpisodesKey(id, season)
+	if cached, state, ok := s.cache.Get("merged", key); ok {
+		if state == cacheStateStale && ctx.Err() == nil {
+			s.refreshEpisodes(ctx, id, season)
+		}
+		return cached.(EpisodeResult)
+	}
+	result := s.computeEpisodes(ctx, id, season)
+	s.rememberEpisodes(id, season, result)
+	return result
+}
+
+func (s *Service) computeEpisodes(ctx context.Context, id string, season int) EpisodeResult {
 	providerName, externalID, err := ParseTitleID(id)
 	if err != nil {
 		return EpisodeResult{Episodes: []Episode{}}
@@ -363,11 +388,29 @@ func (s *Service) Episodes(ctx context.Context, id string, season int) EpisodeRe
 			}
 		}
 	}
-	if maps.Equal(ids, enriched) || ctx.Err() != nil {
-		return initial
+	result := initial
+	if !maps.Equal(ids, enriched) && ctx.Err() == nil {
+		result = s.EpisodesWithIDs(ctx, enriched, season, id)
+		result.Episodes = MergeEpisodes([][]Episode{result.Episodes, initial.Episodes})
 	}
-	result := s.EpisodesWithIDs(ctx, enriched, season, id)
-	result.Episodes = MergeEpisodes([][]Episode{result.Episodes, initial.Episodes})
+	// Report metadata failures only when the source can enrich this episode list.
+	for _, name := range detail.DegradedProviders {
+		for _, provider := range s.providers {
+			if provider.Name() != name {
+				continue
+			}
+			if _, ok := provider.(EpisodeProvider); !ok {
+				continue
+			}
+			if source, ok := provider.(IDProvider); ok && !source.SupportsIDs(enriched) {
+				continue
+			}
+			if !containsString(result.DegradedProviders, name) {
+				result.DegradedProviders = append(result.DegradedProviders, name)
+			}
+		}
+	}
+	sort.Strings(result.DegradedProviders)
 	return result
 }
 
@@ -380,6 +423,9 @@ func (s *Service) EpisodesWithIDs(ctx context.Context, providerIDs map[string]st
 	replies := parallelReplies(len(s.providers), func(i int) providerReply {
 		provider, ok := s.providers[i].(EpisodeProvider)
 		if !ok {
+			return providerReply{}
+		}
+		if source, ok := provider.(IDProvider); ok && !source.SupportsIDs(providerIDs) {
 			return providerReply{}
 		}
 		return s.fetchCached(ctx, provider.Name(), canonical, func(callCtx context.Context) (any, error) {

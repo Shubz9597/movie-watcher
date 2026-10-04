@@ -148,3 +148,7 @@ func (p *AniZip) Episodes(ctx context.Context, request EpisodeRequest) ([]Episod
 	}
 	return episodes, nil
 }
+
+func (p *AniZip) SupportsIDs(ids map[string]string) bool {
+	return ids["anilist"] != "" || ids["jikan"] != "" || ids["kitsu"] != ""
+}
