@@ -100,8 +100,8 @@ preserving published ready packages.
    `/healthz` (byte-exact), `/readyz`, `/v1/version`, the published-port
    audit (loopback-or-gateway only), disk usage, a byte-range `206` with
    exactly 1024 bytes, and the immediate SSE first tick. The disposable
-   fixture stack (`tests/compose.fixture.yaml` + `tests/Caddyfile.fixture`,
-   fixture via `tests/make-fixture.sh`) supplies both URLs for testing.
+   fixture mode below supplies real backend URLs for testing. Python 3 is
+   required on the host when media checks are enabled.
 5. **Backup** — `scripts/backup.sh <backup-dir>`: locked, staged, checksummed
    (sha256 manifest), atomic. Database via consistent `pg_dump`; Prowlarr
    config and subtitle cache from the data tree; torrent payloads excluded
@@ -124,6 +124,52 @@ preserving published ready packages.
    linux/amd64,linux/arm64` (records digests). Build context is
    `torrent-streamer/`; the version/revision/build-time are embedded and
    visible at `/v1/version`.
+
+## Stream and SSE verification with test data
+
+Set `TORWATCH_VERIFY_FIXTURES=1` in the private `.env`, then run:
+
+```bash
+./deploy/torwatch-server/torwatch.sh verify
+```
+
+Verification generates a deterministic 1 MiB torrent under
+`$TORWATCH_DATA_DIR/verification`, starts the internal-only `stream-fixture`
+service from `compose.verify.yaml`, and derives both verification URLs. The
+magnet uses an internal HTTP metadata source and web seed; no public swarm is
+needed. Requests use the existing gateway, Go `/stream`, torrent reader and
+`/buffer/info` handlers. The production gateway configuration is unchanged.
+
+Checks require correct `206`, `Content-Range`, `Content-Length`, exact fixture
+bytes at the beginning and a seek offset, a suffix range, and `416` for an
+out-of-bounds range. SSE must return `text/event-stream`, an initial data event
+within two seconds after the range checks warm metadata, and a second event
+within three seconds. Both checks reject compressed responses and time out
+when delivery stalls. A short metadata-wait fallback that closes the SSE
+connection does not count as a successful stream.
+
+The `.mp4` fixture contains known byte patterns, not playable media; these
+checks verify HTTP/torrent transport. FFmpeg playback checks use separate
+playable clips. Its source service has no published port; the backend caches
+the small fixture payload under its normal source retention policy. Filenames
+include a content digest so changed test data cannot reuse an old torrent path.
+
+For an existing real torrent, leave fixture mode disabled and set quoted
+`TORWATCH_VERIFY_STREAM_URL` and `TORWATCH_VERIFY_SSE_URL` values in `.env`.
+Include a `magnet` or `infoHash`, `fileIndex`, and `sse=1` in the SSE URL.
+Only explicitly provided URLs are checked in this mode. Fixture mode supplies
+both when unset, so normal update/rollback verification performs the checks
+automatically on this host.
+
+The old `tests/compose.fixture.yaml` is only a static Caddy range-pass-through
+fixture. It does not verify the Go stream handler and is unnecessary here.
+
+Verifier regressions can be run without Docker:
+
+```bash
+python3 deploy/torwatch-server/scripts/tests/test_verify_media.py
+bash deploy/torwatch-server/scripts/tests/run-tests.sh
+```
 
 ## Automatic deployment from Git
 

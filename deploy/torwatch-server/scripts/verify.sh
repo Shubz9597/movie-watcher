@@ -9,7 +9,8 @@
 #                               bytes for bytes=0-1023)
 #   TORWATCH_VERIFY_SSE_URL     URL delivering an immediate first SSE tick
 set -euo pipefail
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 ENV_FILE=".env"
 while [ $# -gt 0 ]; do
@@ -25,7 +26,7 @@ fi
 GATEWAY="http://127.0.0.1:${GATEWAY_PORT:-8080}"
 
 # shellcheck source=compose-common.sh
-. "$(dirname "$0")/compose-common.sh"
+. "$SCRIPT_DIR/compose-common.sh"
 torwatch_compose_files
 
 echo "[verify] /healthz (retrying up to ${TORWATCH_VERIFY_TRIES:-90}x2s for startup/rolling restarts)"
@@ -89,25 +90,38 @@ if [ -n "${TORWATCH_DATA_DIR:-}" ] && [ -d "$TORWATCH_DATA_DIR" ] && command -v 
   df -h "$TORWATCH_DATA_DIR" 2>/dev/null | tail -n 1 || true
 fi
 
-echo "[verify] /stream byte-range (206, exactly 1024 bytes)"
-RANGE_FILE="${TORWATCH_VERIFY_STREAM_URL:-}"
-if [ -n "$RANGE_FILE" ]; then
-  CODE_AND_SIZE=$(curl -s -o /tmp/torwatch-range.bin -w "%{http_code} %{size_download}" \
-    -H "Range: bytes=0-1023" "$RANGE_FILE")
-  read -r CODE SIZE <<<"$CODE_AND_SIZE"
-  [ "$CODE" = "206" ] || { echo "stream range status = $CODE (want 206)" >&2; exit 1; }
-  [ "$SIZE" = "1024" ] || { echo "stream range bytes = $SIZE (want 1024)" >&2; exit 1; }
+MEDIA_ARGS=()
+if [ "${TORWATCH_VERIFY_FIXTURES:-0}" = "1" ]; then
+  command -v python3 >/dev/null || { echo "verify: fixture checks require Python 3" >&2; exit 1; }
+  FIXTURE_ROOT="${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR required}/verification"
+  python3 scripts/verification_fixture.py "$FIXTURE_ROOT" >/dev/null
+  docker compose "${COMPOSE_FILES[@]}" up -d stream-fixture
+  # Wait before registering the magnet: metainfo source failures are cached
+  # by the torrent client, so a startup race could otherwise poison the check.
+  docker compose "${COMPOSE_FILES[@]}" exec -T vod curl -fsS \
+    --max-time 3 --retry 4 --retry-all-errors --retry-delay 1 \
+    http://stream-fixture:9090/infohash >/dev/null
+  URLS="$(python3 scripts/verify-media.py --print-urls --gateway "$GATEWAY" --fixture-root "$FIXTURE_ROOT")"
+  mapfile -t FIXTURE_URLS <<<"$URLS"
+  TORWATCH_VERIFY_STREAM_URL="${TORWATCH_VERIFY_STREAM_URL:-${FIXTURE_URLS[0]}}"
+  TORWATCH_VERIFY_SSE_URL="${TORWATCH_VERIFY_SSE_URL:-${FIXTURE_URLS[1]}}"
+  MEDIA_ARGS+=(--fixture-root "$FIXTURE_ROOT")
+fi
+
+echo "[verify] /stream byte ranges and /buffer/info repeated SSE events"
+if [ -n "${TORWATCH_VERIFY_STREAM_URL:-}" ]; then
+  MEDIA_ARGS+=(--stream-url "$TORWATCH_VERIFY_STREAM_URL")
 else
   echo "[verify] TORWATCH_VERIFY_STREAM_URL unset — range check skipped (record as pending)"
 fi
-
-echo "[verify] /buffer/info SSE first tick (gateway must not buffer)"
-SSE_FILE="${TORWATCH_VERIFY_SSE_URL:-}"
-if [ -n "$SSE_FILE" ]; then
-  FIRST_LINE=$(curl -s -N --max-time 5 "$SSE_FILE" | head -n 1)
-  [ "$FIRST_LINE" = "retry: 2000" ] || { echo "SSE first line = $FIRST_LINE" >&2; exit 1; }
+if [ -n "${TORWATCH_VERIFY_SSE_URL:-}" ]; then
+  MEDIA_ARGS+=(--sse-url "$TORWATCH_VERIFY_SSE_URL")
 else
   echo "[verify] TORWATCH_VERIFY_SSE_URL unset — SSE check skipped (record as pending)"
+fi
+if [ "${#MEDIA_ARGS[@]}" -gt 0 ]; then
+  command -v python3 >/dev/null || { echo "verify: media checks require Python 3" >&2; exit 1; }
+  python3 scripts/verify-media.py "${MEDIA_ARGS[@]}"
 fi
 
 echo "VERIFY OK"

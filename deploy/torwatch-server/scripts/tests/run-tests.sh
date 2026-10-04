@@ -314,5 +314,11 @@ expect_exit 0 "preflight accepts a healthy shared PostgreSQL service" \
 finish_test
 
 log ""
+log "== verification wrapper =="
+new_workspace
+expect_exit 0 "torwatch.sh verify works from outside the package directory" \
+  bash "$PKG_ROOT/torwatch.sh" verify --env-file "$WORKSPACE/.env"
+finish_test
+
 log "TOTALS: pass=$PASS fail=$FAIL"
 [ "$FAIL" = "0" ]

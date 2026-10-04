@@ -5,7 +5,7 @@
 # the package's own compose project/volumes.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 COMMAND="${1:-}"
 case "$COMMAND" in

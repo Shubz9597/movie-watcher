@@ -1,0 +1,16 @@
+# Optional internal source for checks of the real Go /stream and SSE handlers.
+# Select with TORWATCH_VERIFY_FIXTURES=1. No ports or production routes are added.
+services:
+  stream-fixture:
+    image: caddy:2.10.0-alpine
+    command: caddy file-server --root /srv --listen :9090
+    restart: unless-stopped
+    volumes:
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/verification:/srv:ro${SELINUX_MOUNT_OPTS:-}
+    networks:
+      - gateway
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: 2
