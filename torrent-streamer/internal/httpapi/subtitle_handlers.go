@@ -194,16 +194,16 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 			Year: intParam(q, "year"), Season: intParam(q, "season"), Episode: intParam(q, "episode"),
 			Langs: langs,
 		}
-		if providerKey == "" {
-			part.err = errors.New("OpenSubtitles API key is not configured")
-		} else {
-			part.results, part.err = subtitles.FetchFromOpenSub(ctx, query, providerKey)
-		}
-		// Stremio's keyless OpenSubtitles addon covers a missing or refused
-		// key and searches that found nothing.
+		// Stremio's keyless OpenSubtitles addon first (exact episode match by
+		// IMDb id, reliable downloads); the configured key is the fallback.
+		part.results, part.err = subtitles.FetchFromStremio(ctx, query)
 		if part.err != nil || len(part.results) == 0 {
-			if fallback, err := subtitles.FetchFromStremio(ctx, query); err == nil && len(fallback) > 0 {
-				part.results, part.err = fallback, nil
+			if providerKey == "" {
+				if part.err == nil {
+					part.err = errors.New("OpenSubtitles API key is not configured")
+				}
+			} else {
+				part.results, part.err = subtitles.FetchFromOpenSub(ctx, query, providerKey)
 			}
 		}
 		if part.err == nil {

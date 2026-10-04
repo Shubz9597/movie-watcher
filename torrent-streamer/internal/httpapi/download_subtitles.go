@@ -62,16 +62,13 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	} else if q.Season > 0 || q.Episode > 0 {
 		query.Season, query.Episode = q.Season, q.Episode
 	}
-	vtt, err := "", error(downloads.ErrSubtitleNotFound)
-	if apiKey != "" {
+	// Stremio's keyless OpenSubtitles addon first: it matches episodes by
+	// IMDb id and its downloads work where the configured key's download
+	// endpoint keeps failing. The key is the fallback (and covers titles
+	// without an IMDb id).
+	vtt, err := stremioForDownload(ctx, query, q.Lang, q.VideoName)
+	if (err != nil || strings.TrimSpace(vtt) == "") && apiKey != "" {
 		vtt, err = openSubForDownload(ctx, query, apiKey, q.Lang, q.VideoName)
-	}
-	if err != nil || strings.TrimSpace(vtt) == "" {
-		// Keyless fallback: Stremio's OpenSubtitles addon finds episodes by
-		// IMDb id even when the key is refused or its download endpoint fails.
-		if fallback, fallbackErr := stremioForDownload(ctx, query, q.Lang, q.VideoName); fallbackErr == nil {
-			vtt, err = fallback, nil
-		}
 	}
 	if err != nil {
 		return nil, "", err
