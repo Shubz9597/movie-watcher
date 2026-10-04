@@ -207,14 +207,30 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 				stremioQuery.IMDBID, stremioQuery.Season, stremioQuery.Episode = imdb, season, episode
 			}
 		}
-		part.results, part.err = subtitles.FetchFromStremio(ctx, stremioQuery)
-		if part.err != nil || len(part.results) == 0 {
+		// Both catalogs, merged and ranked against the playing file below:
+		// Stremio's addon lists only a few files per language, the key's
+		// catalog is complete.
+		type openSubAnswer struct {
+			results []subtitles.SubResult
+			err     error
+		}
+		openSubCh := make(chan openSubAnswer, 1)
+		go func() {
 			if providerKey == "" {
-				if part.err == nil {
-					part.err = errors.New("OpenSubtitles API key is not configured")
-				}
-			} else {
-				part.results, part.err = subtitles.FetchFromOpenSub(ctx, query, providerKey)
+				openSubCh <- openSubAnswer{err: errors.New("OpenSubtitles API key is not configured")}
+				return
+			}
+			results, err := subtitles.FetchFromOpenSub(ctx, query, providerKey)
+			openSubCh <- openSubAnswer{results, err}
+		}()
+		stremioResults, stremioErr := subtitles.FetchFromStremio(ctx, stremioQuery)
+		openSub := <-openSubCh
+		part.results = append(append(part.results, stremioResults...), openSub.results...)
+		openSubErr := openSub.err
+		if len(part.results) == 0 {
+			part.err = openSubErr
+			if part.err == nil {
+				part.err = stremioErr
 			}
 		}
 		if part.err == nil {

@@ -21,11 +21,6 @@ import (
 // the torrent does not carry.
 type DownloadSubtitleSource struct{}
 
-// candidatesConsidered bounds release matching to the provider's best-ranked
-// results; the provider ordering (hash match, trusted, non-HI, popularity)
-// still breaks ties.
-const candidatesConsidered = 10
-
 // subtitleRetryDelays spaces retries of transient provider failures
 // (timeouts, resets, 5xx, rate limits). The provider is noticeably flaky from
 // home networks; one blip should not fail a download that asked for
@@ -78,88 +73,108 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 			}
 		}
 	}
-	vtt, err := stremioForDownload(ctx, stremioQuery, q.Lang, q.VideoName)
-	if (err != nil || strings.TrimSpace(vtt) == "") && apiKey != "" {
-		vtt, err = openSubForDownload(ctx, query, apiKey, q.Lang, q.VideoName)
+	// Both catalogs, best release match first: Stremio's addon lists only a
+	// few files per language (sometimes all CAM-era), the key's catalog is
+	// complete but its downloads fail often. Try the closest few in order.
+	var candidates []subtitles.SubResult
+	if results, err := subtitles.FetchFromStremio(ctx, stremioQuery); err == nil {
+		candidates = append(candidates, results...)
+	}
+	if apiKey != "" {
+		if results, err := subtitles.FetchFromOpenSub(ctx, query, apiKey); err == nil {
+			candidates = append(candidates, results...)
+		}
+	}
+	ranked := rankSubtitleResults(candidates, q.Lang, q.VideoName)
+	if len(ranked) == 0 {
+		return nil, "", downloads.ErrSubtitleNotFound
+	}
+	var vtt string
+	var err error
+	for _, candidate := range ranked[:min(len(ranked), downloadAttempts)] {
+		if candidate.Source == "stremio" {
+			vtt, err = subtitles.DownloadStremioSubtitle(ctx, candidate.ID)
+		} else {
+			vtt, err = subtitles.DownloadOpenSubSubtitle(ctx, candidate.ID, apiKey)
+		}
+		if err == nil && strings.TrimSpace(vtt) != "" {
+			return []byte(vtt), "vtt", nil
+		}
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	if strings.TrimSpace(vtt) == "" {
-		return nil, "", downloads.ErrSubtitleNotFound
-	}
-	return []byte(vtt), "vtt", nil
+	return nil, "", downloads.ErrSubtitleNotFound
 }
 
-func openSubForDownload(ctx context.Context, query subtitles.SearchQuery, apiKey, lang, videoName string) (string, error) {
-	results, err := subtitles.FetchFromOpenSub(ctx, query, apiKey)
-	if err != nil {
-		return "", err
-	}
-	best, ok := bestSubtitleRelease(results, lang, videoName)
-	if !ok {
-		return "", downloads.ErrSubtitleNotFound
-	}
-	return subtitles.DownloadOpenSubSubtitle(ctx, best.ID, apiKey)
+// downloadAttempts bounds how many ranked subtitles an offline download
+// tries before giving up.
+const downloadAttempts = 4
+
+// earlyReleaseTokens mark subtitles timed for CAM/TS-era copies; they drift
+// against a proper release of the same title.
+var earlyReleaseTokens = map[string]bool{
+	"cam": true, "camrip": true, "hdcam": true, "ts": true, "hdts": true, "telesync": true,
+	"tc": true, "telecine": true, "scr": true, "dvdscr": true, "screener": true, "workprint": true, "r5": true,
 }
 
-func stremioForDownload(ctx context.Context, query subtitles.SearchQuery, lang, videoName string) (string, error) {
-	results, err := subtitles.FetchFromStremio(ctx, query)
-	if err != nil {
-		return "", err
+// subtitleScore counts release tokens (group, source, resolution...) a
+// subtitle shares with the video, minus a penalty for CAM/TS-era timing when
+// the video is not such a copy.
+func subtitleScore(release, fileName string, videoTokens map[string]bool, videoEarly bool) int {
+	score, early := 0, false
+	for token := range releaseTokens(release + " " + fileName) {
+		if videoTokens[token] {
+			score++
+		}
+		if earlyReleaseTokens[token] {
+			early = true
+		}
 	}
-	best, ok := bestSubtitleRelease(results, lang, videoName)
-	if !ok {
-		return "", downloads.ErrSubtitleNotFound
+	if early && !videoEarly {
+		score -= 5
 	}
-	return subtitles.DownloadStremioSubtitle(ctx, best.ID)
+	return score
 }
 
-// bestSubtitleRelease picks the result whose release name shares the most
-// tokens with the video file (same group/source/resolution keeps timing in
-// sync). Equal scores keep the provider's ranking.
-func bestSubtitleRelease(results []subtitles.SubResult, lang, videoName string) (subtitles.SubResult, bool) {
+func hasEarlyRelease(tokens map[string]bool) bool {
+	for token := range tokens {
+		if earlyReleaseTokens[token] {
+			return true
+		}
+	}
+	return false
+}
+
+// rankSubtitleResults keeps one language's results, closest release first;
+// ties keep catalog order (Stremio's results come first).
+func rankSubtitleResults(results []subtitles.SubResult, lang, videoName string) []subtitles.SubResult {
 	videoTokens := releaseTokens(videoName)
-	var best subtitles.SubResult
-	bestScore, considered, found := -1, 0, false
+	videoEarly := hasEarlyRelease(videoTokens)
+	ranked := make([]subtitles.SubResult, 0, len(results))
 	for _, result := range results {
-		if !strings.EqualFold(result.Lang, lang) || result.ID == "" {
-			continue
-		}
-		considered++
-		if considered > candidatesConsidered {
-			break
-		}
-		score := 0
-		for token := range releaseTokens(result.Release + " " + result.FileName) {
-			if videoTokens[token] {
-				score++
-			}
-		}
-		if score > bestScore {
-			best, bestScore, found = result, score, true
+		if strings.EqualFold(result.Lang, lang) && result.ID != "" {
+			ranked = append(ranked, result)
 		}
 	}
-	return best, found
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return subtitleScore(ranked[i].Release, ranked[i].FileName, videoTokens, videoEarly) >
+			subtitleScore(ranked[j].Release, ranked[j].FileName, videoTokens, videoEarly)
+	})
+	return ranked
 }
 
-// sortTracksByRelease orders subtitle tracks by how many release tokens they
-// share with the playing video; ties keep the provider's order.
+// sortTracksByRelease orders the player's subtitle tracks the same way.
 func sortTracksByRelease(tracks []SubtitleTrack, videoName string) {
 	videoTokens := releaseTokens(videoName)
 	if len(videoTokens) == 0 {
 		return
 	}
-	score := func(track SubtitleTrack) int {
-		matched := 0
-		for token := range releaseTokens(track.Release + " " + track.FileName) {
-			if videoTokens[token] {
-				matched++
-			}
-		}
-		return matched
-	}
-	sort.SliceStable(tracks, func(i, j int) bool { return score(tracks[i]) > score(tracks[j]) })
+	videoEarly := hasEarlyRelease(videoTokens)
+	sort.SliceStable(tracks, func(i, j int) bool {
+		return subtitleScore(tracks[i].Release, tracks[i].FileName, videoTokens, videoEarly) >
+			subtitleScore(tracks[j].Release, tracks[j].FileName, videoTokens, videoEarly)
+	})
 }
 
 // magnetDisplayName returns a magnet's dn (release name), if any.
