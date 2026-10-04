@@ -397,39 +397,22 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         call.resolve()
     }
 
+    /// Fill zooms the picture until it covers the surface (the overflow is
+    /// cut off), the way VLC for iOS does "Fill to screen": libvlc's scale
+    /// factor is in device pixels per video pixel, and 0 means aspect-fit.
+    /// A crop geometry did not take effect on device, and zooming keeps
+    /// subtitles inside the visible area.
     private func applyVideoScale(_ player: VLCMediaPlayer) {
-        if videoScaleMode == "fill" {
-            if let size = surfaceView?.bounds.size, size.width > 1, size.height > 1 {
-                setCropGeometry(aspectRatioString(size), on: player)
-            }
-        } else {
-            setCropGeometry(nil, on: player) // libvlc default: aspect-fit letterbox
-        }
-    }
-
-    /// MobileVLCKit's `videoCropGeometry` is a raw `char *` property: bridge a
-    /// Swift String through a C copy that libvlc's var system takes ownership
-    /// of (var_SetString duplicates), then release our buffer immediately.
-    private func setCropGeometry(_ geometry: String?, on player: VLCMediaPlayer) {
-        guard let geometry = geometry else {
-            player.videoCropGeometry = nil
+        player.videoCropGeometry = nil
+        guard videoScaleMode == "fill" else {
+            player.scaleFactor = 0 // libvlc default: aspect-fit letterbox
             return
         }
-        geometry.withCString { pointer in
-            let copy = strdup(pointer)
-            player.videoCropGeometry = copy
-            free(copy)
-        }
-    }
-
-    /// "W:H" with the canonical reduced form libvlc expects ("16:9").
-    private func aspectRatioString(_ size: CGSize) -> String {
-        let width = Int(round(size.width * 100))
-        let height = Int(round(size.height * 100))
-        var a = width, b = height
-        while b != 0 { (a, b) = (b, a % b) }
-        let gcd = max(a, 1)
-        return "\(width / gcd):\(height / gcd)"
+        let video = player.videoSize
+        guard let surface = surfaceView, video.width > 0, video.height > 0,
+              surface.bounds.width > 1, surface.bounds.height > 1 else { return }
+        let cover = max(surface.bounds.width / video.width, surface.bounds.height / video.height)
+        player.scaleFactor = Float(cover * surface.traitCollection.displayScale)
     }
 
     /// Orientation handoff from the web layer: locks landscape the moment the
