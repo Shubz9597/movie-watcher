@@ -226,9 +226,10 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 		stremioResults, stremioErr := subtitles.FetchFromStremio(ctx, stremioQuery)
 		openSub := <-openSubCh
 		part.results = append(append(part.results, stremioResults...), openSub.results...)
-		openSubErr := openSub.err
-		if len(part.results) == 0 {
-			part.err = openSubErr
+		// An error only when neither catalog answered: Stremio answering with
+		// nothing means the title has no subtitles, not an outage.
+		if len(part.results) == 0 && stremioErr != nil {
+			part.err = openSub.err
 			if part.err == nil {
 				part.err = stremioErr
 			}

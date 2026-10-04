@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -53,7 +54,11 @@ func FetchFromStremio(ctx context.Context, query SearchQuery) ([]SubResult, erro
 	if query.Season > 0 && query.Episode > 0 {
 		path = fmt.Sprintf("/subtitles/series/%s:%d:%d.json", url.PathEscape(imdb), query.Season, query.Episode)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(stremioSubtitlesBase, "/")+path, nil)
+	base := stremioSubtitlesBase
+	if override := os.Getenv("TORWATCH_STREMIO_SUBTITLES_URL"); override != "" {
+		base = override
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
 	if err != nil {
 		return nil, err
 	}

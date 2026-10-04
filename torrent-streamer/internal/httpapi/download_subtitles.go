@@ -77,9 +77,8 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	// few files per language (sometimes all CAM-era), the key's catalog is
 	// complete but its downloads fail often. Try the closest few in order.
 	var candidates []subtitles.SubResult
-	if results, err := subtitles.FetchFromStremio(ctx, stremioQuery); err == nil {
-		candidates = append(candidates, results...)
-	}
+	results, stremioErr := subtitles.FetchFromStremio(ctx, stremioQuery)
+	candidates = append(candidates, results...)
 	if apiKey != "" {
 		if results, err := subtitles.FetchFromOpenSub(ctx, query, apiKey); err == nil {
 			candidates = append(candidates, results...)
@@ -87,6 +86,11 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	}
 	ranked := rankSubtitleResults(candidates, q.Lang, q.VideoName)
 	if len(ranked) == 0 {
+		// Stremio failing (timeout, outage) is retried; Stremio answering
+		// with nothing, or having no IMDb id to search, is final.
+		if stremioErr != nil && !errors.Is(stremioErr, subtitles.ErrNoIMDbID) {
+			return nil, "", stremioErr
+		}
 		return nil, "", downloads.ErrSubtitleNotFound
 	}
 	var vtt string
