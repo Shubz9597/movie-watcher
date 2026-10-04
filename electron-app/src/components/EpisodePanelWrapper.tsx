@@ -538,6 +538,7 @@ export default function EpisodePanel({
             season: episodeSeason,
             episode: episode.episodeNumber,
             absolute: episode.absoluteNumber ?? episode.episodeNumber,
+            ...packFileHints,
           });
           reusedPack = {
             title: savedPack.title,
@@ -659,6 +660,7 @@ export default function EpisodePanel({
           season: activeEpisode.seasonNumber ?? selectedSeason,
           episode: activeEpisode.episodeNumber,
           absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
+          ...packFileHints,
         });
         fileIndex = resolved.fileIndex;
         console.log('[EpisodePanel] Resolved file index:', fileIndex, 'for', resolved.fileName);
@@ -779,6 +781,7 @@ export default function EpisodePanel({
           season: activeEpisode.seasonNumber ?? selectedSeason,
           episode: activeEpisode.episodeNumber,
           absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
+          ...packFileHints,
         });
         fileIndex = resolved.fileIndex;
       }
@@ -855,6 +858,8 @@ export default function EpisodePanel({
 
   // Batch torrents carry other episodes too: any released episode of the
   // season can be queued as a range ("from E3 to E12").
+  // Lets the pack matcher skip sibling shows in franchise collections.
+  const packFileHints = { titles: [title, ...(titleAliases || [])].filter(Boolean), anime: kind === 'anime' };
   const batchEpisodes = (): EpisodeSummary[] => episodes.filter(isEpisodeAvailableForContinuation);
 
   const batchRangeFor = (torrent: TorrentRow): BatchRange | null => {
@@ -883,6 +888,11 @@ export default function EpisodePanel({
     const selections: DownloadSelection[] = [];
     const missing: number[] = [];
     for (const episode of targets) {
+      // Torrentio named the searched episode's file; the matcher finds the rest.
+      if (torrent.fileIndex != null && episode.id === activeEpisode?.id) {
+        selections.push(selectionForEpisode(torrent, episode, null));
+        continue;
+      }
       const file = pickEpisodeFile(files, episodeTarget(episode));
       if (file) selections.push(selectionForEpisode(torrent, episode, file));
       else missing.push(episode.episodeNumber);
@@ -894,6 +904,7 @@ export default function EpisodePanel({
     season: episode.seasonNumber ?? selectedSeason,
     episode: episode.episodeNumber,
     absolute: episode.absoluteNumber ?? episode.episodeNumber,
+    ...packFileHints,
   });
 
   const downloadSelectionForEpisode = async (torrent: TorrentRow, activeEpisode: EpisodeSummary): Promise<DownloadSelection> => {

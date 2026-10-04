@@ -39,7 +39,9 @@ type TorrentSourceParams = {
   cat?: string;
 };
 
-type EpisodeTarget = { season?: number; episode?: number; absolute?: number };
+// titles name the show so franchise collections skip its siblings' files;
+// anime packs number episodes absolutely, so their season folders are ignored.
+type EpisodeTarget = { season?: number; episode?: number; absolute?: number; titles?: string[]; anime?: boolean };
 
 export type ResolvedEpisodeFile = {
   fileIndex: number;
@@ -107,11 +109,11 @@ export function pickEpisodeFile(files: TorrentFileEntry[], target: EpisodeTarget
 }
 
 export async function resolveTorrentFile(params: TorrentSourceParams & EpisodeTarget): Promise<ResolvedEpisodeFile> {
-  const { season, episode, absolute } = params;
+  const { season, episode, absolute, titles, anime } = params;
   if (episode == null && absolute == null) {
     throw new Error('episode or absolute number is required');
   }
-  const pick = pickEpisodeFile(await listTorrentFiles(params), { season, episode, absolute });
+  const pick = pickEpisodeFile(await listTorrentFiles(params), { season, episode, absolute, titles, anime });
   if (!pick) {
     throw new Error('No matching file for requested episode');
   }

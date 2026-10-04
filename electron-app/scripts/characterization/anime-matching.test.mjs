@@ -121,3 +121,54 @@ test("pickFileIndexForEpisode reads dot-separated episode numbers in packs", () 
   assert.equal(pickFileIndexForEpisode(files, { season: 1, episode: 99, absolute: 99 }).matched, false);
   assert.equal(matchesEpisode("Show/Season 1/05.mkv", undefined, 5), true);
 });
+
+// Real pack layouts that broke the matcher, checked against Torrentio's own
+// per-episode file mapping (615/615 across 44 packs after the fix).
+test("pickFileIndexForEpisode reads the episode from the file name, not the folder", () => {
+  const range = [1, 2, 3].map((n) => ({ index: n, name: `Better.Call.Saul.S02E01-10.1080p.NF.WEB-DL/Better.Call.Saul.S02E0${n}.Title.1080p.mkv`, length: 1e9 + n }));
+  assert.equal(pickFileIndexForEpisode(range, { season: 2, episode: 2 }).index, 2, "a S02E01-10 folder does not vouch for every file");
+  const dotted = [1, 2].map((n) => ({ index: n, name: `Show.S02.1080p/Show.S02E0${n}.1080p.BluRay.x264.mkv`, length: 1e9 + (2 - n) }));
+  assert.equal(pickFileIndexForEpisode(dotted, { season: 2, episode: 2 }).index, 2, "S02E01.1080p is not a range up to 1080");
+  const titled = [
+    { index: 0, name: "Show - S05E02 - 50% Off.mkv", length: 2e9 },
+    { index: 1, name: "Show - S05E04 - Namaste.mkv", length: 1e9 },
+  ];
+  assert.equal(pickFileIndexForEpisode(titled, { season: 5, episode: 4 }).index, 1, "a title starting with a number is not a range");
+});
+
+test("pickFileIndexForEpisode honors episode markers and season folders", () => {
+  const files = [1, 2, 3].map((n) => ({ index: n, name: `Show - Season 2 1080p WEBRip/E0${n} Name.mp4`, length: 1e9 }));
+  assert.equal(pickFileIndexForEpisode(files, { season: 2, episode: 3 }).index, 3);
+  const seasons = [
+    { index: 0, name: "Show/Season 1/03.mkv", length: 2e9 },
+    { index: 1, name: "Show/Season 2/03.mkv", length: 1e9 },
+  ];
+  assert.equal(pickFileIndexForEpisode(seasons, { season: 2, episode: 3 }).index, 1, "TV season folders must agree");
+});
+
+test("pickFileIndexForEpisode ignores numbers inside episode titles", () => {
+  const files = [
+    { index: 0, name: "Dragon Ball Kai - S01E20 - Vegeta, Burning With Ambition.mkv", length: 1e9 },
+    { index: 1, name: "Dragon Ball Kai - S01E62 - Piccolo's Assault! Android 20 and the Twisted Future!.mkv", length: 2e9 },
+    { index: 2, name: "Dragonball Z Kai 62 Piccolo's Assault! Android 20.mkv", length: 2e9 },
+    { index: 3, name: "Dragonball Z Kai 20 The Rebellion Against Frieza.mkv", length: 1e9 },
+  ];
+  assert.equal(pickFileIndexForEpisode(files.slice(0, 2), { season: 1, episode: 20, absolute: 20, anime: true }).index, 0);
+  assert.equal(pickFileIndexForEpisode(files.slice(2), { season: 1, episode: 20, absolute: 20, anime: true }).index, 3);
+  const special = [
+    { index: 0, name: "Kai/Season 1/Dragon Ball Kai - S01E28 - The Ginyu Special Force Has Arrived!.mkv", length: 1e9 },
+    { index: 1, name: "Kai/Season 2/Dragon Ball Kai - S02E28 - Super Saiyan 3!!.mkv", length: 2e9 },
+  ];
+  assert.equal(pickFileIndexForEpisode(special, { season: 1, episode: 28, absolute: 28, anime: true }).index, 0, "\"Special Force\" is an episode, not an extra");
+});
+
+test("pickFileIndexForEpisode keeps to the requested show inside a franchise collection", () => {
+  const files = [
+    { index: 0, name: "DB/Dragon Ball GT [DVDRip]/[RH] Dragon Ball GT - 03 [D8016271].mkv", length: 9e8 },
+    { index: 1, name: "DB/Dragon Ball Super/Season 1/Dragon Ball Super - S01E03 - King Kai's Planet.mkv", length: 2e9 },
+    { index: 2, name: "DB/Dragon Ball Kai/Season 1 (Saiyan Saga)/[AnimeRG] Dragon Ball KAI - 003 [1080p].mkv", length: 3e8 },
+    { index: 3, name: "DB/Movies/Dragon Ball Z/Dragon Ball Z - 03 - The Tree of Might.mkv", length: 3e9 },
+  ];
+  const picked = pickFileIndexForEpisode(files, { season: 1, episode: 3, absolute: 3, anime: true, titles: ["Dragon Ball Kai"] });
+  assert.equal(picked.index, 2);
+});

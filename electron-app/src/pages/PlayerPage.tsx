@@ -263,6 +263,7 @@ export default function PlayerPage({ navigate, params }: Props) {
             const resolved = await resolveTorrentFile({
               magnetUri: magnet, cat, season: Number(season), episode: Number(episode),
               absolute: absoluteEpisode ? Number(absoluteEpisode) : Number(episode),
+              titles: playbackTitle ? [playbackTitle] : [], anime: cat === 'anime',
             });
             resolvedFileIndex = resolved.fileIndex;
           } catch (error) {
