@@ -28,6 +28,10 @@ var (
 	stremioURLs   = map[string]stremioURL{}
 )
 
+// stremioUserAgent identifies TorWatch: Cloudflare-fronted services answer
+// Go's default "Go-http-client" agent with 403.
+const stremioUserAgent = "TorWatch/1.0"
+
 type stremioURL struct {
 	url     string
 	expires time.Time
@@ -54,6 +58,7 @@ func FetchFromStremio(ctx context.Context, query SearchQuery) ([]SubResult, erro
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", stremioUserAgent)
 	resp, err := stremioHTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("stremio subtitles: %w", err)
@@ -138,6 +143,7 @@ func DownloadStremioSubtitle(ctx context.Context, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", stremioUserAgent)
 	resp, err := stremioHTTP.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("stremio subtitle download: %w", err)

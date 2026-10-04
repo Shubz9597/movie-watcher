@@ -123,3 +123,18 @@ func TestPublicTrackerRejectsHomeNetwork(t *testing.T) {
 		}
 	}
 }
+
+func TestTorrentioSendsUserAgent(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") != userAgent {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write([]byte(`{"streams":[]}`))
+	}))
+	defer server.Close()
+	if _, err := (&Torrentio{BaseURL: server.URL, HTTP: server.Client()}).Releases(context.Background(), Request{Kind: KindMovie, Title: "x", IMDBID: "tt0468569"}); err != nil {
+		t.Fatalf("Releases with the TorWatch agent = %v", err)
+	}
+}

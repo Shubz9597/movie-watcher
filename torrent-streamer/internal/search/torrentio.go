@@ -36,6 +36,10 @@ type kitsuEntry struct {
 
 const torrentioTimeout = 8 * time.Second
 
+// userAgent identifies TorWatch: Torrentio's Cloudflare front answers Go's
+// default "Go-http-client" agent with 403.
+const userAgent = "TorWatch/1.0"
+
 var (
 	torrentioSeeders = regexp.MustCompile(`👤\s*(\d+)`)
 	torrentioSize    = regexp.MustCompile(`💾\s*([\d.]+)\s*(TB|GB|MB|KB)`)
@@ -99,6 +103,7 @@ func (t *Torrentio) kitsuID(ctx context.Context, anilistID int) int {
 	if err != nil {
 		return 0
 	}
+	req.Header.Set("User-Agent", userAgent)
 	client := t.HTTP
 	if client == nil {
 		client = http.DefaultClient
@@ -159,6 +164,7 @@ func (t *Torrentio) Releases(ctx context.Context, request Request) ([]prowlarrRe
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", userAgent)
 	client := t.HTTP
 	if client == nil {
 		client = http.DefaultClient

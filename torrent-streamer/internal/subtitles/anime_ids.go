@@ -76,6 +76,7 @@ func fetchAnimeMapping(ctx context.Context, param string) (animeMapping, error) 
 	if err != nil {
 		return animeMapping{}, err
 	}
+	req.Header.Set("User-Agent", stremioUserAgent)
 	resp, err := stremioHTTP.Do(req)
 	if err != nil {
 		return animeMapping{}, err
