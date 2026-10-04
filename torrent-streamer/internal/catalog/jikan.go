@@ -59,6 +59,9 @@ type jikanAnime struct {
 
 func (p *Jikan) Search(ctx context.Context, query SearchQuery) ([]Title, error) {
 	limit := query.Limit
+	if limit > 25 {
+		limit = 25
+	}
 	if limit <= 0 {
 		limit = 24
 	}
@@ -172,4 +175,8 @@ func (p *Jikan) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode
 		})
 	}
 	return episodes, nil
+}
+
+func (p *Jikan) SupportsSearchType(kind TitleType) bool {
+	return kind == "" || kind == "all" || kind == TypeAnime
 }

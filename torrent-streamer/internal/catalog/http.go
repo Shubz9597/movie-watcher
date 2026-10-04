@@ -8,11 +8,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var errProviderUnavailable = errors.New("catalog: provider unavailable")
+
+type rateLimitError struct{ retryAfter time.Duration }
+
+func (e *rateLimitError) Error() string { return ErrRateLimited.Error() }
+func (e *rateLimitError) Unwrap() error { return ErrRateLimited }
+
+type providerStatusError struct {
+	code    int
+	message string
+}
+
+func (e *providerStatusError) Error() string { return e.message }
+
+func retryAfter(value string) time.Duration {
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		return max(time.Until(at), 0)
+	}
+	return 0
+}
 
 // fetchJSON performs one provider HTTP call, mapping status codes to catalog
 // errors: 404 → ErrNotFound, 429 → ErrRateLimited, other 4xx/5xx → transport
@@ -42,6 +65,10 @@ func doProviderRequest(ctx context.Context, client *http.Client, newRequest func
 	// One bounded retry for transient failures. ErrNotFound/ErrRateLimited
 	// are authoritative answers and are returned as-is.
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrRateLimited) {
+		return err
+	}
+	var status *providerStatusError
+	if errors.As(err, &status) && status.code < 500 {
 		return err
 	}
 	select {
@@ -75,11 +102,11 @@ func doProviderRequestOnce(ctx context.Context, client *http.Client, newRequest 
 		return ErrNotFound
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return ErrRateLimited
+		return &rateLimitError{retryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("provider status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return &providerStatusError{code: resp.StatusCode, message: fmt.Sprintf("provider status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
 	}
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, 8<<20))
 	if err := decoder.Decode(target); err != nil {

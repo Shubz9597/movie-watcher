@@ -3,10 +3,15 @@ package catalog
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrNotFound reports that a provider knows nothing about a requested id
@@ -46,6 +51,11 @@ type Provider interface {
 type SearchProvider interface {
 	Provider
 	Search(ctx context.Context, query SearchQuery) ([]Title, error)
+}
+
+// TypedSearchProvider can skip upstreams that cannot contribute to this type.
+type TypedSearchProvider interface {
+	SupportsSearchType(TitleType) bool
 }
 
 type DetailProvider interface {
@@ -89,6 +99,10 @@ type NamedGenreSectionProvider interface {
 type Options struct {
 	// ProviderTimeout bounds each single provider call (default 8s).
 	ProviderTimeout time.Duration
+	// RequestTimeout bounds the complete catalog operation (default 3s).
+	RequestTimeout time.Duration
+	// FailureTTL prevents repeated calls to an unavailable upstream (default 30s).
+	FailureTTL time.Duration
 	// CacheTTL bounds fresh-cache age per provider key (default 10m).
 	CacheTTL time.Duration
 	// CacheMaxEntries bounds the in-memory cache (default 512).
@@ -102,6 +116,12 @@ type Options struct {
 func (o Options) withDefaults() Options {
 	if o.ProviderTimeout <= 0 {
 		o.ProviderTimeout = 8 * time.Second
+	}
+	if o.RequestTimeout <= 0 {
+		o.RequestTimeout = 3 * time.Second
+	}
+	if o.FailureTTL <= 0 {
+		o.FailureTTL = 30 * time.Second
 	}
 	if o.CacheTTL <= 0 {
 		o.CacheTTL = 10 * time.Minute
@@ -125,16 +145,32 @@ type Service struct {
 	options   Options
 	cache     *Cache
 	providers []Provider
+	failures  *Cache
+	flights   singleflight.Group
+	slots     chan struct{}
+	workMu    sync.Mutex
+	work      sync.WaitGroup
+	closed    bool
+	nextWork  uint64
+	cancels   map[uint64]context.CancelFunc
 }
 
 // NewService builds the service over the given providers, which are in fixed
 // configuration-declared priority order (highest priority first).
 func NewService(providers []Provider, options Options) *Service {
-	return &Service{options: options.withDefaults(), cache: NewCache(options.CacheMaxEntries), providers: providers}
+	options = options.withDefaults()
+	return &Service{
+		options:   options,
+		cache:     NewCache(options.CacheMaxEntries),
+		providers: slices.Clone(providers),
+		failures:  NewCache(options.CacheMaxEntries),
+		slots:     make(chan struct{}, 8),
+		cancels:   make(map[uint64]context.CancelFunc),
+	}
 }
 
 // Providers exposes the registry in priority order (diagnostics/tests).
-func (s *Service) Providers() []Provider { return s.providers }
+func (s *Service) Providers() []Provider { return slices.Clone(s.providers) }
 
 // SearchResult is the degraded-aware unified search outcome.
 type SearchResult struct {
@@ -145,36 +181,39 @@ type SearchResult struct {
 
 // Search runs every search-capable provider and merges deterministically.
 func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
+	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
+	defer cancel()
 	if query.Limit <= 0 || query.Limit > s.options.SearchLimit {
 		query.Limit = s.options.SearchLimit
 	}
-	groups := make([][]Title, 0, len(s.providers))
-	degraded := []string{}
-	cachedAt := map[string]time.Time{}
-	for _, provider := range s.providers {
+	key := searchCacheKey(query)
+	replies := parallelReplies(len(s.providers), func(i int) providerReply {
+		provider := s.providers[i]
 		searcher, ok := provider.(SearchProvider)
 		if !ok {
-			continue
+			return providerReply{}
 		}
-		if cached, state, ok := s.cache.Get(provider.Name(), searchCacheKey(query)); ok && state == cacheStateFresh {
-			groups = append(groups, filterByType(cached.([]Title), query.Type))
-			continue
+		if typed, ok := provider.(TypedSearchProvider); ok && !typed.SupportsSearchType(query.Type) {
+			return providerReply{}
 		}
-		titles, err := callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, error) {
-			return searcher.Search(ctx, query)
-		})
-		if err != nil {
-			degraded = append(degraded, provider.Name())
-			if stale, state, ok := s.cache.Get(provider.Name(), searchCacheKey(query)); ok && state == cacheStateStale {
-				groups = append(groups, stale.([]Title))
-				if at, ok := s.cache.FetchedAt(provider.Name(), searchCacheKey(query)); ok {
-					cachedAt[provider.Name()] = at
-				}
+		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
+	})
+	groups := make([][]Title, 0, len(replies))
+	degraded := []string{}
+	cachedAt := map[string]time.Time{}
+	for i, reply := range replies {
+		provider := s.providers[i].Name()
+		if reply.stale || (reply.err != nil && !errors.Is(reply.err, ErrNotFound)) {
+			degraded = append(degraded, provider)
+		}
+		if titles, ok := reply.value.([]Title); ok {
+			groups = append(groups, filterByType(titles, query.Type))
+		}
+		if reply.stale {
+			if at, ok := s.cache.FetchedAt(provider, key); ok {
+				cachedAt[provider] = at
 			}
-			continue
 		}
-		s.cache.Set(provider.Name(), searchCacheKey(query), titles, s.options.CacheTTL)
-		groups = append(groups, filterByType(titles, query.Type))
 	}
 	sort.Strings(degraded)
 	titles := MergeTitles(groups)
@@ -212,99 +251,83 @@ type DetailResult struct {
 
 // Detail resolves merged metadata for one opaque title id. Provider cross
 // links (e.g. an AniList id revealing the MAL id) accumulate across providers
-// and not-found providers are retried once with the enriched id set.
+// and not-found providers are retried when the known id set expands.
 func (s *Service) Detail(ctx context.Context, id string) DetailResult {
+	if _, _, err := ParseTitleID(id); err != nil {
+		return DetailResult{NotFound: true}
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
+	defer cancel()
+	if cached, state, ok := s.cache.Get("merged", "detail:"+id); ok {
+		result := cached.(DetailResult)
+		if state == cacheStateStale && ctx.Err() == nil {
+			s.refreshDetail(ctx, id)
+		}
+		return result
+	}
+	result := s.computeDetail(ctx, id)
+	s.rememberDetail(id, result)
+	return result
+}
+
+func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 	providerName, externalID, err := ParseTitleID(id)
 	if err != nil {
 		return DetailResult{NotFound: true}
 	}
 	ids := map[string]string{providerName: externalID}
-	degraded := []string{}
-	notFound := true
-	var merged Title
-	var retryable []DetailProvider
-	idsAtAttempt := map[string]int{}
-
-	for _, provider := range s.providers {
-		detailer, ok := provider.(DetailProvider)
-		if !ok {
-			continue
-		}
-		title, err := s.detailFromProvider(ctx, detailer, ids, id)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				retryable = append(retryable, detailer)
-				idsAtAttempt[detailer.Name()] = len(ids)
-				continue
+	replies := make([]providerReply, len(s.providers))
+	attempted := make([]string, len(s.providers))
+	// Later rounds retry only providers that lacked an id, once another provider
+	// has discovered a cross-link. Merge order remains registry priority.
+	for round := 0; round < len(s.providers); round++ {
+		snapshot := maps.Clone(ids)
+		key := "detail:" + episodeIDsKey(snapshot, 0)
+		next := parallelReplies(len(s.providers), func(i int) providerReply {
+			detailer, ok := s.providers[i].(DetailProvider)
+			if !ok || attempted[i] == key || (attempted[i] != "" && !errors.Is(replies[i].err, ErrNotFound)) {
+				return replies[i]
 			}
-			degraded = append(degraded, provider.Name())
-			if stale, state, ok := s.cache.Get(provider.Name(), "detail:"+id); ok && state == cacheStateStale {
-				notFound = false
-				staleTitle := stale.(Title)
-				if merged.ID == "" {
-					merged = staleTitle
-				} else {
-					mergeTitle(&merged, staleTitle)
+			attempted[i] = key
+			return s.fetchCached(ctx, detailer.Name(), key, func(callCtx context.Context) (any, error) {
+				return detailer.Detail(callCtx, DetailRequest{ProviderIDs: maps.Clone(snapshot)})
+			})
+		})
+		replies = next
+		for _, reply := range replies {
+			if title, ok := reply.value.(Title); ok && reply.err == nil {
+				for namespace, value := range title.ProviderIDs {
+					if _, exists := ids[namespace]; !exists {
+						ids[namespace] = value
+					}
 				}
 			}
-			continue
 		}
-		notFound = false
-		if merged.ID == "" {
-			merged = title
-		} else {
-			mergeTitle(&merged, title)
+		if maps.Equal(snapshot, ids) || ctx.Err() != nil {
+			break
 		}
 	}
-
-	// Retry providers that reported not-found with the enriched id set.
-	for _, detailer := range retryable {
-		if len(ids) <= idsAtAttempt[detailer.Name()] {
-			continue
+	degraded := []string{}
+	var merged Title
+	found := false
+	for i, reply := range replies {
+		if reply.stale || (reply.err != nil && !errors.Is(reply.err, ErrNotFound)) {
+			degraded = append(degraded, s.providers[i].Name())
 		}
-		title, err := s.detailFromProvider(ctx, detailer, ids, id)
-		if err != nil {
-			continue
-		}
-		notFound = false
-		if merged.ID == "" {
-			merged = title
-		} else {
-			mergeTitle(&merged, title)
+		if title, ok := reply.value.(Title); ok && reply.err == nil {
+			if !found {
+				merged = title
+				found = true
+			} else {
+				mergeTitle(&merged, title)
+			}
 		}
 	}
-	if merged.ID == "" && !notFound {
+	if found && merged.ID == "" {
 		merged.ID = id
 	}
-	if merged.ID != "" {
-		notFound = false
-	}
 	sort.Strings(degraded)
-	return DetailResult{Title: merged, Found: merged.ID != "", NotFound: notFound && len(degraded) == 0, DegradedProviders: degraded}
-}
-
-func (s *Service) detailFromProvider(ctx context.Context, detailer DetailProvider, ids map[string]string, id string) (Title, error) {
-	// Detail used to populate this cache but never read it. Episodes also
-	// resolves detail, so revisits unnecessarily repeated every upstream call.
-	var title Title
-	if cached, state, ok := s.cache.Get(detailer.Name(), "detail:"+id); ok && state == cacheStateFresh {
-		title = cached.(Title)
-	} else {
-		var err error
-		title, err = callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) (Title, error) {
-			return detailer.Detail(ctx, DetailRequest{ProviderIDs: ids})
-		})
-		if err != nil {
-			return Title{}, err
-		}
-		s.cache.Set(detailer.Name(), "detail:"+id, title, s.options.CacheTTL)
-	}
-	for namespace, value := range title.ProviderIDs {
-		if _, ok := ids[namespace]; !ok {
-			ids[namespace] = value
-		}
-	}
-	return title, nil
+	return DetailResult{Title: merged, Found: found, NotFound: !found && len(degraded) == 0, DegradedProviders: degraded}
 }
 
 // EpisodeResult is the degraded-aware episode-list outcome.
@@ -314,53 +337,64 @@ type EpisodeResult struct {
 }
 
 // Episodes resolves the merged episode list for one title id and season,
-// enriching the id set via a detail resolution first so cross-linked
+// enriching the id set concurrently via detail resolution so cross-linked
 // providers (AniZip via AniList ids, Cinemeta via IMDb ids) can contribute.
 func (s *Service) Episodes(ctx context.Context, id string, season int) EpisodeResult {
+	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
+	defer cancel()
 	providerName, externalID, err := ParseTitleID(id)
 	if err != nil {
 		return EpisodeResult{Episodes: []Episode{}}
 	}
-	detail := s.Detail(ctx, id)
 	ids := map[string]string{providerName: externalID}
+	// Fetch episodes from already known ids while detail discovers cross-links.
+	// Useful initial episodes survive a metadata provider exhausting the budget.
+	var detail DetailResult
+	var initial EpisodeResult
+	var workers sync.WaitGroup
+	workers.Go(func() { detail = s.Detail(ctx, id) })
+	workers.Go(func() { initial = s.EpisodesWithIDs(ctx, ids, season, id) })
+	workers.Wait()
+	enriched := maps.Clone(ids)
 	if detail.Found {
 		for namespace, value := range detail.Title.ProviderIDs {
-			if _, ok := ids[namespace]; !ok {
-				ids[namespace] = value
+			if _, exists := enriched[namespace]; !exists {
+				enriched[namespace] = value
 			}
 		}
 	}
-	return s.EpisodesWithIDs(ctx, ids, season, id)
+	if maps.Equal(ids, enriched) || ctx.Err() != nil {
+		return initial
+	}
+	result := s.EpisodesWithIDs(ctx, enriched, season, id)
+	result.Episodes = MergeEpisodes([][]Episode{result.Episodes, initial.Episodes})
+	return result
 }
 
 // EpisodesWithIDs merges episode lists over the given provider id set.
 func (s *Service) EpisodesWithIDs(ctx context.Context, providerIDs map[string]string, season int, titleID string) EpisodeResult {
-	request := EpisodeRequest{ProviderIDs: providerIDs, Season: season}
-	// Cache keys for this merged-id set: canonical key is the sorted id set.
+	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
+	defer cancel()
+	providerIDs = maps.Clone(providerIDs)
 	canonical := episodeIDsKey(providerIDs, season)
-	groups := make([][]Episode, 0, len(s.providers))
-	degraded := []string{}
-	for _, provider := range s.providers {
-		episodeProvider, ok := provider.(EpisodeProvider)
+	replies := parallelReplies(len(s.providers), func(i int) providerReply {
+		provider, ok := s.providers[i].(EpisodeProvider)
 		if !ok {
-			continue
+			return providerReply{}
 		}
-		if cached, state, ok := s.cache.Get(provider.Name(), canonical); ok && state == cacheStateFresh {
-			groups = append(groups, cached.([]Episode))
-			continue
-		}
-		episodes, err := callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Episode, error) {
-			return episodeProvider.Episodes(ctx, request)
+		return s.fetchCached(ctx, provider.Name(), canonical, func(callCtx context.Context) (any, error) {
+			return provider.Episodes(callCtx, EpisodeRequest{ProviderIDs: maps.Clone(providerIDs), Season: season})
 		})
-		if err != nil {
-			degraded = append(degraded, provider.Name())
-			if stale, state, ok := s.cache.Get(provider.Name(), canonical); ok && state == cacheStateStale {
-				groups = append(groups, stale.([]Episode))
-			}
-			continue
+	})
+	groups := make([][]Episode, 0, len(replies))
+	degraded := []string{}
+	for i, reply := range replies {
+		if reply.stale || (reply.err != nil && !errors.Is(reply.err, ErrNotFound)) {
+			degraded = append(degraded, s.providers[i].Name())
 		}
-		s.cache.Set(provider.Name(), canonical, episodes, s.options.CacheTTL)
-		groups = append(groups, episodes)
+		if episodes, ok := reply.value.([]Episode); ok {
+			groups = append(groups, episodes)
+		}
 	}
 	sort.Strings(degraded)
 	merged := MergeEpisodes(groups)
@@ -434,103 +468,72 @@ func (s *Service) Section(ctx context.Context, kind string) SectionResult {
 // same deterministic title merge as Search; cachedAt/totalPages aggregate
 // deterministically over contributing providers.
 func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionResult {
-	page := query.Page
-	if page < 1 {
-		page = 1
-	}
+	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
+	defer cancel()
+	page := max(query.Page, 1)
 	cacheKey := "section:" + query.Kind + "\x00g" + strconv.Itoa(query.GenreID) + "\x00n" + query.Genre + "\x00t" + string(query.Type) + "\x00p" + strconv.Itoa(page)
-	groups := make([][]Title, 0, len(s.providers))
+	replies := parallelReplies(len(s.providers), func(i int) providerReply {
+		provider := s.providers[i]
+		var fetch func(context.Context) (any, error)
+		switch {
+		case query.Genre != "":
+			source, ok := provider.(NamedGenreSectionProvider)
+			if !ok {
+				return providerReply{}
+			}
+			fetch = func(ctx context.Context) (any, error) {
+				titles, total, err := source.NamedGenreSection(ctx, query.Genre, page)
+				return sectionCacheEntry{Titles: titles, TotalPages: total}, err
+			}
+		case query.GenreID > 0:
+			source, ok := provider.(GenreSectionProvider)
+			if !ok {
+				return providerReply{}
+			}
+			fetch = func(ctx context.Context) (any, error) {
+				titles, total, err := source.GenreSection(ctx, query.Type, query.GenreID, page)
+				return sectionCacheEntry{Titles: titles, TotalPages: total}, err
+			}
+		case page > 1:
+			source, ok := provider.(PageableSectionProvider)
+			if !ok {
+				return providerReply{}
+			}
+			fetch = func(ctx context.Context) (any, error) {
+				titles, total, err := source.SectionPage(ctx, query.Kind, page)
+				return sectionCacheEntry{Titles: titles, TotalPages: total}, err
+			}
+		default:
+			source, ok := provider.(SectionProvider)
+			if !ok {
+				return providerReply{}
+			}
+			fetch = func(ctx context.Context) (any, error) {
+				titles, err := source.Section(ctx, query.Kind)
+				return sectionCacheEntry{Titles: titles}, err
+			}
+		}
+		return s.fetchCached(ctx, provider.Name(), cacheKey, fetch)
+	})
+	groups := make([][]Title, 0, len(replies))
 	degraded := []string{}
 	cachedAt := map[string]time.Time{}
 	totalPages := 0
-	for _, provider := range s.providers {
-		var titles []Title
-		var providerTotal int
-		var err error
-		if query.Genre != "" {
-			genreProvider, ok := provider.(NamedGenreSectionProvider)
-			if !ok {
-				continue
-			}
-			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				if entry, valid := asSectionCacheEntry(cached); valid {
-					groups = append(groups, entry.Titles)
-					totalPages = max(totalPages, entry.TotalPages)
-					continue
-				}
-			}
-			titles, providerTotal, err = callProviderPaged(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, int, error) {
-				return genreProvider.NamedGenreSection(ctx, query.Genre, page)
-			})
-		} else if query.GenreID > 0 {
-			genreProvider, ok := provider.(GenreSectionProvider)
-			if !ok {
-				continue
-			}
-			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				if entry, valid := asSectionCacheEntry(cached); valid {
-					groups = append(groups, entry.Titles)
-					totalPages = max(totalPages, entry.TotalPages)
-					continue
-				}
-			}
-			titles, providerTotal, err = callProviderPaged(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, int, error) {
-				return genreProvider.GenreSection(ctx, query.Type, query.GenreID, page)
-			})
-		} else if page > 1 {
-			paged, ok := provider.(PageableSectionProvider)
-			if !ok {
-				continue
-			}
-			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				if entry, valid := asSectionCacheEntry(cached); valid {
-					groups = append(groups, entry.Titles)
-					totalPages = max(totalPages, entry.TotalPages)
-					continue
-				}
-			}
-			titles, providerTotal, err = callProviderPaged(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, int, error) {
-				return paged.SectionPage(ctx, query.Kind, page)
-			})
-		} else {
-			sectionProvider, ok := provider.(SectionProvider)
-			if !ok {
-				continue
-			}
-			if cached, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateFresh {
-				if entry, valid := asSectionCacheEntry(cached); valid {
-					groups = append(groups, entry.Titles)
-					totalPages = max(totalPages, entry.TotalPages)
-					if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
-						cachedAt[provider.Name()] = at
-					}
-					continue
-				}
-			}
-			titles, err = callProvider(ctx, s.options.ProviderTimeout, func(ctx context.Context) ([]Title, error) {
-				return sectionProvider.Section(ctx, query.Kind)
-			})
+	for i, reply := range replies {
+		provider := s.providers[i].Name()
+		if reply.stale || (reply.err != nil && !errors.Is(reply.err, ErrNotFound)) {
+			degraded = append(degraded, provider)
 		}
-		if err != nil {
-			degraded = append(degraded, provider.Name())
-			if stale, state, ok := s.cache.Get(provider.Name(), cacheKey); ok && state == cacheStateStale {
-				if entry, valid := asSectionCacheEntry(stale); valid {
-					groups = append(groups, entry.Titles)
-					totalPages = max(totalPages, entry.TotalPages)
-					if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
-						cachedAt[provider.Name()] = at
-					}
-				}
+		if reply.err == nil {
+			if entry, ok := asSectionCacheEntry(reply.value); ok {
+				groups = append(groups, entry.Titles)
+				totalPages = max(totalPages, entry.TotalPages)
 			}
-			continue
 		}
-		s.cache.Set(provider.Name(), cacheKey, sectionCacheEntry{Titles: titles, TotalPages: providerTotal}, s.options.CacheTTL)
-		groups = append(groups, titles)
-		if providerTotal > totalPages {
-			totalPages = providerTotal
-		}
-		if at, ok := s.cache.FetchedAt(provider.Name(), cacheKey); ok {
-			cachedAt[provider.Name()] = at
+		if reply.value != nil {
+			if at, ok := s.cache.FetchedAt(provider, cacheKey); ok {
+				cachedAt[provider] = at
+			}
 		}
 	}
 	merged := MergeTitles(groups)
@@ -540,18 +543,4 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 	}
 	sort.Strings(degraded)
 	return SectionResult{SectionID: query.Kind, Kind: query.Kind, Page: page, TotalPages: totalPages, TitleIDs: ids, Titles: merged, DegradedProviders: degraded, CachedAt: cachedAt}
-}
-
-// callProvider bounds one provider call with the configured timeout.
-func callProvider[T any](ctx context.Context, timeout time.Duration, call func(ctx context.Context) (T, error)) (T, error) {
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return call(callCtx)
-}
-
-// callProviderPaged bounds one paged provider call (titles + total pages).
-func callProviderPaged[T any](ctx context.Context, timeout time.Duration, call func(ctx context.Context) (T, int, error)) (T, int, error) {
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return call(callCtx)
 }

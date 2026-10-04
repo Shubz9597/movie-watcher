@@ -19,28 +19,28 @@ func (f *fakeProvider) Name() string { return f.name }
 
 func (f *fakeProvider) Search(ctx context.Context, query SearchQuery) ([]Title, error) {
 	if f.searchFn == nil {
-		return nil, errors.New("not supported")
+		return nil, ErrNotFound
 	}
 	return f.searchFn(ctx, query)
 }
 
 func (f *fakeProvider) Detail(ctx context.Context, request DetailRequest) (Title, error) {
 	if f.detailFn == nil {
-		return Title{}, errors.New("not supported")
+		return Title{}, ErrNotFound
 	}
 	return f.detailFn(ctx, request)
 }
 
 func (f *fakeProvider) Episodes(ctx context.Context, request EpisodeRequest) ([]Episode, error) {
 	if f.episodeFn == nil {
-		return nil, errors.New("not supported")
+		return nil, ErrNotFound
 	}
 	return f.episodeFn(ctx, request)
 }
 
 func (f *fakeProvider) Section(ctx context.Context, kind string) ([]Title, error) {
 	if f.sectionFn == nil {
-		return nil, errors.New("not supported")
+		return nil, ErrNotFound
 	}
 	return f.sectionFn(ctx, kind)
 }

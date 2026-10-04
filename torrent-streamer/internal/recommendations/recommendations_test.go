@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,12 +52,15 @@ func (f *fakeCandidates) Candidates(context.Context) ([]catalog.Title, error) {
 }
 
 type fakeSeedGenres struct {
+	mu     sync.Mutex
 	genres map[string][]string
 	calls  map[string]int
 	errFor map[string]error
 }
 
 func (f *fakeSeedGenres) SeedGenres(_ context.Context, canonicalID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.calls == nil {
 		f.calls = map[string]int{}
 	}

@@ -73,7 +73,7 @@ type aniListMedia struct {
 		Native        string `json:"native"`
 		UserPreferred string `json:"userPreferred"`
 	} `json:"title"`
-	Synonyms []string `json:"synonyms"`
+	Synonyms  []string `json:"synonyms"`
 	StartDate struct {
 		Year  int `json:"year"`
 		Month int `json:"month"`
@@ -238,7 +238,7 @@ func (p *AniList) SeedSimilar(ctx context.Context, canonicalID string, limit int
 		} `json:"errors"`
 	}
 	err = postJSON(ctx, p.http, p.base, map[string]any{
-		"query": "query ($id: Int) { Media(id: $id, type: ANIME) { recommendations(perPage: 12, sort: RATING_DESC) { nodes { mediaRecommendation { ...media } } } } } " + aniListMediaFields,
+		"query":     "query ($id: Int) { Media(id: $id, type: ANIME) { recommendations(perPage: 12, sort: RATING_DESC) { nodes { mediaRecommendation { ...media } } } } } " + aniListMediaFields,
 		"variables": map[string]any{"id": id},
 	}, &payload)
 	if err != nil {
@@ -368,4 +368,8 @@ func stripHTML(description string) string {
 		}
 	}
 	return strings.TrimSpace(out.String())
+}
+
+func (p *AniList) SupportsSearchType(kind TitleType) bool {
+	return kind == "" || kind == "all" || kind == TypeAnime
 }

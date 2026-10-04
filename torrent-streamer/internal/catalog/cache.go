@@ -225,21 +225,17 @@ func (c *Cache) Set(provider, key string, value any, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	if len(c.entries) >= c.maxEntries {
-		c.evictOldestLocked(now)
+	if _, exists := c.entries[provider+"\x00"+key]; !exists && len(c.entries) >= c.maxEntries {
+		c.evictOldestLocked()
 	}
 	c.entries[provider+"\x00"+key] = &cacheEntry{value: cloneCacheValue(value), fetched: now, expires: now.Add(ttl), provider: provider}
 }
 
-func (c *Cache) evictOldestLocked(now time.Time) {
+func (c *Cache) evictOldestLocked() {
 	var oldestKey string
 	var oldest time.Time
 	first := true
 	for key, entry := range c.entries {
-		if !now.Before(entry.expires) {
-			delete(c.entries, key)
-			continue
-		}
 		if first || entry.expires.Before(oldest) {
 			oldestKey, oldest, first = key, entry.expires, false
 		}
@@ -310,6 +306,10 @@ func cloneEpisodes(episodes []Episode) []Episode {
 }
 func cloneCacheValue(value any) any {
 	switch v := value.(type) {
+	case DetailResult:
+		v.Title = cloneTitle(v.Title)
+		v.DegradedProviders = slices.Clone(v.DegradedProviders)
+		return v
 	case Title:
 		return cloneTitle(v)
 	case []Title:

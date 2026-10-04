@@ -195,6 +195,7 @@ func main() {
 	// capabilities are added only when they actually land.
 	catalogProviders := buildCatalogProviders(prowlarrHTTP)
 	catalogService := catalog.NewService(catalogProviders, catalog.Options{})
+	defer catalogService.Close()
 	// Household library (feature 002 M3.2): advertise library.household.v1
 	// ONLY when the schema is initialized and the storage-backed service
 	// opened; an uninitialized schema keeps the routes absent and the

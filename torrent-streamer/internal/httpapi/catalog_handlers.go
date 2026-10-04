@@ -189,19 +189,7 @@ func (h CatalogHandlers) handleEpisodes(w http.ResponseWriter, r *http.Request) 
 		writeCatalogError(w, http.StatusBadRequest, "invalid_request", "season parameter must be a non-negative integer")
 		return
 	}
-	result := h.Catalog.Detail(r.Context(), id)
-	ids := map[string]string{}
-	if result.Found {
-		for namespace, value := range result.Title.ProviderIDs {
-			ids[namespace] = value
-		}
-	}
-	if _, ok := ids[catalogNamespace(id)]; !ok {
-		if namespace, externalID, err := catalog.ParseTitleID(id); err == nil {
-			ids[namespace] = externalID
-		}
-	}
-	episodeResult := h.Catalog.EpisodesWithIDs(r.Context(), ids, season, id)
+	episodeResult := h.Catalog.Episodes(r.Context(), id, season)
 	if len(episodeResult.Episodes) == 0 && len(episodeResult.DegradedProviders) > 0 {
 		writeCatalogError(w, http.StatusServiceUnavailable, "providers_unavailable", "all episode providers failed", episodeResult.DegradedProviders)
 		return

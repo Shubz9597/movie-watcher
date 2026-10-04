@@ -23,11 +23,12 @@ func TestDetailCacheKeepsCrossLinksAndAvoidsRepeatedCalls(t *testing.T) {
 	s := NewService([]Provider{primary, secondary}, Options{})
 	first := s.Detail(context.Background(), "anilist:1")
 	first.Title.ProviderIDs["jikan"] = "outside"
+	primaryBefore, secondaryBefore := primaryCalls.Load(), secondaryCalls.Load()
 	second := s.Detail(context.Background(), "anilist:1")
 	if !second.Found || second.Title.ProviderIDs["jikan"] != "2" || second.Title.Overview != "Enriched" {
 		t.Fatalf("cached Detail(anilist:1) = %+v, want original cross-links and enrichment", second)
 	}
-	if primaryCalls.Load() != 1 || secondaryCalls.Load() != 1 {
-		t.Fatalf("detail provider calls = (%d,%d), want (1,1)", primaryCalls.Load(), secondaryCalls.Load())
+	if primaryCalls.Load() != primaryBefore || secondaryCalls.Load() != secondaryBefore {
+		t.Fatalf("detail provider calls = (%d,%d), want no calls after priming", primaryCalls.Load(), secondaryCalls.Load())
 	}
 }
