@@ -191,6 +191,8 @@ export default function TorrentPanel({
       if (isAnime) {
         result = await searchAnimeTorrents({
           title,
+          anilistId,
+          imdbId,
           year,
           aliases: titleAliases,
           originalLanguage,

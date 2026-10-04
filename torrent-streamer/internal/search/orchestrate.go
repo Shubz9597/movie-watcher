@@ -76,7 +76,7 @@ func (s *Service) Search(ctx context.Context, request Request) (Response, error)
 			}
 			return results, nil
 		}
-		releases, err := s.searchAll(ctx, request, key)
+		releases, err := s.fetchReleases(ctx, request, key)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +254,7 @@ func (s *Service) refreshInBackground(request Request, key string) {
 		defer cancel()
 		// The collector publishes the completed result; publishing its early
 		// return here could overwrite the completed set with a partial set.
-		_, _ = s.searchAll(ctx, request, key)
+		_, _ = s.fetchReleases(ctx, request, key)
 	}()
 }
 

@@ -570,6 +570,8 @@ export default function EpisodePanel({
       if (kind === 'anime') {
         result = await searchAnimeTorrents({
           title,
+          anilistId,
+          imdbId,
           year,
           season: episode.seasonNumber,
           episode: episode.episodeNumber,

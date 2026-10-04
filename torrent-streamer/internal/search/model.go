@@ -12,16 +12,18 @@ const (
 
 // Request describes a torrent search.
 type Request struct {
-	Kind             Kind     `json:"kind"`
-	Title            string   `json:"title"`
-	Aliases          []string `json:"aliases,omitempty"`
-	IMDBID           string   `json:"imdbId,omitempty"`
-	TVDBID           int      `json:"tvdbId,omitempty"`
-	Year             int      `json:"year,omitempty"`
-	Season           *int     `json:"season,omitempty"`
-	Episode          *int     `json:"episode,omitempty"`
-	Absolute         *int     `json:"absolute,omitempty"`
-	OriginalLanguage string   `json:"originalLanguage,omitempty"`
+	Kind    Kind     `json:"kind"`
+	Title   string   `json:"title"`
+	Aliases []string `json:"aliases,omitempty"`
+	IMDBID  string   `json:"imdbId,omitempty"`
+	// AniListID identifies anime for Torrentio (resolved to a Kitsu id).
+	AniListID        int    `json:"anilistId,omitempty"`
+	TVDBID           int    `json:"tvdbId,omitempty"`
+	Year             int    `json:"year,omitempty"`
+	Season           *int   `json:"season,omitempty"`
+	Episode          *int   `json:"episode,omitempty"`
+	Absolute         *int   `json:"absolute,omitempty"`
+	OriginalLanguage string `json:"originalLanguage,omitempty"`
 }
 
 // SeasonPack describes why a release is considered a multi-episode pack.
@@ -34,15 +36,18 @@ type SeasonPack struct {
 // Result is a renderer-safe torrent search result. SourceID is opaque: raw
 // indexer download URLs and credentials never cross the backend boundary.
 type Result struct {
-	Title        string      `json:"title"`
-	Indexer      string      `json:"indexer"`
-	Size         int64       `json:"size,omitempty"`
-	Seeders      int         `json:"seeders,omitempty"`
-	Leechers     int         `json:"leechers,omitempty"`
-	MagnetURI    string      `json:"magnetUri,omitempty"`
-	InfoHash     string      `json:"infoHash,omitempty"`
-	SourceID     string      `json:"sourceId,omitempty"`
-	PublishDate  string      `json:"publishDate,omitempty"`
+	Title       string `json:"title"`
+	Indexer     string `json:"indexer"`
+	Size        int64  `json:"size,omitempty"`
+	Seeders     int    `json:"seeders,omitempty"`
+	Leechers    int    `json:"leechers,omitempty"`
+	MagnetURI   string `json:"magnetUri,omitempty"`
+	InfoHash    string `json:"infoHash,omitempty"`
+	SourceID    string `json:"sourceId,omitempty"`
+	PublishDate string `json:"publishDate,omitempty"`
+	// FileIndex is the requested episode's file inside a pack, when the
+	// source knows it.
+	FileIndex    *int        `json:"fileIndex,omitempty"`
 	EpisodeMatch *bool       `json:"episodeMatch,omitempty"`
 	SeasonPack   *SeasonPack `json:"seasonPack,omitempty"`
 	// Badges parsed from the release name: "1080p", "BluRay", "Hindi" /

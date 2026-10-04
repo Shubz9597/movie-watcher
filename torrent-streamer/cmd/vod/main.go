@@ -176,6 +176,15 @@ func main() {
 	}
 	cancelPurge()
 	torrentSearch.SetStore(releaseStore)
+	// Torrentio answers film, TV and anime searches from a pre-built index
+	// in under a second; Prowlarr stays the fallback. "off" disables it.
+	if torrentioURL := envOr("TORWATCH_TORRENTIO_URL", "https://torrentio.strem.fun"); !strings.EqualFold(torrentioURL, "off") {
+		torrentSearch.SetTorrentio(&search.Torrentio{
+			BaseURL:   torrentioURL,
+			AniZipURL: envOr("TORWATCH_ANIZIP_BASE_URL", ""),
+			HTTP:      &http.Client{Timeout: 10 * time.Second},
+		})
+	}
 
 	// prepare torrentx (root dirs, initial state)
 	torrentx.Init()

@@ -135,6 +135,8 @@ type prowlarrRelease struct {
 	PublishDate string             `json:"publishDate"`
 	Languages   []prowlarrLanguage `json:"languages"`
 	ImdbID      flexString         `json:"imdbId"`
+	// FileIndex is the episode's file inside a pack (Torrentio knows it).
+	FileIndex *int `json:"fileIndex,omitempty"`
 }
 
 type prowlarrLanguage struct {
@@ -163,6 +165,7 @@ type Service struct {
 	resolveGroup singleflight.Group
 
 	store              ReleaseStore
+	torrentio          *Torrentio
 	softDeadline       time.Duration
 	refreshing         map[string]bool
 	indexerList        []indexerInfo
@@ -409,7 +412,7 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 		if indexer == "" {
 			indexer = release.IndexerName
 		}
-		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate,
+		result := Result{Title: release.Title, Indexer: indexer, Size: release.Size, Seeders: release.Seeders, Leechers: release.Leechers, MagnetURI: magnet, InfoHash: hash, SourceID: sourceID, PublishDate: release.PublishDate, FileIndex: release.FileIndex,
 			languageRank: decision.languageRank, verified: decision.class == classVerified, packTier: int(decision.pack), qualityTier: decision.qualityTier}
 		applyBadges(&result, request, decision)
 		if episodeRequested {

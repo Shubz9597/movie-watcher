@@ -87,6 +87,9 @@ export async function searchTvTorrents(params: {
 
 export async function searchAnimeTorrents(params: {
   title: string;
+  /** Torrentio finds anime by AniList (→ Kitsu) or IMDb id. */
+  anilistId?: number;
+  imdbId?: string;
   year?: number;
   season?: number;
   episode?: number;
