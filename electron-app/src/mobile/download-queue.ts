@@ -1,4 +1,5 @@
 import type { ConnectionConfig } from '../platform/contracts.ts';
+import type { PreparingProgress } from '../lib/preparing-status';
 import type { NativeManifestAsset } from '../platform/native-downloads.ts';
 import { getDeviceId } from '../lib/device-id.ts';
 import { DOWNLOADS_UI_ENABLED, getNativeDownloads } from './downloads-adapter.ts';
@@ -123,7 +124,16 @@ type JobBody = {
   jobId: string;
   state: 'preparing' | 'ready' | 'failed' | 'cancelled' | 'expired';
   reasonCode?: string;
+  progress?: PreparingProgress;
 };
+
+// Live server progress of preparing jobs (memory only: it is refreshed by
+// every poll and meaningless after a restart).
+const liveProgress = new Map<string, PreparingProgress>();
+
+export function preparingProgressFor(jobId: string): PreparingProgress | undefined {
+  return liveProgress.get(jobId);
+}
 
 function preparationFailure(reasonCode?: string): string {
   switch (reasonCode) {
@@ -328,9 +338,14 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
       if (!response.ok) throw await responseError(response, 'Could not check the download.');
       const job = await response.json() as JobBody;
       if (job.state === 'preparing') {
+        if (job.progress) {
+          liveProgress.set(pending.jobId, job.progress);
+          notify();
+        }
         await new Promise((resolve) => window.setTimeout(resolve, 2_000));
         continue;
       }
+      liveProgress.delete(pending.jobId);
       if (job.state !== 'ready') throw new JobFailedError(job.reasonCode);
 
       const manifestResponse = await fetch(
@@ -363,6 +378,7 @@ async function monitorAndEnqueue(pending: PendingDownload): Promise<void> {
       return;
     }
   } catch (error) {
+    liveProgress.delete(pending.jobId);
     if (cancelledJobs.has(pending.jobId)) return;
     upsertPending({
       ...pending,

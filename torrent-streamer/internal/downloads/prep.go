@@ -228,6 +228,8 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		p.running--
 		p.mu.Unlock()
 	}()
+	setProgressStage(job.ID, StageMetadata, nil, nil)
+	defer clearProgress(job.ID)
 	staged := p.stagingDir(job.ID)
 	ready := p.readyDir(job.ID)
 	discard := func() { _ = os.RemoveAll(staged) }
@@ -274,6 +276,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		fail(ReasonSourceUnavailable, err)
 		return
 	}
+	setProgressStage(job.ID, StageMetadata, t, nil)
 	infoCtx, cancelInfo := context.WithTimeout(jobCtx, p.InfoTimeout)
 	if err := torrentx.WaitForInfo(infoCtx, t); err != nil {
 		cancelInfo()
@@ -324,6 +327,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	}
 	defer func() { p.mu.Lock(); p.reserved -= needed; p.mu.Unlock() }()
 	file.Download()
+	setProgressStage(job.ID, StageDownloading, nil, file)
 
 	// 4. Subtitle sidecars, resolved BEFORE the long video copy so a missing
 	// language fails in seconds, not hours. Torrent-internal files win;
@@ -337,6 +341,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	}
 	var subtitleAssets []AssetRow
 	if len(job.RequestedSubtitles) > 0 {
+		setProgressStage(job.ID, StageSubtitles, nil, nil)
 		requested := requestedSet(job.RequestedSubtitles)
 		matched := map[string]torrentx.SubtitleFile{}
 		for _, sub := range torrentx.FindSubtitleFilesForVideo(t, fileIdx) {
@@ -391,6 +396,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	}
 
 	// 5. Stage the video (hash while copying; ctx cancellation aborts).
+	setProgressStage(job.ID, StageDownloading, nil, nil)
 	ext := strings.ToLower(filepath.Ext(file.Path()))
 	if !isSafeExt(ext) {
 		fail(ReasonPreparationFailed, fmt.Errorf("unexpected video extension %q", ext))
@@ -408,6 +414,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		return
 	}
 
+	setProgressStage(job.ID, StageFinalizing, nil, nil)
 	assets := []AssetRow{{
 		Kind: AssetKindVideo, URLPath: videoURL, DiskPath: videoDisk,
 		SizeBytes: videoSize, SHA256: videoSHA,

@@ -16,9 +16,11 @@ import { getDeviceId } from '../lib/device-id';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
 import { downloadMeta, forgetDownloadMeta } from '../lib/offline-download-meta';
+import { describePreparing, preparingFraction } from '../lib/preparing-status';
 import {
   cancelPendingDownload,
   pendingDownloads,
+  preparingProgressFor,
   resumePendingDownloads,
   retryPendingDownload,
   subscribePendingDownloads,
@@ -294,7 +296,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   }, [downloads, reloadKey]);
 
   useEffect(() => {
-    const refreshPending = () => setPending(pendingDownloads());
+    // A new array each time: live progress changes without the stored
+    // pending items changing.
+    const refreshPending = () => setPending([...pendingDownloads()]);
     const unsubscribe = subscribePendingDownloads(refreshPending);
     resumePendingDownloads();
     return unsubscribe;
@@ -375,6 +379,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   const renderPending = (item: PendingDownload, episodeView = false) => {
     const failed = item.state === 'failed';
     const elapsed = formatElapsed(item.queuedAt, now);
+    const progress = failed ? undefined : preparingProgressFor(item.jobId);
+    const fraction = preparingFraction(progress);
     return (
       <li key={`pending-${item.jobId}`} className={ROW_CLASS}>
         {episodeView ? <EpisodeStill src={downloadMeta(item.jobId).still} /> : <DownloadPoster src={downloadMeta(item.jobId).poster ?? item.posterUrl} />}
@@ -399,8 +405,13 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2" aria-live="polite">
             <span className={`type-secondary inline-flex min-w-0 items-center gap-2 ${failed ? 'text-red-300' : 'text-white/70'}`}>
               {!failed ? <LoaderCircle className="h-4 w-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
-              <span>{failed ? item.reason || 'Couldn’t prepare this source.' : `Preparing${elapsed ? ` · ${elapsed}` : ''}`}</span>
+              <span>{failed ? item.reason || 'Couldn’t prepare this source.' : `${describePreparing(progress)}${elapsed ? ` · ${elapsed}` : ''}`}</span>
             </span>
+            {fraction != null ? (
+              <div className="h-1 w-full overflow-hidden rounded-full bg-white/15" role="progressbar" aria-label="Server download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.floor(fraction * 100)}>
+                <div className="h-full rounded-full bg-white/80" style={{ width: `${fraction * 100}%` }} />
+              </div>
+            ) : null}
             {failed ? (
               <div className="flex flex-wrap gap-2">
                 {item.reasonCode === 'subtitles_unavailable' ? (

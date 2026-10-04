@@ -200,7 +200,28 @@ func (h DownloadsHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 		h.writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.jobBody(job))
+	body := h.jobBody(job)
+	if job.State == downloads.StatePreparing {
+		body.Progress = h.preparingProgress(r.Context(), job.ID)
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// preparingProgress is what the server is doing for a preparing job right
+// now; a job no worker holds yet is queued behind the others.
+func (h DownloadsHandlers) preparingProgress(ctx context.Context, jobID string) *jobProgress {
+	if progress, ok := downloads.JobProgress(jobID); ok {
+		return &jobProgress{Progress: progress}
+	}
+	queued := &jobProgress{Progress: downloads.Progress{Stage: downloads.StageQueued}}
+	if counter, ok := h.Store.(interface {
+		QueuedAhead(context.Context, string) (int, error)
+	}); ok {
+		if ahead, err := counter.QueuedAhead(ctx, jobID); err == nil {
+			queued.QueuedAhead = ahead
+		}
+	}
+	return queued
 }
 
 func (h DownloadsHandlers) handleCancel(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +321,14 @@ type jobBody struct {
 	ReasonCode string     `json:"reasonCode"`
 	ReadyAt    *time.Time `json:"readyAt,omitempty"`
 	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+	// Progress is live detail for a preparing job: the stage (queued,
+	// metadata, subtitles, downloading, finalizing), peers and bytes.
+	Progress *jobProgress `json:"progress,omitempty"`
+}
+
+type jobProgress struct {
+	downloads.Progress
+	QueuedAhead int `json:"queuedAhead,omitempty"`
 }
 
 func (h DownloadsHandlers) jobBody(job downloads.Job) jobBody {

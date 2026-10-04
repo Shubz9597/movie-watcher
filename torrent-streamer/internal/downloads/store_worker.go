@@ -142,3 +142,17 @@ func isRelativeDownloadPath(rel string) bool {
 	}
 	return true
 }
+
+// QueuedAhead counts preparing jobs waiting for a slot that were created
+// before this one (the running jobs are not counted).
+func (s *Store) QueuedAhead(ctx context.Context, jobID string) (int, error) {
+	var ahead int
+	err := s.DB.QueryRowContext(ctx, `
+SELECT count(*) FROM download_jobs
+WHERE state=$1 AND claimed_by='' AND id::text<>$2
+  AND created_at < (SELECT created_at FROM download_jobs WHERE id::text=$2)`, StatePreparing, jobID).Scan(&ahead)
+	if err != nil {
+		return 0, fmt.Errorf("count queued jobs: %w", err)
+	}
+	return ahead, nil
+}
