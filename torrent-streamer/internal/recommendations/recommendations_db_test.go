@@ -96,9 +96,14 @@ func TestRecommendationsAgainstRealLibraryStore(t *testing.T) {
 		t.Fatalf("second item wrong: %+v", result.Items[1])
 	}
 
-	// Effective mutation → revision advances → cache invalidates (rebuild).
+	// Effective mutation → revision advances → the previous result is served
+	// while a background rebuild runs; the rebuilt result follows.
 	callsBefore := candidates.calls
 	writeFlag(t, store, "tmdb:movie:3", library.CollectionFavourites, true)
+	if _, err = service.Recommend(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service.refreshWG.Wait()
 	result, err = service.Recommend(ctx)
 	if err != nil {
 		t.Fatal(err)
