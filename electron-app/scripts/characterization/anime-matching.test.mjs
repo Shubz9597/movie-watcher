@@ -106,3 +106,18 @@ test("pickFileIndexForEpisode still matches name tokens when no video extension 
 test("pickFileIndexForEpisode returns null for empty input", () => {
   assert.equal(pickFileIndexForEpisode([], { season: 1, episode: 5 }), null);
 });
+
+test("pickFileIndexForEpisode reads dot-separated episode numbers in packs", () => {
+  const dir = "[SoM] Dragon Ball Kai (2009) (BD 1080p x264 FLAC) [Dual Audio]/";
+  const files = [
+    { index: 0, name: `${dir}Extras/NCOP-NCEDs/Dragon Ball Kai NCOP 1 - Dragon Soul.mkv`, length: 2e8 },
+    { index: 1, name: `${dir}Dragon.Ball.Kai.2009.001.1080p.BD.Dual-Audio.FLAC2.0.Hi10P.x264-SoM.mkv`, length: 3e9 },
+    { index: 2, name: `${dir}Dragon.Ball.Kai.2009.022.1080p.BD.Dual-Audio.FLAC2.0.Hi10P.x264-SoM.mkv`, length: 3e9 },
+    { index: 3, name: `${dir}Dragon.Ball.Kai.2009.098.1080p.BD.Dual-Audio.FLAC2.0.Hi10P.x264-SoM.mkv`, length: 3e9 },
+  ];
+  assert.equal(pickFileIndexForEpisode(files, { season: 1, episode: 22, absolute: 22 }).index, 2);
+  assert.equal(pickFileIndexForEpisode(files, { season: 1, episode: 1, absolute: 1 }).index, 1);
+  assert.equal(pickFileIndexForEpisode(files, { season: 1, episode: 98, absolute: 98 }).index, 3);
+  assert.equal(pickFileIndexForEpisode(files, { season: 1, episode: 99, absolute: 99 }).matched, false);
+  assert.equal(matchesEpisode("Show/Season 1/05.mkv", undefined, 5), true);
+});

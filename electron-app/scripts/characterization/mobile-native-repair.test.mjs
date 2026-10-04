@@ -147,7 +147,7 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   assert.match(nativePlugin, /CAPPluginMethod\(name: "playLocal"/u);
   assert.match(queue, /export async function cancelPendingDownload/u);
   assert.match(queue, /This title is already in Downloads/u);
-  assert.match(episodePanel, /selectedSize = resolved\.fileLength \?\? torrent\.size/u);
+  assert.match(episodePanel, /selectedSize = packFile \? packFile\.fileLength \?\? torrent\.size/u);
 });
 
 test("native download repair resumes failed work and finalizes staged assets", () => {

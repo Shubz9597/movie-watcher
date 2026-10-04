@@ -101,7 +101,9 @@ export function extractEpisodeHints(title: string): {
     addRange(generic, start, end);
   }
 
-  const looseRegex = /(?:^|[\s\-\[\(])(\d{2,3})(?:\s*[-–~]\s*(\d{2,3}))?(?=[\]\s\-\)\._]|$)/g;
+  // Dots and path slashes separate too: scene-style packs name files
+  // "Show.2009.022.1080p.mkv" or "Season 1/05.mkv".
+  const looseRegex = /(?:^|[\s\-\[\(./])(\d{2,3})(?:\s*[-–~]\s*(\d{2,3}))?(?=[\]\s\-\)\._]|$)/g;
   while ((match = looseRegex.exec(cleaned)) !== null) {
     const start = Number(match[1]);
     const end = match[2] ? Number(match[2]) : start;

@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { getTvSeason } from '../lib/services/catalog-gateway';
 import { getCinemetaSeasonMetadata } from '../lib/services/catalog-gateway';
 import { resolveTorrentSource, searchTvTorrents, searchAnimeTorrents } from '../lib/services/torrent-search-service';
-import { resolveTorrentFile } from '../lib/services/resolve-service';
+import { listTorrentFiles, pickEpisodeFile, resolveTorrentFile, type ResolvedEpisodeFile } from '../lib/services/resolve-service';
 import { getSavedResumeSource } from '../lib/services/continue-service';
 import { getVodBase } from '../lib/api-client';
 import { usePlatform } from '../platform/PlatformProvider';
@@ -25,6 +25,7 @@ import { getDeviceId } from '../lib/device-id';
 import { NativeDownloadButton } from './NativeDownloadButton';
 import { fetchWatched, setWatched, watchedKey, type WatchedItem } from '../lib/services/watched-service';
 import type { DownloadSelection } from '../mobile/download-queue';
+import type { BatchRange } from './NativeDownloadButton';
 
 type Props = {
   kind: 'tv' | 'anime';
@@ -852,46 +853,67 @@ export default function EpisodePanel({
     return downloadSelectionForEpisode(torrent, activeEpisode);
   };
 
-  // Batch torrents carry the following episodes too: the next released
-  // episodes after the active one (for "this + next N" downloads).
-  const followingEpisodes = (): EpisodeSummary[] => {
-    if (!activeEpisode) return [];
-    const index = episodes.findIndex((episode) => episode.id === activeEpisode.id);
-    if (index < 0) return [];
-    const following: EpisodeSummary[] = [];
-    for (const episode of episodes.slice(index + 1)) {
-      if (!isEpisodeAvailableForContinuation(episode)) break;
-      following.push(episode);
-    }
-    return following;
+  // Batch torrents carry other episodes too: any released episode of the
+  // season can be queued as a range ("from E3 to E12").
+  const batchEpisodes = (): EpisodeSummary[] => episodes.filter(isEpisodeAvailableForContinuation);
+
+  const batchRangeFor = (torrent: TorrentRow): BatchRange | null => {
+    if (!torrent.seasonPack || !activeEpisode) return null;
+    const numbers = batchEpisodes().map((episode) => episode.episodeNumber);
+    if (numbers.length < 2) return null;
+    return {
+      first: Math.min(...numbers),
+      last: Math.max(...numbers),
+      current: activeEpisode.episodeNumber,
+      selections: (from, to) => batchSelectionsFor(torrent, from, to),
+    };
   };
 
-  const batchSelectionsFor = async (torrent: TorrentRow, extra: number): Promise<DownloadSelection[]> => {
-    if (!activeEpisode) throw new Error('Choose an episode first.');
-    const targets = [activeEpisode, ...followingEpisodes().slice(0, extra)];
+  // Lists the pack's files once and picks each episode from that list.
+  // Episodes the pack does not carry are reported, not fatal.
+  const batchSelectionsFor = async (torrent: TorrentRow, from: number, to: number) => {
+    const targets = batchEpisodes().filter((episode) => episode.episodeNumber >= from && episode.episodeNumber <= to);
+    const files = await listTorrentFiles({
+      magnetUri: await resolveTorrentSource(torrent),
+      torrentUrl: torrent.torrentUrl,
+      downloadUrl: torrent.downloadUrl,
+      infoHash: torrent.infoHash,
+      cat: kind,
+    });
     const selections: DownloadSelection[] = [];
-    for (const episode of targets) selections.push(await downloadSelectionForEpisode(torrent, episode));
-    return selections;
+    const missing: number[] = [];
+    for (const episode of targets) {
+      const file = pickEpisodeFile(files, episodeTarget(episode));
+      if (file) selections.push(selectionForEpisode(torrent, episode, file));
+      else missing.push(episode.episodeNumber);
+    }
+    return { selections, missing };
   };
+
+  const episodeTarget = (episode: EpisodeSummary) => ({
+    season: episode.seasonNumber ?? selectedSeason,
+    episode: episode.episodeNumber,
+    absolute: episode.absoluteNumber ?? episode.episodeNumber,
+  });
 
   const downloadSelectionForEpisode = async (torrent: TorrentRow, activeEpisode: EpisodeSummary): Promise<DownloadSelection> => {
-    let fileIndex = torrent.fileIndex;
-    let selectedSize = torrent.size;
-    if (torrent.seasonPack) {
-      const magnet = await resolveTorrentSource(torrent);
-      const resolved = await resolveTorrentFile({
-        magnetUri: magnet,
-        torrentUrl: torrent.torrentUrl,
-        downloadUrl: torrent.downloadUrl,
-        infoHash: torrent.infoHash,
-        cat: kind,
-        season: activeEpisode.seasonNumber ?? selectedSeason,
-        episode: activeEpisode.episodeNumber,
-        absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
-      });
-      fileIndex = resolved.fileIndex;
-      selectedSize = resolved.fileLength ?? torrent.size;
-    }
+    if (!torrent.seasonPack) return selectionForEpisode(torrent, activeEpisode, null);
+    const magnet = await resolveTorrentSource(torrent);
+    const resolved = await resolveTorrentFile({
+      magnetUri: magnet,
+      torrentUrl: torrent.torrentUrl,
+      downloadUrl: torrent.downloadUrl,
+      infoHash: torrent.infoHash,
+      cat: kind,
+      ...episodeTarget(activeEpisode),
+    });
+    return selectionForEpisode(torrent, activeEpisode, resolved);
+  };
+
+  // packFile is the episode's file inside a season pack (null otherwise).
+  const selectionForEpisode = (torrent: TorrentRow, activeEpisode: EpisodeSummary, packFile: ResolvedEpisodeFile | null): DownloadSelection => {
+    const fileIndex = packFile ? packFile.fileIndex : torrent.fileIndex;
+    const selectedSize = packFile ? packFile.fileLength ?? torrent.size : torrent.size;
     const season = activeEpisode.seasonNumber || selectedSeason;
     const episode = activeEpisode.episodeNumber;
     const seriesId = kind === 'anime' && anilistId
@@ -1208,7 +1230,7 @@ export default function EpisodePanel({
                         <NativeDownloadButton
                           selection={() => downloadSelectionFor(torrent)}
                           details={downloadDetailsFor(torrent)}
-                          {...(torrent.seasonPack ? { batch: { maxExtra: followingEpisodes().length, selections: (extra: number) => batchSelectionsFor(torrent, extra) } } : {})}
+                          batch={batchRangeFor(torrent)}
                           onError={setTorrentError}
                         />
                       </div>
@@ -1217,7 +1239,7 @@ export default function EpisodePanel({
                       className="mt-3 w-full sm:hidden"
                       selection={() => downloadSelectionFor(torrent)}
                       details={downloadDetailsFor(torrent)}
-                      {...(torrent.seasonPack ? { batch: { maxExtra: followingEpisodes().length, selections: (extra: number) => batchSelectionsFor(torrent, extra) } } : {})}
+                      batch={batchRangeFor(torrent)}
                       onError={setTorrentError}
                     />
                   </div>

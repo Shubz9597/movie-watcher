@@ -31,21 +31,27 @@ function normalizeFiles(raw: unknown): TorrentFileEntry[] {
     .filter((f) => Number.isFinite(f.index) && f.index >= 0 && f.name.length > 0);
 }
 
-export async function resolveTorrentFile(params: {
+type TorrentSourceParams = {
   magnetUri?: string;
   torrentUrl?: string;
   downloadUrl?: string;
   infoHash?: string;
   cat?: string;
-  season?: number;
-  episode?: number;
-  absolute?: number;
-}): Promise<{ fileIndex: number; fileName: string; fileLength?: number | null; matched?: boolean; score?: number | null }> {
-  const { magnetUri, torrentUrl, downloadUrl, infoHash, cat = 'anime', season, episode, absolute } = params;
+};
 
-  if (episode == null && absolute == null) {
-    throw new Error('episode or absolute number is required');
-  }
+type EpisodeTarget = { season?: number; episode?: number; absolute?: number };
+
+export type ResolvedEpisodeFile = {
+  fileIndex: number;
+  fileName: string;
+  fileLength?: number | null;
+  matched?: boolean;
+  score?: number | null;
+};
+
+/** Lists a torrent's files once, so a batch can pick many episodes from it. */
+export async function listTorrentFiles(params: TorrentSourceParams): Promise<TorrentFileEntry[]> {
+  const { magnetUri, torrentUrl, downloadUrl, infoHash, cat = 'anime' } = params;
 
   // Normalize source
   let normalizedSrc: string | undefined;
@@ -80,17 +86,17 @@ export async function resolveTorrentFile(params: {
     throw new Error(`File listing failed (${filesRes.status})`);
   }
 
-  const filesJson = await filesRes.json();
-  const files = normalizeFiles(filesJson);
+  const files = normalizeFiles(await filesRes.json());
   if (!files.length) {
     throw new Error('No files returned for torrent');
   }
+  return files;
+}
 
-  const pick = pickFileIndexForEpisode(files, { season, episode, absolute });
-  if (!pick || !pick.matched) {
-    throw new Error('No matching file for requested episode');
-  }
-
+/** The file for one episode, or null when the torrent does not carry it. */
+export function pickEpisodeFile(files: TorrentFileEntry[], target: EpisodeTarget): ResolvedEpisodeFile | null {
+  const pick = pickFileIndexForEpisode(files, target);
+  if (!pick || !pick.matched) return null;
   return {
     fileIndex: pick.index,
     fileName: pick.name,
@@ -98,6 +104,18 @@ export async function resolveTorrentFile(params: {
     matched: pick.matched ?? false,
     score: pick.score ?? null,
   };
+}
+
+export async function resolveTorrentFile(params: TorrentSourceParams & EpisodeTarget): Promise<ResolvedEpisodeFile> {
+  const { season, episode, absolute } = params;
+  if (episode == null && absolute == null) {
+    throw new Error('episode or absolute number is required');
+  }
+  const pick = pickEpisodeFile(await listTorrentFiles(params), { season, episode, absolute });
+  if (!pick) {
+    throw new Error('No matching file for requested episode');
+  }
+  return pick;
 }
 
 
