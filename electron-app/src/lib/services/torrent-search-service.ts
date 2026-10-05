@@ -9,6 +9,7 @@ export type TorrentSearchResult = {
   leechers?: number;
   magnetUri?: string;
   infoHash?: string;
+  fileIndex?: number;
   sourceId?: string;
   publishDate?: string;
   episodeMatch?: boolean;

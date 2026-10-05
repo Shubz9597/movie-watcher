@@ -34,7 +34,7 @@ type ReleaseStore interface {
 
 // CacheVersion prefixes persisted search keys; rows from other versions are
 // purged at startup (see SQLReleaseStore.PurgeOtherVersions).
-const CacheVersion = "v5"
+const CacheVersion = "v6"
 
 const (
 	storeFreshTTL = 30 * time.Minute
@@ -65,10 +65,13 @@ func (s *Service) Search(ctx context.Context, request Request) (Response, error)
 	}
 
 	resultChannel := s.searchFlight.DoChan(key, func() (any, error) {
+		// One caller leaving must not cancel work shared by other viewers.
+		flightCtx, cancelFlight := context.WithTimeout(context.WithoutCancel(ctx), searchBudget)
+		defer cancelFlight()
 		if cached, ok := s.cached(key); ok {
 			return cached, nil
 		}
-		if releases, fetchedAt, ok := s.loadStored(ctx, key); ok {
+		if releases, fetchedAt, ok := s.loadStored(flightCtx, key); ok {
 			results := s.normalize(request, releases)
 			s.remember(key, results)
 			if s.now().Sub(fetchedAt) > storeFreshTTL {
@@ -76,7 +79,7 @@ func (s *Service) Search(ctx context.Context, request Request) (Response, error)
 			}
 			return results, nil
 		}
-		releases, err := s.fetchReleases(ctx, request, key)
+		releases, err := s.fetchReleases(flightCtx, request, key)
 		if err != nil {
 			return nil, err
 		}
@@ -115,6 +118,7 @@ func searchKey(request Request) string {
 		CacheVersion, string(request.Kind), normalizeAnimeTitle(request.Title), strconv.Itoa(request.Year),
 		value(request.Season), value(request.Episode), value(request.Absolute),
 		string(normalizeLanguage(request.OriginalLanguage)), normalizeIMDBID(request.IMDBID),
+		strconv.Itoa(request.AniListID), strconv.Itoa(request.TVDBID),
 	}, "|")
 }
 
@@ -316,12 +320,30 @@ func (c *searchCollector) snapshot() ([]prowlarrRelease, int) {
 }
 
 func (s *Service) searchAll(ctx context.Context, request Request, key string) ([]prowlarrRelease, error) {
+	return s.searchAllSeeded(ctx, request, key, nil)
+}
+
+func (s *Service) searchAllSeeded(ctx context.Context, request Request, key string, seed []prowlarrRelease) ([]prowlarrRelease, error) {
 	// The searches outlive this request when it returns early; their budget
 	// is the search budget, not the caller's context.
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), searchBudget)
-	indexers, err := s.enabledIndexers(runCtx)
+	listCtx := runCtx
+	if len(seed) > 0 {
+		var cancelList context.CancelFunc
+		listCtx, cancelList = context.WithTimeout(ctx, s.softDeadline)
+		defer cancelList()
+	}
+	indexers, err := s.enabledIndexers(listCtx)
 	if err != nil {
 		cancelRun()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if len(seed) > 0 {
+			s.remember(key, s.normalize(request, seed))
+			s.saveStored(key, seed)
+			return seed, nil
+		}
 		return nil, err
 	}
 	routed := make([]indexerInfo, 0, len(indexers))
@@ -334,7 +356,7 @@ func (s *Service) searchAll(ctx context.Context, request Request, key string) ([
 		routed = indexers
 	}
 	variants := buildQueries(request)
-	collector := &searchCollector{changed: make(chan struct{}, 1), done: make(chan struct{})}
+	collector := &searchCollector{releases: slices.Clone(seed), changed: make(chan struct{}, 1), done: make(chan struct{})}
 	type plannedQuery struct {
 		query   prowlarrQuery
 		primary bool
@@ -418,7 +440,7 @@ func (s *Service) searchAll(ctx context.Context, request Request, key string) ([
 		case <-collector.changed:
 		}
 		if softPassed {
-			if releases, primaryPending := collector.snapshot(); primaryPending <= 0 && len(releases) > 0 {
+			if releases, primaryPending := collector.snapshot(); (primaryPending <= 0 || len(seed) > 0) && len(releases) > 0 {
 				return releases, nil
 			}
 		}

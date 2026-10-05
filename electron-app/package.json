@@ -30,6 +30,7 @@
     "test:mobile-navigation": "node --test --experimental-strip-types scripts/characterization/mobile-navigation.test.mjs",
     "test:search": "node --test --experimental-strip-types scripts/characterization/search-order.test.mjs scripts/characterization/search-franchise.test.mjs",
     "smoke:mobile-navigation": "node scripts/mobile-navigation-smoke.mjs",
+    "smoke:torrent-search": "node scripts/torrent-search-smoke.mjs",
     "smoke:launch": "node scripts/launch-screen-smoke.mjs",
     "test": "npm run test:skip-segments && npm run test:diagnostics && npm run test:player-contracts && npm run test:network-routing && npm run test:characterization && npm run test:mobile-navigation && npm run test:search",
     "smoke:ui": "electron scripts/titlebar-smoke.cjs",

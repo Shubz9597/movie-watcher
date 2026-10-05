@@ -60,6 +60,7 @@ type TorrentApiItem = {
   torrentUrl?: string;
   downloadUrl?: string;
   infoHash?: string;
+  fileIndex?: number;
   indexer?: string;
   publishDate?: string;
   episodeMatch?: boolean;
@@ -516,7 +517,7 @@ export default function EpisodePanel({
     }
   };
 
-  const fetchTorrentsForEpisode = async (episode: EpisodeSummary) => {
+  const fetchTorrentsForEpisode = async (episode: EpisodeSummary, findAlternatives = false) => {
     if (isEpisodeUpcoming(episode)) return;
     const requestId = torrentRequestId.current + 1;
     torrentRequestId.current = requestId;
@@ -559,10 +560,9 @@ export default function EpisodePanel({
         }
       }
 
-      // A previously selected batch is the only source we carry forward. Its
-      // file was verified above, so do not run a new search or auto-rank a
-      // different torrent for this episode.
-      if (reusedPack) {
+      // Keep the verified pack across episodes; an explicit alternative search
+      // adds choices without changing the source the viewer already selected.
+      if (reusedPack && !findAlternatives) {
         if (torrentRequestId.current === requestId) setTorrentRows([reusedPack]);
         return;
       }
@@ -607,6 +607,7 @@ export default function EpisodePanel({
             torrentUrl: it.torrentUrl || it.downloadUrl,
             downloadUrl: it.downloadUrl,
             infoHash: it.infoHash,
+            fileIndex: it.fileIndex,
             indexer: it.indexer || '-',
             publishDate: it.publishDate,
             episodeMatch: it.episodeMatch,
@@ -617,12 +618,19 @@ export default function EpisodePanel({
             pack: it.pack,
           }))
         : [];
+      if (reusedPack) {
+        const savedKey = rowKey(reusedPack);
+        rows.unshift(reusedPack);
+        for (let i = rows.length - 1; i > 0; i -= 1) {
+          if (rowKey(rows[i]) === savedKey) rows.splice(i, 1);
+        }
+      }
       if (torrentRequestId.current === requestId) setTorrentRows(rows);
     } catch (e) {
       if (torrentRequestId.current !== requestId) return;
       if (reusedPack) {
         setTorrentRows([reusedPack]);
-        setTorrentError(null);
+        setTorrentError(e instanceof Error ? e.message : 'Failed to find other sources');
         return;
       }
       const message = e instanceof Error ? e.message : 'Failed to fetch torrents';
@@ -1181,6 +1189,19 @@ export default function EpisodePanel({
 
           {!torrentLoading && !torrentError && torrentRows && displayedTorrentRows.length === 0 ? (
             <div className="type-body px-5 py-8 text-center text-white/70">No sources found for this episode.</div>
+          ) : null}
+
+          {!torrentLoading && torrentRows?.some((row) => row.reusedSeasonPack) ? (
+            <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-3">
+              <p className="type-secondary text-white/65">Your selected season pack is available.</p>
+              <button
+                type="button"
+                onClick={() => void fetchTorrentsForEpisode(activeEpisode, true)}
+                className="type-caption min-h-11 shrink-0 rounded-md px-3 text-white/85 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              >
+                Find other sources
+              </button>
+            </div>
           ) : null}
 
           {torrentRows && displayedTorrentRows.length > 0 ? (

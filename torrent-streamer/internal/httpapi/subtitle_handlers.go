@@ -56,6 +56,9 @@ type SubtitleTrack struct {
 	MovieHashMatched bool   `json:"movieHashMatched,omitempty"`
 }
 
+// fetchOpenSubCatalog is shared by streaming and offline subtitle lookups.
+var fetchOpenSubCatalog = subtitles.FetchFromOpenSub
+
 // RegisterSubtitleRoutes registers subtitle-related HTTP handlers
 func RegisterSubtitleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/subtitles/configure", handleSubtitleConfiguration)
@@ -94,7 +97,7 @@ func handleSubtitleConfiguration(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handleSubtitleList returns the complete English catalog from both the
+// handleSubtitleList returns English subtitle choices from both the
 // selected torrent and OpenSubtitles. The two lookups run concurrently so a
 // slow torrent metadata read cannot unnecessarily delay provider results.
 // GET /subtitles/list?magnet=...&cat=movie&fileIndex=0&imdbId=tt1234567
@@ -201,15 +204,14 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 		// Stremio's keyless OpenSubtitles addon first (exact episode match by
 		// IMDb id, reliable downloads); the configured key is the fallback.
 		// Anime episodes map to the show's IMDb season/episode via ani.zip.
-		stremioQuery := query
 		if anilistID, malID := intParam(q, "anilistId"), intParam(q, "malId"); anilistID > 0 || malID > 0 {
 			if imdb, season, episode, ok := subtitles.AnimeEpisodeIMDb(ctx, anilistID, malID, query.Episode); ok {
-				stremioQuery.IMDBID, stremioQuery.Season, stremioQuery.Episode = imdb, season, episode
+				query.IMDBID, query.Season, query.Episode = imdb, season, episode
 			}
 		}
 		// Both catalogs, merged and ranked against the playing file below:
 		// Stremio's addon lists only a few files per language, the key's
-		// catalog is complete.
+		// API supplies additional release choices.
 		type openSubAnswer struct {
 			results []subtitles.SubResult
 			err     error
@@ -220,35 +222,31 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 				openSubCh <- openSubAnswer{err: errors.New("OpenSubtitles API key is not configured")}
 				return
 			}
-			results, err := subtitles.FetchFromOpenSub(ctx, query, providerKey)
+			results, err := fetchOpenSubCatalog(ctx, query, providerKey)
 			openSubCh <- openSubAnswer{results, err}
 		}()
-		stremioResults, stremioErr := subtitles.FetchFromStremio(ctx, stremioQuery)
+		stremioResults, stremioErr := subtitles.FetchFromStremio(ctx, query)
 		openSub := <-openSubCh
 		part.results = append(append(part.results, stremioResults...), openSub.results...)
-		// An error only when neither catalog answered: Stremio answering with
-		// nothing means the title has no subtitles, not an outage.
-		if len(part.results) == 0 && stremioErr != nil {
+		// Preserve available tracks while reporting a failed configured catalog.
+		if providerKey != "" && openSub.err != nil {
 			part.err = openSub.err
-			if part.err == nil {
-				part.err = stremioErr
-			}
+		} else if len(part.results) == 0 && stremioErr != nil && openSub.err != nil {
+			part.err = openSub.err
 		}
-		if part.err == nil {
-			for i := range part.results {
-				part.results[i].URL = buildSubtitleExternalURL(part.results[i].Source, part.results[i].ID, part.results[i].Lang)
-				format := strings.TrimPrefix(strings.ToLower(filepath.Ext(part.results[i].FileName)), ".")
-				if format == "" {
-					format = "srt"
-				}
-				part.tracks = append(part.tracks, SubtitleTrack{
-					Source: part.results[i].Source, Lang: part.results[i].Lang, Label: part.results[i].Label,
-					URL: part.results[i].URL, FileName: part.results[i].FileName, Format: format,
-					Release: part.results[i].Release, DownloadCount: part.results[i].DownloadCount,
-					HearingImpaired: part.results[i].HearingImpaired, Trusted: part.results[i].Trusted,
-					MovieHashMatched: part.results[i].MovieHashMatched,
-				})
+		for i := range part.results {
+			part.results[i].URL = buildSubtitleExternalURL(part.results[i].Source, part.results[i].ID, part.results[i].Lang)
+			format := strings.TrimPrefix(strings.ToLower(filepath.Ext(part.results[i].FileName)), ".")
+			if format == "" {
+				format = "srt"
 			}
+			part.tracks = append(part.tracks, SubtitleTrack{
+				Source: part.results[i].Source, Lang: part.results[i].Lang, Label: part.results[i].Label,
+				URL: part.results[i].URL, FileName: part.results[i].FileName, Format: format,
+				Release: part.results[i].Release, DownloadCount: part.results[i].DownloadCount,
+				HearingImpaired: part.results[i].HearingImpaired, Trusted: part.results[i].Trusted,
+				MovieHashMatched: part.results[i].MovieHashMatched,
+			})
 		}
 		externalCh <- part
 	}()
@@ -276,7 +274,9 @@ func handleSubtitleList(w http.ResponseWriter, r *http.Request) {
 	if externalPart.err != nil {
 		log.Printf("[subtitles] opensub search error: %v", externalPart.err)
 		var rateErr *subtitles.RateLimitError
-		if providerKey == "" {
+		if len(resp.Tracks) > 0 {
+			resp.Message = "Some subtitle providers are unavailable. Showing available subtitles."
+		} else if providerKey == "" {
 			resp.Message = "OpenSubtitles API key is not configured"
 		} else if errors.As(externalPart.err, &rateErr) {
 			resp.Message = rateErr.Error()

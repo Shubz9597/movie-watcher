@@ -443,7 +443,22 @@ func (s *Service) normalize(request Request, releases []prowlarrRelease) []Resul
 			}
 		}
 		if duplicateIndex >= 0 {
-			if betterResult(result, results[duplicateIndex]) {
+			current := results[duplicateIndex]
+			// A stronger mirror must not discard Torrentio's verified file choice.
+			if result.FileIndex == nil {
+				result.FileIndex = current.FileIndex
+			}
+			if current.FileIndex == nil {
+				current.FileIndex = result.FileIndex
+			}
+			if result.FileIndex != nil {
+				result.packTier = int(packNone)
+			}
+			if current.FileIndex != nil {
+				current.packTier = int(packNone)
+			}
+			results[duplicateIndex] = current
+			if betterResult(result, current) {
 				results[duplicateIndex] = result
 			}
 			for _, key := range keys {
@@ -547,7 +562,7 @@ func betterSwarm(a, b Result) bool {
 func resultIdentityKeys(result Result) []string {
 	keys := make([]string, 0, 2)
 	if result.InfoHash != "" {
-		keys = append(keys, "hash:"+result.InfoHash)
+		return []string{"hash:" + result.InfoHash}
 	}
 	if result.Size > 0 {
 		var normalized strings.Builder

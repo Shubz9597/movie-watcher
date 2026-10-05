@@ -2,6 +2,8 @@ package subtitles
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -475,7 +477,9 @@ func fetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string, min
 		params.Set("order_by", "download_count")
 		params.Set("order_direction", "desc")
 	}
-	cacheKey := params.Encode()
+	requestQuery := params.Encode()
+	credential := sha256.Sum256([]byte(apiKey + "\x00" + os.Getenv("OPENSUBTITLES_USER_TOKEN") + "\x00" + os.Getenv("OPENSUB_USER_TOKEN")))
+	cacheKey := "opensub:" + openSubAPI + ":" + hex.EncodeToString(credential[:]) + ":" + requestQuery
 	searchCacheMu.RLock()
 	if cached, ok := searchCache[cacheKey]; ok && time.Since(cached.fetched) < searchCacheTTL {
 		searchCacheMu.RUnlock()
@@ -483,7 +487,7 @@ func fetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string, min
 	}
 	searchCacheMu.RUnlock()
 
-	reqURL := openSubAPI + "/subtitles?" + cacheKey
+	reqURL := openSubAPI + "/subtitles?" + requestQuery
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
@@ -548,33 +552,39 @@ func fetchFromOpenSub(ctx context.Context, query SearchQuery, apiKey string, min
 			continue
 		}
 
-		fileID := a.Files[0].FileID
-		if fileID <= 0 || seen[fileID] {
-			continue
-		}
-		seen[fileID] = true
-		fileName := a.Files[0].FileName
-		if fileName == "" {
-			fileName = a.Release
+		for _, file := range a.Files {
+			fileID := file.FileID
+			if fileID <= 0 || seen[fileID] {
+				continue
+			}
+			seen[fileID] = true
+			fileName := file.FileName
+			if fileName == "" {
+				fileName = a.Release
+			}
+
+			hi := ""
+			if a.HearingImpaired {
+				hi = " (HI)"
+			}
+
+			subs = append(subs, SubResult{
+				Source:           "opensub",
+				ID:               fmt.Sprintf("%d", fileID),
+				Lang:             lang,
+				Label:            fmt.Sprintf("%s%s", langName(lang), hi),
+				FileName:         fileName,
+				Release:          a.Release,
+				DownloadCount:    a.DownloadCount,
+				HearingImpaired:  a.HearingImpaired,
+				Trusted:          a.Trusted,
+				MovieHashMatched: a.MovieHashMatch,
+			})
+			if len(subs) >= 50 {
+				break
+			}
 		}
 
-		hi := ""
-		if a.HearingImpaired {
-			hi = " (HI)"
-		}
-
-		subs = append(subs, SubResult{
-			Source:           "opensub",
-			ID:               fmt.Sprintf("%d", fileID),
-			Lang:             lang,
-			Label:            fmt.Sprintf("%s%s", langName(lang), hi),
-			FileName:         fileName,
-			Release:          a.Release,
-			DownloadCount:    a.DownloadCount,
-			HearingImpaired:  a.HearingImpaired,
-			Trusted:          a.Trusted,
-			MovieHashMatched: a.MovieHashMatch,
-		})
 		if len(subs) >= 50 {
 			break
 		}

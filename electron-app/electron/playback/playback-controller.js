@@ -294,6 +294,8 @@ export function createPlaybackController({
 
       const values = {
         imdbId: payload?.imdbId,
+        anilistId: payload?.anilistId,
+        malId: payload?.malId,
         tmdbId: payload?.tmdbId,
         title: payload?.title,
         year: payload?.year,

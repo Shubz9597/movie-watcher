@@ -78,9 +78,12 @@ export function SubtitleMenu({ activeSubtitleUrl, loadingSubtitleUrl, state, onC
           </div>
           {!providerConfigured && state.status !== 'loading' && tracks.length > 0 ? (
             <div className="subtitle-provider-callout">
-              <span>From the torrent only</span>
+              <span>{tracks.some((track) => track.source !== 'torrent') ? 'From the free subtitle addon' : 'From the torrent only'}</span>
               {configureButton}
             </div>
+          ) : null}
+          {state.status !== 'loading' && tracks.length > 0 && state.message ? (
+            <div className="subtitle-provider-callout" role="status">{state.message}</div>
           ) : null}
           {isConfiguring ? (
             <form className="subtitle-provider-form" onSubmit={submitConfiguration}>

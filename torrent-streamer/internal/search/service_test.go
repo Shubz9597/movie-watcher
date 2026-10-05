@@ -91,7 +91,7 @@ func TestSearchRunsVariantsConcurrentlyWithoutGrabbing(t *testing.T) {
 	}
 }
 
-func TestNormalizeDeduplicatesMirrorsAndKeepsBestSource(t *testing.T) {
+func TestNormalizeDeduplicatesHashesWithoutCollapsingDistinctSwarms(t *testing.T) {
 	t.Parallel()
 
 	service := &Service{sources: make(map[string]sourceEntry), now: time.Now, sourceTTL: time.Minute}
@@ -101,8 +101,8 @@ func TestNormalizeDeduplicatesMirrorsAndKeepsBestSource(t *testing.T) {
 		{Title: "Different mirror name", Indexer: "three", Protocol: "torrent", InfoHash: "2222222222222222222222222222222222222222", Size: 1000, Seeders: 20},
 	})
 
-	if len(results) != 1 {
-		t.Fatalf("len(results) = %d, want 1 mirrored release", len(results))
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want two distinct torrent hashes", len(results))
 	}
 	if results[0].Indexer != "two" || results[0].Seeders != 40 || results[0].MagnetURI == "" {
 		t.Fatalf("result = %#v, want the most-seeded direct magnet", results[0])

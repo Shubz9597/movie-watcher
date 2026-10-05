@@ -65,11 +65,10 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	// endpoint keeps failing. The key is the fallback (and covers titles
 	// without an IMDb id).
 	// Anime ids (anilist:<id>) map to the show's IMDb season/episode.
-	stremioQuery := query
 	if parts := strings.Split(q.SeriesID, ":"); len(parts) == 2 && parts[0] == "anilist" {
 		if anilistID, err := strconv.Atoi(parts[1]); err == nil {
 			if imdb, season, episode, ok := subtitles.AnimeEpisodeIMDb(ctx, anilistID, 0, q.Episode); ok {
-				stremioQuery.IMDBID, stremioQuery.Season, stremioQuery.Episode = imdb, season, episode
+				query.IMDBID, query.Season, query.Episode = imdb, season, episode
 			}
 		}
 	}
@@ -77,15 +76,19 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	// few files per language (sometimes all CAM-era), the key's catalog is
 	// complete but its downloads fail often. Try the closest few in order.
 	var candidates []subtitles.SubResult
-	results, stremioErr := subtitles.FetchFromStremio(ctx, stremioQuery)
+	results, stremioErr := subtitles.FetchFromStremio(ctx, query)
 	candidates = append(candidates, results...)
+	var openSubErr error
 	if apiKey != "" {
-		if results, err := subtitles.FetchFromOpenSub(ctx, query, apiKey); err == nil {
-			candidates = append(candidates, results...)
-		}
+		var results []subtitles.SubResult
+		results, openSubErr = fetchOpenSubCatalog(ctx, query, apiKey)
+		candidates = append(candidates, results...)
 	}
 	ranked := rankSubtitleResults(candidates, q.Lang, q.VideoName)
 	if len(ranked) == 0 {
+		if openSubErr != nil {
+			return nil, "", openSubErr
+		}
 		// Stremio failing (timeout, outage) is retried; Stremio answering
 		// with nothing, or having no IMDb id to search, is final.
 		if stremioErr != nil && !errors.Is(stremioErr, subtitles.ErrNoIMDbID) {

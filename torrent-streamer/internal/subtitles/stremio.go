@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +59,22 @@ func FetchFromStremio(ctx context.Context, query SearchQuery) ([]SubResult, erro
 	if override := os.Getenv("TORWATCH_STREMIO_SUBTITLES_URL"); override != "" {
 		base = override
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
+	wantedLangs := make([]string, 0, len(query.Langs))
+	for _, lang := range query.Langs {
+		if normalized := normalizeLang(lang); normalized != "" {
+			wantedLangs = append(wantedLangs, normalized)
+		}
+	}
+	slices.Sort(wantedLangs)
+	endpoint := strings.TrimRight(base, "/") + path
+	cacheKey := "stremio:" + endpoint + "\x00" + strings.Join(slices.Compact(wantedLangs), ",")
+	searchCacheMu.RLock()
+	cached, found := searchCache[cacheKey]
+	searchCacheMu.RUnlock()
+	if found && time.Since(cached.fetched) < searchCacheTTL {
+		return cloneSubResults(cached.results), nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +130,9 @@ func FetchFromStremio(ctx context.Context, query SearchQuery) ([]SubResult, erro
 			FileName: fileName, Release: sub.ReleaseName,
 		})
 	}
+	searchCacheMu.Lock()
+	putSearchLocked(cacheKey, results, now)
+	searchCacheMu.Unlock()
 	return results, nil
 }
 

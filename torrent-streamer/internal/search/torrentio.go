@@ -19,7 +19,7 @@ import (
 
 // Torrentio is a public, keyless index of torrents by IMDb id. It answers in
 // well under a second from a pre-built index, so film and TV searches ask it
-// first; Prowlarr remains the fallback when it fails or has nothing usable.
+// first; Prowlarr supplements sparse lists and handles failures.
 type Torrentio struct {
 	BaseURL   string // e.g. https://torrentio.strem.fun
 	AniZipURL string // AniList → Kitsu id mappings; default https://api.ani.zip
@@ -34,7 +34,10 @@ type kitsuEntry struct {
 	expires time.Time
 }
 
-const torrentioTimeout = 8 * time.Second
+const (
+	torrentioTimeout    = 8 * time.Second
+	minTorrentioChoices = 5
+)
 
 // userAgent identifies TorWatch: Torrentio's Cloudflare front answers Go's
 // default "Go-http-client" agent with 403.
@@ -119,13 +122,23 @@ func (t *Torrentio) kitsuID(ctx context.Context, anilistID int) int {
 				KitsuID flexString `json:"kitsu_id"`
 			} `json:"mappings"`
 		}
-		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload) == nil {
-			id, _ = strconv.Atoi(string(payload.Mappings.KitsuID))
+		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload) != nil {
+			return 0 // malformed responses are transient, not missing mappings
 		}
+		id, _ = strconv.Atoi(string(payload.Mappings.KitsuID))
+	} else if resp.StatusCode != http.StatusNotFound {
+		return 0 // throttling and provider outages must be retried
 	}
 	t.kitsuMu.Lock()
 	if t.kitsu == nil {
 		t.kitsu = map[int]kitsuEntry{}
+	}
+	if len(t.kitsu) >= 2048 {
+		for key, entry := range t.kitsu {
+			if time.Now().After(entry.expires) || len(t.kitsu) >= 2048 {
+				delete(t.kitsu, key)
+			}
+		}
 	}
 	t.kitsu[anilistID] = kitsuEntry{id: id, expires: time.Now().Add(24 * time.Hour)}
 	t.kitsuMu.Unlock()
@@ -153,12 +166,12 @@ func torrentioPath(request Request) string {
 
 // Releases fetches Torrentio's streams for the request as indexer releases.
 func (t *Torrentio) Releases(ctx context.Context, request Request) ([]prowlarrRelease, error) {
+	ctx, cancel := context.WithTimeout(ctx, torrentioTimeout)
+	defer cancel()
 	path := t.path(ctx, request)
 	if path == "" {
 		return nil, errors.New("torrentio: request not supported")
 	}
-	ctx, cancel := context.WithTimeout(ctx, torrentioTimeout)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(t.BaseURL, "/")+path, nil)
 	if err != nil {
 		return nil, err
@@ -302,20 +315,23 @@ func parseTorrentioSize(value, unit string) int64 {
 	return int64(number * scale)
 }
 
-// fetchReleases asks Torrentio first for films, TV and anime; Prowlarr answers when
-// Torrentio is off, fails (403, timeout, outage) or has nothing that passes
-// the release rules.
+// fetchReleases keeps abundant Torrentio lists fast and supplements fewer
+// than five usable choices with Prowlarr. The collector retains both sources
+// in memory and persistent caches, including when slow indexers finish later.
 func (s *Service) fetchReleases(ctx context.Context, request Request, key string) ([]prowlarrRelease, error) {
-	if s.torrentio != nil && s.torrentio.path(ctx, request) != "" {
+	if s.torrentio != nil {
 		releases, err := s.torrentio.Releases(ctx, request)
+		results := s.normalize(request, releases)
 		switch {
 		case err != nil:
 			log.Printf("[search] torrentio unavailable, using prowlarr: %v", err)
-		case len(s.normalize(request, releases)) == 0:
+		case len(results) == 0:
 			log.Printf("[search] torrentio had no usable releases for %q, using prowlarr", request.Title)
+		case len(results) < minTorrentioChoices:
+			return s.searchAllSeeded(ctx, request, key, releases)
 		default:
 			s.saveStored(key, releases)
-			s.remember(key, s.normalize(request, releases))
+			s.remember(key, results)
 			return releases, nil
 		}
 	}

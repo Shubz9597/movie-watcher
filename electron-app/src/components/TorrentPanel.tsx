@@ -41,6 +41,7 @@ type TorrentApiItem = {
   torrentUrl?: string;
   downloadUrl?: string;
   infoHash?: string;
+  fileIndex?: number;
   indexer?: string;
   publishDate?: string;
   quality?: string;
@@ -219,6 +220,7 @@ export default function TorrentPanel({
         torrentUrl: it.torrentUrl || it.downloadUrl,
         downloadUrl: it.downloadUrl,
         infoHash: it.infoHash,
+        fileIndex: it.fileIndex,
         indexer: it.indexer || '-',
         quality: it.quality,
         source: it.source,

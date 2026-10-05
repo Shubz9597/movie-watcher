@@ -768,7 +768,7 @@ export default function NativePlayerControls(props: Props) {
               </form>
             ) : null}
             {catalogStatus === 'loading' ? <p className="type-secondary mt-3 flex items-center gap-2 text-white/70" role="status"><LoaderCircle className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" /> Finding subtitles…</p> : null}
-            {catalogStatus !== 'loading' && catalog.length === 0 ? (
+            {catalogStatus !== 'loading' && (catalogMessage || catalog.length === 0) ? (
               <p className="type-secondary mt-3 text-white/60">{catalogMessage || 'No subtitles found.'}</p>
             ) : null}
             {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="type-secondary min-h-12 text-white/75 underline transition hover:text-white">Search again</button> : null}
