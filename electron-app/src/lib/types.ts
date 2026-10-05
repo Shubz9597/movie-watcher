@@ -38,7 +38,6 @@ export type TorrentRow = {
   publishDate?: string;
   fileIndex?: number;
   previouslyUsed?: boolean;
-  reusedSeasonPack?: boolean;
   episodeMatch?: boolean;
   /** Parsed by the server from the release name. */
   quality?: string;

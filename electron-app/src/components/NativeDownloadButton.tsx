@@ -101,6 +101,12 @@ export function NativeDownloadButton({
     if (state !== 'idle') return;
     setError(null);
     setNotice(null);
+    // A single episode downloads at once with the saved subtitle choice;
+    // only a pack opens the sheet to pick its episode range.
+    if (!batch) {
+      void startSingle();
+      return;
+    }
     if (batch) {
       setRangeFrom(String(batch.current));
       setRangeTo(String(batch.current));
@@ -122,12 +128,24 @@ export function NativeDownloadButton({
           : null;
   const isRange = Boolean(batch && !rangeError && !(from === batch.current && to === batch.current));
 
-  const start = async (): Promise<void> => {
-    if (state !== 'idle') return;
+  const startSingle = async (): Promise<void> => {
+    setState('starting');
+    const loaded = await loadDownloadOptions(connection);
+    setOptions(loaded);
+    if (sizeBytes && loaded.freeBytes != null && loaded.freeBytes < sizeBytes) {
+      setState('idle');
+      onError?.('Not enough storage on this device.');
+      return;
+    }
+    await start(loaded, true);
+  };
+
+  const start = async (loaded: DownloadOptions | null = options, starting = false): Promise<void> => {
+    if (state !== 'idle' && !starting) return;
     setState('starting');
     setError(null);
     try {
-      const subtitles = options?.subtitlesSupported && subtitleLang ? [subtitleLang] : [];
+      const subtitles = loaded?.subtitlesSupported && subtitleLang ? [subtitleLang] : [];
       let selections: DownloadSelection[];
       let missing: number[] = [];
       if (batch && isRange) {
@@ -153,7 +171,7 @@ export function NativeDownloadButton({
       setProgress(null);
       if (queued === 0 && firstError) throw firstError;
       if (queued === 0) throw new Error('These episodes are already in Downloads.');
-      if (options?.subtitlesSupported) saveSubtitlePreference(subtitleLang);
+      if (loaded?.subtitlesSupported) saveSubtitlePreference(subtitleLang);
       setQueuedCount(queued);
       setState('queued');
       // Leave the sheet open to say which episodes the pack lacks.
@@ -174,11 +192,11 @@ export function NativeDownloadButton({
         type="button"
         onClick={openSheet}
         disabled={state !== 'idle'}
-        aria-haspopup="dialog"
+        aria-haspopup={batch ? 'dialog' : undefined}
         className={`${ACTION_SECONDARY_CLASS} px-4 ${className}`}
       >
         <Download className="h-4 w-4" aria-hidden="true" />
-        {state === 'queued' ? (queuedCount > 1 ? `Queued ${queuedCount}` : 'Queued') : 'Download'}
+        {state === 'queued' ? (queuedCount > 1 ? `Queued ${queuedCount}` : 'Queued') : state === 'starting' && !open ? 'Starting…' : 'Download'}
       </button>
       <SelectionSurface open={open} title="Download" onClose={() => { if (state !== 'starting') setOpen(false); }}>
         <div className="pb-1">

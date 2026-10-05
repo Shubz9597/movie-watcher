@@ -71,7 +71,8 @@ export function prioritizePreviouslyUsedTorrent(
   return [{
     title: source.sourceName || 'Previously used source',
     indexer: 'History',
-    magnetUri: sourceURI,
+    // Sources saved before the server sent literal hashes are escaped.
+    magnetUri: sourceURI.replace(/urn%3Abtih%3A/i, 'urn:btih:'),
     infoHash: savedHash || undefined,
     fileIndex: source.fileIndex,
     previouslyUsed: true,

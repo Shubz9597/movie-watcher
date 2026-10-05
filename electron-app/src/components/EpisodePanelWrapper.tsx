@@ -14,12 +14,6 @@ import { getVodBase } from '../lib/api-client';
 import { usePlatform } from '../platform/PlatformProvider';
 import type { ResumeSourceContext, SavedResumeSource, TorrentRow } from '../lib/types';
 import { prioritizePreviouslyUsedTorrent, torrentInfoHash } from '../lib/torrent-identity';
-import {
-  clearSeasonPack,
-  loadSeasonPack,
-  saveSeasonPack,
-  seasonPackSeriesKey,
-} from '../lib/season-pack-cache';
 import type { EpisodeSummary, SeasonSummary } from '../lib/title-types';
 import { getDeviceId } from '../lib/device-id';
 import { NativeDownloadButton } from './NativeDownloadButton';
@@ -225,7 +219,6 @@ export default function EpisodePanel({
   const returnToEpisode = useRef<number | null>(null);
   const seasonRequestId = useRef(0);
   const playInFlight = useRef(false);
-  const seriesPackKey = seasonPackSeriesKey(kind, tmdbId, anilistId, title);
   const seasonCache = useRef<Map<number, EpisodeSummary[]>>(new Map());
   const rowKey = (t: TorrentRow) =>
     torrentInfoHash(t.infoHash) || torrentInfoHash(t.magnetUri) || t.sourceId || t.torrentUrl || t.downloadUrl || t.title;
@@ -517,7 +510,7 @@ export default function EpisodePanel({
     }
   };
 
-  const fetchTorrentsForEpisode = async (episode: EpisodeSummary, findAlternatives = false) => {
+  const fetchTorrentsForEpisode = async (episode: EpisodeSummary) => {
     if (isEpisodeUpcoming(episode)) return;
     const requestId = torrentRequestId.current + 1;
     torrentRequestId.current = requestId;
@@ -525,48 +518,8 @@ export default function EpisodePanel({
     setTorrentLoading(true);
     setTorrentError(null);
     setTorrentRows(null);
-    let reusedPack: TorrentRow | null = null;
     try {
       console.log('[EpisodePanel] Fetching torrents for episode', episode.episodeNumber);
-      const episodeSeason = episode.seasonNumber ?? selectedSeason;
-      const savedPack = loadSeasonPack(seriesPackKey, episodeSeason);
-      if (savedPack) {
-        try {
-          const resolved = await resolveTorrentFile({
-            magnetUri: savedPack.magnetUri,
-            infoHash: savedPack.infoHash,
-            cat: kind,
-            season: episodeSeason,
-            episode: episode.episodeNumber,
-            absolute: episode.absoluteNumber ?? episode.episodeNumber,
-            ...packFileHints,
-          });
-          reusedPack = {
-            title: savedPack.title,
-            size: savedPack.size,
-            seeders: savedPack.seeders,
-            leechers: savedPack.leechers,
-            magnetUri: savedPack.magnetUri,
-            infoHash: savedPack.infoHash,
-            indexer: savedPack.indexer,
-            fileIndex: resolved.fileIndex,
-            episodeMatch: true,
-            reusedSeasonPack: true,
-            seasonPack: { season: episodeSeason, reason: 'same-pack', keywords: ['same-pack'] },
-          };
-        } catch (error) {
-          console.warn('[EpisodePanel] Saved season pack does not contain this episode:', error);
-          clearSeasonPack(seriesPackKey, episodeSeason);
-        }
-      }
-
-      // Keep the verified pack across episodes; an explicit alternative search
-      // adds choices without changing the source the viewer already selected.
-      if (reusedPack && !findAlternatives) {
-        if (torrentRequestId.current === requestId) setTorrentRows([reusedPack]);
-        return;
-      }
-
       let result: { results: TorrentApiItem[]; error?: string };
       
       if (kind === 'anime') {
@@ -618,21 +571,9 @@ export default function EpisodePanel({
             pack: it.pack,
           }))
         : [];
-      if (reusedPack) {
-        const savedKey = rowKey(reusedPack);
-        rows.unshift(reusedPack);
-        for (let i = rows.length - 1; i > 0; i -= 1) {
-          if (rowKey(rows[i]) === savedKey) rows.splice(i, 1);
-        }
-      }
       if (torrentRequestId.current === requestId) setTorrentRows(rows);
     } catch (e) {
       if (torrentRequestId.current !== requestId) return;
-      if (reusedPack) {
-        setTorrentRows([reusedPack]);
-        setTorrentError(e instanceof Error ? e.message : 'Failed to find other sources');
-        return;
-      }
       const message = e instanceof Error ? e.message : 'Failed to fetch torrents';
       setTorrentError(message);
       setTorrentRows([]);
@@ -674,14 +615,6 @@ export default function EpisodePanel({
         console.log('[EpisodePanel] Resolved file index:', fileIndex, 'for', resolved.fileName);
       }
 
-      if (activeEpisode && t.seasonPack) {
-        saveSeasonPack(
-          seriesPackKey,
-          activeEpisode.seasonNumber ?? selectedSeason,
-          t,
-          magnet,
-        );
-      }
 
       const params: Record<string, string> = {
         cat: kind,
@@ -715,7 +648,7 @@ export default function EpisodePanel({
       // Batch torrents hold the following episodes too: hand the player the
       // rest of this season so it can continue from the same pack when an
       // episode ends ("season:episode:absolute", released episodes only).
-      if (activeEpisode && (t.seasonPack || t.reusedSeasonPack)) {
+      if (activeEpisode && t.seasonPack) {
         const activeIndex = episodes.findIndex((episode) => episode.id === activeEpisode.id);
         const queue = activeIndex < 0 ? [] : episodes
           .slice(activeIndex + 1)
@@ -794,14 +727,6 @@ export default function EpisodePanel({
         fileIndex = resolved.fileIndex;
       }
 
-      if (activeEpisode && t.seasonPack) {
-        saveSeasonPack(
-          seriesPackKey,
-          activeEpisode.seasonNumber ?? selectedSeason,
-          t,
-          magnet,
-        );
-      }
 
       const streamParams = new URLSearchParams({
         cat: kind,
@@ -1191,18 +1116,6 @@ export default function EpisodePanel({
             <div className="type-body px-5 py-8 text-center text-white/70">No sources found for this episode.</div>
           ) : null}
 
-          {!torrentLoading && torrentRows?.some((row) => row.reusedSeasonPack) ? (
-            <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-3">
-              <p className="type-secondary text-white/65">Your selected season pack is available.</p>
-              <button
-                type="button"
-                onClick={() => void fetchTorrentsForEpisode(activeEpisode, true)}
-                className="type-caption min-h-11 shrink-0 rounded-md px-3 text-white/85 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-              >
-                Find other sources
-              </button>
-            </div>
-          ) : null}
 
           {torrentRows && displayedTorrentRows.length > 0 ? (
           <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
@@ -1232,9 +1145,6 @@ export default function EpisodePanel({
                           <div className="line-clamp-2 text-sm leading-5 text-white/80" title={torrent.title}>{torrent.title}</div>
                           {torrent.previouslyUsed ? (
                             <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
-                          ) : null}
-                          {torrent.reusedSeasonPack ? (
-                            <span className="type-caption shrink-0 rounded border border-white/25 px-1.5 py-0.5 font-medium text-white/85">Same batch</span>
                           ) : null}
                         </div>
                         <div className="type-caption text-numeric mt-1 text-white/70">
