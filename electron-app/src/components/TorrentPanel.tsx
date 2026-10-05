@@ -76,11 +76,13 @@ function qualityFromTitle(title: string) {
   return null;
 }
 // The backend origin is read per call so runtime origin switches apply.
-async function downloadM3U(magnet: string, displayTitle: string, cat: string, seriesId?: string, imdbId?: string) {
+async function downloadM3U(magnet: string, displayTitle: string, cat: string, selection: { seriesId?: string; imdbId?: string; anilistId?: number; fileIndex?: number } = {}) {
+  const { seriesId, imdbId, anilistId, fileIndex } = selection;
   const VOD_BASE = getVodBase();
   const params = new URLSearchParams();
   params.set('cat', cat);
   params.set('magnet', magnet);
+  if (fileIndex != null) params.set('fileIndex', String(fileIndex));
   if (seriesId) params.set('seriesId', seriesId);
   params.set('subjectId', getDeviceId());
   params.set('trackProgress', '1');
@@ -92,6 +94,9 @@ async function downloadM3U(magnet: string, displayTitle: string, cat: string, se
   try {
     const subParams = new URLSearchParams({ cat, magnet });
     if (imdbId) subParams.set('imdbId', imdbId);
+    if (anilistId) subParams.set('anilistId', String(anilistId));
+    if (fileIndex != null) subParams.set('fileIndex', String(fileIndex));
+    subParams.set('title', displayTitle);
     subParams.set('langs', 'en');
     const res = await fetch(`${VOD_BASE}/subtitles/list?${subParams.toString()}`);
     if (res.ok) {
@@ -332,7 +337,7 @@ export default function TorrentPanel({
     setError(null);
     try {
       const magnet = await resolveTorrentSource(torrent);
-      await downloadM3U(magnet, title, kind, defaultSeriesId || undefined, imdbId);
+      await downloadM3U(magnet, title, kind, { seriesId: defaultSeriesId || undefined, imdbId, anilistId, fileIndex: torrent.fileIndex });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Couldn’t open this source.');
     } finally {

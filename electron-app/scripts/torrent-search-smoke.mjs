@@ -8,6 +8,7 @@ const output='../.tmp/torrent-search-review';
 const html=`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import EpisodePanel from '/components/EpisodePanelWrapper.tsx';
+import TorrentPanel from '/components/TorrentPanel.tsx';
 import {PlatformProvider} from '/platform/PlatformProvider.tsx';
 import {RouterProvider} from '/lib/router-adapter.tsx';
 import {FixtureConnection,FixtureStorage} from '/platform/fixtures.ts';
@@ -18,6 +19,7 @@ const hash='a'.repeat(40),other='b'.repeat(40);
 saveSeasonPack('anilist:6033',1,{title:'Saved Kai pack',indexer:'Saved',infoHash:hash},'magnet:?xt=urn:btih:'+hash);
 window.fetch=async(input)=>{
  const url=String(input);let payload={results:[]};
+ if(url.includes('/subtitles/list?'))window.subtitleQuery=new URL(url).searchParams.toString();
  if(url.includes('/files?'))payload=[{index:7,name:'Dragon Ball Kai - 01.mkv',length:1000}];
  if(url.includes('/v1/torrents/search')){
   window.calls++;
@@ -28,7 +30,9 @@ window.fetch=async(input)=>{
 };
 const platform={kind:'fixture',connection:new FixtureConnection('ok'),storage:new FixtureStorage(),player:{}};
 const episode={id:'s1e1',seasonNumber:1,episodeNumber:1,absoluteNumber:1,name:'Episode one',airDate:'2009-04-05'};
-createRoot(document.getElementById('root')).render(React.createElement(PlatformProvider,{platform},React.createElement(RouterProvider,{navigate:(route,params)=>window.navigation={route,params}},React.createElement(EpisodePanel,{kind:'anime',title:'Dragon Ball Kai',anilistId:6033,seasons:[{seasonNumber:1,name:'Season 1'}],initialSeason:1,initialEpisodes:[episode],initialEpisode:1}))));
+const root=createRoot(document.getElementById('root'));
+window.mountMovie=()=>{window.searchFailed=false;window.playlist=null;URL.createObjectURL=(blob)=>{blob.text().then(text=>window.playlist=text);return 'blob:audit'};root.render(React.createElement(PlatformProvider,{platform:{...platform,kind:'electron',desktop:{}}},React.createElement(RouterProvider,{navigate:()=>{}},React.createElement(TorrentPanel,{title:'Movie fixture',kind:'movie',imdbId:'tt91919'}))));};
+root.render(React.createElement(PlatformProvider,{platform},React.createElement(RouterProvider,{navigate:(route,params)=>window.navigation={route,params}},React.createElement(EpisodePanel,{kind:'anime',title:'Dragon Ball Kai',anilistId:6033,seasons:[{seasonNumber:1,name:'Season 1'}],initialSeason:1,initialEpisodes:[episode],initialEpisode:1}))));
 </script></body></html>`;
 let server,browser;
 try{
@@ -51,5 +55,16 @@ try{
  assert.equal(await page.$$eval('.content-auto-row',els=>els.length),1);
  assert.deepEqual(errors,[]);
  await page.screenshot({path:output+'/source-picker.png'});
- console.log('PASS: saved continuity; alternatives; deduplication; fileIndex=0 playback; visible outage with retained saved pack.');
+ await page.setViewport({width:1280,height:900});
+ await page.evaluate(()=>window.mountMovie());
+ await page.waitForSelector('button[aria-label="More playback options"]');
+ await page.evaluate(()=>{document.querySelectorAll('button[aria-label="More playback options"]')[1].click()});
+ await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(e=>e.textContent.includes('Open in external player')));
+ await page.evaluate(()=>[...document.querySelectorAll('button')].find(e=>e.textContent.includes('Open in external player')).click());
+ await page.waitForFunction(()=>window.playlist!==null);
+ const playlist=await page.evaluate(()=>window.playlist);
+ assert.equal(new URL(playlist.trim().split('\n').at(-1)).searchParams.get('fileIndex'),'0');
+ assert.equal(new URLSearchParams(await page.evaluate(()=>window.subtitleQuery)).get('fileIndex'),'0');
+ assert.deepEqual(errors,[]);
+ console.log('PASS: saved continuity; alternatives; deduplication; fileIndex=0 playback and M3U; visible outage with retained saved pack.');
 }finally{await browser?.close();await server?.close();await rm(fixture,{force:true});}

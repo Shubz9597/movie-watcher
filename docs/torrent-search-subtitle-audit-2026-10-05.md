@@ -12,7 +12,7 @@ A separate reproduced backend problem: any nonempty Torrentio answer, even one u
 
 ## Other corrected defects
 
-- The client discarded `fileIndex` in both movie and episode row mappings. The field now survives through source selection and playback, including index zero. A stronger Prowlarr mirror cannot discard Torrentio's verified file choice. The [Stremio stream contract](https://stremio.github.io/stremio-addon-sdk/api/responses/stream.html) specifies this field as the file index within a torrent.
+- The client discarded `fileIndex` in both movie and episode row mappings. The field now survives through source selection, playback and movie M3U export, including index zero. A stronger Prowlarr mirror cannot discard Torrentio's verified file choice. The [Stremio stream contract](https://stremio.github.io/stremio-addon-sdk/api/responses/stream.html) specifies this field as the file index within a torrent.
 - Matching title and size collapsed different known torrent hashes into one choice. Known hashes now define distinct swarms; identical hashes still deduplicate and keep the stronger swarm. Title/size fallback remains for releases whose hashes are unknown.
 - Anime search cache keys omitted AniList identity; TVDB identity was also omitted despite affecting Prowlarr queries. Both are included. Cache version v6 invalidates the old release rows through the existing startup purge.
 - ani.zip throttling, server errors and malformed mapping responses were cached as missing for 24 hours. Only successful mapping responses and actual 404 misses are cached. Mapping lookup now falls within Torrentio's overall timeout, runs once per fetch, and has a bounded cache.
@@ -34,6 +34,12 @@ The configured OpenSubtitles API returned **HTTP 403** for a movie lookup, and a
 - Full `go test -race -count=1 ./...` passed using an isolated PostgreSQL 16.9 container with migrations applied; production PostgreSQL was not used for tests.
 - `go vet ./...`, Go formatting and `git diff --check` passed.
 - Frontend TypeScript checking, characterization tests, player-contract tests (10), and desktop/mobile/browser renderer builds passed.
-- `npm run smoke:torrent-search` drives the real episode component with deterministic HTTP fixtures: default pack continuity, finding alternatives, duplicate removal, file-index-zero handoff to playback, and a visible failure retaining the saved pack. It makes no torrent download. Screenshot: `.tmp/torrent-search-review/source-picker.png`.
+- `npm run smoke:torrent-search` drives the real episode component with deterministic HTTP fixtures: default pack continuity, finding alternatives, duplicate removal, file-index-zero handoff to playback and movie M3U export, and a visible failure retaining the saved pack. It makes no torrent download. Screenshot: `.tmp/torrent-search-review/source-picker.png`.
 
 The server deployment does not install a new mobile/desktop binary on the user's device. Rebuild/install that client to receive the source-picker and playback-handoff changes.
+
+## Deployment verification
+
+Backend revision `98ef558` was pushed and deployed using `deploy-from-git.sh`, with its pre-update backup. Health, readiness, version and LAN port checks passed. The fixture verified three byte-exact HTTP 206 ranges, an HTTP 416 range rejection, and two SSE data events. This verifies the transport with test data, not playback availability of arbitrary public swarms.
+
+After deployment, live Severance S01E01 returned 49 choices (0.604 s first request, 0.003 s cached), and Dragon Ball Kai episode 1 returned 11 (0.425 s first request, 0.001 s cached). All retained file indices. Inception retained five addon subtitles and displayed the provider warning; listing took 1.435 s first and 0.570 s repeated. The remaining API failure prevents that configured provider from benefiting from a successful catalog cache. Public provider counts may change over time.
