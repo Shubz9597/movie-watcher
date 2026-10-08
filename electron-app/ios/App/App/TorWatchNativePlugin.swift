@@ -134,7 +134,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 call.reject("The player surface is unavailable.")
                 return
             }
-            self.videoScaleMode = Self.savedVideoScaleMode() // the viewer's last Fit/Fill choice
+            self.videoScaleMode = TorWatchNativePlugin.savedVideoScaleMode() // the viewer's last Fit/Fill choice
             self.currentMediaURL = files.video
             self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId)
             self.attachLocalSidecars(selecting: subtitleLang)
@@ -217,7 +217,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 call.reject("The player surface is unavailable.")
                 return
             }
-            self.videoScaleMode = Self.savedVideoScaleMode() // the viewer's last Fit/Fill choice
+            self.videoScaleMode = TorWatchNativePlugin.savedVideoScaleMode() // the viewer's last Fit/Fill choice
             self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId, localDownloadId: nil)
             call.resolve()
         }
@@ -404,7 +404,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         videoScaleMode = mode
-        UserDefaults.standard.set(mode, forKey: Self.videoScaleModeKey)
+        UserDefaults.standard.set(mode, forKey: TorWatchNativePlugin.videoScaleModeKey)
         if let player = mediaPlayer {
             applyVideoScale(player)
             // A paused picture is not redrawn until the next frame: re-seek
