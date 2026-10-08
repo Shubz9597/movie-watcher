@@ -118,6 +118,9 @@ function nextScaleMode(mode: 'fit' | 'fill' | 'stretch'): 'fit' | 'fill' | 'stre
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, onClose } = props;
+  const episodeLabel = Number.isInteger(season) && season >= 0 && Number.isInteger(episode) && episode > 0
+    ? `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
+    : null;
   // Offline downloads play without a magnet: no server catalog, torrent
   // telemetry or import — only the tracks inside the downloaded package.
   const local = !magnet;
@@ -637,7 +640,7 @@ export default function NativePlayerControls(props: Props) {
       {/* Top bar — safe-area aware so the close button never sits under the
           Dynamic Island / notch in either orientation. */}
       <div
-        className={`absolute inset-x-0 top-0 z-20 flex items-start gap-2 bg-gradient-to-b from-black/70 to-transparent pb-8 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' || scaleToast ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
+        className={`absolute inset-x-0 top-0 z-20 flex items-start gap-2 bg-gradient-to-b from-black/70 to-transparent pb-8 px-[max(0.5rem,env(safe-area-inset-left),env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' || scaleToast ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         <button
@@ -649,13 +652,17 @@ export default function NativePlayerControls(props: Props) {
           <ChevronLeft className="h-6 w-6" aria-hidden="true" />
         </button>
         {hasVideo ? (
-          <div className="pointer-events-none min-w-0 flex-1 pt-3">
-            <p className="truncate text-left text-base font-medium text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">{title}</p>
+          <div className="pointer-events-none min-w-0 flex-1 pt-3 text-center">
+            <div data-player-heading className="flex min-w-0 items-center justify-center gap-2 text-base font-medium text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">
+              <p className="min-w-0 truncate" title={title}>{title}</p>
+              {episodeLabel ? <span data-player-episode className="text-numeric shrink-0">{episodeLabel}</span> : null}
+            </div>
             {scaleToast ? (
               <span className="mt-2 inline-block rounded-full bg-black/80 px-3 py-1 text-sm font-medium text-white" role="status" aria-live="polite">{scaleToast}</span>
             ) : null}
           </div>
         ) : null}
+        <div className="w-12 shrink-0" aria-hidden="true" />
       </div>
 
       {/* Skip-intro chip (where timestamps exist) */}

@@ -14,7 +14,11 @@ inside a narrow box, and verbose mode messages appear over the scene.
   when the display configuration compares equal. This is a plausible cause of
   ineffective runtime sizing. The repair uses a clipped UIKit viewport and a
   natural-aspect drawable. Fit uses no transform, Fill uses a uniform cover
-  transform, and Stretch scales each axis independently. Mode changes never
+  transform, and Stretch scales each axis independently. Following the user's
+  YouTube reference, Stretch now targets a centered viewport no wider than
+  16:9. Symmetric horizontal safe-area gutters keep the iOS picture clear of
+  the Dynamic Island/notch in either landscape orientation; an inner viewport
+  clips Fill so its cropped edges cannot spill into those gutters. Mode changes never
   seek or change the drawable bounds, including while paused. Actual viewport
   dimensions and video pixel aspect are used instead of assuming landscape.
 - [VLCKit playback/time implementation](https://github.com/videolan/vlckit/blob/3.0/Sources/VLCMediaPlayer.m)
@@ -32,18 +36,22 @@ inside a narrow box, and verbose mode messages appear over the scene.
   is restored on a new engine. Source inspected from the
   [published sources archive](https://repo.maven.apache.org/maven2/org/videolan/android/libvlc-all/3.6.2/libvlc-all-3.6.2-sources.jar).
 - Shared controls now show only **Fit**, **Fill**, or **Stretch** in a short
-  pill immediately below the left-aligned title. Sizing requests remain
+  pill immediately below the centered title. Episode playback includes a
+  zero-padded label such as `Dragon Ball Z Kai S01E01`; the episode number stays
+  visible when a long title truncates. Movies do not get an episode label. Sizing requests remain
   guarded by the current playback identifier on both native platforms.
 
 ## Verification
 
 - `npm run test:native-video-layout`: compiles and exercises the production C
   geometry helper for 4:3, cinema, matching aspect, anamorphic, portrait,
-  iPad/split-view, and invalid dimensions. Verifies coverage, preserved aspect,
+  iPad/split-view, notch-safe widths, the supplied reference's side-bar width,
+  and invalid dimensions. Verifies coverage, preserved aspect,
   independent stretching, and constant drawable bounds between modes.
 - `node scripts/native-loader-smoke.mjs`: uses the real React controls with a
   deterministic native bridge. Verifies one call per mode, no seek or playback
-  toggle during sizing, short labels, pill placement, and responsive layouts.
+  toggle during sizing, short labels, centered pill placement, episode labels
+  (including specials and three-digit episodes), and responsive layouts.
 - TypeScript check, mobile production build, and 51 player/lifecycle/episode
   regression checks passed.
 

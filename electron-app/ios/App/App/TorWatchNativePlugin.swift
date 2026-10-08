@@ -733,24 +733,36 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 /// bounds stay constant across mode changes; only its transform changes.
 final class VideoSurfaceView: UIView {
     let drawableView = UIView()
+    private let viewportView = UIView()
     var onResize: (() -> Void)?
     private var lastSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         clipsToBounds = true
+        backgroundColor = .black
+        viewportView.clipsToBounds = true
+        viewportView.frame = bounds
+        addSubview(viewportView)
         drawableView.frame = bounds
-        addSubview(drawableView)
+        viewportView.addSubview(drawableView)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func apply(aspect: CGFloat, mode: String) {
-        let layout = torwatch_video_layout(Double(bounds.width), Double(bounds.height),
+        // Symmetric gutters keep the picture centered and clear of the
+        // Dynamic Island/notch, whichever side it occupies in landscape.
+        let sideInset = max(safeAreaInsets.left, safeAreaInsets.right)
+        let availableWidth = max(0, bounds.width - sideInset * 2)
+        let layout = torwatch_video_layout(Double(availableWidth), Double(bounds.height),
             Double(aspect), mode == "fill" ? 1 : mode == "stretch" ? 2 : 0)
         guard layout.width > 0, layout.height > 0 else { return }
+        let viewportFrame = CGRect(x: (bounds.width - CGFloat(layout.viewport_width)) / 2,
+            y: 0, width: CGFloat(layout.viewport_width), height: bounds.height)
+        if viewportView.frame != viewportFrame { viewportView.frame = viewportFrame }
         let drawableBounds = CGRect(x: 0, y: 0, width: CGFloat(layout.width), height: CGFloat(layout.height))
-        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let center = CGPoint(x: viewportView.bounds.midX, y: viewportView.bounds.midY)
         let transform = CGAffineTransform(scaleX: CGFloat(layout.scale_x), y: CGFloat(layout.scale_y))
         guard drawableView.bounds != drawableBounds || drawableView.center != center ||
               drawableView.transform != transform else { return }
@@ -765,6 +777,11 @@ final class VideoSurfaceView: UIView {
         super.layoutSubviews()
         guard bounds.size != lastSize else { return }
         lastSize = bounds.size
+        onResize?()
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
         onResize?()
     }
 }

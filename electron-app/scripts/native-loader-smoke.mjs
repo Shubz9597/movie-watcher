@@ -34,8 +34,8 @@ for (const name of ['Time', 'State', 'Buffering', 'Tracks']) player['subscribe' 
 };
 const root = createRoot(document.getElementById('root'));
 let generation = 0;
-window.mount = (logoUrl = null, title = 'Interstellar') => {
-  root.render(React.createElement(Controls, {key: ++generation, player, title, logoUrl, posterUrl:null, magnet:'', cat:'movie', season:0, episode:0, onClose: () => {window.closedPlayer = true;}}));
+window.mount = (logoUrl = null, title = 'Interstellar', season = 0, episode = 0) => {
+  root.render(React.createElement(Controls, {key: ++generation, player, title, logoUrl, posterUrl:null, magnet:'', cat:episode > 0 ? 'anime' : 'movie', season, episode, onClose: () => {window.closedPlayer = true;}}));
 };
 window.emit = (name, value) => events[name]?.(value);
 window.mount();
@@ -68,7 +68,7 @@ try {
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
     await page.evaluate(() => window.emit('State', 'paused'));
     // Size changes must reach the player once, including while paused, and
-    // the brief mode pill belongs immediately below the left-aligned title.
+    // the brief mode pill belongs immediately below the centered title.
     for (const mode of ['Fill', 'Stretch', 'Fit']) {
       await page.click(`button[aria-label="${mode}"]`);
       await page.waitForFunction(mode => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent === mode), {}, mode);
@@ -76,15 +76,16 @@ try {
         const title = pill.previousElementSibling;
         return {
           title: title?.textContent,
-          left: pill.getBoundingClientRect().left - title.getBoundingClientRect().left,
+          centered: Math.abs(pill.getBoundingClientRect().left + pill.getBoundingClientRect().width / 2 - innerWidth / 2) < 1,
           below: pill.getBoundingClientRect().top >= title.getBoundingClientRect().bottom,
           alignment: getComputedStyle(title).textAlign,
         };
       });
-      assert.deepEqual(placement, {title:'Interstellar', left:0, below:true, alignment:'left'});
+      assert.deepEqual(placement, {title:'Interstellar', centered:true, below:true, alignment:'center'});
       await page.screenshot({ path: path.join(output, `landscape-${mode.toLowerCase()}.png`) });
     }
     assert.deepEqual(await page.evaluate(() => window.controlCalls), [['scale','fill'], ['scale','stretch'], ['scale','fit']], 'sizing must not toggle playback or seek');
+    assert.equal(await page.$('[data-player-episode]'), null, 'movies have no episode suffix');
     await page.evaluate(() => window.emit('State', 'playing'));
     await page.evaluate(() => window.emit('Buffering', {active:true}));
     // A real stall appears, but never brings the title/poster back.
@@ -123,6 +124,39 @@ try {
     await page.screenshot({ path: path.join(output, 'tablet-controls-long-title.png') });
     await page.setViewport({ width:390, height:844, deviceScaleFactor:1 });
     await page.screenshot({ path: path.join(output, 'portrait-controls-long-title.png') });
+    for (const [title, season, episode, expected, width, height] of [
+      ['Dragon Ball Z Kai', 1, 1, 'S01E01', 874, 402],
+      ['Dragon Ball Z Kai', 1, 125, 'S01E125', 874, 402],
+      ['Dragon Ball Z Kai', 0, 3, 'S00E03', 874, 402],
+      ['A very long episode title that should truncate without hiding the episode number', 2, 12, 'S02E12', 390, 844],
+    ]) {
+      await page.setViewport({width, height, deviceScaleFactor:1});
+      await page.evaluate(([title, season, episode]) => {
+        window.localStorage.setItem('mw_video_scale', 'fill');
+        window.mount(null, title, season, episode);
+      }, [title, season, episode]);
+      await page.waitForFunction(title => document.querySelector('.native-loader-title')?.textContent === title, {}, title);
+      await page.evaluate(() => window.emit('State', 'paused'));
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
+      assert.equal(await page.$eval('[data-player-episode]', el => el.textContent), expected);
+      await page.click('button[aria-label="Stretch"]');
+      await page.waitForFunction(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent === 'Stretch'));
+      const placement = await page.$eval('[data-player-heading]', heading => {
+        const episode = heading.querySelector('[data-player-episode]');
+        const pill = heading.nextElementSibling;
+        return {
+          centered: Math.abs(heading.getBoundingClientRect().left + heading.getBoundingClientRect().width / 2 - innerWidth / 2) < 1,
+          pillCentered: Math.abs(pill.getBoundingClientRect().left + pill.getBoundingClientRect().width / 2 - innerWidth / 2) < 1,
+          below: pill.getBoundingClientRect().top >= heading.getBoundingClientRect().bottom,
+          episodeVisible: episode.getBoundingClientRect().right <= innerWidth && episode.getBoundingClientRect().left >= 0,
+          overflow: document.documentElement.scrollWidth > innerWidth,
+        };
+      });
+      assert.deepEqual(placement, {centered:true, pillCentered:true, below:true, episodeVisible:true, overflow:false});
+      await page.screenshot({path:path.join(output, `episode-${expected.toLowerCase()}.png`)});
+      // Return to Fit so each remount exercises the same first mode change.
+      await page.click('button[aria-label="Fit"]');
+    }
     // Synthetic wide transparent artwork exercises the image path without
     // network/API credentials. It is test data, not shipped title artwork.
     const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="100"><text x="450" y="72" fill="white" text-anchor="middle" font-family="serif" font-size="70" letter-spacing="8">INTERSTELLAR</text></svg>');
