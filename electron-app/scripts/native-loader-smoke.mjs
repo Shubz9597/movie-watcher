@@ -139,7 +139,8 @@ try {
       await page.waitForFunction(title => document.querySelector('.native-loader-title')?.textContent === title, {}, title);
       await page.evaluate(() => window.emit('State', 'paused'));
       await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
-      assert.equal(await page.$eval('[data-player-episode]', el => el.textContent), expected);
+      // Wait for THIS mount's label: the previous episode's can linger a frame.
+      await page.waitForFunction(expected => document.querySelector('[data-player-episode]')?.textContent === expected, {}, expected);
       await page.click('button[aria-label="Stretch"]');
       await page.waitForFunction(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent === 'Stretch'));
       const placement = await page.$eval('[data-player-heading]', heading => {

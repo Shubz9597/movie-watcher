@@ -20,7 +20,7 @@ import '/globals.css';
 setBackendOrigin(location.origin);
 const events = {};
 window.calls = [];
-const player = {seekTo(){}, seekBy(){}, togglePlayback(){}, setVideoScale(){}, setEmbeddedSubtitleScale(){}, loadSubtitle:async()=>null};
+const player = {seekTo(){}, seekBy(){}, togglePlayback(){window.calls.push(['togglePlayback']);}, setVideoScale(){}, setEmbeddedSubtitleScale(){}, loadSubtitle:async()=>null};
 for (const name of ['setSubtitleDelay','setAudioDelay','selectSubtitleTrack','selectAudioTrack']) player[name] = value => window.calls.push([name, value]);
 for (const name of ['Time','State','Buffering','Tracks']) player['subscribe' + name] = callback => {events[name]=callback; return () => {delete events[name];};};
 const root = createRoot(document.getElementById('root'));
@@ -82,19 +82,32 @@ try {
   };
   await page.goto(url);
   await ready();
-  await page.click('button[aria-label="Subtitles"]');
+  // Track changes make VLC rebuild its streams (a frozen frame): a playing
+  // video pauses while Audio and subtitles is open and resumes after; a
+  // paused one stays paused.
+  const toggles = () => page.evaluate(() => window.calls.filter(([name]) => name === 'togglePlayback').length);
+  await page.evaluate(() => { window.emit('State','playing'); window.calls = []; });
+  await page.click('button[aria-label="Audio and subtitles"]');
+  assert.equal(await toggles(), 1, 'opening the panel pauses playback');
+  await page.click('button[aria-label="Close Audio and subtitles"]');
+  assert.equal(await toggles(), 2, 'closing the panel resumes playback');
+  await page.evaluate(() => { window.emit('State','paused'); window.calls = []; });
+  await page.click('button[aria-label="Audio and subtitles"]');
+  await page.click('button[aria-label="Close Audio and subtitles"]');
+  assert.equal(await toggles(), 0, 'a paused video stays paused');
+  await page.click('button[aria-label="Audio and subtitles"]');
   await clickText('release-a.srt');
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'external');
-  await page.click('button[aria-label="Close Subtitles"]');
+  await page.click('button[aria-label="Close Audio and subtitles"]');
   await page.click('button[aria-label="Timing sync"]');
   for (let index = 0; index < 40; index++) await page.click('button[aria-label="Subtitles earlier"]');
   await page.waitForFunction(() => window.readPreferences()?.subtitleDelay === -4);
   assert.equal(await page.evaluate(() => document.body.textContent.includes('Saved subtitle dialogue')), true, 'negative delay must move the actual overlay, not just the timing display');
   await page.click('button[aria-label="Audio later"]');
   await page.click('button[aria-label="Close Timing sync"]');
-  await page.click('button[aria-label="Audio tracks"]');
+  await page.click('button[aria-label="Audio and subtitles"]');
   await clickText('Japanese');
-  await page.click('button[aria-label="Close Audio"]');
+  await page.click('button[aria-label="Close Audio and subtitles"]');
   await page.click('button[aria-label="Close player"]');
   await page.waitForFunction(() => !document.querySelector('.native-loader'));
 
@@ -108,7 +121,7 @@ try {
   assert.ok(restoredCalls.some(([name,value]) => name === 'selectAudioTrack' && value === 22));
   assert.equal(await page.$('h2'), null, 'automatic restore must not open a settings sheet');
   assert.equal(downloads, 2, 'the same selected OpenSubtitles URL is restored directly');
-  await page.click('button[aria-label="Subtitles"]');
+  await page.click('button[aria-label="Audio and subtitles"]');
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some(el => el.querySelector('span')?.textContent === 'release-a.srt' && el.getAttribute('aria-pressed') === 'true'));
   await clickText('Off');
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'off');
@@ -117,7 +130,7 @@ try {
   assert.equal(downloads, 2, 'Off remains Off on resume');
   assert.equal(await page.evaluate(() => document.body.textContent.includes('Saved subtitle dialogue')), false);
 
-  await page.click('button[aria-label="Subtitles"]');
+  await page.click('button[aria-label="Audio and subtitles"]');
   await clickText('English embedded');
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'embedded');
   await page.evaluate(() => {window.calls=[]; window.mount();});
@@ -135,12 +148,12 @@ try {
 
   // A restore response completing after replacement cannot touch the new video.
   await mount();
-  await page.click('button[aria-label="Subtitles"]');
+  await page.click('button[aria-label="Audio and subtitles"]');
   await clickText('release-a.srt');
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'external');
   slowNextSubtitle = true;
   await mount();
-  await page.waitForFunction(() => document.querySelector('button[aria-label="Subtitles"]'));
+  await page.waitForFunction(() => document.querySelector('button[aria-label="Audio and subtitles"]'));
   const started = Date.now();
   while (!pendingResponse && Date.now() - started < 3000) await new Promise(resolve => setTimeout(resolve,20));
   assert.ok(pendingResponse, 'restore request should be pending');

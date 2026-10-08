@@ -6,7 +6,7 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, Minus, Plus, X, RotateCcw, RotateCw } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, Minus, Plus, X, RotateCcw, RotateCw, Check } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
@@ -149,7 +149,7 @@ export default function NativePlayerControls(props: Props) {
   const [time, setTime] = useState({ currentTime: 0, duration: 0 });
   const [playing, setPlaying] = useState(true);
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [activeSheet, setActiveSheet] = useState<'none' | 'subtitles' | 'audio' | 'sync' | 'stats'>('none');
+  const [activeSheet, setActiveSheet] = useState<'none' | 'tracks' | 'sync' | 'stats'>('none');
 
   const [embeddedAudio, setEmbeddedAudio] = useState<NativeTrackInfo[]>([]);
   const [embeddedSubs, setEmbeddedSubs] = useState<NativeTrackInfo[]>([]);
@@ -410,7 +410,7 @@ export default function NativePlayerControls(props: Props) {
 
   // --- Subtitle catalog (server /subtitles/list) ---
   useEffect(() => {
-    if (activeSheet !== 'subtitles' || catalogStatus !== 'loading' || local) return;
+    if (activeSheet !== 'tracks' || catalogStatus !== 'loading' || local) return;
     let cancelled = false;
     const params = new URLSearchParams({ cat, magnet, langs: language, title });
     if (year) params.set('year', String(year));
@@ -462,6 +462,27 @@ export default function NativePlayerControls(props: Props) {
     if (controlsHideTimer.current !== null) window.clearTimeout(controlsHideTimer.current);
     subtitleOperation.current++;
   }, []);
+
+  // Changing audio or subtitles makes VLC rebuild its streams, which shows
+  // as a frozen frame mid-scene: the video pauses while the Audio and
+  // subtitles panel is open and resumes when it closes (if it was playing).
+  const resumeAfterTracks = useRef(false);
+  const openTracks = () => {
+    if (playing) {
+      resumeAfterTracks.current = true;
+      player.togglePlayback();
+    }
+    setActiveSheet('tracks');
+  };
+  const previousSheet = useRef(activeSheet);
+  useEffect(() => {
+    const wasTracks = previousSheet.current === 'tracks';
+    previousSheet.current = activeSheet;
+    if (wasTracks && activeSheet !== 'tracks' && resumeAfterTracks.current) {
+      resumeAfterTracks.current = false;
+      player.togglePlayback();
+    }
+  }, [activeSheet, player]);
 
   const toggleControls = useCallback(() => {
     if (activeSheetRef.current !== 'none') {
@@ -764,11 +785,8 @@ export default function NativePlayerControls(props: Props) {
                 <HeartPulse className="h-6 w-6" aria-hidden="true" />
               </IconButton>
             ) : null}
-            <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
+            <IconButton label="Audio and subtitles" onClick={() => (activeSheet === 'tracks' ? setActiveSheet('none') : openTracks())} active={activeSheet === 'tracks'}>
               <Captions className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Audio tracks" onClick={() => setActiveSheet(activeSheet === 'audio' ? 'none' : 'audio')} active={activeSheet === 'audio'}>
-              <AudioLines className="h-6 w-6" aria-hidden="true" />
             </IconButton>
             <IconButton label="Timing sync" onClick={() => setActiveSheet(activeSheet === 'sync' ? 'none' : 'sync')} active={activeSheet === 'sync'}>
               <Timer className="h-6 w-6" aria-hidden="true" />
@@ -876,26 +894,53 @@ export default function NativePlayerControls(props: Props) {
 
       {/* Sheets — right-side panel (~42% width), desktop-equivalent; keeps
           the video visible on the left and respects safe areas. */}
-      {activeSheet === 'subtitles' ? (
-        <Sheet title="Subtitles" onClose={() => setActiveSheet('none')}>
-          {subtitleError ? <p role="alert" className="type-secondary mb-3 text-red-300">{subtitleError}</p> : null}
-          {/* Compact track chips */}
-          <fieldset disabled={!!loadingSubtitleUrl || importing} className="flex flex-wrap gap-2 disabled:opacity-60">
-            {/* Off only makes sense when something is actually active. */}
-            {activeSubtitleUrl !== null || selectedEmbeddedSub !== null ? (
-              <ChipButton active={false} onClick={disableSubtitles}>Off</ChipButton>
-            ) : null}
-            {embeddedSubs.map((track) => (
-              <ChipButton key={track.id} active={selectedEmbeddedSub === track.id} onClick={() => chooseEmbeddedSubtitle(track)}>
-                {track.label || `Track ${track.id}`}
-              </ChipButton>
-            ))}
-          </fieldset>
-          {local ? (
-            embeddedSubs.length === 0 ? <p className="type-secondary text-white/60">No subtitles in this download.</p> : null
-          ) : <>
-          <div className="mt-4 border-t border-white/[0.08] pt-4">
-            <h3 className="text-sm font-semibold text-white">Online subtitles</h3>
+      {activeSheet === 'tracks' ? (
+        <TracksPanel onClose={() => setActiveSheet('none')}>
+          <section aria-labelledby="audioTracksHeading" className="min-h-0 overflow-y-auto pr-2">
+            <h2 id="audioTracksHeading" className="text-2xl font-semibold text-white">Audio</h2>
+            <ul className="mt-4 space-y-1">
+              {embeddedAudio.length === 0 ? (
+                <TrackRow selected label="Default" onClick={() => {}} />
+              ) : embeddedAudio.map((track) => (
+                <TrackRow key={track.id} selected={selectedEmbeddedAudio === track.id} label={track.label || `Track ${track.id}`} onClick={() => chooseEmbeddedAudio(track)} />
+              ))}
+            </ul>
+          </section>
+          <section aria-labelledby="subtitleTracksHeading" className="min-h-0 overflow-y-auto pr-2">
+            <h2 id="subtitleTracksHeading" className="text-2xl font-semibold text-white">Subtitles</h2>
+            {subtitleError ? <p role="alert" className="type-secondary mt-3 text-red-300">{subtitleError}</p> : null}
+            <ul className="mt-4 space-y-1">
+              <TrackRow
+                selected={activeSubtitleUrl === null && selectedEmbeddedSub === null}
+                label="Off"
+                disabled={!!loadingSubtitleUrl || importing}
+                onClick={() => { if (activeSubtitleUrl !== null || selectedEmbeddedSub !== null) disableSubtitles(); }}
+              />
+              {embeddedSubs.map((track) => (
+                <TrackRow
+                  key={track.id}
+                  selected={selectedEmbeddedSub === track.id}
+                  label={track.label || `Track ${track.id}`}
+                  detail="In video"
+                  disabled={!!loadingSubtitleUrl || importing}
+                  onClick={() => chooseEmbeddedSubtitle(track)}
+                />
+              ))}
+              {local ? null : catalog.map((track) => (
+                <TrackRow
+                  key={track.url}
+                  selected={activeSubtitleUrl === track.url}
+                  label={loadingSubtitleUrl === track.url ? 'Loading…' : track.fileName || track.label}
+                  detail={`${track.source === 'torrent' ? 'Torrent' : 'OpenSubtitles'}${track.movieHashMatched ? ' · hash' : ''}`}
+                  disabled={!!loadingSubtitleUrl || importing}
+                  onClick={() => void chooseCatalogSubtitle(track)}
+                />
+              ))}
+            </ul>
+            {local ? (
+              embeddedSubs.length === 0 ? <p className="type-secondary mt-2 text-white/60">No subtitles in this download.</p> : null
+            ) : (
+              <div className="mt-5 border-t border-white/[0.12] pt-4">
             <label className="type-secondary mt-3 flex items-center justify-between gap-2 text-white/75">
               Language
               <select aria-label="Subtitle language" value={language} onChange={(event) => { setLanguage(event.target.value); setCatalog([]); setCatalogStatus('loading'); }} className="min-h-12 rounded-lg border border-white/15 bg-black px-3 text-sm text-white">
@@ -934,51 +979,20 @@ export default function NativePlayerControls(props: Props) {
               <p className="type-secondary mt-3 text-white/60">{catalogMessage || 'No subtitles found.'}</p>
             ) : null}
             {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="type-secondary min-h-12 text-white/75 underline transition hover:text-white">Search again</button> : null}
-            <div className="mt-1 space-y-2">
-              {catalog.map((track) => (
-                <button
-                  key={track.url}
-                  type="button"
-                  onClick={() => void chooseCatalogSubtitle(track)}
-                  disabled={!!loadingSubtitleUrl || importing}
-                  aria-pressed={activeSubtitleUrl === track.url}
-                  className={`flex min-h-12 w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ${activeSubtitleUrl === track.url ? 'border-white bg-white text-black' : 'border-white/10 bg-white/[0.03] text-white/80 hover:border-white/25 hover:text-white'}`}
-                >
-                  <span className="min-w-0 flex-1 truncate">{loadingSubtitleUrl === track.url ? 'Loading…' : track.fileName || track.label}</span>
-                  <span className="shrink-0 text-xs opacity-60">
-                    {track.source === 'torrent' ? 'Torrent' : 'OpenSubtitles'}
-                    {track.movieHashMatched ? ' · hash' : ''}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-4 border-t border-white/[0.08] pt-4">
+              </div>
+            )}
+            {local ? null : (
+              <div className="mt-4 border-t border-white/[0.12] pt-4">
             <label className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-lg border border-white/20 px-4 text-sm font-medium text-white transition hover:border-white/40 focus-within:ring-2 focus-within:ring-white">
               <Upload className="h-4 w-4" aria-hidden="true" />
               {importing ? 'Importing…' : 'Import subtitle file'}
               <input type="file" accept=".srt,.vtt,.ass,.ssa" className="sr-only" onChange={(event) => void importLocalSubtitle(event)} disabled={importing || !!loadingSubtitleUrl} />
             </label>
             <p className="type-secondary mt-2 text-white/60">SRT, VTT, ASS or SSA · up to 4 MB</p>
-          </div>
-          </>}
-        </Sheet>
-      ) : null}
-
-      {activeSheet === 'audio' ? (
-        <Sheet title="Audio" onClose={() => setActiveSheet('none')}>
-          {embeddedAudio.length === 0 ? (
-            <p className="type-secondary text-white/60">No audio tracks found.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {embeddedAudio.map((track) => (
-                <ChipButton key={track.id} active={selectedEmbeddedAudio === track.id} onClick={() => chooseEmbeddedAudio(track)}>
-                  {track.label || `Track ${track.id}`}
-                </ChipButton>
-              ))}
-            </div>
-          )}
-        </Sheet>
+              </div>
+            )}
+          </section>
+        </TracksPanel>
       ) : null}
 
       {activeSheet === 'sync' ? (
@@ -1112,16 +1126,53 @@ function CenterButton({ label, onClick, children, large = false }: {
   );
 }
 
-function ChipButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+/** Netflix-style track row: a checkmark marks the active track. */
+function TrackRow({ selected, label, detail, disabled = false, onClick }: {
+  selected: boolean;
+  label: string;
+  detail?: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`min-h-12 max-w-full truncate rounded-lg border px-4 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${active ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/80 hover:border-white/35 hover:text-white'}`}
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-pressed={selected}
+        className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50 ${selected ? 'text-white' : 'text-white/70 hover:bg-white/[0.06] hover:text-white'}`}
+      >
+        <i className="inline-flex w-7 shrink-0 justify-center not-italic" aria-hidden="true">
+          {selected ? <Check className="h-6 w-6" /> : null}
+        </i>
+        <span className={`min-w-0 flex-1 truncate text-lg ${selected ? 'font-semibold' : ''}`}>{label}</span>
+        {detail ? <small className="shrink-0 text-xs text-white/50">{detail}</small> : null}
+      </button>
+    </li>
+  );
+}
+
+/** Full-screen Audio and subtitles panel (Netflix layout): two columns,
+ *  each scrolling on its own; safe-area aware. */
+function TracksPanel({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div
+      className="absolute inset-0 z-30 bg-[#0b0b0b]/95 backdrop-blur-xl"
+      onPointerUp={(event) => event.stopPropagation()}
     >
-      {children}
-    </button>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close Audio and subtitles"
+        className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-10 inline-flex h-12 w-12 items-center justify-center rounded-lg text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+      >
+        <X className="h-7 w-7" aria-hidden="true" />
+      </button>
+      <div className="grid h-full grid-cols-1 gap-8 overflow-y-auto px-[max(1.5rem,env(safe-area-inset-left),env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pr-20 pt-[max(1.25rem,env(safe-area-inset-top))] sm:grid-cols-2 sm:overflow-hidden">
+        {children}
+      </div>
+    </div>
   );
 }
 
