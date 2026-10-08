@@ -78,7 +78,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // drawable; "fill" center-crops the source to the drawable's aspect so the
     // video covers the display (never stretched).
     private var videoScaleMode: String = "fit"
-    private var appliedCropGeometry: String? // what VLC currently crops to
+    private var appliedCropGeometry: String? // crop|aspect VLC currently uses
     // Current media + subtitle text scale (% of default), kept so the engine
     // can be recreated in place when the user pinch-resizes embedded subs.
     private var currentMediaURL: URL?
@@ -393,13 +393,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// so the zoom is set before playback rather than mid-scene (changing it
     /// while playing makes VLC rebuild its picture, a visible hitch).
     private static func savedVideoScaleMode() -> String {
-        UserDefaults.standard.string(forKey: videoScaleModeKey) == "fill" ? "fill" : "fit"
+        let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "fit"
+        return saved == "fill" || saved == "stretch" ? saved : "fit"
     }
 
     @objc func setVideoScale(_ call: CAPPluginCall) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.setVideoScale(call) }; return }
         let mode = call.getString("mode") ?? "fit"
-        guard mode == "fit" || mode == "fill" else {
+        guard mode == "fit" || mode == "fill" || mode == "stretch" else {
             call.reject("Unknown video scale mode.")
             return
         }
@@ -416,39 +417,43 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         call.resolve()
     }
 
-    /// Fill crops the picture to the screen's shape (top and bottom of a
-    /// 4:3 or 16:9 picture on a wider phone), so it covers the full height
-    /// in landscape; Fit shows the whole picture with bars. Cropping keeps
-    /// VLC's subtitles inside the visible picture. (libvlc's scale factor
-    /// rebuilt the picture without zooming on device, so it is not used.)
-    /// Nothing is set when the value is unchanged: every change makes VLC
-    /// rebuild its picture.
+    /// Fit shows the whole picture with bars. Fill crops the picture to the
+    /// screen's shape AND displays it at that shape, so it covers the screen
+    /// without distortion (cropping alone made VLC squeeze the result back
+    /// into the old 4:3 box: an oval Earth). Stretch keeps the whole picture
+    /// and widens it to the screen. Playback is always landscape, so the
+    /// landscape shape is used even before rotation: the geometry is set once
+    /// before play() and never changes mid-scene. Each change makes VLC
+    /// rebuild its picture and wait for the next keyframe (a frozen frame
+    /// for a few seconds), so nothing is set unless it changed.
     private func applyVideoScale(_ player: VLCMediaPlayer) {
         if player.scaleFactor != 0 { player.scaleFactor = 0 }
-        var geometry: String?
-        if videoScaleMode == "fill" {
-            guard let size = surfaceView?.bounds.size, size.width > 1, size.height > 1 else { return }
-            geometry = aspectRatioString(size)
+        guard let size = surfaceView?.bounds.size, size.width > 1, size.height > 1 else { return }
+        let screen = landscapeRatioString(size)
+        let crop: String? = videoScaleMode == "fill" ? screen : nil
+        let aspect: String? = videoScaleMode == "fit" ? nil : screen
+        let applied = "\(crop ?? "-")|\(aspect ?? "-")"
+        guard applied != appliedCropGeometry else { return }
+        appliedCropGeometry = applied
+        // Both properties are raw `char *` in MobileVLCKit; libvlc copies the
+        // string (var_SetString), so a temporary C copy is enough.
+        func cString(_ value: String?, _ assign: (UnsafeMutablePointer<CChar>?) -> Void) {
+            guard let value = value else { assign(nil); return }
+            value.withCString { pointer in
+                let copy = strdup(pointer)
+                assign(copy)
+                free(copy)
+            }
         }
-        guard geometry != appliedCropGeometry else { return }
-        appliedCropGeometry = geometry
-        guard let geometry = geometry else {
-            player.videoCropGeometry = nil
-            return
-        }
-        // MobileVLCKit's videoCropGeometry is a raw `char *`: libvlc copies
-        // it (var_SetString), so a temporary C copy is enough.
-        geometry.withCString { pointer in
-            let copy = strdup(pointer)
-            player.videoCropGeometry = copy
-            free(copy)
-        }
+        cString(crop) { player.videoCropGeometry = $0 }
+        cString(aspect) { player.videoAspectRatio = $0 }
     }
 
-    /// "W:H" reduced to lowest terms, e.g. "284:131" for an 852x393 pt screen.
-    private func aspectRatioString(_ size: CGSize) -> String {
-        let width = Int(size.width.rounded())
-        let height = Int(size.height.rounded())
+    /// The screen's landscape shape reduced to lowest terms ("284:131" for an
+    /// 852x393 pt phone), whichever way the surface is currently oriented.
+    private func landscapeRatioString(_ size: CGSize) -> String {
+        let width = Int(max(size.width, size.height).rounded())
+        let height = Int(min(size.width, size.height).rounded())
         var a = width, b = height
         while b != 0 { (a, b) = (b, a % b) }
         let gcd = max(a, 1)

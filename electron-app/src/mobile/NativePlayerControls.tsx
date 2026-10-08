@@ -6,7 +6,7 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, HeartPulse, Minus, Plus, X } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, Minus, Plus, X } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
@@ -22,7 +22,7 @@ export type NativePlayerControlsSurface = {
   setAudioDelay(seconds: number): void;
   selectAudioTrack(trackId: number): void;
   selectSubtitleTrack(trackId: number | null): void;
-  setVideoScale(mode: 'fit' | 'fill'): void;
+  setVideoScale(mode: 'fit' | 'fill' | 'stretch'): void;
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null>;
   /** Embedded-subtitle text scale (% of default) — engine recreate at position. */
   setEmbeddedSubtitleScale(percent: number): void;
@@ -104,6 +104,19 @@ function formatDelay(seconds: number): string {
   return `${sign}${seconds.toFixed(1)}s`;
 }
 
+
+// Fit: whole picture, bars. Fill: covers the screen, crops top and bottom.
+// Stretch: covers the screen, widens the picture.
+const SCALE_MODES = {
+  fit: { label: 'Fit to screen', toast: 'Fit · whole picture' },
+  fill: { label: 'Fill screen', toast: 'Fill · crops top and bottom' },
+  stretch: { label: 'Stretch to screen', toast: 'Stretch · widens the picture' },
+} as const;
+
+function nextScaleMode(mode: 'fit' | 'fill' | 'stretch'): 'fit' | 'fill' | 'stretch' {
+  return mode === 'fit' ? 'fill' : mode === 'fill' ? 'stretch' : 'fit';
+}
+
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, onClose } = props;
   // Offline downloads play without a magnet: no server catalog, torrent
@@ -135,13 +148,17 @@ export default function NativePlayerControls(props: Props) {
   const [language, setLanguage] = useState('en');
   const [scrubTo, setScrubTo] = useState<number | null>(null);
   // The player remembers Fit/Fill natively; this mirrors it for the button.
-  const [scaleMode, setScaleMode] = useState<'fit' | 'fill'>(() => {
+  const [scaleMode, setScaleMode] = useState<'fit' | 'fill' | 'stretch'>(() => {
     try {
-      return window.localStorage.getItem('mw_video_scale') === 'fill' ? 'fill' : 'fit';
+      const saved = window.localStorage.getItem('mw_video_scale');
+      return saved === 'fill' || saved === 'stretch' ? saved : 'fit';
     } catch {
       return 'fit';
     }
   });
+  // Names the new mode for a moment: three similar icons need a word.
+  const [scaleToast, setScaleToast] = useState<string | null>(null);
+  const scaleToastTimer = useRef<number | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(true);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [savingApiKey, setSavingApiKey] = useState(false);
@@ -467,6 +484,7 @@ export default function NativePlayerControls(props: Props) {
   };
   useEffect(() => () => {
     if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
+    if (scaleToastTimer.current !== null) window.clearTimeout(scaleToastTimer.current);
   }, []);
 
   // Sheet-loaded tracks render as the WEB overlay (pinch-resizable); embedded
@@ -635,6 +653,12 @@ export default function NativePlayerControls(props: Props) {
         <div className="w-12 shrink-0" aria-hidden="true" />
       </div>
 
+      {scaleToast ? (
+        <div className="pointer-events-none absolute inset-x-0 top-1/3 z-30 flex justify-center" role="status" aria-live="polite">
+          <span className="rounded-lg bg-black/70 px-4 py-2 text-sm font-medium text-white">{scaleToast}</span>
+        </div>
+      ) : null}
+
       {/* Skip-intro chip (where timestamps exist) */}
       {activeSkipSegment ? (
         <div className="absolute bottom-28 right-4 z-20">
@@ -706,11 +730,14 @@ export default function NativePlayerControls(props: Props) {
             </IconButton>
             {/* Scale sits LAST — the convention in mainstream players. */}
             <IconButton
-              label={scaleMode === 'fit' ? 'Fill screen' : 'Fit to screen'}
+              label={SCALE_MODES[nextScaleMode(scaleMode)].label}
               onClick={() => {
-                const next = scaleMode === 'fit' ? 'fill' : 'fit';
+                const next = nextScaleMode(scaleMode);
                 setScaleMode(next);
                 player.setVideoScale(next);
+                setScaleToast(SCALE_MODES[next].toast);
+                if (scaleToastTimer.current) window.clearTimeout(scaleToastTimer.current);
+                scaleToastTimer.current = window.setTimeout(() => setScaleToast(null), 1600);
                 try {
                   window.localStorage.setItem('mw_video_scale', next);
                 } catch {
@@ -718,7 +745,11 @@ export default function NativePlayerControls(props: Props) {
                 }
               }}
             >
-              {scaleMode === 'fit' ? <Scan className="h-6 w-6" aria-hidden="true" /> : <Proportions className="h-6 w-6" aria-hidden="true" />}
+              {scaleMode === 'fit'
+                ? <Scan className="h-6 w-6" aria-hidden="true" />
+                : scaleMode === 'fill'
+                  ? <Proportions className="h-6 w-6" aria-hidden="true" />
+                  : <MoveHorizontal className="h-6 w-6" aria-hidden="true" />}
             </IconButton>
           </div>
         </div>

@@ -85,7 +85,7 @@ export type NativePlaybackBridge = {
   setAudioDelay?(seconds: number, playId: string): Promise<void>;
   // Fit preserves the whole picture (letterbox); Fill uses the whole display
   // with intentional center-crop. Never stretch.
-  setVideoScale?(mode: 'fit' | 'fill', playId: string): Promise<void>;
+  setVideoScale?(mode: 'fit' | 'fill' | 'stretch', playId: string): Promise<void>;
   setSubtitleScale?(percent: number, playId: string): Promise<void>;
   // Orientation handoff: locks landscape the moment the user enters playback
   // (before metadata/session prepare) and restores app orientation on close.
@@ -271,7 +271,7 @@ export class NativePlaybackController {
     this.bridge.setAudioDelay?.(seconds, this.currentPlayId).catch(() => {});
   }
 
-  setVideoScale(mode: 'fit' | 'fill'): void {
+  setVideoScale(mode: 'fit' | 'fill' | 'stretch'): void {
     if (this.currentPlayId === '') return;
     this.bridge.setVideoScale?.(mode, this.currentPlayId).catch(() => {});
   }
