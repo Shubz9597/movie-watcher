@@ -46,6 +46,9 @@ final class DownloadCoordinator: NSObject {
     private var retryAttempts: [String: Int] = [:]
     private static let maxRetries = 6
     private let stateLock = NSLock()
+    /// Serialises queue decisions; recursive because finishing one download
+    /// starts the next from inside the same call chain.
+    private let queueLock = NSRecursiveLock()
 
     /// Emitted (on the main queue) whenever durable state changed; the
     /// Capacitor plugin forwards this to the WebView.
@@ -146,11 +149,34 @@ final class DownloadCoordinator: NSObject {
             createdAt: Date(),
             updatedAt: Date())
         try store.upsert(record)
-        try startTasks(for: record)
         if #available(iOS 16.1, *) {
             DownloadLiveActivity.start(record)
         }
+        startNextIfIdle()
         emitChange()
+    }
+
+    /// Transfers run one at a time, oldest first: on a slow link each episode
+    /// finishes (and can be watched) while the next one downloads, instead of
+    /// every episode sharing the bandwidth and none finishing. Called whenever
+    /// a transfer ends, fails, pauses or is removed, and after enqueueing.
+    private func startNextIfIdle() {
+        queueLock.lock()
+        defer { queueLock.unlock() }
+        var attempted = Set<String>()
+        while true {
+            let records = (try? store.list()) ?? []
+            if records.contains(where: { $0.state == .downloading }) { return }
+            guard let next = records.first(where: { $0.state == .queued && !attempted.contains($0.downloadId) }) else { return }
+            attempted.insert(next.downloadId)
+            do {
+                // Sets .downloading, or finalizes at once when every asset is
+                // already staged; then the loop moves on to the following one.
+                try startTasks(for: next)
+            } catch {
+                failDownload(next.downloadId, reason: "storage_failed")
+            }
+        }
     }
 
     /// Creates + resumes one download task per not-yet-done asset.
@@ -189,6 +215,7 @@ final class DownloadCoordinator: NSObject {
                 if #available(iOS 16.1, *), let record = try? self.store.get(downloadId) {
                     DownloadLiveActivity.refresh(record, status: "Paused")
                 }
+                self.startNextIfIdle()
                 self.emitChange()
                 completion(nil)
             } catch {
@@ -222,10 +249,13 @@ final class DownloadCoordinator: NSObject {
                         try? FileManager.default.removeItem(
                             at: try DownloadStore.stagingDirectory(downloadId: downloadId))
                         try self.store.resetTransferProgress(downloadId)
-                        try self.startTasks(for: record)
+                        try self.store.setState(downloadId, .queued)
+                        self.startNextIfIdle()
                     }
                 } else if tasks.isEmpty {
-                    try self.startTasks(for: record)
+                    // Lost transfers wait their turn in the queue.
+                    try self.store.setState(downloadId, .queued)
+                    self.startNextIfIdle()
                 } else {
                     for task in tasks { task.resume() }
                     try self.store.setState(downloadId, .downloading)
@@ -255,6 +285,7 @@ final class DownloadCoordinator: NSObject {
                 DownloadLiveActivity.finish(record, status: "Cancelled", immediate: true)
             }
             self.resetTransferMetrics(downloadId)
+            self.startNextIfIdle()
             self.emitChange()
             completion(nil)
         }
@@ -305,10 +336,18 @@ final class DownloadCoordinator: NSObject {
             for downloadId in affected {
                 guard let record = try? self.store.get(downloadId), record.state == .downloading || record.state == .queued else { continue }
                 try? self.store.setState(downloadId, .queued)
-                if let record = try? self.store.get(downloadId) {
-                    try? self.startTasks(for: record)
-                }
             }
+            // Builds before the one-at-a-time queue started every download at
+            // once. Keep the oldest live transfer; the others restart in turn.
+            let live = self.store.incompleteDownloads().filter { $0.state == .downloading }
+            for record in live.dropFirst() {
+                let ids = Set(self.store.allTaskMappings().filter { $0.downloadId == record.downloadId }.map { $0.taskId })
+                for task in allTasks where ids.contains(Int(task.taskIdentifier)) { task.cancel() }
+                try? self.store.removeTasks(record.downloadId)
+                try? self.store.resetTransferProgress(record.downloadId)
+                try? self.store.setState(record.downloadId, .queued)
+            }
+            self.startNextIfIdle()
             // A process may be suspended after the transfer finishes but
             // before verification/finalization. The staged files are durable,
             // so finish that state instead of leaving it stuck forever.
@@ -612,6 +651,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             DownloadLiveActivity.finish(complete, status: "Downloaded")
         }
         resetTransferMetrics(record.downloadId)
+        startNextIfIdle()
         emitChange()
     }
 
@@ -644,5 +684,6 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             for task in tasks { task.cancel() }
             try? self.store.removeTasks(downloadId)
         }
+        startNextIfIdle()
     }
 }

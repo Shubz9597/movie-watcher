@@ -912,3 +912,17 @@ test("connection diagnostics: short UI message, host/error detail goes to the lo
   assert.doesNotMatch(message, /192\.168\.1\.50:4001|TypeError|Load failed/u, "the UI line stays short");
   assert.match(logged.join('\n'), /192\.168\.1\.50:4001/u, "host detail is logged");
 });
+
+test("native downloads transfer one at a time, oldest first", () => {
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const coordinator = readFileSync(join(repoRoot, "electron-app", "ios", "App", "App", "Downloads", "DownloadCoordinator.swift"), "utf8");
+  const enqueue = coordinator.slice(coordinator.indexOf("func enqueue("), coordinator.indexOf("private func startNextIfIdle"));
+  assert.doesNotMatch(enqueue, /startTasks\(for:/u, "enqueue must not start a transfer directly");
+  assert.match(enqueue, /startNextIfIdle\(\)/u);
+  assert.match(coordinator, /if records\.contains\(where: \{ \$0\.state == \.downloading \}\) \{ return \}/u);
+  assert.match(coordinator, /records\.first\(where: \{ \$0\.state == \.queued/u, "the oldest queued download goes next");
+  const finalize = coordinator.slice(coordinator.indexOf("private func tryMaybeFinalize"), coordinator.indexOf("static func sha256Hex"));
+  assert.match(finalize, /setState\(record\.downloadId, \.ready\)[\s\S]+startNextIfIdle\(\)/u, "a finished episode starts the next");
+  assert.match(coordinator, /private func failDownload[\s\S]+startNextIfIdle\(\)/u, "a failed episode starts the next");
+  assert.match(coordinator, /live\.dropFirst\(\)/u, "transfers left running in parallel by older builds are queued again");
+});
