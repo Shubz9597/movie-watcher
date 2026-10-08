@@ -69,6 +69,7 @@ class TorWatchNativePlugin : Plugin() {
         // possibly-incomplete torrent; a deeper network buffer absorbs
         // peer-driven throughput dips.
         private const val NETWORK_CACHING_MS = 4000
+        private const val VIDEO_SCALE_MODE_KEY = "videoScaleMode"
     }
 
     private var libVLC: LibVLC? = null
@@ -248,6 +249,9 @@ class TorWatchNativePlugin : Plugin() {
         player.media = media
         media.release()
         player.attachViews(layout, null, true, true)
+        val savedScaleMode = activity.getSharedPreferences("torwatch.player", 0)
+            .getString(VIDEO_SCALE_MODE_KEY, "fit") ?: "fit"
+        player.setVideoScale(videoScaleType(savedScaleMode))
 
         if (seekTo != null && seekTo > 0) {
             pendingSeek = (seekTo * 1000.0).toLong()
@@ -375,20 +379,22 @@ class TorWatchNativePlugin : Plugin() {
     fun setVideoScale(call: PluginCall) {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { setVideoScale(call) }; return }
         val mode = call.getString("mode") ?: "fit"
-        if (mode != "fit" && mode != "fill") {
+        if (mode != "fit" && mode != "fill" && mode != "stretch") {
             call.reject("Unknown video scale mode.")
             return
         }
-        val player = mediaPlayer
-        if (player != null) {
-            // Fit letterboxes the complete picture; Fill center-crops the
-            // source to the drawable's aspect. Neither stretches.
-            player.setVideoScale(
-                if (mode == "fill") MediaPlayer.ScaleType.SURFACE_FILL
-                else MediaPlayer.ScaleType.SURFACE_BEST_FIT,
-            )
-        }
+        if (call.getString("playId") != playId) { call.resolve(); return }
+        bridge.activity.getSharedPreferences("torwatch.player", 0).edit()
+            .putString(VIDEO_SCALE_MODE_KEY, mode).apply()
+        mediaPlayer?.setVideoScale(videoScaleType(mode))
         call.resolve()
+    }
+
+    private fun videoScaleType(mode: String): MediaPlayer.ScaleType = when (mode) {
+        // LibVLC's FILL stretches; FIT_SCREEN preserves the aspect and crops.
+        "fill" -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
+        "stretch" -> MediaPlayer.ScaleType.SURFACE_FILL
+        else -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
     }
 
     @PluginMethod

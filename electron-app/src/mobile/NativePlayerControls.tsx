@@ -105,12 +105,11 @@ function formatDelay(seconds: number): string {
 }
 
 
-// Fit: whole picture, bars. Fill: covers the screen, crops top and bottom.
-// Stretch: covers the screen, widens the picture.
+// Fit keeps the whole picture; Fill crops to cover; Stretch fills both axes.
 const SCALE_MODES = {
-  fit: { label: 'Fit to screen', toast: 'Fit · whole picture' },
-  fill: { label: 'Fill screen', toast: 'Fill · crops top and bottom' },
-  stretch: { label: 'Stretch to screen', toast: 'Stretch · widens the picture' },
+  fit: 'Fit',
+  fill: 'Fill',
+  stretch: 'Stretch',
 } as const;
 
 function nextScaleMode(mode: 'fit' | 'fill' | 'stretch'): 'fit' | 'fill' | 'stretch' {
@@ -147,7 +146,7 @@ export default function NativePlayerControls(props: Props) {
   const [subtitleError, setSubtitleError] = useState('');
   const [language, setLanguage] = useState('en');
   const [scrubTo, setScrubTo] = useState<number | null>(null);
-  // The player remembers Fit/Fill natively; this mirrors it for the button.
+  // Mirror the saved native sizing preference for the button.
   const [scaleMode, setScaleMode] = useState<'fit' | 'fill' | 'stretch'>(() => {
     try {
       const saved = window.localStorage.getItem('mw_video_scale');
@@ -638,7 +637,7 @@ export default function NativePlayerControls(props: Props) {
       {/* Top bar — safe-area aware so the close button never sits under the
           Dynamic Island / notch in either orientation. */}
       <div
-        className={`absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 bg-gradient-to-b from-black/70 to-transparent pb-8 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
+        className={`absolute inset-x-0 top-0 z-20 flex items-start gap-2 bg-gradient-to-b from-black/70 to-transparent pb-8 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' || scaleToast ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         <button
@@ -649,15 +648,15 @@ export default function NativePlayerControls(props: Props) {
         >
           <ChevronLeft className="h-6 w-6" aria-hidden="true" />
         </button>
-        {hasVideo ? <p className="pointer-events-none min-w-0 flex-1 truncate text-center text-base font-medium text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">{title}</p> : null}
-        <div className="w-12 shrink-0" aria-hidden="true" />
+        {hasVideo ? (
+          <div className="pointer-events-none min-w-0 flex-1 pt-3">
+            <p className="truncate text-left text-base font-medium text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">{title}</p>
+            {scaleToast ? (
+              <span className="mt-2 inline-block rounded-full bg-black/80 px-3 py-1 text-sm font-medium text-white" role="status" aria-live="polite">{scaleToast}</span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-
-      {scaleToast ? (
-        <div className="pointer-events-none absolute inset-x-0 top-1/3 z-30 flex justify-center" role="status" aria-live="polite">
-          <span className="rounded-lg bg-black/70 px-4 py-2 text-sm font-medium text-white">{scaleToast}</span>
-        </div>
-      ) : null}
 
       {/* Skip-intro chip (where timestamps exist) */}
       {activeSkipSegment ? (
@@ -730,12 +729,12 @@ export default function NativePlayerControls(props: Props) {
             </IconButton>
             {/* Scale sits LAST — the convention in mainstream players. */}
             <IconButton
-              label={SCALE_MODES[nextScaleMode(scaleMode)].label}
+              label={SCALE_MODES[nextScaleMode(scaleMode)]}
               onClick={() => {
                 const next = nextScaleMode(scaleMode);
                 setScaleMode(next);
                 player.setVideoScale(next);
-                setScaleToast(SCALE_MODES[next].toast);
+                setScaleToast(SCALE_MODES[next]);
                 if (scaleToastTimer.current) window.clearTimeout(scaleToastTimer.current);
                 scaleToastTimer.current = window.setTimeout(() => setScaleToast(null), 1600);
                 try {

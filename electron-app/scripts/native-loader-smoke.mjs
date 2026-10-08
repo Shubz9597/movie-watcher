@@ -18,7 +18,15 @@ import { createRoot } from 'react-dom/client';
 import Controls from '/mobile/NativePlayerControls.tsx';
 import '/globals.css';
 const events = {};
-const player = { seekTo(){}, seekBy(){}, togglePlayback(){}, setSubtitleDelay(){}, setAudioDelay(){}, selectAudioTrack(){}, selectSubtitleTrack(){}, loadSubtitle: async () => null };
+window.controlCalls = [];
+const player = {
+  seekTo(position){ window.controlCalls.push(['seek', position]); },
+  seekBy(){},
+  togglePlayback(){ window.controlCalls.push(['toggle']); },
+  setVideoScale(mode){ window.controlCalls.push(['scale', mode]); },
+  setEmbeddedSubtitleScale(){},
+  setSubtitleDelay(){}, setAudioDelay(){}, selectAudioTrack(){}, selectSubtitleTrack(){}, loadSubtitle: async () => null
+};
 for (const name of ['Time', 'State', 'Buffering', 'Tracks']) player['subscribe' + name] = callback => {
   events[name] = callback;
   if (name === 'Buffering') callback({active:true});
@@ -57,6 +65,27 @@ try {
     assert.equal(await page.locator('[role="status"]').map(el => el.textContent).wait(), 'Interstellar');
     await page.evaluate(() => window.emit('State', 'playing'));
     await page.waitForFunction(() => !document.querySelector('.native-loader--visible'));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
+    await page.evaluate(() => window.emit('State', 'paused'));
+    // Size changes must reach the player once, including while paused, and
+    // the brief mode pill belongs immediately below the left-aligned title.
+    for (const mode of ['Fill', 'Stretch', 'Fit']) {
+      await page.click(`button[aria-label="${mode}"]`);
+      await page.waitForFunction(mode => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent === mode), {}, mode);
+      const placement = await page.$eval('[role="status"]', pill => {
+        const title = pill.previousElementSibling;
+        return {
+          title: title?.textContent,
+          left: pill.getBoundingClientRect().left - title.getBoundingClientRect().left,
+          below: pill.getBoundingClientRect().top >= title.getBoundingClientRect().bottom,
+          alignment: getComputedStyle(title).textAlign,
+        };
+      });
+      assert.deepEqual(placement, {title:'Interstellar', left:0, below:true, alignment:'left'});
+      await page.screenshot({ path: path.join(output, `landscape-${mode.toLowerCase()}.png`) });
+    }
+    assert.deepEqual(await page.evaluate(() => window.controlCalls), [['scale','fill'], ['scale','stretch'], ['scale','fit']], 'sizing must not toggle playback or seek');
+    await page.evaluate(() => window.emit('State', 'playing'));
     await page.evaluate(() => window.emit('Buffering', {active:true}));
     // A real stall appears, but never brings the title/poster back.
     await page.waitForSelector('.native-rebuffer--visible');
@@ -83,6 +112,17 @@ try {
     await page.waitForFunction(() => document.querySelector('.native-loader-title')?.textContent.startsWith('A very long'));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: path.join(output, 'tablet-long-title.png') });
+    await page.evaluate(() => {
+      window.emit('State', 'paused');
+      window.emit('Time', {currentTime:250, duration:1400});
+    });
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
+    await page.click('button[aria-label="Fill"]');
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent === 'Fill'));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(output, 'tablet-controls-long-title.png') });
+    await page.setViewport({ width:390, height:844, deviceScaleFactor:1 });
+    await page.screenshot({ path: path.join(output, 'portrait-controls-long-title.png') });
     // Synthetic wide transparent artwork exercises the image path without
     // network/API credentials. It is test data, not shipped title artwork.
     const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="100"><text x="450" y="72" fill="white" text-anchor="middle" font-family="serif" font-size="70" letter-spacing="8">INTERSTELLAR</text></svg>');
@@ -99,7 +139,7 @@ try {
     assert.equal(await page.evaluate(() => window.closedPlayer), true);
   }
   assert.deepEqual(errors, []);
-  console.log(baseline ? 'Baseline captured: ' + output : 'Native loader smoke passed: startup, state-only completion, rebuffer, short stalls, auto-hide, image failure, logo progress, responsive layout, reduced motion, close. Captures: ' + output);
+  console.log(baseline ? 'Baseline captured: ' + output : 'Native controls smoke passed: sizing cycle while paused, title/pill placement, startup, rebuffer, auto-hide, artwork fallback, responsive layout, reduced motion, close. Captures: ' + output);
 } finally {
   await browser?.close();
   await server?.close();

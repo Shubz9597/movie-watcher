@@ -84,7 +84,7 @@ export type NativePlaybackBridge = {
   setSubtitleDelay?(seconds: number, playId: string): Promise<void>;
   setAudioDelay?(seconds: number, playId: string): Promise<void>;
   // Fit preserves the whole picture (letterbox); Fill uses the whole display
-  // with intentional center-crop. Never stretch.
+  // with intentional center-crop; Stretch fills both axes independently.
   setVideoScale?(mode: 'fit' | 'fill' | 'stretch', playId: string): Promise<void>;
   setSubtitleScale?(percent: number, playId: string): Promise<void>;
   // Orientation handoff: locks landscape the moment the user enters playback
