@@ -159,23 +159,64 @@ final class DownloadCoordinator: NSObject {
     /// Transfers run one at a time, oldest first: on a slow link each episode
     /// finishes (and can be watched) while the next one downloads, instead of
     /// every episode sharing the bandwidth and none finishing. Called whenever
-    /// a transfer ends, fails, pauses or is removed, and after enqueueing.
-    private func startNextIfIdle() {
-        queueLock.lock()
-        defer { queueLock.unlock() }
-        var attempted = Set<String>()
-        while true {
-            let records = (try? store.list()) ?? []
-            if records.contains(where: { $0.state == .downloading }) { return }
-            guard let next = records.first(where: { $0.state == .queued && !attempted.contains($0.downloadId) }) else { return }
-            attempted.insert(next.downloadId)
-            do {
-                // Sets .downloading, or finalizes at once when every asset is
-                // already staged; then the loop moves on to the following one.
-                try startTasks(for: next)
-            } catch {
-                failDownload(next.downloadId, reason: "storage_failed")
+    /// a transfer ends, fails, pauses, resumes or is removed, after enqueueing,
+    /// and on every Downloads list read.
+    ///
+    /// The decision uses the transfers iOS actually holds, not only the stored
+    /// state: a download marked downloading whose transfer iOS dropped (or left
+    /// suspended) must never block the queue.
+    func startNextIfIdle() {
+        session.getAllTasks { [weak self] allTasks in
+            guard let self = self else { return }
+            self.queueLock.lock()
+            defer { self.queueLock.unlock() }
+            var owner: [Int: String] = [:]
+            for mapping in self.store.allTaskMappings() { owner[mapping.taskId] = mapping.downloadId }
+            var changed = false
+            var inFlight = Set<String>()
+            var suspended: [String: [URLSessionTask]] = [:]
+            for task in allTasks {
+                guard let downloadId = owner[Int(task.taskIdentifier)] else { continue }
+                if task.state == .suspended {
+                    suspended[downloadId, default: []].append(task)
+                } else {
+                    inFlight.insert(downloadId)
+                }
             }
+            let mapped = Set(owner.values)
+            for record in (try? self.store.list()) ?? [] where record.state == .downloading && !inFlight.contains(record.downloadId) {
+                if let tasks = suspended[record.downloadId] {
+                    for task in tasks { task.resume() }
+                    inFlight.insert(record.downloadId)
+                    changed = true
+                } else if !mapped.contains(record.downloadId) && Date().timeIntervalSince(record.updatedAt) > 30 {
+                    // Its transfer is gone and nothing has moved for 30 s (a
+                    // transfer that just finished is still being verified):
+                    // back in line; finished assets are kept.
+                    try? self.store.setState(record.downloadId, .queued)
+                    changed = true
+                } else {
+                    inFlight.insert(record.downloadId)
+                }
+            }
+            if inFlight.isEmpty {
+                var attempted = Set<String>()
+                while let next = ((try? self.store.list()) ?? []).first(where: { $0.state == .queued && !attempted.contains($0.downloadId) }) {
+                    attempted.insert(next.downloadId)
+                    changed = true
+                    do {
+                        // Sets .downloading, or finalizes at once when every
+                        // asset is already staged; then the next one is tried.
+                        try self.startTasks(for: next)
+                    } catch {
+                        self.failDownload(next.downloadId, reason: "storage_failed")
+                    }
+                    if (try? self.store.get(next.downloadId))?.state == .downloading { break }
+                }
+            }
+            // Only real changes are announced: list reads call this too, and an
+            // unconditional event would make the screen re-read forever.
+            if changed { self.emitChange() }
         }
     }
 
@@ -544,7 +585,9 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         clearTaskMetrics(taskId)
         try? store.removeTask(taskId)
         if error.code == NSURLErrorCancelled {
-            // pause()/remove() initiated this; durable state already reflects it.
+            // Usually pause()/remove(); if iOS cancelled it instead, the queue
+            // check puts the download back in line.
+            startNextIfIdle()
             return
         }
         // Connection drops and server restarts are routine on a home server:

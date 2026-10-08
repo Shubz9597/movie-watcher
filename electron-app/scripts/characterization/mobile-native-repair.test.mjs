@@ -916,11 +916,20 @@ test("connection diagnostics: short UI message, host/error detail goes to the lo
 test("native downloads transfer one at a time, oldest first", () => {
   const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
   const coordinator = readFileSync(join(repoRoot, "electron-app", "ios", "App", "App", "Downloads", "DownloadCoordinator.swift"), "utf8");
-  const enqueue = coordinator.slice(coordinator.indexOf("func enqueue("), coordinator.indexOf("private func startNextIfIdle"));
+  const enqueue = coordinator.slice(coordinator.indexOf("func enqueue("), coordinator.indexOf("func startNextIfIdle()"));
   assert.doesNotMatch(enqueue, /startTasks\(for:/u, "enqueue must not start a transfer directly");
   assert.match(enqueue, /startNextIfIdle\(\)/u);
-  assert.match(coordinator, /if records\.contains\(where: \{ \$0\.state == \.downloading \}\) \{ return \}/u);
-  assert.match(coordinator, /records\.first\(where: \{ \$0\.state == \.queued/u, "the oldest queued download goes next");
+  const queue = coordinator.slice(coordinator.indexOf("func startNextIfIdle()"), coordinator.indexOf("/// Creates + resumes"));
+  assert.match(queue, /session\.getAllTasks/u, "the queue decides from the transfers iOS really holds");
+  assert.match(queue, /if inFlight\.isEmpty/u, "only one transfer at a time");
+  assert.match(queue, /\.first\(where: \{ \$0\.state == \.queued/u, "the oldest queued download goes next");
+  assert.match(queue, /suspended\[record\.downloadId\][\s\S]+task\.resume\(\)/u, "a downloading record with a suspended transfer is resumed");
+  assert.match(queue, /!mapped\.contains\(record\.downloadId\) && Date\(\)\.timeIntervalSince\(record\.updatedAt\) > 30/u, "a dropped transfer is requeued, never one that is finishing");
+  assert.match(queue, /if changed \{ self\.emitChange\(\) \}/u, "list reads must not trigger endless change events");
+  const plugin = readFileSync(join(repoRoot, "electron-app", "ios", "App", "App", "Downloads", "TorWatchDownloadsPlugin.swift"), "utf8");
+  assert.match(plugin, /@objc func list\(_ call: CAPPluginCall\) \{\s+\/\/[^\n]*\n\s+coordinator\.startNextIfIdle\(\)/u, "opening Downloads unsticks the queue");
+  const page = readFileSync(join(repoRoot, "electron-app", "src", "pages", "DownloadsPage.tsx"), "utf8");
+  assert.match(page, /\{loading && !inventory \? \(/u, "refreshes keep the list mounted (no jump to the top)");
   const finalize = coordinator.slice(coordinator.indexOf("private func tryMaybeFinalize"), coordinator.indexOf("static func sha256Hex"));
   assert.match(finalize, /setState\(record\.downloadId, \.ready\)[\s\S]+startNextIfIdle\(\)/u, "a finished episode starts the next");
   assert.match(coordinator, /private func failDownload[\s\S]+startNextIfIdle\(\)/u, "a failed episode starts the next");

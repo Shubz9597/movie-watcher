@@ -635,7 +635,10 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         </p>
       ) : null}
 
-      {loading ? (
+      {/* Placeholders only before the first read: later refreshes (pause,
+          resume, progress) update the list in place, so it never collapses
+          and throws the viewer back to the top. */}
+      {loading && !inventory ? (
         <div className="mt-6 max-w-4xl space-y-3" role="status" aria-label="Loading downloads">
           {[0, 1].map((row) => (
             <div key={row} className="h-[132px] animate-pulse rounded-lg bg-white/[0.06] sm:h-[164px]" />

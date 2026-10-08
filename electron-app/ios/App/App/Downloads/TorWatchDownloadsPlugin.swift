@@ -99,6 +99,8 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func list(_ call: CAPPluginCall) {
+        // Opening Downloads also unsticks a queue whose transfer iOS dropped.
+        coordinator.startNextIfIdle()
         do {
             let records = try coordinator.store.list()
             let progress = records.map { record -> [String: Any] in
