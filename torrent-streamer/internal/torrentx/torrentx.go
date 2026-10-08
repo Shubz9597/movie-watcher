@@ -355,6 +355,7 @@ func AddOrGetTorrent(cl *torrent.Client, src string) (*torrent.Torrent, error) {
 	}
 	if t, ok := cl.Torrent(ih); ok {
 		log.Printf("[AddOrGetTorrent] torrent already exists: %s", ih.HexString())
+		mergeMagnetTrackers(t, src)
 		return t, nil
 	}
 	log.Printf("[AddOrGetTorrent] adding magnet URI")

@@ -328,6 +328,8 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	defer func() { p.mu.Lock(); p.reserved -= needed; p.mu.Unlock() }()
 	file.Download()
 	setProgressStage(job.ID, StageDownloading, nil, file)
+	// Long preparations outlive the engine's own peer searches.
+	go torrentx.KeepPeersFlowing(jobCtx, cl, t, "download "+job.ID)
 
 	// 4. Subtitle sidecars, resolved BEFORE the long video copy so a missing
 	// language fails in seconds, not hours. Torrent-internal files win;
