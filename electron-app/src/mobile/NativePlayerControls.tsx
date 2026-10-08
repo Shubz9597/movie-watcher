@@ -11,6 +11,8 @@ import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { offlineSkipSegments } from '../lib/offline-skip-segments';
+import { clampPlaybackDelay, matchingSavedTrack, readVideoPlaybackPreferences, saveVideoPlaybackPreferences, subtitleCueAtTime, videoPlaybackPreferenceKey } from './video-playback-preferences';
+import type { SavedSubtitle, VideoPlaybackPreferences } from './video-playback-preferences';
 
 export type NativeTrackInfo = { id: number; label?: string; language?: string };
 
@@ -124,6 +126,22 @@ export default function NativePlayerControls(props: Props) {
   // Offline downloads play without a magnet: no server catalog, torrent
   // telemetry or import — only the tracks inside the downloaded package.
   const local = !magnet;
+  // PlayerPage remounts controls for a different source/file/episode. Capture
+  // this video's settings once, and save explicit changes immediately.
+  const [savedVideo] = useState(() => {
+    const key = videoPlaybackPreferenceKey({ origin: getVodBase(), magnet, downloadId, cat, fileIndex, season, episode });
+    return { key, preferences: readVideoPlaybackPreferences(key) };
+  });
+  const preferencesRef = useRef<VideoPlaybackPreferences>(savedVideo.preferences ?? {
+    subtitle: null, subtitleDelay: 0, audioTrack: null, audioDelay: 0,
+  });
+  const pendingSubtitleRestore = useRef(savedVideo.preferences?.subtitle ?? null);
+  const pendingAudioRestore = useRef(savedVideo.preferences?.audioTrack ?? null);
+  const timingRestored = useRef(false);
+  const savePreferences = (patch: Partial<VideoPlaybackPreferences>) => {
+    preferencesRef.current = { ...preferencesRef.current, ...patch };
+    saveVideoPlaybackPreferences(savedVideo.key, preferencesRef.current);
+  };
 
   const [hasVideo, setHasVideo] = useState(false);
   const [buffering, setBuffering] = useState<{ active: boolean; progress?: number }>({ active: true });
@@ -141,13 +159,16 @@ export default function NativePlayerControls(props: Props) {
   const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [catalogMessage, setCatalogMessage] = useState('');
   const [activeSubtitleUrl, setActiveSubtitleUrl] = useState<string | null>(null);
-  const [subtitleDelay, setSubtitleDelayState] = useState(0);
-  const [audioDelay, setAudioDelayState] = useState(0);
+  const [subtitleDelay, setSubtitleDelayState] = useState(preferencesRef.current.subtitleDelay);
+  const [audioDelay, setAudioDelayState] = useState(preferencesRef.current.audioDelay);
   const [skipSegments, setSkipSegments] = useState<SkipSegment[]>([]);
   const [importing, setImporting] = useState(false);
   const [loadingSubtitleUrl, setLoadingSubtitleUrl] = useState<string | null>(null);
   const [subtitleError, setSubtitleError] = useState('');
-  const [language, setLanguage] = useState('en');
+  const [language, setLanguage] = useState(() => {
+    const selection = preferencesRef.current.subtitle;
+    return selection?.kind === 'external' ? selection.language || 'en' : 'en';
+  });
   const [scrubTo, setScrubTo] = useState<number | null>(null);
   // Mirror the saved native sizing preference for the button.
   const [scaleMode, setScaleMode] = useState<'fit' | 'fill' | 'stretch'>(() => {
@@ -295,8 +316,8 @@ export default function NativePlayerControls(props: Props) {
   // derived (not stored) so a 500ms clock tick never misses a cue.
   const activeOverlayCue = useMemo(() => {
     if (!overlayCues) return null;
-    return overlayCues.find((cue) => time.currentTime >= cue.start && time.currentTime <= cue.end) ?? null;
-  }, [overlayCues, time.currentTime]);
+    return subtitleCueAtTime(overlayCues, time.currentTime, subtitleDelay);
+  }, [overlayCues, time.currentTime, subtitleDelay]);
 
   // --- Pinch-to-resize on the video surface: two-finger spread adjusts the
   // overlay font size live and persists per device. A pinch suppresses the
@@ -492,27 +513,81 @@ export default function NativePlayerControls(props: Props) {
   // Sheet-loaded tracks render as the WEB overlay (pinch-resizable); embedded
   // tracks stay VLC-rendered. Choosing one kind always clears the other so
   // subtitles never render twice.
-  const applyOverlayFromUrl = async (url: string, hint: SubtitleFormat): Promise<void> => {
+  const applyOverlayFromUrl = async (selection: Extract<SavedSubtitle, { kind: 'external' }>, operation: number): Promise<boolean> => {
+    const url = selection.url.startsWith('http') ? selection.url : `${getVodBase()}${selection.url}`;
     const res = await fetch(url, { headers: { Accept: 'text/vtt, text/plain, */*' }, signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new Error(`subtitle download failed (${res.status})`);
     const raw = await res.text();
-    const cues = parseSubtitles(raw, hint);
+    const cues = parseSubtitles(raw, selection.format);
     if (cues.length === 0) throw new Error('That subtitle file has no readable cues.');
+    // A late download must not override Off, a manual track choice, or a
+    // replaced player (including automatic restore requests).
+    if (operation !== subtitleOperation.current) return false;
     setOverlayCues(cues);
     setSelectedEmbeddedSub(null);
-    setActiveSubtitleUrl(url);
+    setActiveSubtitleUrl(selection.url);
     player.selectSubtitleTrack(null); // never double-render over the overlay
+    return true;
   };
+
+  // Restore only after the native player is ready. Embedded inventories can
+  // arrive later than Playing, so keep a missing selection pending until its
+  // track appears. User actions cancel their respective pending restoration.
+  useEffect(() => {
+    if (!hasVideo) return;
+    if (!timingRestored.current) {
+      timingRestored.current = true;
+      player.setSubtitleDelay(preferencesRef.current.subtitleDelay);
+      player.setAudioDelay(preferencesRef.current.audioDelay);
+    }
+    const audio = pendingAudioRestore.current;
+    if (audio) {
+      const track = matchingSavedTrack(embeddedAudio, audio);
+      if (track) {
+        pendingAudioRestore.current = null;
+        player.selectAudioTrack(track.id);
+        setSelectedEmbeddedAudio(track.id);
+      }
+    }
+    const selection = pendingSubtitleRestore.current;
+    if (!selection) return;
+    if (selection.kind === 'embedded') {
+      const track = matchingSavedTrack(embeddedSubs, selection.track);
+      if (!track) return;
+      pendingSubtitleRestore.current = null;
+      player.selectSubtitleTrack(track.id);
+      setSelectedEmbeddedSub(track.id);
+    } else if (selection.kind === 'off') {
+      // Wait for track enumeration so VLC's initial auto-selection settles.
+      if (embeddedSubs.length === 0) return;
+      pendingSubtitleRestore.current = null;
+      player.selectSubtitleTrack(null);
+      setSelectedEmbeddedSub(null);
+    } else {
+      pendingSubtitleRestore.current = null;
+      const operation = ++subtitleOperation.current;
+      setLoadingSubtitleUrl(selection.url);
+      void applyOverlayFromUrl(selection, operation).catch(() => {
+        if (operation === subtitleOperation.current) setSubtitleError('Couldn’t restore your saved subtitle. Select it to try again.');
+      }).finally(() => {
+        if (operation === subtitleOperation.current) setLoadingSubtitleUrl(null);
+      });
+    }
+  }, [hasVideo, embeddedAudio, embeddedSubs, player]);
 
   const chooseCatalogSubtitle = async (track: CatalogSubtitleTrack) => {
     if (loadingSubtitleUrl || importing) return;
+    pendingSubtitleRestore.current = null;
     const operation = ++subtitleOperation.current;
-    const url = track.url.startsWith('http') ? track.url : `${getVodBase()}${track.url}`;
+    const selection: Extract<SavedSubtitle, { kind: 'external' }> = {
+      kind: 'external', url: track.url, format: (track.format || 'vtt') as SubtitleFormat,
+      label: track.fileName || track.label, language: track.lang,
+    };
     setLoadingSubtitleUrl(track.url);
     setSubtitleError('');
     try {
       if (operation !== subtitleOperation.current) return;
-      await applyOverlayFromUrl(url, (track.format || 'vtt') as SubtitleFormat);
+      if (await applyOverlayFromUrl(selection, operation)) savePreferences({ subtitle: selection });
     } catch {
       if (operation === subtitleOperation.current) setSubtitleError('Couldn’t load this subtitle.');
     } finally {
@@ -521,22 +596,32 @@ export default function NativePlayerControls(props: Props) {
   };
 
   const chooseEmbeddedSubtitle = (track: NativeTrackInfo) => {
+    pendingSubtitleRestore.current = null;
+    subtitleOperation.current++;
+    setLoadingSubtitleUrl(null);
     setOverlayCues(null);
     setActiveSubtitleUrl(null);
     player.selectSubtitleTrack(track.id);
     setSelectedEmbeddedSub(track.id);
+    savePreferences({ subtitle: { kind: 'embedded', track } });
   };
 
   const disableSubtitles = () => {
+    pendingSubtitleRestore.current = null;
+    subtitleOperation.current++;
+    setLoadingSubtitleUrl(null);
     setOverlayCues(null);
     setActiveSubtitleUrl(null);
     player.selectSubtitleTrack(null);
     setSelectedEmbeddedSub(null);
+    savePreferences({ subtitle: { kind: 'off' } });
   };
 
   const chooseEmbeddedAudio = (track: NativeTrackInfo) => {
+    pendingAudioRestore.current = null;
     player.selectAudioTrack(track.id);
     setSelectedEmbeddedAudio(track.id);
+    savePreferences({ audioTrack: track });
   };
 
   const importLocalSubtitle = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -549,6 +634,7 @@ export default function NativePlayerControls(props: Props) {
       return;
     }
     setImporting(true);
+    pendingSubtitleRestore.current = null;
     setSubtitleError('');
     const operation = ++subtitleOperation.current;
     const origin = getVodBase();
@@ -562,10 +648,11 @@ export default function NativePlayerControls(props: Props) {
         throw new Error(data.error ?? 'The subtitle could not be imported.');
       }
       if (operation !== subtitleOperation.current || origin !== getVodBase()) return;
-      await applyOverlayFromUrl(`${origin}${data.url}`, (data.format || 'vtt') as SubtitleFormat);
-      if (operation !== subtitleOperation.current) return;
-      setActiveSubtitleUrl(data.url);
-      setSelectedEmbeddedSub(null);
+      const selection: Extract<SavedSubtitle, { kind: 'external' }> = {
+        kind: 'external', url: data.url, format: (data.format || 'vtt') as SubtitleFormat,
+        label: data.fileName || file.name,
+      };
+      if (await applyOverlayFromUrl(selection, operation)) savePreferences({ subtitle: selection });
     } catch (error) {
       if (operation === subtitleOperation.current) setSubtitleError(error instanceof Error ? error.message : 'The subtitle could not be imported.');
     } finally {
@@ -574,13 +661,15 @@ export default function NativePlayerControls(props: Props) {
   };
 
   const adjustDelay = (kind: 'subtitle' | 'audio', value: number) => {
-    const clamped = Math.max(-30, Math.min(30, Math.round(value * 10) / 10));
+    const clamped = clampPlaybackDelay(value);
     if (kind === 'subtitle') {
       setSubtitleDelayState(clamped);
       player.setSubtitleDelay(clamped);
+      savePreferences({ subtitleDelay: clamped });
     } else {
       setAudioDelayState(clamped);
       player.setAudioDelay(clamped);
+      savePreferences({ audioDelay: clamped });
     }
   };
 
