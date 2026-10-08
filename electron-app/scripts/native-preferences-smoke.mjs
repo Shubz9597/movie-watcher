@@ -100,9 +100,32 @@ try {
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'external');
   await page.click('button[aria-label="Close Audio and subtitles"]');
   await page.click('button[aria-label="Timing sync"]');
-  for (let index = 0; index < 40; index++) await page.click('button[aria-label="Subtitles earlier"]');
+  // Four presses of -1 s reach -4 s (the old control needed 40 presses);
+  // fine steps and the slider land on the same tenths.
+  for (let index = 0; index < 4; index++) await page.click('button[aria-label="Subtitles 1 second earlier"]');
+  await page.click('button[aria-label="Subtitles earlier"]');
+  await page.click('button[aria-label="Subtitles later"]');
+  await page.waitForFunction(() => window.readPreferences()?.subtitleDelay === -4);
+  await page.$eval('input[aria-label="Subtitles timing"]', input => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '-2.5');
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+  });
+  await page.waitForFunction(() => window.readPreferences()?.subtitleDelay === -2.5);
+  for (let index = 0; index < 15; index++) await page.click('button[aria-label="Subtitles earlier"]');
   await page.waitForFunction(() => window.readPreferences()?.subtitleDelay === -4);
   assert.equal(await page.evaluate(() => document.body.textContent.includes('Saved subtitle dialogue')), true, 'negative delay must move the actual overlay, not just the timing display');
+  // Holding a step button repeats it (once on press, then every 100 ms).
+  await page.$eval('button[aria-label="Audio 1 second later"]', el => el.scrollIntoView({block: 'center'}));
+  const holdBox = await (await page.$('button[aria-label="Audio 1 second later"]')).boundingBox();
+  await page.mouse.move(holdBox.x + holdBox.width / 2, holdBox.y + holdBox.height / 2);
+  await page.mouse.down();
+  await new Promise(resolve => setTimeout(resolve, 900));
+  await page.mouse.up();
+  const held = await page.evaluate(() => window.readPreferences()?.audioDelay);
+  assert.ok(held >= 4, `holding +1s must repeat (got ${held})`);
+  await page.click('button[aria-label="Reset audio timing"]');
+  await page.waitForFunction(() => window.readPreferences()?.audioDelay === 0);
   await page.click('button[aria-label="Audio later"]');
   await page.click('button[aria-label="Close Timing sync"]');
   await page.click('button[aria-label="Audio and subtitles"]');

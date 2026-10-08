@@ -6,7 +6,7 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, Minus, Plus, X, RotateCcw, RotateCw, Check } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, X, RotateCcw, RotateCw, Check } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
@@ -999,11 +999,13 @@ export default function NativePlayerControls(props: Props) {
         <Sheet title="Timing sync" onClose={() => setActiveSheet('none')}>
           <DelayRow
             label="Subtitles"
+            hint="Subtitles late? Move left. Early? Move right."
             value={subtitleDelay}
             onAdjust={(value) => adjustDelay('subtitle', value)}
           />
           <DelayRow
             label="Audio"
+            hint="Voices late? Move left. Early? Move right."
             value={audioDelay}
             onAdjust={(value) => adjustDelay('audio', value)}
           />
@@ -1228,17 +1230,97 @@ function BufferingLoader({ title, logoUrl, visible, progress }: {
   );
 }
 
-function DelayRow({ label, value, onAdjust }: { label: string; value: number; onAdjust: (value: number) => void }) {
-  const stepClass = 'inline-flex h-12 w-12 items-center justify-center rounded-lg border border-white/20 text-white transition hover:border-white/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white';
+// Timing control (VLC / MX Player style; Netflix has none): a slider for
+// the big jump, ±1 s and ±0.1 s steps for fine tuning, press-and-hold to
+// repeat a step, and Reset. Earlier = negative, later = positive.
+const DELAY_SLIDER_RANGE = 10;
+
+function DelayRow({ label, hint, value, onAdjust }: { label: string; hint: string; value: number; onAdjust: (value: number) => void }) {
+  // The latest value for repeating steps (a held button outlives renders).
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const range = Math.max(DELAY_SLIDER_RANGE, Math.ceil(Math.abs(value)));
+  const step = (delta: number) => onAdjust(Math.round((valueRef.current + delta) * 10) / 10);
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
-      <span className="text-sm text-white/85">{label}</span>
-      <div className="flex items-center gap-2">
-        <button type="button" aria-label={`${label} earlier`} onClick={() => onAdjust(value - 0.1)} className={stepClass}><Minus className="h-4 w-4" aria-hidden="true" /></button>
-        <output className="text-numeric w-16 text-center text-sm text-white">{formatDelay(value)}</output>
-        <button type="button" aria-label={`${label} later`} onClick={() => onAdjust(value + 0.1)} className={stepClass}><Plus className="h-4 w-4" aria-hidden="true" /></button>
-        <button type="button" aria-label={`Reset ${label.toLowerCase()} timing`} onClick={() => onAdjust(0)} className="min-h-12 px-2 text-sm text-white/80 underline hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">Reset</button>
+    <div className="border-b border-white/[0.08] py-4 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-base font-semibold text-white">{label}</span>
+        <div className="flex items-center gap-2">
+          <output className="text-numeric min-w-16 text-right text-lg font-semibold text-white">{formatDelay(value)}</output>
+          <button
+            type="button"
+            aria-label={`Reset ${label.toLowerCase()} timing`}
+            onClick={() => onAdjust(0)}
+            disabled={value === 0}
+            className="min-h-11 rounded-lg px-3 text-sm text-white/80 underline hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:no-underline disabled:opacity-40"
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+      <p className="type-secondary mt-1 text-white/60">{hint}</p>
+      <div className="mt-3 flex items-center gap-3">
+        <span className="text-xs text-white/55" aria-hidden="true">Earlier</span>
+        <input
+          type="range"
+          min={-range}
+          max={range}
+          step={0.1}
+          value={value}
+          aria-label={`${label} timing`}
+          aria-valuetext={formatDelay(value)}
+          onChange={(event) => onAdjust(Number(event.target.value))}
+          className="h-8 min-w-0 flex-1 cursor-pointer accent-white"
+        />
+        <span className="text-xs text-white/55" aria-hidden="true">Later</span>
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-2">
+        <RepeatButton label={`${label} 1 second earlier`} onStep={() => step(-1)}>−1s</RepeatButton>
+        <RepeatButton label={`${label} earlier`} onStep={() => step(-0.1)}>−0.1s</RepeatButton>
+        <RepeatButton label={`${label} later`} onStep={() => step(0.1)}>+0.1s</RepeatButton>
+        <RepeatButton label={`${label} 1 second later`} onStep={() => step(1)}>+1s</RepeatButton>
       </div>
     </div>
+  );
+}
+
+// A step button that repeats while held: once on press, then after 400 ms
+// every 100 ms until released. A click without a press (keyboard) steps once.
+function RepeatButton({ label, onStep, children }: { label: string; onStep: () => void; children: React.ReactNode }) {
+  const timers = useRef<{ delay: number | null; repeat: number | null; pressed: boolean }>({ delay: null, repeat: null, pressed: false });
+  const stop = () => {
+    if (timers.current.delay !== null) window.clearTimeout(timers.current.delay);
+    if (timers.current.repeat !== null) window.clearInterval(timers.current.repeat);
+    timers.current.delay = null;
+    timers.current.repeat = null;
+  };
+  useEffect(() => stop, []);
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onPointerDown={() => {
+        stop();
+        timers.current.pressed = true;
+        onStep();
+        timers.current.delay = window.setTimeout(() => {
+          timers.current.repeat = window.setInterval(onStep, 100);
+        }, 400);
+      }}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      onPointerCancel={stop}
+      onClick={() => {
+        // Pointer presses already stepped on pointerdown.
+        if (timers.current.pressed) {
+          timers.current.pressed = false;
+          return;
+        }
+        onStep();
+      }}
+      className="text-numeric inline-flex min-h-12 items-center justify-center rounded-lg border border-white/20 text-sm font-medium text-white transition hover:border-white/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+    >
+      {children}
+    </button>
   );
 }
