@@ -409,8 +409,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             applyVideoScale(player)
             // A paused picture is not redrawn until the next frame: re-seek
             // in place so the new zoom shows at once.
-            if !player.isPlaying, let current = player.time {
-                player.time = current
+            if !player.isPlaying {
+                player.time = player.time
             }
         }
         call.resolve()
