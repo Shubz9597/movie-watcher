@@ -6,7 +6,7 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, Minus, Plus, X } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, AudioLines, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, Minus, Plus, X, RotateCcw, RotateCw } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
@@ -458,7 +458,7 @@ export default function NativePlayerControls(props: Props) {
    * Tap language (M1.4.7 device pass):
    *  - single tap anywhere: toggle the control chrome
    *  - double tap LEFT third: rewind 10s · RIGHT third: advance 10s
-   *    (on-screen ±10s buttons were removed in favor of this)
+   *    (the centre buttons do the same while the controls show)
    */
   const handleSurfaceTap = (event: ReactPointerEvent<HTMLDivElement>) => {
     // Trailing taps right after a pinch are gesture remnants — ignore.
@@ -612,6 +612,9 @@ export default function NativePlayerControls(props: Props) {
     }
   };
 
+  // The centre buttons and dim layer show with the controls, but not over
+  // an open sheet.
+  const centerVisible = hasVideo && controlsVisible && activeSheet === 'none';
   return (
     <div
       className="fixed inset-0 z-[60] touch-none select-none bg-transparent"
@@ -637,10 +640,13 @@ export default function NativePlayerControls(props: Props) {
           </span>
         </div>
       ) : null}
-      {/* Top bar — safe-area aware so the close button never sits under the
-          Dynamic Island / notch in either orientation. */}
+      {/* YouTube-style chrome: the picture dims while the controls show. */}
+      <div aria-hidden="true" className={`pointer-events-none absolute inset-0 z-10 bg-black/40 transition-opacity duration-200 ${centerVisible ? 'opacity-100' : 'opacity-0'}`} />
+
+      {/* Top bar — title on the left, track tools on the right; safe-area
+          aware so nothing sits under the Dynamic Island / notch. */}
       <div
-        className={`absolute inset-x-0 top-0 z-20 flex items-start gap-2 bg-gradient-to-b from-black/70 to-transparent pb-8 px-[max(0.5rem,env(safe-area-inset-left),env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' || scaleToast ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
+        className={`absolute inset-x-0 top-0 z-20 flex items-start gap-1 bg-gradient-to-b from-black/60 to-transparent pb-6 px-[max(0.5rem,env(safe-area-inset-left),env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity duration-200 ${!hasVideo || controlsVisible || activeSheet !== 'none' || scaleToast ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         <button
@@ -652,18 +658,52 @@ export default function NativePlayerControls(props: Props) {
           <ChevronLeft className="h-6 w-6" aria-hidden="true" />
         </button>
         {hasVideo ? (
-          <div className="pointer-events-none min-w-0 flex-1 pt-3 text-center">
-            <div data-player-heading className="flex min-w-0 items-center justify-center gap-2 text-base font-medium text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">
-              <p className="min-w-0 truncate" title={title}>{title}</p>
-              {episodeLabel ? <span data-player-episode className="text-numeric shrink-0">{episodeLabel}</span> : null}
+          <div className="pointer-events-none min-w-0 flex-1 pt-1.5 text-left">
+            <div data-player-heading className="min-w-0 text-left text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">
+              <p className="truncate text-lg font-semibold leading-6" title={title}>{title}</p>
+              {episodeLabel ? <p data-player-episode className="text-numeric truncate text-sm text-white/75">{episodeLabel}</p> : null}
             </div>
             {scaleToast ? (
               <span className="mt-2 inline-block rounded-full bg-black/80 px-3 py-1 text-sm font-medium text-white" role="status" aria-live="polite">{scaleToast}</span>
             ) : null}
           </div>
+        ) : <div className="flex-1" />}
+        {hasVideo ? (
+          <div className="flex shrink-0 items-center gap-1">
+            {!local ? (
+              <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
+                <HeartPulse className="h-6 w-6" aria-hidden="true" />
+              </IconButton>
+            ) : null}
+            <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
+              <Captions className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+            <IconButton label="Audio tracks" onClick={() => setActiveSheet(activeSheet === 'audio' ? 'none' : 'audio')} active={activeSheet === 'audio'}>
+              <AudioLines className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+            <IconButton label="Timing sync" onClick={() => setActiveSheet(activeSheet === 'sync' ? 'none' : 'sync')} active={activeSheet === 'sync'}>
+              <Timer className="h-6 w-6" aria-hidden="true" />
+            </IconButton>
+          </div>
         ) : null}
-        <div className="w-12 shrink-0" aria-hidden="true" />
       </div>
+
+      {/* Centre: back 10 s, play/pause, forward 10 s (double-tap the left or
+          right of the picture does the same). Hidden while buffering, where
+          the spinner takes the centre. */}
+      {hasVideo ? (
+        <div className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-10 transition-opacity duration-200 ${centerVisible && !showRebuffering ? 'opacity-100' : 'invisible opacity-0'}`}>
+          <CenterButton label="Back 10 seconds" onClick={() => player.seekBy(-10)}>
+            <RotateCcw className="h-7 w-7" aria-hidden="true" />
+          </CenterButton>
+          <CenterButton label={playing ? 'Pause' : 'Play'} onClick={() => player.togglePlayback()} large>
+            {playing ? <Pause className="h-9 w-9 fill-current" aria-hidden="true" /> : <Play className="ml-1 h-9 w-9 fill-current" aria-hidden="true" />}
+          </CenterButton>
+          <CenterButton label="Forward 10 seconds" onClick={() => player.seekBy(10)}>
+            <RotateCw className="h-7 w-7" aria-hidden="true" />
+          </CenterButton>
+        </div>
+      ) : null}
 
       {/* Skip-intro chip (where timestamps exist) */}
       {activeSkipSegment ? (
@@ -681,59 +721,16 @@ export default function NativePlayerControls(props: Props) {
         </div>
       ) : null}
 
-      {/* Bottom control bar */}
+      {/* Bottom: elapsed / total on the left, screen size on the right, the
+          full-width seek bar beneath. */}
       <div
-        className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-10 transition-opacity duration-200 ${hasVideo && (controlsVisible || activeSheet !== 'none') ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
+        className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-[max(1rem,env(safe-area-inset-left),env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-10 transition-opacity duration-200 ${hasVideo && (controlsVisible || activeSheet !== 'none') ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
-        {/* Seek bar — dragging scrubs locally; ONE seek commits on release
-            so a drag cannot flood the player (or, via heartbeats, the server). */}
-        <div className="flex items-center gap-3">
-          <span className="text-numeric text-sm text-white/85">{formatTime(time.currentTime)}</span>
-          <div className="relative h-6 flex-1">
-            <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-white/20">
-              <div className="h-full rounded-full bg-white" style={{ width: `${progress}%` }} />
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(time.duration, 1)}
-              step={1}
-              value={Math.min(scrubTo ?? time.currentTime, time.duration || 0)}
-              aria-label="Seek"
-              aria-valuetext={formatTime(scrubTo ?? time.currentTime)}
-              onChange={(event) => setScrubTo(Number(event.target.value))}
-              onPointerUp={commitScrub}
-              onKeyUp={(event) => {
-                // Keyboard scrubbing commits on arrow-release, not per tick.
-                if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) commitScrub();
-              }}
-              className="absolute inset-0 w-full cursor-pointer opacity-0"
-            />
-          </div>
-          <span className="text-numeric text-sm text-white/85">-{formatTime(Math.max(0, time.duration - (scrubTo ?? time.currentTime)))}</span>
-        </div>
-
-        {/* Buttons — play/pause only; ±10s is double-tap on the video. */}
-        <div className="mt-2 flex items-center justify-between">
-          <IconButton label={playing ? 'Pause' : 'Play'} onClick={() => player.togglePlayback()} accent>
-            {playing ? <Pause className="h-7 w-7" aria-hidden="true" /> : <Play className="h-7 w-7" aria-hidden="true" />}
-          </IconButton>
-          <div className="flex items-center gap-1">
-            {!local ? (
-              <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
-                <HeartPulse className="h-6 w-6" aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            <IconButton label="Subtitles" onClick={() => setActiveSheet(activeSheet === 'subtitles' ? 'none' : 'subtitles')} active={activeSheet === 'subtitles' || activeSubtitleUrl !== null || selectedEmbeddedSub !== null}>
-              <Captions className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Audio tracks" onClick={() => setActiveSheet(activeSheet === 'audio' ? 'none' : 'audio')} active={activeSheet === 'audio'}>
-              <AudioLines className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Timing sync" onClick={() => setActiveSheet(activeSheet === 'sync' ? 'none' : 'sync')} active={activeSheet === 'sync'}>
-              <Timer className="h-6 w-6" aria-hidden="true" />
-            </IconButton>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-numeric rounded-full bg-black/45 px-3 py-1 text-sm font-medium text-white">
+            {formatTime(scrubTo ?? time.currentTime)} / {formatTime(time.duration)}
+          </span>
             {/* Scale sits LAST — the convention in mainstream players. */}
             <IconButton
               label={SCALE_MODES[nextScaleMode(scaleMode)]}
@@ -757,7 +754,34 @@ export default function NativePlayerControls(props: Props) {
                   ? <Proportions className="h-6 w-6" aria-hidden="true" />
                   : <MoveHorizontal className="h-6 w-6" aria-hidden="true" />}
             </IconButton>
+        </div>
+        {/* Seek bar — dragging scrubs locally; ONE seek commits on release
+            so a drag cannot flood the player (or, via heartbeats, the server). */}
+        <div className="relative mt-1 h-8">
+          <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-white/25">
+            <div className="h-full rounded-full bg-white" style={{ width: `${progress}%` }} />
           </div>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow"
+            style={{ left: `${progress}%` }}
+          />
+          <input
+            type="range"
+            min={0}
+            max={Math.max(time.duration, 1)}
+            step={1}
+            value={Math.min(scrubTo ?? time.currentTime, time.duration || 0)}
+            aria-label="Seek"
+            aria-valuetext={formatTime(scrubTo ?? time.currentTime)}
+            onChange={(event) => setScrubTo(Number(event.target.value))}
+            onPointerUp={commitScrub}
+            onKeyUp={(event) => {
+              // Keyboard scrubbing commits on arrow-release, not per tick.
+              if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) commitScrub();
+            }}
+            className="absolute inset-0 w-full cursor-pointer opacity-0"
+          />
         </div>
       </div>
 
@@ -971,6 +995,28 @@ function IconButton({ label, onClick, children, active = false, accent = false }
       onClick={onClick}
       {...(accent ? {} : { 'aria-pressed': active })}
       className={`inline-flex h-12 w-12 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${accent ? 'text-white [&_svg]:fill-current' : active ? 'bg-white text-black' : 'text-white hover:bg-white/10'} [filter:drop-shadow(0_1px_3px_rgb(0_0_0/60%))]`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Round centre controls over the dimmed picture (YouTube style). They stop
+// the tap from reaching the surface, which would toggle the controls.
+function CenterButton({ label, onClick, children, large = false }: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  large?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      onPointerUp={(event) => event.stopPropagation()}
+      className={`pointer-events-auto inline-flex items-center justify-center rounded-full bg-black/45 text-white transition hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${large ? 'h-20 w-20' : 'h-14 w-14'}`}
     >
       {children}
     </button>

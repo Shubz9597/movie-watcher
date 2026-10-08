@@ -68,7 +68,8 @@ try {
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
     await page.evaluate(() => window.emit('State', 'paused'));
     // Size changes must reach the player once, including while paused, and
-    // the brief mode pill belongs immediately below the centered title.
+    // the brief mode pill sits below the title, which is on the left
+    // (YouTube layout: title top-left, tools top-right, play in the centre).
     for (const mode of ['Fill', 'Stretch', 'Fit']) {
       await page.click(`button[aria-label="${mode}"]`);
       await page.waitForFunction(mode => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent === mode), {}, mode);
@@ -76,12 +77,12 @@ try {
         const title = pill.previousElementSibling;
         return {
           title: title?.textContent,
-          centered: Math.abs(pill.getBoundingClientRect().left + pill.getBoundingClientRect().width / 2 - innerWidth / 2) < 1,
+          left: pill.getBoundingClientRect().right < innerWidth / 2,
           below: pill.getBoundingClientRect().top >= title.getBoundingClientRect().bottom,
           alignment: getComputedStyle(title).textAlign,
         };
       });
-      assert.deepEqual(placement, {title:'Interstellar', centered:true, below:true, alignment:'center'});
+      assert.deepEqual(placement, {title:'Interstellar', left:true, below:true, alignment:'left'});
       await page.screenshot({ path: path.join(output, `landscape-${mode.toLowerCase()}.png`) });
     }
     assert.deepEqual(await page.evaluate(() => window.controlCalls), [['scale','fill'], ['scale','stretch'], ['scale','fit']], 'sizing must not toggle playback or seek');
@@ -145,14 +146,14 @@ try {
         const episode = heading.querySelector('[data-player-episode]');
         const pill = heading.nextElementSibling;
         return {
-          centered: Math.abs(heading.getBoundingClientRect().left + heading.getBoundingClientRect().width / 2 - innerWidth / 2) < 1,
-          pillCentered: Math.abs(pill.getBoundingClientRect().left + pill.getBoundingClientRect().width / 2 - innerWidth / 2) < 1,
+          left: heading.getBoundingClientRect().left < innerWidth * 0.2,
+          pillLeft: Math.abs(pill.getBoundingClientRect().left - heading.getBoundingClientRect().left) < 1,
           below: pill.getBoundingClientRect().top >= heading.getBoundingClientRect().bottom,
           episodeVisible: episode.getBoundingClientRect().right <= innerWidth && episode.getBoundingClientRect().left >= 0,
           overflow: document.documentElement.scrollWidth > innerWidth,
         };
       });
-      assert.deepEqual(placement, {centered:true, pillCentered:true, below:true, episodeVisible:true, overflow:false});
+      assert.deepEqual(placement, {left:true, pillLeft:true, below:true, episodeVisible:true, overflow:false});
       await page.screenshot({path:path.join(output, `episode-${expected.toLowerCase()}.png`)});
       // Return to Fit so each remount exercises the same first mode change.
       await page.click('button[aria-label="Fit"]');
