@@ -331,17 +331,24 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	// Long preparations outlive the engine's own peer searches.
 	go torrentx.KeepPeersFlowing(jobCtx, cl, t, "download "+job.ID)
 
-	// 4. Subtitle sidecars, resolved BEFORE the long video copy so a missing
-	// language fails in seconds, not hours. Torrent-internal files win;
-	// otherwise the provider fallback supplies the best-matching release.
-	// A requested language nobody can provide fails the job with
-	// subtitles_unavailable (the client offers Continue without subtitles —
-	// never silently ready, contracts.md §4).
+	// 4. Subtitles. Torrent sidecar files win. Otherwise the video's own
+	// track is used once the video is staged (it is timed to this exact
+	// file), and the provider's best match is the fallback; it is fetched
+	// now, while the video downloads. A requested language nobody can
+	// provide fails the job with subtitles_unavailable (the client offers
+	// Continue without subtitles — never silently ready, contracts.md §4).
 	if err := os.MkdirAll(staged, 0o755); err != nil {
 		fail(ReasonInsufficientServerSpace, err)
 		return
 	}
 	var subtitleAssets []AssetRow
+	type providerSubtitle struct {
+		data []byte
+		ext  string
+		err  error
+	}
+	var laterLangs []string // resolved after the video is staged
+	providerSubs := map[string]providerSubtitle{}
 	if len(job.RequestedSubtitles) > 0 {
 		setProgressStage(job.ID, StageSubtitles, nil, nil)
 		requested := requestedSet(job.RequestedSubtitles)
@@ -368,32 +375,19 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 				})
 				continue
 			}
+			laterLangs = append(laterLangs, lang)
 			if p.Subtitles == nil {
-				fail(ReasonSubtitlesUnavailable, fmt.Errorf("requested subtitle language %q not in torrent", lang))
-				return
+				providerSubs[lang] = providerSubtitle{err: errors.New("no subtitle provider")}
+				continue
 			}
 			data, subExt, err := p.Subtitles.FetchSubtitle(jobCtx, SubtitleQuery{
 				SeriesID: job.SeriesID, Season: job.Season, Episode: job.Episode, Lang: lang,
 				VideoName: filepath.Base(file.Path()), Hints: job.SubtitleHints,
 			})
-			if err != nil || len(data) == 0 {
-				fail(ReasonSubtitlesUnavailable, fmt.Errorf("subtitle %q: %v", lang, err))
-				return
+			if err == nil && len(data) == 0 {
+				err = ErrSubtitleNotFound
 			}
-			if subExt != "vtt" && subExt != "srt" {
-				subExt = "vtt"
-			}
-			name := "subtitles." + lang + "." + subExt
-			size, sha, err := writeHashed(filepath.Join(staged, name), data)
-			if err != nil {
-				fail(ReasonInsufficientServerSpace, err)
-				return
-			}
-			subtitleAssets = append(subtitleAssets, AssetRow{
-				Kind: AssetKindSubtitle, Lang: lang, URLPath: url,
-				DiskPath:  "ready/" + filepath.Base(job.ID) + "/" + name,
-				SizeBytes: size, SHA256: sha,
-			})
+			providerSubs[lang] = providerSubtitle{data: data, ext: subExt, err: err}
 		}
 	}
 
@@ -417,6 +411,33 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	}
 
 	setProgressStage(job.ID, StageFinalizing, nil, nil)
+	for _, lang := range laterLangs {
+		url := "/v1/downloads/jobs/" + job.ID + "/assets/subtitles/" + lang
+		data, subExt := []byte(nil), ""
+		if embedded, err := extractEmbeddedSubtitle(jobCtx, filepath.Join(staged, "video"+ext), lang); err == nil {
+			data, subExt = embedded, "vtt"
+		} else if provided := providerSubs[lang]; provided.err == nil {
+			log.Printf("[downloads] job %s: no embedded %q subtitle (%v); using the provider's", job.ID, lang, err)
+			data, subExt = provided.data, provided.ext
+		} else {
+			fail(ReasonSubtitlesUnavailable, fmt.Errorf("subtitle %q: none embedded (%v), provider: %v", lang, err, provided.err))
+			return
+		}
+		if subExt != "vtt" && subExt != "srt" {
+			subExt = "vtt"
+		}
+		name := "subtitles." + lang + "." + subExt
+		size, sha, err := writeHashed(filepath.Join(staged, name), data)
+		if err != nil {
+			fail(ReasonInsufficientServerSpace, err)
+			return
+		}
+		subtitleAssets = append(subtitleAssets, AssetRow{
+			Kind: AssetKindSubtitle, Lang: lang, URLPath: url,
+			DiskPath:  "ready/" + filepath.Base(job.ID) + "/" + name,
+			SizeBytes: size, SHA256: sha,
+		})
+	}
 	assets := []AssetRow{{
 		Kind: AssetKindVideo, URLPath: videoURL, DiskPath: videoDisk,
 		SizeBytes: videoSize, SHA256: videoSHA,
