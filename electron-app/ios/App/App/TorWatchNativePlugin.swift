@@ -78,6 +78,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // drawable; "fill" center-crops the source to the drawable's aspect so the
     // video covers the display (never stretched).
     private var videoScaleMode: String = "fit"
+    private var appliedCropGeometry: String? // what VLC currently crops to
     // Current media + subtitle text scale (% of default), kept so the engine
     // can be recreated in place when the user pinch-resizes embedded subs.
     private var currentMediaURL: URL?
@@ -133,7 +134,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 call.reject("The player surface is unavailable.")
                 return
             }
-            self.videoScaleMode = "fit" // each video starts fitted, matching the controls
+            self.videoScaleMode = Self.savedVideoScaleMode() // the viewer's last Fit/Fill choice
             self.currentMediaURL = files.video
             self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId)
             self.attachLocalSidecars(selecting: subtitleLang)
@@ -216,7 +217,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 call.reject("The player surface is unavailable.")
                 return
             }
-            self.videoScaleMode = "fit" // each video starts fitted, matching the controls
+            self.videoScaleMode = Self.savedVideoScaleMode() // the viewer's last Fit/Fill choice
             self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId, localDownloadId: nil)
             call.resolve()
         }
@@ -247,6 +248,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--sub-text-scale=\(currentSubTextScale)",
         ])
         player.delegate = self
+        appliedCropGeometry = nil // a new player starts uncropped
 
         let surface = VideoSurfaceView(frame: rootVC.view.bounds)
         // Fill crops to the surface's shape: re-apply whenever its size
@@ -385,6 +387,15 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// Fit letterboxes the complete picture inside the drawable; Fill
     /// center-crops the source to the drawable's aspect ratio so the video
     /// covers the display. Neither mode ever stretches the picture.
+    private static let videoScaleModeKey = "torwatch.videoScaleMode"
+
+    /// Fit or Fill as the viewer last chose it: every video starts that way,
+    /// so the zoom is set before playback rather than mid-scene (changing it
+    /// while playing makes VLC rebuild its picture, a visible hitch).
+    private static func savedVideoScaleMode() -> String {
+        UserDefaults.standard.string(forKey: videoScaleModeKey) == "fill" ? "fill" : "fit"
+    }
+
     @objc func setVideoScale(_ call: CAPPluginCall) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.setVideoScale(call) }; return }
         let mode = call.getString("mode") ?? "fit"
@@ -393,6 +404,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         videoScaleMode = mode
+        UserDefaults.standard.set(mode, forKey: Self.videoScaleModeKey)
         if let player = mediaPlayer {
             applyVideoScale(player)
             // A paused picture is not redrawn until the next frame: re-seek
@@ -404,22 +416,43 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         call.resolve()
     }
 
-    /// Fill zooms the picture until it covers the surface (the overflow is
-    /// cut off), the way VLC for iOS does "Fill to screen": libvlc's scale
-    /// factor is in device pixels per video pixel, and 0 means aspect-fit.
-    /// A crop geometry did not take effect on device, and zooming keeps
-    /// subtitles inside the visible area.
+    /// Fill crops the picture to the screen's shape (top and bottom of a
+    /// 4:3 or 16:9 picture on a wider phone), so it covers the full height
+    /// in landscape; Fit shows the whole picture with bars. Cropping keeps
+    /// VLC's subtitles inside the visible picture. (libvlc's scale factor
+    /// rebuilt the picture without zooming on device, so it is not used.)
+    /// Nothing is set when the value is unchanged: every change makes VLC
+    /// rebuild its picture.
     private func applyVideoScale(_ player: VLCMediaPlayer) {
-        player.videoCropGeometry = nil
-        guard videoScaleMode == "fill" else {
-            player.scaleFactor = 0 // libvlc default: aspect-fit letterbox
+        if player.scaleFactor != 0 { player.scaleFactor = 0 }
+        var geometry: String?
+        if videoScaleMode == "fill" {
+            guard let size = surfaceView?.bounds.size, size.width > 1, size.height > 1 else { return }
+            geometry = aspectRatioString(size)
+        }
+        guard geometry != appliedCropGeometry else { return }
+        appliedCropGeometry = geometry
+        guard let geometry = geometry else {
+            player.videoCropGeometry = nil
             return
         }
-        let video = player.videoSize
-        guard let surface = surfaceView, video.width > 0, video.height > 0,
-              surface.bounds.width > 1, surface.bounds.height > 1 else { return }
-        let cover = max(surface.bounds.width / video.width, surface.bounds.height / video.height)
-        player.scaleFactor = Float(cover * surface.traitCollection.displayScale)
+        // MobileVLCKit's videoCropGeometry is a raw `char *`: libvlc copies
+        // it (var_SetString), so a temporary C copy is enough.
+        geometry.withCString { pointer in
+            let copy = strdup(pointer)
+            player.videoCropGeometry = copy
+            free(copy)
+        }
+    }
+
+    /// "W:H" reduced to lowest terms, e.g. "284:131" for an 852x393 pt screen.
+    private func aspectRatioString(_ size: CGSize) -> String {
+        let width = Int(size.width.rounded())
+        let height = Int(size.height.rounded())
+        var a = width, b = height
+        while b != 0 { (a, b) = (b, a % b) }
+        let gcd = max(a, 1)
+        return "\(width / gcd):\(height / gcd)"
     }
 
     /// Orientation handoff from the web layer: locks landscape the moment the
@@ -566,6 +599,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             notifyListeners("buffering", data: ["active": true, "playId": playId])
         case .playing:
             applyPendingSeek(player)
+            applyVideoScale(player) // the video size is known from here
             notifyListeners("buffering", data: ["active": false, "playId": playId])
             notifyListeners("playbackState", data: ["state": "playing", "playId": playId])
             emitTracks()
@@ -587,6 +621,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             ])
         case .esAdded:
             // New elementary streams (or an attached subtitle) settled.
+            applyVideoScale(player)
             emitTracks()
         default:
             break

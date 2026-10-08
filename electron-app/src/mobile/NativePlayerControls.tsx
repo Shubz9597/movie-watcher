@@ -134,7 +134,14 @@ export default function NativePlayerControls(props: Props) {
   const [subtitleError, setSubtitleError] = useState('');
   const [language, setLanguage] = useState('en');
   const [scrubTo, setScrubTo] = useState<number | null>(null);
-  const [scaleMode, setScaleMode] = useState<'fit' | 'fill'>('fit');
+  // The player remembers Fit/Fill natively; this mirrors it for the button.
+  const [scaleMode, setScaleMode] = useState<'fit' | 'fill'>(() => {
+    try {
+      return window.localStorage.getItem('mw_video_scale') === 'fill' ? 'fill' : 'fit';
+    } catch {
+      return 'fit';
+    }
+  });
   const [providerConfigured, setProviderConfigured] = useState(true);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [savingApiKey, setSavingApiKey] = useState(false);
@@ -704,6 +711,11 @@ export default function NativePlayerControls(props: Props) {
                 const next = scaleMode === 'fit' ? 'fill' : 'fit';
                 setScaleMode(next);
                 player.setVideoScale(next);
+                try {
+                  window.localStorage.setItem('mw_video_scale', next);
+                } catch {
+                  // The native player still remembers the choice.
+                }
               }}
             >
               {scaleMode === 'fit' ? <Scan className="h-6 w-6" aria-hidden="true" /> : <Proportions className="h-6 w-6" aria-hidden="true" />}
