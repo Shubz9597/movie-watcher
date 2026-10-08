@@ -999,13 +999,11 @@ export default function NativePlayerControls(props: Props) {
         <Sheet title="Timing sync" onClose={() => setActiveSheet('none')}>
           <DelayRow
             label="Subtitles"
-            hint="Subtitles late? Move left. Early? Move right."
             value={subtitleDelay}
             onAdjust={(value) => adjustDelay('subtitle', value)}
           />
           <DelayRow
             label="Audio"
-            hint="Voices late? Move left. Early? Move right."
             value={audioDelay}
             onAdjust={(value) => adjustDelay('audio', value)}
           />
@@ -1235,7 +1233,7 @@ function BufferingLoader({ title, logoUrl, visible, progress }: {
 // repeat a step, and Reset. Earlier = negative, later = positive.
 const DELAY_SLIDER_RANGE = 10;
 
-function DelayRow({ label, hint, value, onAdjust }: { label: string; hint: string; value: number; onAdjust: (value: number) => void }) {
+function DelayRow({ label, value, onAdjust }: { label: string; value: number; onAdjust: (value: number) => void }) {
   // The latest value for repeating steps (a held button outlives renders).
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -1258,22 +1256,17 @@ function DelayRow({ label, hint, value, onAdjust }: { label: string; hint: strin
           </button>
         </div>
       </div>
-      <p className="type-secondary mt-1 text-white/60">{hint}</p>
-      <div className="mt-3 flex items-center gap-3">
-        <span className="text-xs text-white/55" aria-hidden="true">Earlier</span>
-        <input
-          type="range"
-          min={-range}
-          max={range}
-          step={0.1}
-          value={value}
-          aria-label={`${label} timing`}
-          aria-valuetext={formatDelay(value)}
-          onChange={(event) => onAdjust(Number(event.target.value))}
-          className="h-8 min-w-0 flex-1 cursor-pointer accent-white"
-        />
-        <span className="text-xs text-white/55" aria-hidden="true">Later</span>
-      </div>
+      <input
+        type="range"
+        min={-range}
+        max={range}
+        step={0.1}
+        value={value}
+        aria-label={`${label} timing`}
+        aria-valuetext={formatDelay(value)}
+        onChange={(event) => onAdjust(Number(event.target.value))}
+        className="mt-2 h-8 w-full cursor-pointer accent-white"
+      />
       <div className="mt-2 grid grid-cols-4 gap-2">
         <RepeatButton label={`${label} 1 second earlier`} onStep={() => step(-1)}>−1s</RepeatButton>
         <RepeatButton label={`${label} earlier`} onStep={() => step(-0.1)}>−0.1s</RepeatButton>
