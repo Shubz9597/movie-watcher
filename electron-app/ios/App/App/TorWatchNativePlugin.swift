@@ -78,6 +78,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // Size the drawable with UIKit, without changing VLC's crop/aspect or
     // seeking. This also updates the displayed picture while paused.
     private var videoScaleMode: String = "fit"
+    // Track selection last sent to the controls (Int32.min: none sent yet).
+    private var reportedAudioTrack: Int32 = Int32.min
+    private var reportedSubtitleTrack: Int32 = Int32.min
     private var playbackRequested = true
     private var pausedPositionMs: Int32?
     // Current media + subtitle text scale (% of default), kept so the engine
@@ -250,6 +253,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--sub-text-scale=\(currentSubTextScale)",
         ])
         player.delegate = self
+        reportedAudioTrack = Int32.min // a new player reports its tracks afresh
+        reportedSubtitleTrack = Int32.min
 
         let surface = VideoSurfaceView(frame: rootVC.view.bounds)
         // Use the actual viewport, including iPad split view or a denied
@@ -569,6 +574,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
               player === mediaPlayer else { return }
         applyPendingSeek(player)
         applyVideoScale(player) // video output may appear after the playing/ES callbacks
+        // VLC picks its default subtitle/audio track a moment after Playing,
+        // with no callback of its own: report any change so the controls
+        // never show "Off" while subtitles are on screen.
+        if player.currentVideoSubTitleIndex != reportedSubtitleTrack
+            || player.currentAudioTrackIndex != reportedAudioTrack {
+            emitTracks()
+        }
         // D04: periodic local-progress checkpoints every 10s (VLC reports
         // time several times a second; each save is a database write).
         if localDownloadId != nil, Date().timeIntervalSince(lastLocalProgressSave) >= 10 {
@@ -651,9 +663,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             guard let id = (subIndexes[index] as? NSNumber)?.int32Value, id >= 0 else { continue }
             subs.append(["id": id, "label": name])
         }
+        reportedAudioTrack = player.currentAudioTrackIndex
+        reportedSubtitleTrack = player.currentVideoSubTitleIndex
         notifyListeners("tracksUpdate", data: ["audio": audio, "subtitles": subs, "playId": playId,
-            "selectedAudioTrackId": player.currentAudioTrackIndex,
-            "selectedSubtitleTrackId": player.currentVideoSubTitleIndex])
+            "selectedAudioTrackId": reportedAudioTrack,
+            "selectedSubtitleTrackId": reportedSubtitleTrack])
     }
 
     private func makeWebViewTransparent(_ transparent: Bool) {

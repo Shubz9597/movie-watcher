@@ -96,6 +96,7 @@ try {
   await page.click('button[aria-label="Close Audio and subtitles"]');
   assert.equal(await toggles(), 0, 'a paused video stays paused');
   await page.click('button[aria-label="Audio and subtitles"]');
+  await clickText('Search online subtitles'); // the video has its own track
   await clickText('release-a.srt');
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'external');
   await page.click('button[aria-label="Close Audio and subtitles"]');
@@ -172,6 +173,7 @@ try {
   // A restore response completing after replacement cannot touch the new video.
   await mount();
   await page.click('button[aria-label="Audio and subtitles"]');
+  await clickText('Search online subtitles'); // the video has its own track
   await clickText('release-a.srt');
   await page.waitForFunction(() => window.readPreferences()?.subtitle?.kind === 'external');
   slowNextSubtitle = true;
@@ -187,8 +189,19 @@ try {
   await new Promise(resolve => setTimeout(resolve,150));
   assert.equal(await page.evaluate(() => document.body.textContent.includes('Saved subtitle dialogue')), false);
   assert.equal(await page.evaluate(() => window.calls.some(([name]) => name === 'selectSubtitleTrack')), false);
+  // No saved choice: the video's own full English track is shown (not a
+  // signs-only default), and tracks read as languages.
+  await page.evaluate(() => { window.calls = []; window.mount({episode: 9, fileIndex: 5}); });
+  await ready({audio:[{id:1,label:'Track 1 - [Japanese]'}], subtitles:[{id:2,label:'Signs & Songs - [English]'},{id:3,label:'Full Subtitles - [English]'}]});
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'selectSubtitleTrack' && value === 3));
+  await page.click('button[aria-label="Audio and subtitles"]');
+  for (const name of ['Japanese', 'English · Signs & Songs', 'English · Full Subtitles']) {
+    await page.waitForFunction(name => [...document.querySelectorAll('button span')].some(el => el.textContent === name), {}, name);
+  }
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll('button[aria-pressed="true"] span')].map(el => el.textContent).includes('English · Full Subtitles')), true);
+  await page.click('button[aria-label="Close Audio and subtitles"]');
   assert.deepEqual(errors, []);
-  console.log('Video preferences smoke passed: external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
+  console.log('Video preferences smoke passed: default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
 } finally {
   await pendingResponse?.().catch(() => {});
   await browser?.close();

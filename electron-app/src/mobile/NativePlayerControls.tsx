@@ -10,6 +10,7 @@ import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, 
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
+import { preferredSubtitleTrack, trackDisplayNames } from '../lib/track-labels';
 import { offlineSkipSegments } from '../lib/offline-skip-segments';
 import { clampPlaybackDelay, matchingSavedTrack, readVideoPlaybackPreferences, saveVideoPlaybackPreferences, subtitleCueAtTime, videoPlaybackPreferenceKey } from './video-playback-preferences';
 import type { SavedSubtitle, VideoPlaybackPreferences } from './video-playback-preferences';
@@ -408,9 +409,37 @@ export default function NativePlayerControls(props: Props) {
     };
   }, [activeSheet, magnet, cat, fileIndex]);
 
+  // Online subtitles are listed when the video has none of its own, when one
+  // is in use, or on request ("Search online subtitles").
+  const [showOnline, setShowOnline] = useState(false);
+  const showOnlineList = !local && (embeddedSubs.length === 0 || showOnline || activeSubtitleUrl !== null);
+  const subtitleNames = useMemo(() => trackDisplayNames(embeddedSubs.map((track) => track.label)), [embeddedSubs]);
+  const audioNames = useMemo(() => trackDisplayNames(embeddedAudio.map((track) => track.label)), [embeddedAudio]);
+
+  // Without a saved choice, show the video's own full-dialogue subtitle in
+  // the preferred language (VLC's own default can be a signs-only track or
+  // none). Once per video; never over a saved or manual choice.
+  const autoSubtitleDone = useRef(false);
+  useEffect(() => {
+    if (autoSubtitleDone.current || !hasVideo || embeddedSubs.length === 0) return;
+    autoSubtitleDone.current = true;
+    if (preferencesRef.current.subtitle || pendingSubtitleRestore.current || activeSubtitleUrl !== null) return;
+    let preferred = 'en';
+    try {
+      preferred = window.localStorage.getItem('mw_download_subtitle_lang') || 'en';
+    } catch {
+      // English by default.
+    }
+    const current = embeddedSubs.find((track) => track.id === selectedEmbeddedSub);
+    const best = preferredSubtitleTrack(embeddedSubs, preferred);
+    if (!best || (current && preferredSubtitleTrack([current], preferred))) return;
+    player.selectSubtitleTrack(best.id);
+    setSelectedEmbeddedSub(best.id);
+  }, [hasVideo, embeddedSubs, selectedEmbeddedSub, activeSubtitleUrl, player]);
+
   // --- Subtitle catalog (server /subtitles/list) ---
   useEffect(() => {
-    if (activeSheet !== 'tracks' || catalogStatus !== 'loading' || local) return;
+    if (activeSheet !== 'tracks' || catalogStatus !== 'loading' || !showOnlineList) return;
     let cancelled = false;
     const params = new URLSearchParams({ cat, magnet, langs: language, title });
     if (year) params.set('year', String(year));
@@ -438,7 +467,7 @@ export default function NativePlayerControls(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [activeSheet, catalogStatus, magnet, cat, fileIndex, imdbId, tmdbId, season, episode, language, title, year]);
+  }, [activeSheet, catalogStatus, showOnlineList, magnet, cat, fileIndex, imdbId, tmdbId, season, episode, language, title, year]);
 
   // --- Controls auto-hide ---
   const revealControls = useCallback(() => {
@@ -901,8 +930,8 @@ export default function NativePlayerControls(props: Props) {
             <ul className="mt-4 space-y-1">
               {embeddedAudio.length === 0 ? (
                 <TrackRow selected label="Default" onClick={() => {}} />
-              ) : embeddedAudio.map((track) => (
-                <TrackRow key={track.id} selected={selectedEmbeddedAudio === track.id} label={track.label || `Track ${track.id}`} onClick={() => chooseEmbeddedAudio(track)} />
+              ) : embeddedAudio.map((track, index) => (
+                <TrackRow key={track.id} selected={selectedEmbeddedAudio === track.id} label={audioNames[index]} onClick={() => chooseEmbeddedAudio(track)} />
               ))}
             </ul>
           </section>
@@ -916,17 +945,16 @@ export default function NativePlayerControls(props: Props) {
                 disabled={!!loadingSubtitleUrl || importing}
                 onClick={() => { if (activeSubtitleUrl !== null || selectedEmbeddedSub !== null) disableSubtitles(); }}
               />
-              {embeddedSubs.map((track) => (
+              {embeddedSubs.map((track, index) => (
                 <TrackRow
                   key={track.id}
                   selected={selectedEmbeddedSub === track.id}
-                  label={track.label || `Track ${track.id}`}
-                  detail="In video"
+                  label={subtitleNames[index]}
                   disabled={!!loadingSubtitleUrl || importing}
                   onClick={() => chooseEmbeddedSubtitle(track)}
                 />
               ))}
-              {local ? null : catalog.map((track) => (
+              {!showOnlineList ? null : catalog.map((track) => (
                 <TrackRow
                   key={track.url}
                   selected={activeSubtitleUrl === track.url}
@@ -939,6 +967,15 @@ export default function NativePlayerControls(props: Props) {
             </ul>
             {local ? (
               embeddedSubs.length === 0 ? <p className="type-secondary mt-2 text-white/60">No subtitles in this download.</p> : null
+            ) : !showOnlineList ? (
+              // The video has its own subtitles: online search stays one tap away.
+              <button
+                type="button"
+                onClick={() => { setShowOnline(true); setCatalogStatus('loading'); }}
+                className="mt-4 min-h-12 px-2 text-base text-white/70 underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                Search online subtitles
+              </button>
             ) : (
               <div className="mt-5 border-t border-white/[0.12] pt-4">
             <label className="type-secondary mt-3 flex items-center justify-between gap-2 text-white/75">
@@ -981,7 +1018,7 @@ export default function NativePlayerControls(props: Props) {
             {catalogStatus !== 'loading' ? <button type="button" onClick={() => setCatalogStatus('loading')} className="type-secondary min-h-12 text-white/75 underline transition hover:text-white">Search again</button> : null}
               </div>
             )}
-            {local ? null : (
+            {!showOnlineList ? null : (
               <div className="mt-4 border-t border-white/[0.12] pt-4">
             <label className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-lg border border-white/20 px-4 text-sm font-medium text-white transition hover:border-white/40 focus-within:ring-2 focus-within:ring-white">
               <Upload className="h-4 w-4" aria-hidden="true" />
