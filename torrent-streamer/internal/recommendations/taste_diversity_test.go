@@ -200,3 +200,62 @@ func TestShortTitleKeepsTheMainName(t *testing.T) {
 		}
 	}
 }
+
+func TestRotationOffsetHoldsForSixHoursThenMoves(t *testing.T) {
+	start := time.Unix(1_800_000_000, 0).Truncate(rotateWindow)
+	first := rotationOffset(start, "tmdb:tv:1438", 8)
+	if got := rotationOffset(start.Add(5*time.Hour), "tmdb:tv:1438", 8); got != first {
+		t.Fatalf("offset changed within a window: %d then %d", first, got)
+	}
+	if got := rotationOffset(start.Add(rotateWindow), "tmdb:tv:1438", 8); got == first {
+		t.Fatalf("offset must move in the next window, stayed %d", got)
+	}
+	if got := rotationOffset(start, "x", 1); got != 0 {
+		t.Fatalf("a single match cannot rotate, got %d", got)
+	}
+	if got := rotateHead([]int{1, 2, 3, 4, 5}, 2, 3); !equalInts(got, []int{3, 1, 2, 4, 5}) {
+		t.Fatalf("rotateHead = %v", got)
+	}
+}
+
+// One watched show with many matches must not lead with the same title all
+// day: across a day's four windows its lead pick changes.
+func TestRecommendationsRotateThroughTheDay(t *testing.T) {
+	similar := make([]catalog.Title, 0, 10)
+	for i := 0; i < 10; i++ {
+		similar = append(similar, title("tmdb:tv:match-"+string(rune('a'+i)), "Drama"))
+	}
+	leads := map[string]bool{}
+	start := time.Unix(1_800_000_000, 0).Truncate(rotateWindow)
+	for window := 0; window < 4; window++ {
+		now := start.Add(time.Duration(window) * rotateWindow)
+		svc := New(Deps{
+			Library:     &fakeLibrary{revision: 1},
+			Candidates:  &fakeCandidates{},
+			SeedGenres:  &fakeSeedGenres{genres: map[string][]string{"tmdb:tv:1438": {"Drama"}}},
+			SeedSimilar: fakeSimilar{"tmdb:tv:1438": similar},
+			Taste:       fakeTaste{signals: []TasteSignal{{CanonicalID: "tmdb:tv:1438", Label: "watched", Weight: 2, Title: "The Wire"}}},
+			Now:         func() time.Time { return now },
+		})
+		result, err := svc.Recommend(context.Background())
+		if err != nil || len(result.Items) == 0 {
+			t.Fatalf("window %d: %v %v", window, result.Items, err)
+		}
+		leads[result.Items[0].CanonicalID] = true
+	}
+	if len(leads) < 3 {
+		t.Fatalf("the lead pick should change through the day, got %v", leads)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

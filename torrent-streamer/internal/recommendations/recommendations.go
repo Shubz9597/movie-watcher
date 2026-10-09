@@ -52,7 +52,7 @@ const (
 	reasonPopular       = "popular"
 	// Per-seed "more like this" bounds: the first few usable favourites each
 	// contribute one bounded similar-title page to the candidate pool.
-	seedSimilarLimit = 12
+	seedSimilarLimit = 20
 	seedSimilarSeeds = 6
 )
 
@@ -839,6 +839,13 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				explore = append(explore, entry)
 			}
 		}
+		// Rotation: every 6 hours each title leads with a different one of
+		// its best matches (and the exploration picks shift too), so the row
+		// changes through the day while staying about the same titles.
+		for _, key := range order {
+			groups[key] = rotateHead(groups[key], rotationOffset(s.now(), key, min(len(groups[key]), rotateDepth)), rotateDepth)
+		}
+		explore = rotateHead(explore, rotationOffset(s.now(), "explore", min(len(explore), rotateDepth)), rotateDepth)
 		// Consensus picks (backed by several household titles) lead; then
 		// titles rotate, with one exploration pick after every four.
 		interleaved := append(make([]scored, 0, len(scored_)), consensus...)
@@ -952,6 +959,39 @@ func dailyJitter(now time.Time, id string) float64 {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(now.UTC().Format("2006-01-02") + "\x00" + id))
 	return float64(hash.Sum32()%1000) / 1000
+}
+
+// rotateWindow is how long one rotation of the recommendations lasts;
+// rotateDepth is how many of each title's best matches take turns leading.
+const (
+	rotateWindow = 6 * time.Hour
+	rotateDepth  = 8
+)
+
+// rotationOffset is a stable 0..n-1 offset for key in the current rotation
+// window: the same all window long (Home does not reshuffle between loads),
+// different in the next.
+func rotationOffset(now time.Time, key string, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(key))
+	window := uint64(now.Unix()) / uint64(rotateWindow/time.Second)
+	return int((window + uint64(hash.Sum32())) % uint64(n))
+}
+
+// rotateHead rotates the first depth entries left by offset; the rest keep
+// their order.
+func rotateHead[T any](list []T, offset, depth int) []T {
+	depth = min(depth, len(list))
+	if offset <= 0 || offset >= depth {
+		return list
+	}
+	rotated := make([]T, 0, len(list))
+	rotated = append(rotated, list[offset:depth]...)
+	rotated = append(rotated, list[:offset]...)
+	return append(rotated, list[depth:]...)
 }
 
 // shortTitle trims a seed title to its main name for reasons: subtitles after
