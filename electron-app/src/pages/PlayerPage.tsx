@@ -421,6 +421,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           season={Number(season)}
           episode={Number(episode)}
           absoluteEpisode={absoluteEpisode ? Number(absoluteEpisode) : undefined}
+          hasNextEpisode={Boolean((downloadId && localSeriesId) || nextEpisodeRoute?.startsWith('#title?') || advancePackParams(paramsRef.current))}
           onClose={closePlayer}
         />
       )}

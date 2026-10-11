@@ -11,6 +11,7 @@ import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { preferredSubtitleTrack, trackDisplayNames } from '../lib/track-labels';
+import { skipActionAt } from '../lib/skip-action';
 import { offlineSkipSegments } from '../lib/offline-skip-segments';
 import { clampPlaybackDelay, matchingSavedTrack, readVideoPlaybackPreferences, saveVideoPlaybackPreferences, subtitleCueAtTime, videoPlaybackPreferenceKey } from './video-playback-preferences';
 import type { SavedSubtitle, VideoPlaybackPreferences } from './video-playback-preferences';
@@ -89,6 +90,8 @@ type Props = {
   season: number;
   episode: number;
   absoluteEpisode: number | undefined;
+  /** A next episode follows when this one ends (labels the credits skip). */
+  hasNextEpisode?: boolean;
   onClose: () => void;
 };
 
@@ -120,7 +123,7 @@ function nextScaleMode(mode: 'fit' | 'fill' | 'stretch'): 'fit' | 'fill' | 'stre
 }
 
 export default function NativePlayerControls(props: Props) {
-  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, onClose } = props;
+  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, hasNextEpisode = false, onClose } = props;
   const episodeLabel = Number.isInteger(season) && season >= 0 && Number.isInteger(episode) && episode > 0
     ? `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
     : null;
@@ -309,9 +312,10 @@ export default function NativePlayerControls(props: Props) {
     };
   }, [downloadId, time.duration, skipSegments.length, cat, tmdbId, imdbId, malId, season, episode, absoluteEpisode]);
 
-  const activeSkipSegment = useMemo(() => {
-    return skipSegments.find((segment) => time.currentTime >= segment.start && time.currentTime <= segment.end && segment.type === 'intro') ?? null;
-  }, [skipSegments, time.currentTime]);
+  const skipAction = useMemo(
+    () => skipActionAt(skipSegments, time.currentTime, time.duration, hasNextEpisode),
+    [skipSegments, time.currentTime, time.duration, hasNextEpisode],
+  );
 
   // --- Web subtitle overlay: the active cue for the current playback time,
   // derived (not stored) so a 500ms clock tick never misses a cue.
@@ -841,18 +845,18 @@ export default function NativePlayerControls(props: Props) {
         </div>
       ) : null}
 
-      {/* Skip-intro chip (where timestamps exist) */}
-      {activeSkipSegment ? (
+      {/* Skip chip (where timestamps exist) */}
+      {skipAction ? (
         <div className="absolute bottom-28 right-4 z-20">
           <button
             type="button"
             onPointerUp={(event) => {
               event.stopPropagation();
-              player.seekTo(activeSkipSegment.end + 0.25);
+              player.seekTo(skipAction.target);
             }}
             className="min-h-12 rounded-lg bg-white px-5 text-sm font-medium text-black shadow-lg transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
-            Skip intro
+            {skipAction.label}
           </button>
         </div>
       ) : null}
