@@ -131,6 +131,11 @@ services:
       # socks5://warp:1080 (Cloudflare WARP; ISPs that throttle BitTorrent
       # cannot see through it). Falls back to direct dials if it is down.
       TORRENT_PEER_PROXY: ${TORRENT_PEER_PROXY:-}
+      # Optional SOCKS5 proxy for TMDb and OpenSubtitles (ISPs that reset
+      # those connections), e.g. socks5://warp:1080. Other hosts stay direct;
+      # falls back to direct dials if it is down. Hosts are overridable.
+      TORWATCH_API_PROXY: ${TORWATCH_API_PROXY:-}
+      TORWATCH_API_PROXY_HOSTS: ${TORWATCH_API_PROXY_HOSTS:-}
       LOG_FILE: /data/logs/backend.log
       ERROR_LOG_FILE: /data/logs/errors.log
       # Direct VLC playback on small hosts; video conversion is opt-in.

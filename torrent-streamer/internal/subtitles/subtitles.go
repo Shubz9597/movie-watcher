@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"torrent-streamer/internal/apiproxy"
 )
 
 // SubResult represents a subtitle search result from external sources
@@ -142,7 +143,7 @@ func newOpenSubTransport() *http.Transport {
 	// Keep the hostname intact and let net.Dialer use Happy Eyeballs. Forcing
 	// OpenSubtitles through IPv4 made intermittent ISP-to-Cloudflare resets fatal
 	// even when the same machine had a healthy IPv6 route.
-	transport.DialContext = dialer.DialContext
+	transport.DialContext = apiproxy.Wrap(dialer.DialContext) // ISP resets: see apiproxy
 	return transport
 }
 

@@ -20,6 +20,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver
 	"github.com/joho/godotenv"
 
+	"torrent-streamer/internal/apiproxy"
 	"torrent-streamer/internal/bootstrap"
 	"torrent-streamer/internal/buildinfo"
 	"torrent-streamer/internal/catalog"
@@ -120,6 +121,8 @@ func main() {
 	config.Load()
 	closeLog := config.SetupLogging()
 	defer closeLog()
+	// TMDb and OpenSubtitles connections go through TORWATCH_API_PROXY when set.
+	apiproxy.Install(http.DefaultTransport.(*http.Transport))
 
 	serverConfig := config.LoadServerConfig()
 	mustOpenDB(serverConfig.PGDSN)
