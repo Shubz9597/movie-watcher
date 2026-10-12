@@ -92,7 +92,6 @@ class Player {
     var pendingSeek: Double?
     var pausedPositionMs: Int32?
     var playbackRequested = true
-    var resumeAfterBackground = false
     var needsForegroundRefresh = false
     var activationGeneration: UInt64 = 0
     func applyVideoScale(_ player: VLCMediaPlayer) {}
@@ -123,16 +122,20 @@ do {
     let (player, engine, output) = fixture()
     let originalBounds = output.bounds
     background(player)
-    player.pauseForBackground() // duplicate notification keeps original intent
+    player.pauseForBackground() // duplicate notification keeps the pause anchor
     activate(player)
     assert(calls == ["pause"], "no decoder work during notification delivery")
     drainActivation()
-    assert(calls == ["pause", "refresh", "play", "seek:250000"])
-    assert(engine.displayedResumeFrame)
+    assert(calls == ["pause", "refresh"])
+    assert(!engine.isPlaying && !player.playbackRequested)
     assert(output.bounds == originalBounds)
     assert(engine.audioTrack == 2 && engine.subtitleTrack == 4)
     assert(engine.audioDelay == 0.1 && engine.subtitleDelay == -4)
     activate(player); drainActivation()
+    assert(calls.filter { $0 == "play" }.count == 0, "foreground must never autoplay")
+    player.togglePlayback(CAPPluginCall())
+    assert(calls == ["pause", "refresh", "play", "seek:250000"])
+    assert(engine.displayedResumeFrame)
     assert(calls.filter { $0 == "play" }.count == 1)
 }
 // A manual pause before leaving must remain paused on return.
@@ -143,7 +146,7 @@ do {
     assert(!engine.isPlaying && !player.playbackRequested)
     assert(calls == ["pause", "refresh"])
 }
-// Explicit Play followed by Pause supersedes the queued automatic resume.
+// Explicit Play followed by Pause remains paused after queued refresh work.
 do {
     let (player, engine, _) = fixture()
     background(player); activate(player)
@@ -151,6 +154,15 @@ do {
     drainActivation()
     assert(!engine.isPlaying)
     assert(calls.filter { $0 == "play" }.count == 1)
+}
+// A Play request delivered while inactive cannot create foreground autoplay.
+do {
+    let (player, engine, _) = fixture()
+    background(player)
+    player.togglePlayback(CAPPluginCall())
+    activate(player); drainActivation()
+    assert(calls == ["pause", "refresh"])
+    assert(!engine.isPlaying && !player.playbackRequested)
 }
 // An explicit scrub is retained, and inactive seek requests are deferred.
 do {
@@ -163,6 +175,9 @@ do {
     player.applyPendingSeek(engine) // a native time/state callback during activation
     assert(calls == ["pause"], "activation callbacks must wait for surface recovery")
     drainActivation()
+    assert(!engine.isPlaying && !player.playbackRequested)
+    assert(engine.storedTime.intValue == 420_000)
+    player.togglePlayback(CAPPluginCall())
     assert(engine.storedTime.intValue == 420_000 && engine.displayedResumeFrame)
 }
 // Home -> app -> Home -> app before a queued activation can execute.
@@ -171,6 +186,9 @@ do {
     background(player); activate(player)
     background(player); activate(player)
     drainActivation()
+    assert(calls == ["pause", "refresh"])
+    assert(!engine.isPlaying && !player.playbackRequested)
+    player.togglePlayback(CAPPluginCall())
     assert(engine.displayedResumeFrame)
     assert(calls == ["pause", "refresh", "play", "seek:250000"])
 }
@@ -187,13 +205,15 @@ do {
     let (player, engine, _) = fixture()
     engine.isSeekable = false
     background(player); activate(player); drainActivation()
+    assert(calls == ["pause", "refresh"] && !engine.isPlaying)
+    player.togglePlayback(CAPPluginCall())
     assert(calls == ["pause", "refresh", "play"])
     assert(player.pendingSeek == 250)
     engine.isSeekable = true
     player.applyPendingSeek(engine)
     assert(engine.displayedResumeFrame && player.pendingSeek == nil)
 }
-print("Swift foreground lifecycle passed: refresh/play/seek ordering, paused intent, manual override, deferred scrub, rapid switching, replacement, and late seekability.")
+print("Swift foreground lifecycle passed: both Home scenarios stay paused, explicit play/seek ordering, inactive play rejected, deferred scrub, rapid switching, replacement, and late seekability.")
 `);
     const docker = process.env.TORWATCH_SWIFT_DOCKER === '1';
     const args = docker

@@ -90,7 +90,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var activeObserver: NSObjectProtocol?
-    private var resumeAfterBackground = false
     private var needsForegroundRefresh = false
     private var activationGeneration: UInt64 = 0
     private var subtitleDownloads: [URLSessionDownloadTask] = []
@@ -318,8 +317,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        // An explicit Play/Pause wins over queued automatic foreground work.
-        resumeAfterBackground = false
         if playbackRequested {
             pausePlayback(player)
         } else {
@@ -329,10 +326,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     }
 
     private func resumePlayback(_ player: VLCMediaPlayer) {
-        guard UIApplication.shared.applicationState == .active else {
-            resumeAfterBackground = true
-            return
-        }
+        // Returning from Home only refreshes the output. Play must be an
+        // explicit request while the app is active, never queued to autoplay.
+        guard UIApplication.shared.applicationState == .active else { return }
         refreshForegroundSurface(player)
         // Unpause BEFORE the precise seek. Seeking a paused/inactive output
         // can consume its first decoded picture while VLC cannot render it,
@@ -357,9 +353,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private func pauseForBackground() {
         guard let player = mediaPlayer, !terminalSent else { return }
         activationGeneration &+= 1
-        // Duplicate background notifications must not forget that playback
-        // was interrupted, or replace its original pause position.
-        if !needsForegroundRefresh { resumeAfterBackground = playbackRequested }
+        // Duplicate background notifications must not replace the original
+        // pause position. Both playing and paused videos return paused.
         needsForegroundRefresh = true
         if playbackRequested { pausePlayback(player) }
     }
@@ -748,12 +743,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                   !self.terminalSent, generation == self.activationGeneration,
                   UIApplication.shared.applicationState == .active else { return }
             self.refreshForegroundSurface(player)
-            if self.resumeAfterBackground {
-                self.resumeAfterBackground = false
-                self.resumePlayback(player)
-            } else {
-                self.applyPendingSeek(player)
-            }
+            self.applyPendingSeek(player)
         }
     }
 
@@ -775,7 +765,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pendingSeek = nil
         pausedPositionMs = nil
         playbackRequested = false
-        resumeAfterBackground = false
         needsForegroundRefresh = false
         activationGeneration &+= 1 // invalidate activation queued for a replaced player
         subtitleDownloads.forEach { $0.cancel() }
