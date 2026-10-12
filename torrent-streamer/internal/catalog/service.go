@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -197,6 +198,12 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		query.Limit = s.options.SearchLimit
 	}
 	key := searchCacheKey(query)
+	// TMDb search stand-in: started the moment TMDb's search fails, so it
+	// runs alongside slower providers; with TMDb answering it never runs.
+	fallback := s.searchFallbackSource()
+	fallbackResult := make(chan []Title, 1) // buffered: a late starter never blocks
+	var startFallback sync.Once
+	var fallbackStarted atomic.Bool
 	replies := parallelReplies(len(s.providers), func(i int) providerReply {
 		provider := s.providers[i]
 		searcher, ok := provider.(SearchProvider)
@@ -206,7 +213,14 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		if typed, ok := provider.(TypedSearchProvider); ok && !typed.SupportsSearchType(query.Type) {
 			return providerReply{}
 		}
-		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
+		reply := s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
+		if provider.Name() == "tmdb" && fallback != nil && tmdbSearchFailed(reply) {
+			startFallback.Do(func() {
+				fallbackStarted.Store(true)
+				go func() { fallbackResult <- s.runSearchFallback(ctx, fallback, query, key) }()
+			})
+		}
+		return reply
 	})
 	groups := make([][]Title, 0, len(replies))
 	degraded := []string{}
@@ -225,8 +239,12 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 			}
 		}
 	}
-	if fallback := s.searchFallback(ctx, query, key, replies); len(fallback) > 0 {
-		groups = append(groups, filterByType(fallback, query.Type))
+	// Only a fallback that actually started is waited for (it has its own
+	// bounded budget); a search that timed out before TMDb answered skips it.
+	if fallbackStarted.Load() {
+		if titles := <-fallbackResult; len(titles) > 0 {
+			groups = append(groups, filterByType(titles, query.Type))
+		}
 	}
 	sort.Strings(degraded)
 	titles := MergeTitles(groups)
@@ -243,32 +261,30 @@ type TMDbSearchFallback interface {
 	SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title, error)
 }
 
-// searchFallback runs only when TMDb's search failed with no cached answer:
-// with TMDb reachable, search results are exactly TMDb's (plus the others).
-// Its hits are remembered as id links so their title pages resolve too.
-func (s *Service) searchFallback(ctx context.Context, query SearchQuery, key string, replies []providerReply) []Title {
-	tmdbFailed := false
-	var fallback TMDbSearchFallback
-	for i, provider := range s.providers {
-		switch {
-		case provider.Name() == "tmdb":
-			reply := replies[i]
-			// A stale cached answer still counts as an answer; a failure may
-			// carry an empty typed result, which does not.
-			titles, _ := reply.value.([]Title)
-			answered := reply.err == nil || (reply.stale && len(titles) > 0)
-			tmdbFailed = !answered && !errors.Is(reply.err, ErrNotFound)
-		case fallback == nil:
-			if candidate, ok := provider.(TMDbSearchFallback); ok {
-				fallback = candidate
-			}
+// tmdbSearchFailed reports a TMDb search reply that carries no answer. A
+// stale cached answer still counts as one; a failure may carry an empty
+// typed result, which does not.
+func tmdbSearchFailed(reply providerReply) bool {
+	titles, _ := reply.value.([]Title)
+	answered := reply.err == nil || (reply.stale && len(titles) > 0)
+	return !answered && !errors.Is(reply.err, ErrNotFound)
+}
+
+// searchFallbackSource is the provider that stands in for TMDb search.
+func (s *Service) searchFallbackSource() TMDbSearchFallback {
+	for _, provider := range s.providers {
+		if candidate, ok := provider.(TMDbSearchFallback); ok {
+			return candidate
 		}
 	}
-	if !tmdbFailed || fallback == nil || ctx.Err() != nil {
-		return nil
-	}
-	// Its own budget: the failed TMDb attempts already used part of the
-	// search's, and an empty fallback would show no results at all.
+	return nil
+}
+
+// runSearchFallback answers a search through the fallback with its own
+// budget (it starts as soon as TMDb's search fails, while slower providers
+// may still be using the search's) and remembers the hits as id links so
+// their title pages resolve too.
+func (s *Service) runSearchFallback(ctx context.Context, fallback TMDbSearchFallback, query SearchQuery, key string) []Title {
 	fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.options.RequestTimeout)
 	defer cancel()
 	reply := s.fetchCached(fallbackCtx, "cinemeta-search", key, func(callCtx context.Context) (any, error) {
@@ -277,8 +293,8 @@ func (s *Service) searchFallback(ctx context.Context, query SearchQuery, key str
 	titles, _ := reply.value.([]Title)
 	if s.options.Links != nil {
 		for _, title := range titles {
-			if _, known := s.options.Links.GetLink(ctx, title.ID); !known { // TMDb's own link knows the exact type
-				s.options.Links.PutLink(ctx, title.ID, IDLink{ProviderIDs: maps.Clone(title.ProviderIDs), Type: title.Type, Format: title.Format})
+			if _, known := s.options.Links.GetLink(fallbackCtx, title.ID); !known { // TMDb's own link knows the exact type
+				s.options.Links.PutLink(fallbackCtx, title.ID, IDLink{ProviderIDs: maps.Clone(title.ProviderIDs), Type: title.Type, Format: title.Format})
 			}
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 )
 
 // A title answered by Cinemeta alone must carry what the app reads from
@@ -121,5 +122,42 @@ func TestAnimeTitleNeverPullsInTMDb(t *testing.T) {
 	result := service.Detail(context.Background(), "anilist:1535")
 	if !result.Found || result.Title.ID != "anilist:1535" || result.Title.Type != TypeAnime || tmdbCalls != 0 {
 		t.Fatalf("detail = %+v (tmdb calls %d); the anime must stay AniList's", result.Title, tmdbCalls)
+	}
+}
+
+// TMDb failing while another search provider is slow (it runs out the
+// search budget): the fallback starts as soon as TMDb fails, so its results
+// are still there.
+func TestSearchFallbackSurvivesASlowProvider(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/cinemeta_death_note.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/catalog/series/top/search=death note.json":
+			_, _ = w.Write([]byte(`{"metas":[{"id":"tt0877057","imdb_id":"tt0877057"}]}`))
+		case "/catalog/movie/top/search=death note.json":
+			_, _ = w.Write([]byte(`{"metas":[]}`))
+		case "/meta/series/tt0877057.json":
+			_, _ = w.Write(fixture)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	tmdb := &fakeProvider{name: "tmdb", searchFn: func(context.Context, SearchQuery) ([]Title, error) {
+		return nil, errors.New("provider request failed: connection reset by peer")
+	}}
+	slow := &fakeProvider{name: "jikan", searchFn: func(ctx context.Context, _ SearchQuery) ([]Title, error) {
+		<-ctx.Done() // never answers within the budget
+		return nil, ctx.Err()
+	}}
+	service := NewService([]Provider{tmdb, slow, NewCinemeta(CinemetaOptions{BaseURL: server.URL, HTTP: server.Client()})},
+		Options{Links: &MemoryIDLinks{}, RequestTimeout: 300 * time.Millisecond})
+	defer service.Close()
+	result := service.Search(context.Background(), SearchQuery{Query: "death note"})
+	if len(result.Titles) != 1 || result.Titles[0].ID != "tmdb:tv:13916" {
+		t.Fatalf("search = %+v", result.Titles)
 	}
 }

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Cinemeta catalog provider (Stremio official metadata addon; IMDb-keyed).
@@ -283,6 +285,9 @@ func (p *Cinemeta) SupportsIDs(ids map[string]string) bool { return ids["imdb"] 
 // meta lookup for its TMDb id.
 const cinemetaSearchPerType = 6
 
+// cinemetaSearchWait bounds how long the fallback search waits for lookups.
+const cinemetaSearchWait = 2 * time.Second
+
 // SearchAsTMDb searches Cinemeta and returns the hits as the TMDb titles the
 // app knows (tmdb:tv:13916 ...), using the TMDb id Cinemeta lists for each.
 // It stands in for TMDb search while TMDb is unreachable; hits without a
@@ -337,7 +342,12 @@ func (p *Cinemeta) SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title
 			}
 		}
 	}
+	// Lookups Cinemeta has not prepared redirect and take seconds: results
+	// are collected for at most cinemetaSearchWait and returned as they are
+	// (in hit order), instead of one slow title emptying the search.
+	var mu sync.Mutex
 	titles := make([]Title, len(hits))
+	done := make(chan struct{})
 	var wait sync.WaitGroup
 	for i, h := range hits {
 		wait.Go(func() {
@@ -355,10 +365,20 @@ func (p *Cinemeta) SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title
 			title.Format = strings.SplitN(tmdbID, ":", 2)[0]
 			title.Seasons = nil // search results carry no season list (as TMDb's)
 			title.Runtime, title.Genres = 0, nil
+			mu.Lock()
 			titles[i] = title
+			mu.Unlock()
 		})
 	}
-	wait.Wait()
+	go func() { wait.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(cinemetaSearchWait):
+	case <-ctx.Done():
+	}
+	mu.Lock()
+	titles = slices.Clone(titles)
+	mu.Unlock()
 	found := make([]Title, 0, len(titles))
 	for _, title := range titles {
 		if title.ID != "" {
