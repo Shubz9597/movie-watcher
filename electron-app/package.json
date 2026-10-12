@@ -26,6 +26,7 @@
     "test:diagnostics": "node --test scripts/diagnostic-logger.test.mjs",
     "test:player-contracts": "node --test scripts/player-state-contracts.test.mjs",
     "test:native-video-layout": "node --test scripts/native-video-layout.test.mjs",
+    "test:ios-foreground": "node --test scripts/ios-foreground.test.mjs",
     "test:video-preferences": "node --test --experimental-strip-types scripts/characterization/video-playback-preferences.test.mjs",
     "smoke:video-preferences": "node scripts/native-preferences-smoke.mjs",
     "test:network-routing": "node --test scripts/network-routing.test.mjs",

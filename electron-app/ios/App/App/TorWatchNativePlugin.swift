@@ -90,6 +90,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var activeObserver: NSObjectProtocol?
+    private var resumeAfterBackground = false
+    private var needsForegroundRefresh = false
+    private var activationGeneration: UInt64 = 0
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -287,8 +290,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self = self, let player = self.mediaPlayer, self.playbackRequested else { return }
-            self.pausePlayback(player)
+            self?.pauseForBackground()
         }
         mediaPlayer = player
         pendingSeek = seekTo
@@ -316,26 +318,50 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
+        // An explicit Play/Pause wins over queued automatic foreground work.
+        resumeAfterBackground = false
         if playbackRequested {
             pausePlayback(player)
         } else {
-            // Flush queued pre-pause audio/video at the exact pause position.
-            // Normal unpause can replay the old decoder queue while its
-            // picture waits for the clock to catch up. Never rewind here.
-            if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
-                player.time = VLCTime(int: position)
-            }
-            pausedPositionMs = nil
-            playbackRequested = true
-            player.play()
+            resumePlayback(player)
         }
         call.resolve()
+    }
+
+    private func resumePlayback(_ player: VLCMediaPlayer) {
+        guard UIApplication.shared.applicationState == .active else {
+            resumeAfterBackground = true
+            return
+        }
+        refreshForegroundSurface(player)
+        // Unpause BEFORE the precise seek. Seeking a paused/inactive output
+        // can consume its first decoded picture while VLC cannot render it,
+        // leaving audio running over the old frame until video catches up.
+        // Keep an explicit scrub/startup seek in preference to the pause anchor.
+        if pendingSeek == nil, let position = pausedPositionMs {
+            pendingSeek = Double(position) / 1000.0
+        }
+        pausedPositionMs = nil
+        playbackRequested = true
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player.play()
+        applyPendingSeek(player)
     }
 
     private func pausePlayback(_ player: VLCMediaPlayer) {
         playbackRequested = false
         pausedPositionMs = max(0, player.time.intValue)
         player.pause()
+    }
+
+    private func pauseForBackground() {
+        guard let player = mediaPlayer, !terminalSent else { return }
+        activationGeneration &+= 1
+        // Duplicate background notifications must not forget that playback
+        // was interrupted, or replace its original pause position.
+        if !needsForegroundRefresh { resumeAfterBackground = playbackRequested }
+        needsForegroundRefresh = true
+        if playbackRequested { pausePlayback(player) }
     }
 
     @objc func seekBy(_ call: CAPPluginCall) {
@@ -635,7 +661,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // MARK: - Internals
 
     private func applyPendingSeek(_ player: VLCMediaPlayer) {
-        guard let seconds = pendingSeek, seconds.isFinite, player.isSeekable else { return }
+        guard UIApplication.shared.applicationState == .active, !needsForegroundRefresh,
+              let seconds = pendingSeek, seconds.isFinite, player.isSeekable else { return }
         pendingSeek = nil
         let duration = Double(player.media?.length.intValue ?? 0)
         let upper = duration > 0 ? duration : Double(Int32.max)
@@ -704,8 +731,38 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         activeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.requestOrientation(TorWatchPlaybackState.videoAttached)
+            guard let self = self else { return }
+            self.requestOrientation(TorWatchPlaybackState.videoAttached)
+            self.recoverForegroundPlayback()
         }
+    }
+
+    private func recoverForegroundPlayback() {
+        guard !terminalSent, let player = mediaPlayer else { return }
+        let generation = activationGeneration
+        // Notification observers have no guaranteed order. Let VLC receive
+        // didBecomeActive and enable its EAGL context before touching output
+        // or asking the decoder for the resume frame. No timed delay is needed.
+        DispatchQueue.main.async { [weak self, weak player] in
+            guard let self = self, let player = player, player === self.mediaPlayer,
+                  !self.terminalSent, generation == self.activationGeneration,
+                  UIApplication.shared.applicationState == .active else { return }
+            self.refreshForegroundSurface(player)
+            if self.resumeAfterBackground {
+                self.resumeAfterBackground = false
+                self.resumePlayback(player)
+            } else {
+                self.applyPendingSeek(player)
+            }
+        }
+    }
+
+    private func refreshForegroundSurface(_ player: VLCMediaPlayer) {
+        guard needsForegroundRefresh, let surface = surfaceView else { return }
+        surface.superview?.layoutIfNeeded()
+        applyVideoScale(player)
+        surface.refreshDrawableAfterBackground()
+        needsForegroundRefresh = false
     }
 
     /** Full teardown: bounded, idempotent, surface + background restored.
@@ -718,6 +775,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pendingSeek = nil
         pausedPositionMs = nil
         playbackRequested = false
+        resumeAfterBackground = false
+        needsForegroundRefresh = false
+        activationGeneration &+= 1 // invalidate activation queued for a replaced player
         subtitleDownloads.forEach { $0.cancel() }
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
@@ -763,6 +823,20 @@ final class VideoSurfaceView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func refreshDrawableAfterBackground() {
+        // VLC's iOS view resets its EAGL render buffers in layoutSubviews.
+        // A foreground return often keeps the exact same bounds, so UIKit
+        // otherwise skips that layout and leaves the old renderbuffer alive.
+        // Invalidate the drawable subtree without replacing it or resizing it;
+        // this preserves sizing, track choices, slaves and timing offsets.
+        func refresh(_ view: UIView) {
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+            for child in view.subviews { refresh(child) }
+        }
+        UIView.performWithoutAnimation { refresh(drawableView) }
+    }
 
     func apply(aspect: CGFloat, mode: String) {
         // Symmetric gutters keep the picture centered and clear of the
