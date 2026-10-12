@@ -450,8 +450,30 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 			s.options.Links.PutLink(ctx, id, IDLink{ProviderIDs: maps.Clone(merged.ProviderIDs), Type: merged.Type, Format: merged.Format, Title: merged.Title, Year: merged.Year})
 		}
 	}
+	if found {
+		merged.Series = s.confirmSeries(ctx, providerName, merged.Series)
+	}
 	sort.Strings(degraded)
 	return DetailResult{Title: merged, Found: found, NotFound: !found && len(degraded) == 0, DegradedProviders: degraded}
+}
+
+// confirmSeries keeps an anime entry's place in a grouped TMDb show only when
+// that show has the season with room for every episode; otherwise the entry
+// stays a title of its own, as it always was.
+func (s *Service) confirmSeries(ctx context.Context, providerName string, link *SeriesLink) *SeriesLink {
+	if link == nil || providerName == "tmdb" {
+		return nil
+	}
+	show := s.Detail(ctx, link.ID)
+	if !show.Found {
+		return nil
+	}
+	for _, season := range show.Title.Seasons {
+		if season.Number == link.Season && season.EpisodeCount >= link.EpisodeOffset+link.episodes {
+			return link
+		}
+	}
+	return nil
 }
 
 // link returns the remembered provider ids for a title id (none without a
@@ -566,7 +588,7 @@ func (s *Service) EpisodesWithIDs(ctx context.Context, providerIDs map[string]st
 			degraded = append(degraded, s.providers[i].Name())
 		}
 		if episodes, ok := reply.value.([]Episode); ok {
-			groups = append(groups, episodes)
+			groups = append(groups, episodesOfSeason(episodes, season))
 		}
 	}
 	sort.Strings(degraded)
@@ -575,6 +597,20 @@ func (s *Service) EpisodesWithIDs(ctx context.Context, providerIDs map[string]st
 		merged[i].TitleID = titleID
 	}
 	return EpisodeResult{Episodes: merged, DegradedProviders: degraded}
+}
+
+// episodesOfSeason keeps one season's episodes. Providers answer a season
+// request loosely (Cinemeta returns every episode for season 0, AniZip and
+// Jikan number every entry as season 1); merged, those filled Specials with
+// the whole show and repeated episodes in later seasons.
+func episodesOfSeason(episodes []Episode, season int) []Episode {
+	kept := make([]Episode, 0, len(episodes))
+	for _, episode := range episodes {
+		if episode.Season == season {
+			kept = append(kept, episode)
+		}
+	}
+	return kept
 }
 
 func episodeIDsKey(providerIDs map[string]string, season int) string {

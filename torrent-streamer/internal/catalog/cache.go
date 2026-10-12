@@ -92,6 +92,9 @@ func mergeTitle(into *Title, from Title) {
 	if len(into.Genres) == 0 {
 		into.Genres = from.Genres
 	}
+	if into.Series == nil {
+		into.Series = from.Series
+	}
 	if into.Artwork == nil {
 		into.Artwork = map[string]string{}
 	}

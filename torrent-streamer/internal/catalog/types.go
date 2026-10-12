@@ -44,6 +44,19 @@ type Title struct {
 	// Torrent search fans out over these: indexers index release names under
 	// the ORIGINAL/romaji title, not the localized display title.
 	AltTitles []string `json:"altTitles,omitempty"`
+	// Series places one AniList entry (an arc or cour) inside the TMDb show
+	// that groups the whole franchise, so clients can open that show instead.
+	Series *SeriesLink `json:"series,omitempty"`
+}
+
+// SeriesLink is a season of a grouped TMDb show: the entry's episode N is the
+// show's episode N+EpisodeOffset of Season.
+type SeriesLink struct {
+	ID            string `json:"id"`
+	Season        int    `json:"season"`
+	EpisodeOffset int    `json:"episodeOffset,omitempty"`
+	// episodes is the entry's episode count, checked against the show.
+	episodes int
 }
 
 // Season summarizes one season of a series/anime title. TMDb supplies the
