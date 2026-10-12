@@ -23,7 +23,7 @@ func linkTestProviders(tmdbDown *bool) []Provider {
 			if request.ProviderIDs["tmdb"] != "tv:13916" {
 				return Title{}, ErrNotFound
 			}
-			return Title{ID: "tmdb:tv:13916", Type: TypeAnime, Format: "tv", Title: "Death Note",
+			return Title{ID: "tmdb:tv:13916", Type: TypeAnime, Format: "tv", Title: "Death Note", Year: 2006,
 				ProviderIDs: map[string]string{"tmdb": "tv:13916", "imdb": "tt0877057"}, IMDBID: "tt0877057", MergedFrom: []string{"tmdb"},
 				Seasons: []Season{{Number: 1, Name: "Season 1", EpisodeCount: 37}}}, nil
 		},
@@ -39,7 +39,7 @@ func linkTestProviders(tmdbDown *bool) []Provider {
 			if request.ProviderIDs["imdb"] != "tt0877057" {
 				return Title{}, ErrNotFound
 			}
-			return Title{ID: "imdb:tt0877057", Type: TypeSeries, Title: "Death Note",
+			return Title{ID: "imdb:tt0877057", Type: TypeSeries, Title: "Death Note (Cinemeta)", Year: 2007,
 				ProviderIDs: map[string]string{"imdb": "tt0877057"}, IMDBID: "tt0877057", MergedFrom: []string{"cinemeta"},
 				Seasons: []Season{{Number: 1, Name: "Season 1", EpisodeCount: 37}}}, nil
 		},
@@ -71,8 +71,9 @@ func TestTitleResolvesThroughCinemetaWhenTMDbIsDown(t *testing.T) {
 		t.Fatalf("with TMDb down the remembered IMDb link must let Cinemeta answer: %+v", result)
 	}
 	got := result.Title
-	if got.ID != "tmdb:tv:13916" || got.Type != TypeAnime || got.Format != "tv" || got.ProviderIDs["tmdb"] != "tv:13916" || len(got.Seasons) != 1 {
-		t.Fatalf("the app must see the same title (id, type, format, tmdb id, seasons): %+v", got)
+	if got.ID != "tmdb:tv:13916" || got.Type != TypeAnime || got.Format != "tv" || got.ProviderIDs["tmdb"] != "tv:13916" || len(got.Seasons) != 1 ||
+		got.Title != "Death Note" || got.Year != 2006 {
+		t.Fatalf("the app must see the same title (id, type, format, name, year, tmdb id, seasons): %+v", got)
 	}
 	episodes := second.Episodes(context.Background(), "tmdb:tv:13916", 1)
 	if len(episodes.Episodes) != 1 || episodes.Episodes[0].Title != "Rebirth" {
@@ -105,11 +106,11 @@ func TestSQLIDLinksRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &SQLIDLinks{DB: db}
-	link := IDLink{ProviderIDs: map[string]string{"tmdb": "tv:13916", "imdb": "tt0877057"}, Type: TypeAnime, Format: "tv"}
+	link := IDLink{ProviderIDs: map[string]string{"tmdb": "tv:13916", "imdb": "tt0877057"}, Type: TypeAnime, Format: "tv", Title: "Death Note", Year: 2006}
 	store.PutLink(ctx, "tmdb:tv:13916", link)
 	fresh := &SQLIDLinks{DB: db} // a restarted server reads from the table
 	got, ok := fresh.GetLink(ctx, "tmdb:tv:13916")
-	if !ok || got.ProviderIDs["imdb"] != "tt0877057" || got.Type != TypeAnime || got.Format != "tv" {
+	if !ok || got.ProviderIDs["imdb"] != "tt0877057" || got.Type != TypeAnime || got.Format != "tv" || got.Title != "Death Note" || got.Year != 2006 {
 		t.Fatalf("link = %+v, %v", got, ok)
 	}
 	if _, ok := fresh.GetLink(ctx, "tmdb:tv:0"); ok {

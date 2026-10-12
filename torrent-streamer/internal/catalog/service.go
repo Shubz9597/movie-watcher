@@ -267,7 +267,11 @@ func (s *Service) searchFallback(ctx context.Context, query SearchQuery, key str
 	if !tmdbFailed || fallback == nil || ctx.Err() != nil {
 		return nil
 	}
-	reply := s.fetchCached(ctx, "cinemeta-search", key, func(callCtx context.Context) (any, error) {
+	// Its own budget: the failed TMDb attempts already used part of the
+	// search's, and an empty fallback would show no results at all.
+	fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.options.RequestTimeout)
+	defer cancel()
+	reply := s.fetchCached(fallbackCtx, "cinemeta-search", key, func(callCtx context.Context) (any, error) {
 		return fallback.SearchAsTMDb(callCtx, query)
 	})
 	titles, _ := reply.value.([]Title)
@@ -412,6 +416,12 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 			if link.Format != "" {
 				merged.Format = link.Format
 			}
+			if link.Title != "" {
+				merged.Title = link.Title
+			}
+			if link.Year > 0 {
+				merged.Year = link.Year
+			}
 			if merged.ProviderIDs == nil {
 				merged.ProviderIDs = map[string]string{}
 			}
@@ -421,7 +431,7 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 				}
 			}
 		} else if requestedAnswered && len(merged.ProviderIDs) > 1 {
-			s.options.Links.PutLink(ctx, id, IDLink{ProviderIDs: maps.Clone(merged.ProviderIDs), Type: merged.Type, Format: merged.Format})
+			s.options.Links.PutLink(ctx, id, IDLink{ProviderIDs: maps.Clone(merged.ProviderIDs), Type: merged.Type, Format: merged.Format, Title: merged.Title, Year: merged.Year})
 		}
 	}
 	sort.Strings(degraded)

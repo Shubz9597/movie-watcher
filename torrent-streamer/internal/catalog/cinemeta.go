@@ -281,7 +281,7 @@ func (p *Cinemeta) SupportsIDs(ids map[string]string) bool { return ids["imdb"] 
 
 // cinemetaSearchPerType bounds the fallback search: each result needs one
 // meta lookup for its TMDb id.
-const cinemetaSearchPerType = 8
+const cinemetaSearchPerType = 6
 
 // SearchAsTMDb searches Cinemeta and returns the hits as the TMDb titles the
 // app knows (tmdb:tv:13916 ...), using the TMDb id Cinemeta lists for each.
@@ -298,23 +298,33 @@ func (p *Cinemeta) SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title
 		return nil, ErrNotFound // anime search is AniList's
 	}
 	type hit struct{ imdb, kind string }
+	type listing struct {
+		Metas []struct {
+			ID     string `json:"id"`
+			IMDBID string `json:"imdb_id"`
+		} `json:"metas"`
+	}
+	// Both lists at once (movie, series), then each hit's TMDb id at once.
+	listings := make([]listing, len(kinds))
+	errs := make([]error, len(kinds))
+	var listWait sync.WaitGroup
+	for i, kind := range kinds {
+		listWait.Go(func() {
+			endpoint := p.base + "/catalog/" + kind + "/top/search=" + url.PathEscape(query.Query) + ".json"
+			errs[i] = fetchJSON(ctx, p.http, endpoint, &listings[i])
+		})
+	}
+	listWait.Wait()
 	var hits []hit
 	var firstErr error
-	for _, kind := range kinds {
-		var payload struct {
-			Metas []struct {
-				ID     string `json:"id"`
-				IMDBID string `json:"imdb_id"`
-			} `json:"metas"`
-		}
-		endpoint := p.base + "/catalog/" + kind + "/top/search=" + url.PathEscape(query.Query) + ".json"
-		if err := fetchJSON(ctx, p.http, endpoint, &payload); err != nil {
+	for k, kind := range kinds {
+		if errs[k] != nil {
 			if firstErr == nil {
-				firstErr = err
+				firstErr = errs[k]
 			}
 			continue
 		}
-		for i, meta := range payload.Metas {
+		for i, meta := range listings[k].Metas {
 			if i >= cinemetaSearchPerType {
 				break
 			}
