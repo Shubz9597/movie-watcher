@@ -23,9 +23,11 @@ and player UI. On a real background transition, it pauses at the current
 position. Recovery runs on the next main-queue turn
 after activation notification delivery so VLC can enable its context first.
 It explicitly lays out the drawable subtree and leaves playback paused,
-whether the viewer left while playing or already paused. Only an explicit Play
-tap unpauses, then precisely seeks to the original position, flushing old
-queued pictures without rewinding.
+whether the viewer left while playing or already paused. The subsequent
+recording still showed a frozen picture, so recovery now also performs silent
+video preparation before revealing Play. The precise seek happens during
+preparation; an explicit Play tap then only unpauses the ready decoder.
+See [video-readiness verification](ios-video-readiness-2026-10-13.md).
 Explicit pending seeks take precedence, and inactive seeks stay deferred.
 
 Control Center/Siri do not trigger the real-background pause. Duplicate

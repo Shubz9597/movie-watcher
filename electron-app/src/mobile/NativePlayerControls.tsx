@@ -38,7 +38,7 @@ export type NativePlayerControlsSurface = {
     selectedAudioTrackId?: number | null; // authoritative player state
     selectedSubtitleTrackId?: number | null; // -1 = none
   }) => void): () => void;
-  subscribeBuffering(listener: (update: { active: boolean; progress?: number }) => void): () => void;
+  subscribeBuffering(listener: (update: { active: boolean; progress?: number; videoReady?: boolean }) => void): () => void;
 };
 
 type SkipSegment = { type: string; start: number; end: number; provider: string };
@@ -148,7 +148,8 @@ export default function NativePlayerControls(props: Props) {
   };
 
   const [hasVideo, setHasVideo] = useState(false);
-  const [buffering, setBuffering] = useState<{ active: boolean; progress?: number }>({ active: true });
+  const [buffering, setBuffering] = useState<{ active: boolean; progress?: number; videoReady?: boolean }>({ active: true });
+  const controlsReady = hasVideo && buffering.videoReady !== false;
   const [showRebuffering, setShowRebuffering] = useState(false);
   const [time, setTime] = useState({ currentTime: 0, duration: 0 });
   const [playing, setPlaying] = useState(true);
@@ -233,7 +234,7 @@ export default function NativePlayerControls(props: Props) {
     const detachState = player.subscribeState((state) => {
       setPlaying(state === 'playing');
       setHasVideo(true);
-      setBuffering({ active: false });
+      setBuffering(current => ({ ...current, active: current.videoReady === false }));
     });
     const detachBuffering = player.subscribeBuffering((update) => {
       setBuffering(update);
@@ -500,6 +501,9 @@ export default function NativePlayerControls(props: Props) {
   // as a frozen frame mid-scene: the video pauses while the Audio and
   // subtitles panel is open and resumes when it closes (if it was playing).
   const resumeAfterTracks = useRef(false);
+  useEffect(() => {
+    if (buffering.videoReady === false) resumeAfterTracks.current = false;
+  }, [buffering.videoReady]);
   const openTracks = () => {
     if (playing) {
       resumeAfterTracks.current = true;
@@ -536,6 +540,7 @@ export default function NativePlayerControls(props: Props) {
    *    (the centre buttons do the same while the controls show)
    */
   const handleSurfaceTap = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!controlsReady) return;
     // Trailing taps right after a pinch are gesture remnants — ignore.
     if (Date.now() < pinchGuardRef.current) return;
     const x = event.clientX;
@@ -757,7 +762,7 @@ export default function NativePlayerControls(props: Props) {
 
   // The centre buttons and dim layer show with the controls, but not over
   // an open sheet.
-  const centerVisible = hasVideo && controlsVisible && activeSheet === 'none';
+  const centerVisible = controlsReady && controlsVisible && activeSheet === 'none';
   return (
     <div
       className="fixed inset-0 z-[60] touch-none select-none bg-transparent"
@@ -767,13 +772,13 @@ export default function NativePlayerControls(props: Props) {
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
     >
-      <BufferingLoader title={title} logoUrl={logoUrl} visible={!hasVideo} progress={buffering.progress} />
+      <BufferingLoader title={title} logoUrl={logoUrl} visible={!controlsReady} progress={buffering.progress} />
       <div className={`native-rebuffer${showRebuffering ? ' native-rebuffer--visible' : ''}`} role={showRebuffering ? 'status' : undefined} aria-label="Buffering" aria-hidden={!showRebuffering}>
         <LoaderCircle aria-hidden="true" />
       </div>
       {/* Web-rendered subtitle overlay (sheet-loaded tracks): pinch anywhere
           on the video to resize — the size persists per device. */}
-      {hasVideo && activeOverlayCue ? (
+      {controlsReady && activeOverlayCue ? (
         <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-all duration-200" style={{ bottom: controlsVisible || activeSheet !== 'none' ? '9.5rem' : '3rem' }}>
           <span
             className="whitespace-pre-line rounded bg-black/55 px-3 py-1 text-center leading-snug text-white [text-shadow:_0_1px_3px_rgb(0_0_0/90%)]"
@@ -800,7 +805,7 @@ export default function NativePlayerControls(props: Props) {
         >
           <ChevronLeft className="h-6 w-6" aria-hidden="true" />
         </button>
-        {hasVideo ? (
+        {controlsReady ? (
           <div className="pointer-events-none min-w-0 flex-1 pt-1.5 text-left">
             <div data-player-heading className="min-w-0 text-left text-white [text-shadow:_0_1px_3px_rgb(0_0_0/80%)]">
               <p className="truncate text-lg font-semibold leading-6" title={title}>{title}</p>
@@ -811,7 +816,7 @@ export default function NativePlayerControls(props: Props) {
             ) : null}
           </div>
         ) : <div className="flex-1" />}
-        {hasVideo ? (
+        {controlsReady ? (
           <div className="flex shrink-0 items-center gap-1">
             {!local ? (
               <IconButton label="Torrent health" onClick={() => setActiveSheet(activeSheet === 'stats' ? 'none' : 'stats')} active={activeSheet === 'stats'}>
@@ -831,7 +836,7 @@ export default function NativePlayerControls(props: Props) {
       {/* Centre: back 10 s, play/pause, forward 10 s (double-tap the left or
           right of the picture does the same). Hidden while buffering, where
           the spinner takes the centre. */}
-      {hasVideo ? (
+      {controlsReady ? (
         <div className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-10 transition-opacity duration-200 ${centerVisible && !showRebuffering ? 'opacity-100' : 'invisible opacity-0'}`}>
           <CenterButton label="Back 10 seconds" onClick={() => player.seekBy(-10)}>
             <RotateCcw className="h-7 w-7" aria-hidden="true" />
@@ -846,7 +851,7 @@ export default function NativePlayerControls(props: Props) {
       ) : null}
 
       {/* Skip chip (where timestamps exist) */}
-      {skipAction ? (
+      {controlsReady && skipAction ? (
         <div className="absolute bottom-28 right-4 z-20">
           <button
             type="button"
@@ -864,7 +869,7 @@ export default function NativePlayerControls(props: Props) {
       {/* Bottom: elapsed / total on the left, screen size on the right, the
           full-width seek bar beneath. */}
       <div
-        className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-[max(1rem,env(safe-area-inset-left),env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-10 transition-opacity duration-200 ${hasVideo && (controlsVisible || activeSheet !== 'none') ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
+        className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-[max(1rem,env(safe-area-inset-left),env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-10 transition-opacity duration-200 ${controlsReady && (controlsVisible || activeSheet !== 'none') ? 'opacity-100' : 'pointer-events-none invisible opacity-0'}`}
         onPointerUp={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -1241,7 +1246,7 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-/** Startup only. Keep mounted for a quiet fade into the native video surface. */
+/** Startup/video preparation. Keep mounted for a quiet fade into the ready picture. */
 function BufferingLoader({ title, logoUrl, visible, progress }: {
   title: string;
   logoUrl: string | null;

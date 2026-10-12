@@ -451,6 +451,42 @@ test('late controls receive playing, time and completed buffering without toggli
   } finally { await controller.dispose(); }
 });
 
+test('local video readiness cannot be cleared by audio state, clock movement, or buffering percentage', async () => {
+  const fb = fakeBridge();
+  let toggles = 0, buffer;
+  fb.bridge.togglePlayback = async () => { toggles++; };
+  const server = stubServer();
+  server.client.create = async () => { throw new Error('download playback must stay offline'); };
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  controller.subscribeBuffering(value => { buffer = value; });
+  try {
+    await controller.startLocal({ downloadId: 'download-1', title: 'Episode' });
+    const playId = fb.calls.playLocal.at(-1).playId;
+    fb.emitBuffering({ active: true, videoReady: false, playId });
+    fb.emitState({ state: 'playing', playId });
+    for (const currentTime of [600, 600.5, 601, 601.5, 602]) fb.emitTime({ currentTime, duration: 1400, playId });
+    fb.emitBuffering({ active: false, progress: 100, playId });
+    fb.emitState({ state: 'paused', playId });
+    controller.togglePlayback();
+    assert.equal(toggles, 0, 'Play must wait for video output confirmation');
+    assert.equal(buffer.active, true);
+    assert.equal(buffer.videoReady, false);
+    const late = [];
+    controller.subscribeBuffering(value => late.push(value));
+    assert.equal(late[0].videoReady, false, 'late controls keep the readiness gate');
+    fb.emitBuffering({ active: false, videoReady: true, playId });
+    fb.emitState({ state: 'paused', playId });
+    assert.equal(buffer.active, false);
+    assert.equal(buffer.videoReady, true);
+    controller.togglePlayback();
+    assert.equal(toggles, 1);
+    await controller.startLocal({ downloadId: 'download-2', title: 'Next episode' });
+    assert.equal(buffer.videoReady, undefined, 'replacement resets readiness');
+    fb.emitBuffering({ active: false, videoReady: true, playId });
+    assert.equal(buffer.active, true, 'a replaced engine cannot confirm the new video');
+  } finally { await controller.dispose(); }
+});
+
 test('resume buffering clears from sustained clock movement, not seek jumps or stationary ticks', async () => {
   const fb = fakeBridge();
   const controller = new NativePlaybackController({ client: stubServer().client, bridge: fb.bridge });
@@ -708,6 +744,14 @@ test("native bridge: listener registration gates play and dispose removes handle
   listenerResolvers.forEach((resolve) => resolve());
   await starting;
   assert.equal(played, true);
+  const buffering = [];
+  nativeBridge.onBuffering(update => buffering.push(update));
+  callbacks.buffering({ active: true, videoReady: false, playId: 'p1' });
+  callbacks.buffering({ active: false, videoReady: true, playId: 'replaced' });
+  assert.equal(buffering.length, 1);
+  assert.equal(buffering[0].videoReady, false, 'native frame readiness reaches the controller');
+  callbacks.buffering({ active: false, videoReady: true, playId: 'p1' });
+  assert.equal(buffering[1].videoReady, true);
   await nativeBridge.dispose();
   assert.deepEqual(removed.sort(), ["buffering", "playbackState", "timeUpdate", "tracksUpdate"]);
   await assert.rejects(

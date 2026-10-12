@@ -67,6 +67,24 @@ try {
     await page.waitForFunction(() => !document.querySelector('.native-loader--visible'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.native-loader')).opacity === '0');
     await page.evaluate(() => window.emit('State', 'paused'));
+    // iOS foreground preparation must hide Play even if audio reports Playing
+    // and its clock advances. The existing layout returns only on videoReady.
+    await page.evaluate(() => {
+      window.emit('Buffering', {active:true, videoReady:false});
+      window.emit('State', 'playing');
+      window.emit('Time', {currentTime:600, duration:1400});
+    });
+    await page.waitForSelector('.native-loader--visible');
+    assert.equal(await page.$('button[aria-label="Play"]'), null);
+    assert.equal(await page.$('button[aria-label="Pause"]'), null);
+    assert.ok(await page.$('button[aria-label="Close player"]'), 'Close stays available during preparation');
+    await page.screenshot({path:path.join(output,'landscape-video-preparing.png')});
+    await page.evaluate(() => {
+      window.emit('Buffering', {active:false, videoReady:true});
+      window.emit('State', 'paused');
+    });
+    await page.waitForSelector('button[aria-label="Play"]');
+    await page.waitForFunction(() => !document.querySelector('.native-loader--visible'));
     // Size changes must reach the player once, including while paused, and
     // the brief mode pill sits below the title, which is on the left
     // (YouTube layout: title top-left, tools top-right, play in the centre).

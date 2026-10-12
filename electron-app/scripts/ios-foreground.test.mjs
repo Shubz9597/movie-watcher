@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-test('iOS foreground recovery orders surface refresh, play and seek, and rejects stale activation', () => {
+test('iOS video preparation waits for fresh output, stays silent and paused, and rejects stale activation', () => {
   const source = readFileSync(new URL('../ios/App/App/TorWatchNativePlugin.swift', import.meta.url), 'utf8');
   // Use the actual method bodies, so changes to native ordering are exercised.
   const method = name => {
@@ -31,6 +31,8 @@ import Foundation
 import Dispatch
 
 var calls: [String] = []
+var events: [(String, [String: Any])] = []
+var fixtures: [Player] = []
 class UIApplication {
     enum State { case active, background }
     static let shared = UIApplication()
@@ -46,7 +48,8 @@ class UIView {
     var subviews: [UIView] = []
     var onLayout: (() -> Void)?
     var dirty = false
-    var bounds = [0, 0, 640, 360]
+    var bounds = CGRect(x: 0, y: 0, width: 640, height: 360)
+    var window: UIView?
     func setNeedsLayout() { dirty = true }
     func layoutIfNeeded() { if dirty { dirty = false; onLayout?() } }
     static func performWithoutAnimation(_ work: () -> Void) { work() }
@@ -59,9 +62,19 @@ class VLCTime {
     let intValue: Int32
     init(int: Int32) { intValue = int }
 }
-class VLCMedia { var length = VLCTime(int: 1_400_000) }
+struct MediaStats { var decodedVideo: Int32 = 100; var displayedPictures: Int32 = 100 }
+class VLCMedia {
+    var length = VLCTime(int: 1_400_000)
+    var statistics = MediaStats()
+}
+class VLCAudio { var isMuted = false }
 class VLCMediaPlayer {
+    enum State { case playing, paused }
+    var state: State = .playing
     var media: VLCMedia? = VLCMedia()
+    var audio = VLCAudio()
+    var hasVideoOut = true
+    var videoSize = CGSize(width: 640, height: 360)
     var isSeekable = true
     var isPlaying = true
     var drawableReady = false
@@ -77,8 +90,8 @@ class VLCMediaPlayer {
             displayedResumeFrame = isPlaying && drawableReady && UIApplication.shared.applicationState == .active
         }
     }
-    func play() { calls.append("play"); isPlaying = true }
-    func pause() { calls.append("pause"); isPlaying = false }
+    func play() { calls.append("play"); isPlaying = true; state = .playing }
+    func pause() { calls.append("pause"); isPlaying = false; state = .paused }
 }
 class CAPPluginCall {
     func getString(_ name: String) -> String? { "current" }
@@ -94,15 +107,29 @@ class Player {
     var playbackRequested = true
     var needsForegroundRefresh = false
     var activationGeneration: UInt64 = 0
+    var videoReady = true
+    var videoPreparationTimer: Timer?
+    var videoPreparationStarted: Date?
+    var preparationDecodedBaseline = 0
+    var preparationDisplayedBaseline = 0
+    var preparationTargetMs: Int32 = 0
+    var preparationRetried = false
+    var awaitingPreparationPause = false
+    var preparationAudioWasMuted: Bool?
+    func notifyListeners(_ name: String, data: [String: Any]) { events.append((name, data)) }
+    func emitTracks() {}
     func applyVideoScale(_ player: VLCMediaPlayer) {}
-    ${['togglePlayback', 'pausePlayback', 'pauseForBackground', 'resumePlayback', 'applyPendingSeek', 'recoverForegroundPlayback', 'refreshForegroundSurface'].map(method).join('\n')}
+    ${['togglePlayback', 'pausePlayback', 'pauseForBackground', 'resumePlayback', 'applyPendingSeek', 'recoverForegroundPlayback', 'refreshForegroundSurface', 'beginVideoPreparation', 'checkVideoPreparation', 'completeVideoPreparation', 'cancelVideoPreparation'].map(method).join('\n')}
 }
 func fixture() -> (Player, VLCMediaPlayer, UIView) {
-    calls = []
+    for previous in fixtures { previous.cancelVideoPreparation() }
+    calls = []; events = []
     UIApplication.shared.applicationState = .active
     let player = Player(), engine = VLCMediaPlayer(), surface = VideoSurfaceView(), output = UIView()
     output.onLayout = { calls.append("refresh"); engine.drawableReady = true }
     surface.drawableView.subviews = [output]
+    fixtures.append(player)
+    surface.window = UIView()
     player.mediaPlayer = engine
     player.surfaceView = surface
     return (player, engine, output)
@@ -117,82 +144,114 @@ func activate(_ player: Player) {
     player.recoverForegroundPlayback()
 }
 
-// Home -> app: the GPU reset happens even when the viewport is unchanged.
+func freshFrames(_ player: Player, _ engine: VLCMediaPlayer) {
+    engine.media!.statistics.decodedVideo = Int32(player.preparationDecodedBaseline + 2)
+    engine.media!.statistics.displayedPictures = Int32(player.preparationDisplayedBaseline + 2)
+    engine.storedTime = VLCTime(int: player.preparationTargetMs + 100)
+}
+func confirmPausedPreparation(_ player: Player, _ engine: VLCMediaPlayer) {
+    freshFrames(player, engine)
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady && engine.audio.isMuted, "wait for pause confirmation")
+    player.checkVideoPreparation(engine)
+    assert(player.videoReady && !player.playbackRequested && !engine.isPlaying)
+}
+
+// Playing -> Home -> app: preroll is silent; public intent stays paused.
 do {
     let (player, engine, output) = fixture()
     let originalBounds = output.bounds
-    background(player)
-    player.pauseForBackground() // duplicate notification keeps the pause anchor
+    background(player); player.pauseForBackground()
     activate(player)
     assert(calls == ["pause"], "no decoder work during notification delivery")
     drainActivation()
-    assert(calls == ["pause", "refresh"])
-    assert(!engine.isPlaying && !player.playbackRequested)
-    assert(output.bounds == originalBounds)
+    assert(calls == ["pause", "refresh", "play", "seek:250000"])
+    assert(!player.videoReady && !player.playbackRequested && engine.audio.isMuted)
+    player.togglePlayback(CAPPluginCall())
+    assert(calls.filter { $0 == "play" }.count == 1, "ignore Play while preparing")
+    confirmPausedPreparation(player, engine)
+    assert(!engine.audio.isMuted && output.bounds == originalBounds)
     assert(engine.audioTrack == 2 && engine.subtitleTrack == 4)
     assert(engine.audioDelay == 0.1 && engine.subtitleDelay == -4)
-    activate(player); drainActivation()
-    assert(calls.filter { $0 == "play" }.count == 0, "foreground must never autoplay")
+    let seeks = calls.filter { $0.hasPrefix("seek:") }.count
     player.togglePlayback(CAPPluginCall())
-    assert(calls == ["pause", "refresh", "play", "seek:250000"])
-    assert(engine.displayedResumeFrame)
-    assert(calls.filter { $0 == "play" }.count == 1)
+    assert(engine.isPlaying && player.playbackRequested)
+    assert(calls.filter { $0.hasPrefix("seek:") }.count == seeks, "ready Play must not force another keyframe seek")
 }
-// A manual pause before leaving must remain paused on return.
+// Paused -> Home -> app has the same silent preparation and paused result.
 do {
     let (player, engine, _) = fixture()
+    engine.audio.isMuted = true
     player.togglePlayback(CAPPluginCall())
     background(player); activate(player); drainActivation()
-    assert(!engine.isPlaying && !player.playbackRequested)
-    assert(calls == ["pause", "refresh"])
+    confirmPausedPreparation(player, engine)
+    assert(engine.audio.isMuted, "retain the viewer's original mute")
+    activate(player); drainActivation()
+    assert(player.videoReady && !engine.isPlaying)
 }
-// Explicit Play followed by Pause remains paused after queued refresh work.
+// Audio clock and redisplaying old pictures cannot unlock Play.
 do {
     let (player, engine, _) = fixture()
-    background(player); activate(player)
-    player.togglePlayback(CAPPluginCall()); player.togglePlayback(CAPPluginCall())
-    drainActivation()
-    assert(!engine.isPlaying)
-    assert(calls.filter { $0 == "play" }.count == 1)
+    background(player); activate(player); drainActivation()
+    engine.storedTime = VLCTime(int: 250_500)
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady)
+    engine.media!.statistics.displayedPictures += 20
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady && engine.audio.isMuted)
+    engine.media!.statistics.decodedVideo += 2
+    engine.hasVideoOut = false
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady)
+    engine.hasVideoOut = true
+    player.surfaceView!.window = nil
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady)
+    player.surfaceView!.window = UIView()
+    confirmPausedPreparation(player, engine)
 }
-// A Play request delivered while inactive cannot create foreground autoplay.
+// Startup audio stays muted until fresh decoded pictures reach output.
+do {
+    let (player, engine, _) = fixture()
+    engine.storedTime = VLCTime(int: 0)
+    player.pendingSeek = 600
+    player.beginVideoPreparation(engine)
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady && engine.audio.isMuted)
+    freshFrames(player, engine)
+    player.checkVideoPreparation(engine)
+    assert(player.videoReady && player.playbackRequested && engine.isPlaying && !engine.audio.isMuted)
+}
+// Inactive Play is rejected; explicit seek waits for foreground preparation.
 do {
     let (player, engine, _) = fixture()
     background(player)
     player.togglePlayback(CAPPluginCall())
-    activate(player); drainActivation()
-    assert(calls == ["pause", "refresh"])
-    assert(!engine.isPlaying && !player.playbackRequested)
-}
-// An explicit scrub is retained, and inactive seek requests are deferred.
-do {
-    let (player, engine, _) = fixture()
-    background(player)
     player.pendingSeek = 420
     player.applyPendingSeek(engine)
     assert(calls == ["pause"])
     activate(player)
-    player.applyPendingSeek(engine) // a native time/state callback during activation
-    assert(calls == ["pause"], "activation callbacks must wait for surface recovery")
+    player.applyPendingSeek(engine)
+    assert(calls == ["pause"])
     drainActivation()
-    assert(!engine.isPlaying && !player.playbackRequested)
-    assert(engine.storedTime.intValue == 420_000)
-    player.togglePlayback(CAPPluginCall())
-    assert(engine.storedTime.intValue == 420_000 && engine.displayedResumeFrame)
+    assert(engine.storedTime.intValue == 420_000 && engine.audio.isMuted)
+    confirmPausedPreparation(player, engine)
 }
-// Home -> app -> Home -> app before a queued activation can execute.
+// Rapid switching/background during preroll never creates audible autoplay.
 do {
     let (player, engine, _) = fixture()
     background(player); activate(player)
-    background(player); activate(player)
-    drainActivation()
-    assert(calls == ["pause", "refresh"])
-    assert(!engine.isPlaying && !player.playbackRequested)
-    player.togglePlayback(CAPPluginCall())
-    assert(engine.displayedResumeFrame)
-    assert(calls == ["pause", "refresh", "play", "seek:250000"])
+    background(player); activate(player); drainActivation()
+    assert(calls.filter { $0 == "play" }.count == 1 && engine.audio.isMuted)
+    engine.storedTime = VLCTime(int: 255_000) // preroll catch-up is not watched progress
+    background(player)
+    assert(!engine.isPlaying && player.videoPreparationStarted == nil)
+    assert(player.pausedPositionMs == 250_000, "keep the requested position through interrupted preroll")
+    activate(player); drainActivation()
+    confirmPausedPreparation(player, engine)
+    assert(!engine.isPlaying && !player.playbackRequested && !engine.audio.isMuted)
 }
-// Closing playback or replacing its engine makes the old callback harmless.
+// Old queued activation cannot touch a closed or replaced engine.
 for stopped in [false, true] {
     let (player, oldEngine, _) = fixture()
     background(player); activate(player)
@@ -200,20 +259,42 @@ for stopped in [false, true] {
     drainActivation()
     assert(calls == ["pause"] && !oldEngine.isPlaying)
 }
-// Non-seekable startup retains its pending position until VLC is ready.
+// Late seekability cannot accept old frames from the wrong timestamp.
 do {
     let (player, engine, _) = fixture()
     engine.isSeekable = false
     background(player); activate(player); drainActivation()
-    assert(calls == ["pause", "refresh"] && !engine.isPlaying)
-    player.togglePlayback(CAPPluginCall())
-    assert(calls == ["pause", "refresh", "play"])
-    assert(player.pendingSeek == 250)
+    freshFrames(player, engine)
+    player.checkVideoPreparation(engine)
+    assert(player.pendingSeek == 250 && !player.videoReady)
     engine.isSeekable = true
-    player.applyPendingSeek(engine)
-    assert(engine.displayedResumeFrame && player.pendingSeek == nil)
+    player.checkVideoPreparation(engine)
+    assert(!player.videoReady, "seek resets old readiness counters")
+    confirmPausedPreparation(player, engine)
 }
-print("Swift foreground lifecycle passed: both Home scenarios stay paused, explicit play/seek ordering, inactive play rejected, deferred scrub, rapid switching, replacement, and late seekability.")
+// Cold decoding that advances too far is returned to the target once, hidden.
+do {
+    let (player, engine, _) = fixture()
+    background(player); activate(player); drainActivation()
+    freshFrames(player, engine)
+    engine.storedTime = VLCTime(int: 255_000)
+    player.checkVideoPreparation(engine)
+    assert(player.preparationRetried && !player.videoReady && engine.audio.isMuted)
+    assert(engine.storedTime.intValue == 250_000)
+    confirmPausedPreparation(player, engine)
+}
+// Failed video output errors instead of becoming ready because a timer expired.
+do {
+    let (player, engine, _) = fixture()
+    background(player); activate(player); drainActivation()
+    player.videoPreparationStarted = Date(timeIntervalSinceNow: -16)
+    player.checkVideoPreparation(engine)
+    assert(player.terminalSent && !player.videoReady && !engine.isPlaying)
+    assert(events.contains { $0.0 == "playbackState" && ($0.1["state"] as? String) == "error" })
+}
+for player in fixtures { player.cancelVideoPreparation() }
+print("Swift foreground lifecycle passed: silent decoded/output readiness, both Home scenarios paused, no seek on ready Play, startup, inactive requests, rapid switching, replacement, late seekability, catch-up, and timeout.")
+
 `);
     const docker = process.env.TORWATCH_SWIFT_DOCKER === '1';
     const args = docker
