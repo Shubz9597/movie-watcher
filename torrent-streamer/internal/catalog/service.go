@@ -333,11 +333,13 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 		return DetailResult{NotFound: true}
 	}
 	ids := map[string]string{providerName: externalID}
+	// Only the IMDb link is supplied up front: it is what lets Cinemeta
+	// answer while TMDb is down, and every title that has one reached
+	// Cinemeta anyway. Other remembered ids could pull in providers this
+	// title never used.
 	link, linked := s.link(ctx, id)
-	for namespace, value := range link.ProviderIDs {
-		if _, exists := ids[namespace]; !exists {
-			ids[namespace] = value
-		}
+	if imdb := link.ProviderIDs["imdb"]; imdb != "" && ids["imdb"] == "" {
+		ids["imdb"] = imdb
 	}
 	replies := make([]providerReply, len(s.providers))
 	attempted := make([]string, len(s.providers))
@@ -468,12 +470,8 @@ func (s *Service) computeEpisodes(ctx context.Context, id string, season int) Ep
 		return EpisodeResult{Episodes: []Episode{}}
 	}
 	ids := map[string]string{providerName: externalID}
-	if link, ok := s.link(ctx, id); ok {
-		for namespace, value := range link.ProviderIDs {
-			if _, exists := ids[namespace]; !exists {
-				ids[namespace] = value
-			}
-		}
+	if link, ok := s.link(ctx, id); ok && link.ProviderIDs["imdb"] != "" && ids["imdb"] == "" {
+		ids["imdb"] = link.ProviderIDs["imdb"] // as in computeDetail
 	}
 	// Fetch episodes from already known ids while detail discovers cross-links.
 	// Useful initial episodes survive a metadata provider exhausting the budget.

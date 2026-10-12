@@ -143,17 +143,13 @@ func (p *Cinemeta) toTitle(externalID string, meta cinemetaMetaResponse) Title {
 		artwork["background"] = string(meta.Meta.Background)
 	}
 	kind := TypeSeries
-	mediaType := "tv"
 	if meta.Meta.Type == "movie" {
 		kind = TypeMovie
-		mediaType = "movie"
 	}
+	// The TMDb id Cinemeta lists is NOT a provider id here: as a cross-link
+	// it would pull TMDb into titles it never described (an AniList anime
+	// would turn into a TMDb series). Search reads it via cinemetaTMDbID.
 	providerIDs := map[string]string{"imdb": externalID}
-	if meta.Meta.MovieDBID > 0 {
-		// Cinemeta lists the TMDb id: links a Cinemeta-only answer back to
-		// the TMDb title the app knows ("tv:13916", as TMDb's own ids).
-		providerIDs["tmdb"] = mediaType + ":" + strconv.Itoa(int(meta.Meta.MovieDBID))
-	}
 	return Title{
 		ID:            "imdb:" + externalID,
 		Type:          kind,
@@ -169,6 +165,19 @@ func (p *Cinemeta) toTitle(externalID string, meta cinemetaMetaResponse) Title {
 		Genres:        meta.Meta.Genre,
 		ExternalLinks: map[string]string{},
 	}
+}
+
+// cinemetaTMDbID is the TMDb id Cinemeta lists for a title ("tv:13916", as
+// TMDb's own provider ids), or "".
+func cinemetaTMDbID(meta cinemetaMetaResponse) string {
+	if meta.Meta.MovieDBID <= 0 {
+		return ""
+	}
+	mediaType := "tv"
+	if meta.Meta.Type == "movie" {
+		mediaType = "movie"
+	}
+	return mediaType + ":" + strconv.Itoa(int(meta.Meta.MovieDBID))
 }
 
 // cinemetaSeasons summarizes the numbered seasons in the episode list (as
@@ -327,10 +336,11 @@ func (p *Cinemeta) SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title
 				return
 			}
 			title := p.toTitle(h.imdb, meta)
-			tmdbID := title.ProviderIDs["tmdb"]
+			tmdbID := cinemetaTMDbID(meta)
 			if tmdbID == "" {
 				return
 			}
+			title.ProviderIDs["tmdb"] = tmdbID
 			title.ID = "tmdb:" + tmdbID
 			title.Format = strings.SplitN(tmdbID, ":", 2)[0]
 			title.Seasons = nil // search results carry no season list (as TMDb's)
