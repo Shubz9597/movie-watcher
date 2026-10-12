@@ -59,9 +59,11 @@ function useHashRouter() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const navigate = (path: string, params: Record<string, string> = {}) => {
+  const navigate = (path: string, params: Record<string, string> = {}, options?: { replace?: boolean }) => {
     const query = new URLSearchParams(params).toString();
-    window.location.hash = query ? `${path}?${query}` : path;
+    const hash = query ? `${path}?${query}` : path;
+    if (options?.replace) window.location.replace(`#${hash}`);
+    else window.location.hash = hash;
   };
 
   return { route, navigate };

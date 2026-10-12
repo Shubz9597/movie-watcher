@@ -18,6 +18,7 @@ import { LibraryToggle } from '../components/shared/LibraryToggle';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type { ResumeSourceContext, SavedResumeSource } from '../lib/types';
 import { nativeDownloadsSupported } from '../mobile/download-queue';
+import type { NavigateOptions } from '../lib/router-adapter';
 
 // rerender-memo-with-default-value: stable fallback so EpisodePanel's props
 // keep their identity while seasons load or a season list is unavailable.
@@ -46,7 +47,7 @@ export default function TitlePage({
   id,
   params,
 }: {
-  navigate: (path: string, params?: Record<string, string>) => void;
+  navigate: (path: string, params?: Record<string, string>, options?: NavigateOptions) => void;
   kind: string;
   id: string;
   params?: Record<string, string>;
@@ -226,7 +227,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             episodeCount: season.episodeCount,
             airDate: season.airDate,
             posterUrl: season.poster,
-          }));
+          }))
+          // Specials go last, so a show opens on season 1, not its extras.
+          .sort((left, right) => (left.seasonNumber === 0 ? 1 : 0) - (right.seasonNumber === 0 ? 1 : 0) || left.seasonNumber - right.seasonNumber);
         setSeasons(seasonsData);
         const firstSeason = Number.isInteger(requestedSeason) && seasonsData.some((s: any) => s.seasonNumber === requestedSeason)
           ? requestedSeason
@@ -255,6 +258,21 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           return [] as BffEpisodeRow[];
         }),
       ]);
+      // An arc or cour of a show TMDb groups as one series opens as its
+      // season there (one page with every season). Resume links keep the
+      // AniList page they were saved against.
+      const series = row.series;
+      if (series?.id.startsWith('tmdb:tv:') && series.season > 0 && !params?.resumeSubjectId) {
+        const next: Record<string, string> = {
+          kind: 'anime', provider: 'tmdb', mediaKind: 'tv',
+          id: series.id.slice('tmdb:tv:'.length), season: String(series.season),
+        };
+        if (Number.isInteger(requestedEpisode) && requestedEpisode > 0) {
+          next.episode = String(requestedEpisode + (series.episodeOffset ?? 0));
+        }
+        navigate('title', next, { replace: true });
+        return;
+      }
       publishDetail(detailFromBackendTitle(row));
       let episodes: BffEpisodeRow[] = episodeRows;
       if (episodes.length === 0) {

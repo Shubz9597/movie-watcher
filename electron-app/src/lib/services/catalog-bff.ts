@@ -77,6 +77,8 @@ type BffTitle = {
   externalLinks?: Record<string, string>;
   ratings?: { imdb?: { rating?: number; votes?: number; imdbId?: string } };
   seasons?: BffSeason[];
+  // An anime entry's season within the TMDb show that groups the franchise.
+  series?: { id: string; season: number; episodeOffset?: number };
 };
 
 export type BffSeason = {
