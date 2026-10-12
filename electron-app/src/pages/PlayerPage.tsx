@@ -412,6 +412,7 @@ export default function PlayerPage({ navigate, params }: Props) {
           logoUrl={playbackMeta.logoUrl}
           magnet={magnet || ''}
           downloadId={downloadId}
+          seriesId={downloadId ? localSeriesId || undefined : undefined}
           cat={cat}
           fileIndex={playbackMeta.fileIndex}
           tmdbId={tmdbId ? Number(tmdbId) : undefined}

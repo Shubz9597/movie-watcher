@@ -12,7 +12,8 @@ import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/su
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { preferredSubtitleTrack, trackDisplayNames } from '../lib/track-labels';
 import { skipActionAt } from '../lib/skip-action';
-import { offlineSkipSegments } from '../lib/offline-skip-segments';
+import { cacheOfflineSkipSegments, markCreditsLookedUp, needsCreditsLookup, offlineSkipSegments } from '../lib/offline-skip-segments';
+import { bffSearch, bffTitleDetail } from '../lib/services/catalog-bff';
 import { clampPlaybackDelay, matchingSavedTrack, readVideoPlaybackPreferences, saveVideoPlaybackPreferences, subtitleCueAtTime, videoPlaybackPreferenceKey } from './video-playback-preferences';
 import type { SavedSubtitle, VideoPlaybackPreferences } from './video-playback-preferences';
 
@@ -80,6 +81,8 @@ type Props = {
   magnet: string;
   /** Local download playback: offline skip timestamps are read for it. */
   downloadId?: string;
+  /** The download's series (anilist:N or tmdb:tv:N), to look up its skip times. */
+  seriesId?: string;
   cat: string;
   fileIndex: number | undefined;
   tmdbId: number | undefined;
@@ -94,6 +97,25 @@ type Props = {
   hasNextEpisode?: boolean;
   onClose: () => void;
 };
+
+/** The /skip-segments query for a download, as built when it was saved:
+ *  anime by MAL id and episode, shows by TMDb/IMDb id, season and episode.
+ *  A TMDb anime gets its MAL id from anime search, as its title page did. */
+async function downloadSkipQuery(seriesId: string, season: number, episode: number): Promise<Record<string, string> | null> {
+  const detail = await bffTitleDetail(seriesId);
+  let malId = detail.providerIds?.jikan;
+  if (seriesId.startsWith('anilist:')) {
+    return malId ? { kind: 'anime', malId, episode: String(episode) } : null;
+  }
+  const tmdbId = /^tmdb:tv:(\d+)$/.exec(seriesId)?.[1];
+  if (!tmdbId) return null;
+  if (!malId && detail.title) {
+    const results = await bffSearch(detail.title, 'anime', 10).catch(() => []);
+    malId = results.find((result) => result.id === seriesId)?.providerIds?.jikan;
+  }
+  if (malId) return { kind: 'anime', malId, episode: String(episode) };
+  return { kind: 'tv', tmdbId, ...(detail.imdbId ? { imdbId: detail.imdbId } : {}), season: String(season), episode: String(episode) };
+}
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -123,7 +145,7 @@ function nextScaleMode(mode: 'fit' | 'fill' | 'stretch'): 'fit' | 'fill' | 'stre
 }
 
 export default function NativePlayerControls(props: Props) {
-  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, hasNextEpisode = false, onClose } = props;
+  const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, seriesId, hasNextEpisode = false, onClose } = props;
   const episodeLabel = Number.isInteger(season) && season >= 0 && Number.isInteger(episode) && episode > 0
     ? `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
     : null;
@@ -282,6 +304,21 @@ export default function NativePlayerControls(props: Props) {
     if (!downloadId) return;
     setSkipSegments(offlineSkipSegments(downloadId));
   }, [downloadId]);
+  // Downloads saved before credits were kept: look them up once while the
+  // server is reachable (offline, this fails quietly and retries next time).
+  useEffect(() => {
+    if (!downloadId || !seriesId || !needsCreditsLookup(downloadId)) return;
+    let cancelled = false;
+    void (async () => {
+      const query = await downloadSkipQuery(seriesId, season, episode);
+      if (!query || cancelled) return;
+      if (await cacheOfflineSkipSegments(getVodBase(), downloadId, query)) markCreditsLookedUp(downloadId);
+      if (!cancelled) setSkipSegments(offlineSkipSegments(downloadId));
+    })().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [downloadId, seriesId, season, episode]);
   useEffect(() => {
     if (downloadId) return;
     const duration = time.duration;
