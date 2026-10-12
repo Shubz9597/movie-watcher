@@ -324,6 +324,9 @@ type DetailResult struct {
 	Found             bool
 	NotFound          bool
 	DegradedProviders []string
+	// unconfirmed: a check that needed another title could not run (its
+	// providers were down); the result is cached briefly to try again.
+	unconfirmed bool
 }
 
 // Detail resolves merged metadata for one opaque title id. Provider cross
@@ -450,30 +453,32 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 			s.options.Links.PutLink(ctx, id, IDLink{ProviderIDs: maps.Clone(merged.ProviderIDs), Type: merged.Type, Format: merged.Format, Title: merged.Title, Year: merged.Year})
 		}
 	}
+	unconfirmed := false
 	if found {
-		merged.Series = s.confirmSeries(ctx, providerName, merged.Series)
+		merged.Series, unconfirmed = s.confirmSeries(ctx, providerName, merged.Series)
 	}
 	sort.Strings(degraded)
-	return DetailResult{Title: merged, Found: found, NotFound: !found && len(degraded) == 0, DegradedProviders: degraded}
+	return DetailResult{Title: merged, Found: found, NotFound: !found && len(degraded) == 0, DegradedProviders: degraded, unconfirmed: unconfirmed}
 }
 
 // confirmSeries keeps an anime entry's place in a grouped TMDb show only when
 // that show has the season with room for every episode; otherwise the entry
-// stays a title of its own, as it always was.
-func (s *Service) confirmSeries(ctx context.Context, providerName string, link *SeriesLink) *SeriesLink {
+// stays a title of its own, as it always was. unconfirmed reports that the
+// show could not be read (TMDb down), so the answer is worth retrying soon.
+func (s *Service) confirmSeries(ctx context.Context, providerName string, link *SeriesLink) (confirmed *SeriesLink, unconfirmed bool) {
 	if link == nil || providerName == "tmdb" {
-		return nil
+		return nil, false
 	}
 	show := s.Detail(ctx, link.ID)
 	if !show.Found {
-		return nil
+		return nil, !show.NotFound
 	}
 	for _, season := range show.Title.Seasons {
 		if season.Number == link.Season && season.EpisodeCount >= link.EpisodeOffset+link.episodes {
-			return link
+			return link, false
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // link returns the remembered provider ids for a title id (none without a

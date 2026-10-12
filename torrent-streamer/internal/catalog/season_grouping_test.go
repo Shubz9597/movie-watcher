@@ -101,6 +101,10 @@ func TestAnimeArcPointsToItsSeasonOfTheShow(t *testing.T) {
 			if (got == nil) != (test.want == nil) || (got != nil && *got != *test.want) {
 				t.Fatalf("series = %+v, want %+v", got, test.want)
 			}
+			// Only an unreadable show is checked again soon.
+			if result.unconfirmed != (test.tmdbErr != nil) {
+				t.Fatalf("unconfirmed = %v", result.unconfirmed)
+			}
 		})
 	}
 }
@@ -110,7 +114,7 @@ func TestTMDbShowHasNoSeriesLink(t *testing.T) {
 	link := &SeriesLink{ID: "tmdb:tv:85937", Season: 1, episodes: 1}
 	service := NewService(nil, Options{})
 	defer service.Close()
-	if got := service.confirmSeries(context.Background(), "tmdb", link); got != nil {
+	if got, _ := service.confirmSeries(context.Background(), "tmdb", link); got != nil {
 		t.Fatalf("series = %+v", got)
 	}
 }

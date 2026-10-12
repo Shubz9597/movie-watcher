@@ -150,7 +150,7 @@ func (s *Service) rememberDetail(id string, result DetailResult) {
 		return
 	}
 	ttl := s.options.CacheTTL
-	if len(result.DegradedProviders) > 0 {
+	if len(result.DegradedProviders) > 0 || result.unconfirmed {
 		ttl = min(ttl, s.options.FailureTTL)
 	}
 	s.cache.Set("merged", "detail:"+id, result, ttl)
