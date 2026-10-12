@@ -13,6 +13,12 @@
 //     timer — availability must already be 'available' to poll.
 //   - No offline write queue exists anywhere; failed writes surface Retry.
 export const POLL_INTERVAL_MS = 15_000;
+// An UNREACHABLE server (restarting, network blip) is re-checked this often
+// while visible, and at once on return to the app; before this, only a
+// network change re-checked it, so a brief outage left the library stuck
+// until the app was force-closed. An older server that lacks the
+// capability is still never re-probed on a timer.
+export const UNREACHABLE_RECHECK_MS = 30_000;
 const REFRESH_MIN_GAP_MS = 5_000;
 // A real timer can fire its tick a few milliseconds before the monotonic
 // bookkeeping considers the interval elapsed. Dropping such a tick waits a
@@ -51,6 +57,7 @@ export function attachLibrarySync(
   const now = deps.now ?? (() => Date.now());
 
   let lastPoll = 0;
+  let lastRecheck = 0;
   let interval: ReturnType<typeof setInterval> | null = null;
   let catchup: ReturnType<typeof setTimeout> | null = null;
   let detached = false;
@@ -59,7 +66,18 @@ export function attachLibrarySync(
     if (detached) return;
     const at = nowOverride ?? now();
     if (doc && doc.visibilityState !== 'visible') return; // paused while hidden
-    if (store.getSnapshot().availability !== 'available') return; // never probe older/unreachable servers on a timer
+    const availability = store.getSnapshot().availability;
+    if (availability === 'unreachable') {
+      if (at - lastRecheck < UNREACHABLE_RECHECK_MS) return;
+      lastRecheck = at;
+      void store.refreshCapability().then((next) => {
+        if (next !== 'available' || detached) return;
+        lastPoll = now();
+        void store.refreshAll(); // back: refresh what is on screen right away
+      });
+      return;
+    }
+    if (availability !== 'available') return; // never probe an older server on a timer
     const elapsed = at - lastPoll;
     if (elapsed < POLL_INTERVAL_MS) { // bounded 15s polling
       const remaining = POLL_INTERVAL_MS - elapsed;
@@ -80,7 +98,9 @@ export function attachLibrarySync(
   const onVisible = () => {
     if (detached) return;
     // Visibility resume: refresh when the last poll is older than the
-    // bounded gap (a long-hidden tab always refreshes here).
+    // bounded gap (a long-hidden tab always refreshes here); an unreachable
+    // server is re-checked at once.
+    if (store.getSnapshot().availability === 'unreachable') lastRecheck = 0;
     if (now() - lastPoll >= REFRESH_MIN_GAP_MS) tick(now());
   };
   const onOnline = () => {

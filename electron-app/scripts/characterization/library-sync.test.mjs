@@ -9,6 +9,7 @@ import http from "node:http";
 import {
   attachLibrarySync,
   POLL_INTERVAL_MS,
+  UNREACHABLE_RECHECK_MS,
 } from "../../src/lib/library-sync.ts";
 import { LibraryStore, overviewKey, pageKey } from "../../src/lib/library-store.ts";
 import { resetVersionCheckCache } from "../../src/lib/version-check.ts";
@@ -333,4 +334,35 @@ test("two clients see each other's changes through bounded polling (both directi
   setBackendOrigin("http://localhost:4001");
   server.close();
   server.closeAllConnections?.();
+});
+
+test("an unreachable server is re-checked and the library recovers without a restart", async () => {
+  let down = true;
+  const { store, calls } = makeStore([
+    { method: "GET", prefix: "/v1/version", handler: () => (down ? Promise.reject(new TypeError("offline")) : versionOk()) },
+  ]);
+  await store.refreshCapability();
+  assert.equal(store.getSnapshot().availability, "unreachable");
+
+  const doc = fakeVisibility("visible");
+  let clock = Date.now();
+  const sync = attachLibrarySync(store, { documentRef: doc, setInterval: () => 1, clearInterval: () => {}, now: () => clock });
+  const probes = () => calls.filter((c) => c.path.startsWith("/v1/version")).length;
+  const before = probes();
+  sync.tick(clock);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(probes() > before, "an unreachable server is re-checked on the poll");
+
+  const afterFirst = probes();
+  clock += 5_000;
+  sync.tick(clock);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(probes(), afterFirst, "re-checks are bounded (every 30 s)");
+
+  down = false;
+  clock += UNREACHABLE_RECHECK_MS;
+  sync.tick(clock);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(store.getSnapshot().availability, "available", "the library comes back once the server answers");
+  sync.detach();
 });

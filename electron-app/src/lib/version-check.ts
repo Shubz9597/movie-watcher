@@ -62,7 +62,9 @@ export async function fetchServerVersion(deps?: { fetchImpl?: typeof fetch }): P
   } catch {
     payload = null;
   }
-  cache = { version: payload, fetchedAt: Date.now() };
+  // Only answers are cached: a failed check (server restarting, network
+  // blip) is retried on the next call instead of being repeated for a minute.
+  cache = payload ? { version: payload, fetchedAt: Date.now() } : null;
   return payload;
 }
 
