@@ -19,6 +19,7 @@ import { getDeviceId } from '../lib/device-id';
 import { NativeDownloadButton } from './NativeDownloadButton';
 import { fetchWatched, setWatched, watchedKey, type WatchedItem } from '../lib/services/watched-service';
 import type { DownloadSelection } from '../mobile/download-queue';
+import { nextUpEpisode, type NextUp } from '../lib/next-up';
 import type { BatchRange } from './NativeDownloadButton';
 
 type Props = {
@@ -40,7 +41,13 @@ type Props = {
   malId?: number;
   resumeContext?: ResumeSourceContext | null;
   resumeSource?: SavedResumeSource | null;
+  /** Opens this season and episode (with its sources) when nonce changes. */
+  openRequest?: { season: number; episode: number; nonce: number } | null;
+  /** Reports the episode to watch next, from this device's watched marks. */
+  onNextUpChange?: (next: NextUp | null) => void;
 };
+
+export type { NextUp } from '../lib/next-up';
 
 type TorrentApiItem = {
   title: string;
@@ -193,6 +200,8 @@ export default function EpisodePanel({
   malId,
   resumeContext,
   resumeSource,
+  openRequest,
+  onNextUpChange,
 }: Props) {
   const router = useRouter();
   const platform = usePlatform();
@@ -303,6 +312,50 @@ export default function EpisodePanel({
     if (tmdbId) return false;
     return !isEpisodeUpcoming(episode);
   };
+
+  // Next up: the furthest episode this device watched or started, then one
+  // past it when it is finished (into the next season after the last one).
+  const nextUp = useMemo<NextUp | null>(() => nextUpEpisode(
+    watchedMap.values(),
+    normalizedSeasons.map((season) => season.seasonNumber),
+    (season) => (season === selectedSeason ? episodes : seasonCache.current.get(season))?.length
+      || normalizedSeasons.find((entry) => entry.seasonNumber === season)?.episodeCount || 0,
+    kind === 'anime',
+  ), [watchedMap, normalizedSeasons, selectedSeason, episodes, kind]);
+  useEffect(() => {
+    onNextUpChange?.(nextUp);
+  }, [nextUp, onNextUpChange]);
+
+  // One tap for a whole season: every released episode of the selected
+  // season, and Continue watching moves on to the next season.
+  const releasedEpisodes = episodes.filter((episode) => !isEpisodeUpcoming(episode));
+  const seasonWatched = releasedEpisodes.length > 0 && releasedEpisodes.every((episode) =>
+    watchedMap.get(watchedKey(episode.seasonNumber || selectedSeason, episode.episodeNumber))?.watched === true);
+  const toggleSeasonWatched = async () => {
+    if (!watchedSeriesId || releasedEpisodes.length === 0) return;
+    const marking = !seasonWatched;
+    const refs = releasedEpisodes.map((episode) => ({ season: episode.seasonNumber || selectedSeason, episode: episode.episodeNumber }));
+    const optimistic = new Map(watchedMap);
+    for (const ref of refs) {
+      const key = watchedKey(ref.season, ref.episode);
+      if (marking) optimistic.set(key, { ...ref, percent: 100, watched: true });
+      else optimistic.delete(key);
+    }
+    const followingSeason = normalizedSeasons
+      .map((season) => season.seasonNumber)
+      .filter((number) => number > selectedSeason)
+      .sort((a, b) => a - b)[0];
+    const previous = watchedMap;
+    setWatchedMap(optimistic);
+    setWatchedError(null);
+    try {
+      await setWatched(watchedSeriesId, refs, marking, marking && followingSeason !== undefined ? { season: followingSeason, episode: 1 } : null);
+    } catch {
+      setWatchedMap(previous);
+      setWatchedError('Couldn’t update watched. Check the connection.');
+    }
+  };
+
 
   const resolveNextAvailableEpisode = async (current: EpisodeSummary): Promise<EpisodeSummary | null> => {
     const activeIndex = episodes.findIndex((episode) => episode.id === current.id);
@@ -589,6 +642,25 @@ export default function EpisodePanel({
     didOpenInitialEpisode.current = true;
     void fetchTorrentsForEpisode(episode);
   }, [episodes, initialEpisode, seasonLoading]);
+
+  // Play on the title page asks for a season/episode: switch season if
+  // needed, then open the episode's sources once its season has loaded.
+  const pendingOpen = useRef<{ season: number; episode: number } | null>(null);
+  const lastOpenNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!openRequest || openRequest.nonce === lastOpenNonce.current) return;
+    lastOpenNonce.current = openRequest.nonce;
+    pendingOpen.current = { season: openRequest.season, episode: openRequest.episode };
+    if (openRequest.season !== selectedSeason) void onSeasonChange(String(openRequest.season));
+  }, [openRequest]);
+  useEffect(() => {
+    const pending = pendingOpen.current;
+    if (!pending || seasonLoading || pending.season !== selectedSeason) return;
+    const episode = episodes.find((item) => item.episodeNumber === pending.episode);
+    if (!episode) return;
+    pendingOpen.current = null;
+    void fetchTorrentsForEpisode(episode);
+  }, [episodes, seasonLoading, selectedSeason]);
 
   const playTorrent = async (t: TorrentRow) => {
     if (playInFlight.current) return;
@@ -941,6 +1013,19 @@ export default function EpisodePanel({
                 ))}
               </SelectContent>
             </Select>
+            {watchedSeriesId && releasedEpisodes.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => void toggleSeasonWatched()}
+                aria-pressed={seasonWatched}
+                className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm text-white/75 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              >
+                {seasonWatched
+                  ? <CheckCircle2 className="h-5 w-5 fill-white text-black" aria-hidden="true" />
+                  : <Circle className="h-5 w-5" aria-hidden="true" />}
+                {seasonWatched ? 'Season watched' : 'Mark season watched'}
+              </button>
+            ) : null}
           </div>
 
           {seasonLoading ? (

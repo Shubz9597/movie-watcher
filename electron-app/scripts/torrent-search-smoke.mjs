@@ -15,8 +15,10 @@ import {FixtureConnection,FixtureStorage} from '/platform/fixtures.ts';
 import '/globals.css';
 window.calls=0;window.searchFailed=false;window.navigation=null;
 const hash='a'.repeat(40),other='b'.repeat(40);
-window.fetch=async(input)=>{
+window.watchedPosts=[];
+window.fetch=async(input,init)=>{
  const url=String(input);let payload={results:[]};
+ if(url.includes('/v1/watched')&&init?.method==='POST'){window.watchedPosts.push(JSON.parse(init.body));payload={};}
  if(url.includes('/subtitles/list?'))window.subtitleQuery=new URL(url).searchParams.toString();
  if(url.includes('/files?'))payload=[{index:7,name:'Dragon Ball Kai - 01.mkv',length:1000}];
  if(url.includes('/v1/torrents/search')){
@@ -44,6 +46,17 @@ try{
  assert.equal(await page.evaluate(()=>window.calls),1);
  assert.ok(!(await page.evaluate(()=>document.body.textContent.includes('Find other sources'))));
  assert.equal(await page.$$eval('.content-auto-row',els=>els.length),2);
+ // One tap marks every released episode of the season watched (on the
+ // episode list, so leave this episode's sources first).
+ await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Back to episodes')).click());
+ await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Mark season watched')));
+ await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Mark season watched')).click());
+ await page.waitForFunction(()=>window.watchedPosts.length===1&&[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Season watched')));
+ const post=await page.evaluate(()=>window.watchedPosts[0]);
+ assert.deepEqual({seriesId:post.seriesId,items:post.items,watched:post.watched},{seriesId:'anilist:6033',items:[{season:1,episode:1}],watched:true});
+ // Back to the episode's sources for the playback checks below.
+ await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Episode one')).click());
+ await page.waitForFunction(()=>document.querySelectorAll('.content-auto-row').length===2);
  await page.evaluate(()=>{const row=[...document.querySelectorAll('.content-auto-row')].find(e=>e.textContent.includes('Other Kai release'));[...row.querySelectorAll('button')].find(e=>e.textContent.includes('Play')).click()});
  await page.waitForFunction(()=>window.navigation!==null);
  assert.equal(await page.evaluate(()=>window.navigation.params.fileIndex),'0');
@@ -60,5 +73,5 @@ try{
  assert.equal(new URL(playlist.trim().split('\n').at(-1)).searchParams.get('fileIndex'),'0');
  assert.equal(new URLSearchParams(await page.evaluate(()=>window.subtitleQuery)).get('fileIndex'),'0');
  assert.deepEqual(errors,[]);
- console.log('PASS: plain source list; fileIndex=0 playback and M3U.');
+ console.log('PASS: plain source list; season watched; fileIndex=0 playback and M3U.');
 }finally{await browser?.close();await server?.close();await rm(fixture,{force:true});}

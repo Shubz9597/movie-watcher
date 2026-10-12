@@ -3,7 +3,7 @@ import { CheckCircle2, Circle, Download, ExternalLink, Play, SlidersHorizontal, 
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
-import EpisodePanel from '../components/EpisodePanelWrapper';
+import EpisodePanel, { type NextUp } from '../components/EpisodePanelWrapper';
 import TorrentPanel from '../components/TorrentPanel';
 import { usePlatform } from '../platform/PlatformProvider';
 import { getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
@@ -379,6 +379,12 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
     }
   };
 
+  // Series Play: next episode from the watched marks (set by the episode
+  // list) and the request that opens it there. Hooks stay above the early
+  // returns below.
+  const [nextUp, setNextUp] = useState<NextUp | null>(null);
+  const [openRequest, setOpenRequest] = useState<{ season: number; episode: number; nonce: number } | null>(null);
+
   if (loading) {
     return (
       <div className="mx-auto flex min-h-[70vh] max-w-[1600px] items-center px-5 md:px-8 lg:px-12">
@@ -438,6 +444,23 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
   const scrollToSources = () => {
     sourcesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+  // Series: Play opens the next episode from this device's watched marks in
+  // the episode list below (its sources load there; the source is still
+  // chosen by hand). Without watch history it shows the sources as before.
+  const playNextUp = () => {
+    if (!nextUp) {
+      scrollToSources();
+      return;
+    }
+    setOpenRequest({ season: nextUp.season, episode: nextUp.episode, nonce: Date.now() });
+    scrollToSources();
+  };
+  const playLabel = canDirectResume
+    ? 'Resume'
+    : nextUp && !isMovie
+      ? `${nextUp.started ? 'Continue' : 'Play'} S${nextUp.season} E${nextUp.episode}`
+      : 'Play';
+
   const playResume = () => {
     if (!canDirectResume || !resumeSource) return;
     const params: Record<string, string> = {
@@ -549,11 +572,11 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   resumable source, Play opens source selection below. */}
               <button
                 type="button"
-                onClick={canDirectResume ? playResume : scrollToSources}
+                onClick={canDirectResume ? playResume : playNextUp}
                 className="mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-                {canDirectResume ? 'Resume' : 'Play'}
+                {playLabel}
               </button>
               {/* Save toggles appear only when the server library can persist
                   them — never as unexplained disabled controls. */}
@@ -694,6 +717,8 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
               />
             ) : (
               <EpisodePanel
+                openRequest={openRequest}
+                onNextUpChange={setNextUp}
                 kind={kind === 'anime' ? 'anime' : 'tv'}
                 title={detail.title}
                 posterUrl={detail.posterUrl}
