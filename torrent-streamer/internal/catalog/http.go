@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -57,8 +58,30 @@ func postJSON(ctx context.Context, client *http.Client, endpoint string, payload
 	}, target)
 }
 
+// connectionResetRetries: the home ISP's filter resets about half of the TLS
+// handshakes to some providers (TMDb) within ~0.2 s. A reset costs one round
+// trip, so it is retried at once, several times, inside the request budget.
+const connectionResetRetries = 6
+
+// isConnectionReset reports a connection the network cut before any answer.
+func isConnectionReset(err error) bool {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	text := err.Error()
+	return strings.Contains(text, "connection reset") || strings.Contains(text, "EOF")
+}
+
 func doProviderRequest(ctx context.Context, client *http.Client, newRequest func() (*http.Request, error), target any) error {
 	err := doProviderRequestOnce(ctx, client, newRequest, target)
+	for attempt := 0; err != nil && attempt < connectionResetRetries && ctx.Err() == nil && isConnectionReset(err); attempt++ {
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(50 * time.Millisecond):
+		}
+		err = doProviderRequestOnce(ctx, client, newRequest, target)
+	}
 	if err == nil || ctx.Err() != nil {
 		return err
 	}

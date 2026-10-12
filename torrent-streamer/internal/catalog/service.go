@@ -117,6 +117,10 @@ type Options struct {
 	SearchLimit int
 	// Now overrides the clock in tests.
 	Now func() time.Time
+	// Links remembers each title's provider ids across restarts so a title
+	// still resolves through another provider when one is unreachable
+	// (nil: no links).
+	Links IDLinks
 }
 
 func (o Options) withDefaults() Options {
@@ -221,6 +225,9 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 			}
 		}
 	}
+	if fallback := s.searchFallback(ctx, query, key, replies); len(fallback) > 0 {
+		groups = append(groups, filterByType(fallback, query.Type))
+	}
 	sort.Strings(degraded)
 	titles := MergeTitles(groups)
 	rankSearchTitles(titles, query.Query, groups)
@@ -228,6 +235,50 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		titles = titles[:query.Limit]
 	}
 	return SearchResult{Titles: titles, DegradedProviders: degraded, CachedAt: cachedAt}
+}
+
+// TMDbSearchFallback stands in for TMDb search while TMDb is unreachable,
+// answering with TMDb title ids (Cinemeta).
+type TMDbSearchFallback interface {
+	SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title, error)
+}
+
+// searchFallback runs only when TMDb's search failed with no cached answer:
+// with TMDb reachable, search results are exactly TMDb's (plus the others).
+// Its hits are remembered as id links so their title pages resolve too.
+func (s *Service) searchFallback(ctx context.Context, query SearchQuery, key string, replies []providerReply) []Title {
+	tmdbFailed := false
+	var fallback TMDbSearchFallback
+	for i, provider := range s.providers {
+		switch {
+		case provider.Name() == "tmdb":
+			reply := replies[i]
+			// A stale cached answer still counts as an answer; a failure may
+			// carry an empty typed result, which does not.
+			titles, _ := reply.value.([]Title)
+			answered := reply.err == nil || (reply.stale && len(titles) > 0)
+			tmdbFailed = !answered && !errors.Is(reply.err, ErrNotFound)
+		case fallback == nil:
+			if candidate, ok := provider.(TMDbSearchFallback); ok {
+				fallback = candidate
+			}
+		}
+	}
+	if !tmdbFailed || fallback == nil || ctx.Err() != nil {
+		return nil
+	}
+	reply := s.fetchCached(ctx, "cinemeta-search", key, func(callCtx context.Context) (any, error) {
+		return fallback.SearchAsTMDb(callCtx, query)
+	})
+	titles, _ := reply.value.([]Title)
+	if s.options.Links != nil {
+		for _, title := range titles {
+			if _, known := s.options.Links.GetLink(ctx, title.ID); !known { // TMDb's own link knows the exact type
+				s.options.Links.PutLink(ctx, title.ID, IDLink{ProviderIDs: maps.Clone(title.ProviderIDs), Type: title.Type, Format: title.Format})
+			}
+		}
+	}
+	return titles
 }
 
 func searchCacheKey(query SearchQuery) string {
@@ -282,6 +333,12 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 		return DetailResult{NotFound: true}
 	}
 	ids := map[string]string{providerName: externalID}
+	link, linked := s.link(ctx, id)
+	for namespace, value := range link.ProviderIDs {
+		if _, exists := ids[namespace]; !exists {
+			ids[namespace] = value
+		}
+	}
 	replies := make([]providerReply, len(s.providers))
 	attempted := make([]string, len(s.providers))
 	// Later rounds retry only providers that lacked an id, once another provider
@@ -335,8 +392,47 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 	if found && merged.ID == "" {
 		merged.ID = id
 	}
+	if found && s.options.Links != nil {
+		requestedAnswered := false
+		for i, reply := range replies {
+			if _, ok := reply.value.(Title); ok && reply.err == nil && s.providers[i].Name() == providerName {
+				requestedAnswered = true
+			}
+		}
+		if !requestedAnswered && linked {
+			// Another provider answered for this title (its own provider is
+			// unreachable): keep the requested id, type and format, so the
+			// app sees the same title it always does.
+			merged.ID = id
+			if link.Type != "" {
+				merged.Type = link.Type
+			}
+			if link.Format != "" {
+				merged.Format = link.Format
+			}
+			if merged.ProviderIDs == nil {
+				merged.ProviderIDs = map[string]string{}
+			}
+			for namespace, value := range link.ProviderIDs {
+				if _, exists := merged.ProviderIDs[namespace]; !exists {
+					merged.ProviderIDs[namespace] = value
+				}
+			}
+		} else if requestedAnswered && len(merged.ProviderIDs) > 1 {
+			s.options.Links.PutLink(ctx, id, IDLink{ProviderIDs: maps.Clone(merged.ProviderIDs), Type: merged.Type, Format: merged.Format})
+		}
+	}
 	sort.Strings(degraded)
 	return DetailResult{Title: merged, Found: found, NotFound: !found && len(degraded) == 0, DegradedProviders: degraded}
+}
+
+// link returns the remembered provider ids for a title id (none without a
+// link store).
+func (s *Service) link(ctx context.Context, id string) (IDLink, bool) {
+	if s.options.Links == nil {
+		return IDLink{}, false
+	}
+	return s.options.Links.GetLink(ctx, id)
 }
 
 // EpisodeResult is the degraded-aware episode-list outcome.
@@ -372,6 +468,13 @@ func (s *Service) computeEpisodes(ctx context.Context, id string, season int) Ep
 		return EpisodeResult{Episodes: []Episode{}}
 	}
 	ids := map[string]string{providerName: externalID}
+	if link, ok := s.link(ctx, id); ok {
+		for namespace, value := range link.ProviderIDs {
+			if _, exists := ids[namespace]; !exists {
+				ids[namespace] = value
+			}
+		}
+	}
 	// Fetch episodes from already known ids while detail discovers cross-links.
 	// Useful initial episodes survive a metadata provider exhausting the budget.
 	var detail DetailResult

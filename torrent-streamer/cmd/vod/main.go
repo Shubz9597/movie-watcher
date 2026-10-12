@@ -203,7 +203,7 @@ func main() {
 	// catalog.bff.v2 is advertised from the catalog phase onward; further
 	// capabilities are added only when they actually land.
 	catalogProviders := buildCatalogProviders(prowlarrHTTP)
-	catalogService := catalog.NewService(catalogProviders, catalog.Options{})
+	catalogService := catalog.NewService(catalogProviders, catalog.Options{Links: &catalog.SQLIDLinks{DB: db}})
 	defer catalogService.Close()
 	// Household library (feature 002 M3.2): advertise library.household.v1
 	// ONLY when the schema is initialized and the storage-backed service

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Cinemeta catalog provider (Stremio official metadata addon; IMDb-keyed).
@@ -42,6 +44,7 @@ type cinemetaMetaResponse struct {
 		Description string        `json:"description"`
 		Runtime     string        `json:"runtime"`
 		Genre       []string      `json:"genre"`
+		MovieDBID   jsonRawNumber `json:"moviedb_id"`
 		Videos      []struct {
 			ID        string        `json:"id"`
 			Season    jsonRawNumber `json:"season"`
@@ -140,8 +143,16 @@ func (p *Cinemeta) toTitle(externalID string, meta cinemetaMetaResponse) Title {
 		artwork["background"] = string(meta.Meta.Background)
 	}
 	kind := TypeSeries
+	mediaType := "tv"
 	if meta.Meta.Type == "movie" {
 		kind = TypeMovie
+		mediaType = "movie"
+	}
+	providerIDs := map[string]string{"imdb": externalID}
+	if meta.Meta.MovieDBID > 0 {
+		// Cinemeta lists the TMDb id: links a Cinemeta-only answer back to
+		// the TMDb title the app knows ("tv:13916", as TMDb's own ids).
+		providerIDs["tmdb"] = mediaType + ":" + strconv.Itoa(int(meta.Meta.MovieDBID))
 	}
 	return Title{
 		ID:            "imdb:" + externalID,
@@ -150,13 +161,45 @@ func (p *Cinemeta) toTitle(externalID string, meta cinemetaMetaResponse) Title {
 		Year:          yearFromReleaseInfo(meta.Meta.ReleaseInfo),
 		Overview:      meta.Meta.Description,
 		Artwork:       artwork,
-		ProviderIDs:   map[string]string{"imdb": externalID},
+		ProviderIDs:   providerIDs,
 		IMDBID:        externalID,
 		MergedFrom:    []string{"cinemeta"},
+		Seasons:       cinemetaSeasons(meta),
 		Runtime:       parseRuntimeMinutes(meta.Meta.Runtime),
 		Genres:        meta.Meta.Genre,
 		ExternalLinks: map[string]string{},
 	}
+}
+
+// cinemetaSeasons summarizes the numbered seasons in the episode list (as
+// TMDb's season list: number, name, episode count, first air date), so a
+// title answered by Cinemeta alone still has its season picker.
+func cinemetaSeasons(meta cinemetaMetaResponse) []Season {
+	bySeason := map[int]*Season{}
+	for _, video := range meta.Meta.Videos {
+		number := int(video.Season)
+		if number <= 0 || int(video.Episode) <= 0 {
+			continue
+		}
+		season := bySeason[number]
+		if season == nil {
+			season = &Season{Number: number, Name: "Season " + strconv.Itoa(number)}
+			bySeason[number] = season
+		}
+		season.EpisodeCount++
+		if released := video.Released; len(released) >= 10 && (season.AirDate == "" || released[:10] < season.AirDate) {
+			season.AirDate = released[:10]
+		}
+	}
+	seasons := make([]Season, 0, len(bySeason))
+	for _, season := range bySeason {
+		seasons = append(seasons, *season)
+	}
+	sort.Slice(seasons, func(i, j int) bool { return seasons[i].Number < seasons[j].Number })
+	if len(seasons) == 0 {
+		return nil
+	}
+	return seasons
 }
 
 func yearFromReleaseInfo(releaseInfo string) int {
@@ -226,3 +269,84 @@ func (p *Cinemeta) Episodes(ctx context.Context, request EpisodeRequest) ([]Epis
 }
 
 func (p *Cinemeta) SupportsIDs(ids map[string]string) bool { return ids["imdb"] != "" }
+
+// cinemetaSearchPerType bounds the fallback search: each result needs one
+// meta lookup for its TMDb id.
+const cinemetaSearchPerType = 8
+
+// SearchAsTMDb searches Cinemeta and returns the hits as the TMDb titles the
+// app knows (tmdb:tv:13916 ...), using the TMDb id Cinemeta lists for each.
+// It stands in for TMDb search while TMDb is unreachable; hits without a
+// TMDb id are dropped.
+func (p *Cinemeta) SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title, error) {
+	kinds := []string{"movie", "series"}
+	switch query.Type {
+	case TypeMovie:
+		kinds = []string{"movie"}
+	case TypeSeries:
+		kinds = []string{"series"}
+	case TypeAnime:
+		return nil, ErrNotFound // anime search is AniList's
+	}
+	type hit struct{ imdb, kind string }
+	var hits []hit
+	var firstErr error
+	for _, kind := range kinds {
+		var payload struct {
+			Metas []struct {
+				ID     string `json:"id"`
+				IMDBID string `json:"imdb_id"`
+			} `json:"metas"`
+		}
+		endpoint := p.base + "/catalog/" + kind + "/top/search=" + url.PathEscape(query.Query) + ".json"
+		if err := fetchJSON(ctx, p.http, endpoint, &payload); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for i, meta := range payload.Metas {
+			if i >= cinemetaSearchPerType {
+				break
+			}
+			id := meta.IMDBID
+			if id == "" {
+				id = meta.ID
+			}
+			if strings.HasPrefix(id, "tt") {
+				hits = append(hits, hit{imdb: id, kind: kind})
+			}
+		}
+	}
+	titles := make([]Title, len(hits))
+	var wait sync.WaitGroup
+	for i, h := range hits {
+		wait.Go(func() {
+			meta, err := p.fetchMeta(ctx, h.imdb, h.kind)
+			if err != nil {
+				return
+			}
+			title := p.toTitle(h.imdb, meta)
+			tmdbID := title.ProviderIDs["tmdb"]
+			if tmdbID == "" {
+				return
+			}
+			title.ID = "tmdb:" + tmdbID
+			title.Format = strings.SplitN(tmdbID, ":", 2)[0]
+			title.Seasons = nil // search results carry no season list (as TMDb's)
+			title.Runtime, title.Genres = 0, nil
+			titles[i] = title
+		})
+	}
+	wait.Wait()
+	found := make([]Title, 0, len(titles))
+	for _, title := range titles {
+		if title.ID != "" {
+			found = append(found, title)
+		}
+	}
+	if len(found) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return found, nil
+}
