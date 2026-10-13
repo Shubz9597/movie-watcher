@@ -192,6 +192,8 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no playable file in torrent", http.StatusNotFound)
 		return
 	}
+	// Data recorded complete must really be on disk, or it is served as zeros.
+	torrentx.EnsureFileData(r.Context(), cat, t, f)
 	log.Printf("[stream] starting cat=%s file=%s (%d bytes) fidx=%d", cat, f.Path(), f.Length(), fidx)
 
 	torrentx.IncActive(cat, t.InfoHash())

@@ -66,6 +66,8 @@ func (r *TorrentResolver) Resolve(ctx context.Context, cat, sourceID string, fil
 		return ResolvedSource{}, &Error{Code: ReasonMalformedSource, Message: "The selected source contains no playable video file."}
 	}
 	chosenIndex := indexOfFile(files, chosen)
+	// Data recorded complete must really be on disk, or it is served as zeros.
+	torrentx.EnsureFileData(ctx, cat, t, chosen)
 
 	resolved := ResolvedSource{
 		Open: func() (io.ReadSeekCloser, error) {

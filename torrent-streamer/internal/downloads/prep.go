@@ -326,6 +326,8 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		return
 	}
 	defer func() { p.mu.Lock(); p.reserved -= needed; p.mu.Unlock() }()
+	// Data recorded complete must really be on disk, or zeros are packaged.
+	torrentx.EnsureFileData(jobCtx, cat, t, file)
 	file.Download()
 	setProgressStage(job.ID, StageDownloading, nil, file)
 	// Long preparations outlive the engine's own peer searches.
