@@ -90,17 +90,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var activeObserver: NSObjectProtocol?
-    private var needsForegroundRefresh = false
-    private var activationGeneration: UInt64 = 0
-    private var videoReady = false
-    private var videoPreparationTimer: Timer?
-    private var videoPreparationStarted: Date?
-    private var preparationDecodedBaseline = 0
-    private var preparationDisplayedBaseline = 0
-    private var preparationTargetMs: Int32 = 0
-    private var preparationRetried = false
-    private var awaitingPreparationPause = false
-    private var preparationAudioWasMuted: Bool?
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -178,8 +167,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     private func persistLocalProgress(state: String) {
         guard let downloadId = localDownloadId, let player = mediaPlayer else { return }
-        let position = videoReady ? Double(player.time.intValue) / 1000.0
-            : pendingSeek ?? Double(pausedPositionMs ?? preparationTargetMs) / 1000.0
+        let position = Double(player.time.intValue) / 1000.0
         let duration = Double(player.media?.length.intValue ?? 0) / 1000.0
         try? DownloadCoordinator.shared.store.saveProgress(
             downloadId, positionS: position, durationS: duration,
@@ -260,7 +248,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // pinch gesture; 75 = a touch smaller than default for phones).
         let player = VLCMediaPlayer(options: [
             "--audio-time-stretch",
-            "--stats", // readiness requires decoded video AND pictures reaching output
             "--network-caching=1000", // server prebuffers the torrent; keep decoder catch-up bounded
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
@@ -300,13 +287,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.pauseForBackground()
+            guard let self = self, let player = self.mediaPlayer, self.playbackRequested else { return }
+            self.pausePlayback(player)
         }
         mediaPlayer = player
         pendingSeek = seekTo
         playbackRequested = true
         pausedPositionMs = nil
-        beginVideoPreparation(player)
+        player.play()
     }
 
     @objc func seek(_ call: CAPPluginCall) {
@@ -328,150 +316,26 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        guard videoReady else { call.resolve(); return }
         if playbackRequested {
             pausePlayback(player)
         } else {
-            resumePlayback(player)
+            // Flush queued pre-pause audio/video at the exact pause position.
+            // Normal unpause can replay the old decoder queue while its
+            // picture waits for the clock to catch up. Never rewind here.
+            if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
+                player.time = VLCTime(int: position)
+            }
+            pausedPositionMs = nil
+            playbackRequested = true
+            player.play()
         }
         call.resolve()
-    }
-
-    private func resumePlayback(_ player: VLCMediaPlayer) {
-        // Returning from Home only refreshes the output. Play must be an
-        // explicit request while the app is active, never queued to autoplay.
-        guard UIApplication.shared.applicationState == .active else { return }
-        guard videoReady else { return }
-        // The decoder was warmed before Play became available. Unpause its
-        // ready queues directly: seeking on every Play made local episodes
-        // repeatedly decode from a keyframe and replay an older picture.
-        pausedPositionMs = nil
-        playbackRequested = true
-        try? AVAudioSession.sharedInstance().setActive(true)
-        player.play()
-        applyPendingSeek(player)
     }
 
     private func pausePlayback(_ player: VLCMediaPlayer) {
         playbackRequested = false
         pausedPositionMs = max(0, player.time.intValue)
         player.pause()
-    }
-
-    private func pauseForBackground() {
-        guard let player = mediaPlayer, !terminalSent else { return }
-        activationGeneration &+= 1
-        // Duplicate background notifications must not replace the original
-        // pause position. Both playing and paused videos return paused.
-        needsForegroundRefresh = true
-        let preparationPosition = videoPreparationStarted != nil ? preparationTargetMs : nil
-        if playbackRequested || videoPreparationStarted != nil { pausePlayback(player) }
-        if let position = preparationPosition { pausedPositionMs = position }
-        cancelVideoPreparation()
-        videoReady = false
-        notifyListeners("buffering", data: ["active": true, "videoReady": false, "playId": playId])
-    }
-
-    /// Decode silently behind the loader. Playing/time callbacks are not
-    /// video readiness: audio can advance while the old picture is displayed.
-    private func beginVideoPreparation(_ player: VLCMediaPlayer) {
-        guard UIApplication.shared.applicationState == .active else { return }
-        cancelVideoPreparation()
-        videoReady = false
-        awaitingPreparationPause = false
-        preparationRetried = false
-        videoPreparationStarted = Date()
-        preparationTargetMs = pausedPositionMs ?? max(0, player.time.intValue)
-        if pendingSeek == nil, let position = pausedPositionMs {
-            pendingSeek = Double(position) / 1000.0
-        }
-        let audio: VLCAudio? = player.audio
-        if preparationAudioWasMuted == nil { preparationAudioWasMuted = audio?.isMuted ?? false }
-        audio?.isMuted = true
-        preparationDecodedBaseline = Int(player.media?.statistics.decodedVideo ?? 0)
-        preparationDisplayedBaseline = Int(player.media?.statistics.displayedPictures ?? 0)
-        notifyListeners("buffering", data: ["active": true, "videoReady": false, "playId": playId])
-        player.play() // internal preroll; public playback intent stays paused after Home
-        applyPendingSeek(player)
-        let generation = activationGeneration
-        videoPreparationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self, weak player] _ in
-            guard let self = self, let player = player, player === self.mediaPlayer,
-                  !self.terminalSent, generation == self.activationGeneration else { return }
-            self.checkVideoPreparation(player)
-        }
-    }
-
-    private func checkVideoPreparation(_ player: VLCMediaPlayer) {
-        guard let started = videoPreparationStarted,
-              UIApplication.shared.applicationState == .active, !needsForegroundRefresh else { return }
-        if Date().timeIntervalSince(started) >= 15 {
-            cancelVideoPreparation()
-            player.pause()
-            playbackRequested = false
-            terminalSent = true
-            notifyListeners("playbackState", data: ["state": "error", "playId": playId,
-                "message": "The video picture could not be prepared. Reopen the video to try again."])
-            return
-        }
-        if awaitingPreparationPause {
-            if player.state == .paused { completeVideoPreparation(player) }
-            return
-        }
-        applyPendingSeek(player)
-        applyVideoScale(player)
-        guard pendingSeek == nil, player.hasVideoOut,
-              let surface = surfaceView, surface.window != nil,
-              player.videoSize.width > 0, player.videoSize.height > 0,
-              let media = player.media else { return }
-        let stats = media.statistics
-        // displayedPictures includes redisplaying a stale frame; requiring
-        // newly decoded frames as well prevents that from declaring readiness.
-        guard Int(stats.decodedVideo) - preparationDecodedBaseline >= 2,
-              Int(stats.displayedPictures) - preparationDisplayedBaseline >= 2 else { return }
-        let position = player.time.intValue
-        guard position >= preparationTargetMs else { return }
-        if Int64(position) > Int64(preparationTargetMs) + 1500 {
-            // Cold decoder catch-up must not silently skip several seconds.
-            // Once warmed, return to the requested position once, still muted.
-            if !preparationRetried && player.isSeekable {
-                preparationRetried = true
-                pendingSeek = Double(preparationTargetMs) / 1000.0
-                applyPendingSeek(player)
-            }
-            return
-        }
-        if playbackRequested {
-            completeVideoPreparation(player)
-        } else {
-            awaitingPreparationPause = true
-            player.pause()
-            // Remain muted and keep Play unavailable until pause is confirmed.
-        }
-    }
-
-    private func completeVideoPreparation(_ player: VLCMediaPlayer) {
-        guard videoPreparationStarted != nil else { return }
-        if !playbackRequested { pausedPositionMs = max(0, player.time.intValue) }
-        cancelVideoPreparation()
-        videoReady = true
-        let audio: VLCAudio? = player.audio
-        audio?.isMuted = preparationAudioWasMuted ?? false
-        preparationAudioWasMuted = nil
-        notifyListeners("timeUpdate", data: [
-            "currentTime": Double(player.time.intValue) / 1000.0,
-            "duration": Double(max(player.media?.length.intValue ?? 0, 0)) / 1000.0,
-            "playId": playId,
-        ])
-        notifyListeners("buffering", data: ["active": false, "videoReady": true, "playId": playId])
-        notifyListeners("playbackState", data: ["state": playbackRequested ? "playing" : "paused", "playId": playId])
-        emitTracks()
-    }
-
-    private func cancelVideoPreparation() {
-        videoPreparationTimer?.invalidate()
-        videoPreparationTimer = nil
-        videoPreparationStarted = nil
-        awaitingPreparationPause = false
     }
 
     @objc func seekBy(_ call: CAPPluginCall) {
@@ -710,10 +574,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
               player === mediaPlayer else { return }
         applyPendingSeek(player)
         applyVideoScale(player) // video output may appear after the playing/ES callbacks
-        if videoPreparationStarted != nil {
-            checkVideoPreparation(player)
-            return // silent preroll is not watched progress or a public playback clock
-        }
         // VLC picks its default subtitle/audio track a moment after Playing,
         // with no callback of its own: report any change so the controls
         // never show "Off" while subtitles are on screen.
@@ -740,26 +600,21 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
               player === mediaPlayer else { return }
         switch player.state {
         case .buffering:
-            notifyListeners("buffering", data: ["active": true, "videoReady": videoReady, "playId": playId])
+            notifyListeners("buffering", data: ["active": true, "playId": playId])
         case .playing:
             applyPendingSeek(player)
             applyVideoScale(player) // the video size is known from here
-            if !videoReady { checkVideoPreparation(player); emitTracks(); return }
-            notifyListeners("buffering", data: ["active": false, "videoReady": true, "playId": playId])
+            notifyListeners("buffering", data: ["active": false, "playId": playId])
             notifyListeners("playbackState", data: ["state": "playing", "playId": playId])
             emitTracks()
         case .paused:
-            if awaitingPreparationPause { completeVideoPreparation(player); return }
-            if videoPreparationStarted != nil { return }
             if localDownloadId != nil { persistLocalProgress(state: "paused") }
             notifyListeners("playbackState", data: ["state": "paused", "playId": playId])
         case .ended:
-            cancelVideoPreparation()
             if localDownloadId != nil { persistLocalProgress(state: "ended") }
             terminalSent = true
             notifyListeners("playbackState", data: ["state": "ended", "playId": playId])
         case .error:
-            cancelVideoPreparation()
             if localDownloadId != nil { persistLocalProgress(state: "error") }
             terminalSent = true
             // Generic message ONLY: VLC internals never cross the bridge.
@@ -780,17 +635,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // MARK: - Internals
 
     private func applyPendingSeek(_ player: VLCMediaPlayer) {
-        guard UIApplication.shared.applicationState == .active, !needsForegroundRefresh,
-              let seconds = pendingSeek, seconds.isFinite, player.isSeekable else { return }
+        guard let seconds = pendingSeek, seconds.isFinite, player.isSeekable else { return }
         pendingSeek = nil
         let duration = Double(player.media?.length.intValue ?? 0)
         let upper = duration > 0 ? duration : Double(Int32.max)
         player.time = VLCTime(int: Int32(max(0, min(upper, seconds * 1000))))
-        if videoPreparationStarted != nil {
-            preparationTargetMs = Int32(max(0, min(upper, seconds * 1000)))
-            preparationDecodedBaseline = Int(player.media?.statistics.decodedVideo ?? 0)
-            preparationDisplayedBaseline = Int(player.media?.statistics.displayedPictures ?? 0)
-        }
         if !playbackRequested {
             // A scrub while paused becomes the new resume anchor.
             pausedPositionMs = Int32(max(0, min(upper, seconds * 1000)))
@@ -855,37 +704,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         activeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
-            self.requestOrientation(TorWatchPlaybackState.videoAttached)
-            self.recoverForegroundPlayback()
+            self?.requestOrientation(TorWatchPlaybackState.videoAttached)
         }
-    }
-
-    private func recoverForegroundPlayback() {
-        guard !terminalSent, let player = mediaPlayer else { return }
-        let generation = activationGeneration
-        // Notification observers have no guaranteed order. Let VLC receive
-        // didBecomeActive and enable its EAGL context before touching output
-        // or asking the decoder for the resume frame. No timed delay is needed.
-        DispatchQueue.main.async { [weak self, weak player] in
-            guard let self = self, let player = player, player === self.mediaPlayer,
-                  !self.terminalSent, generation == self.activationGeneration,
-                  UIApplication.shared.applicationState == .active else { return }
-            if self.needsForegroundRefresh {
-                self.refreshForegroundSurface(player)
-                self.beginVideoPreparation(player)
-            } else {
-                self.applyPendingSeek(player)
-            }
-        }
-    }
-
-    private func refreshForegroundSurface(_ player: VLCMediaPlayer) {
-        guard needsForegroundRefresh, let surface = surfaceView else { return }
-        surface.superview?.layoutIfNeeded()
-        applyVideoScale(player)
-        surface.refreshDrawableAfterBackground()
-        needsForegroundRefresh = false
     }
 
     /** Full teardown: bounded, idempotent, surface + background restored.
@@ -898,11 +718,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pendingSeek = nil
         pausedPositionMs = nil
         playbackRequested = false
-        cancelVideoPreparation()
-        videoReady = false
-        preparationAudioWasMuted = nil
-        needsForegroundRefresh = false
-        activationGeneration &+= 1 // invalidate activation queued for a replaced player
         subtitleDownloads.forEach { $0.cancel() }
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
@@ -948,20 +763,6 @@ final class VideoSurfaceView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    func refreshDrawableAfterBackground() {
-        // VLC's iOS view resets its EAGL render buffers in layoutSubviews.
-        // A foreground return often keeps the exact same bounds, so UIKit
-        // otherwise skips that layout and leaves the old renderbuffer alive.
-        // Invalidate the drawable subtree without replacing it or resizing it;
-        // this preserves sizing, track choices, slaves and timing offsets.
-        func refresh(_ view: UIView) {
-            view.setNeedsLayout()
-            view.layoutIfNeeded()
-            for child in view.subviews { refresh(child) }
-        }
-        UIView.performWithoutAnimation { refresh(drawableView) }
-    }
 
     func apply(aspect: CGFloat, mode: String) {
         // Symmetric gutters keep the picture centered and clear of the

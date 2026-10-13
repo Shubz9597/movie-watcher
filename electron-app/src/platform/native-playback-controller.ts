@@ -66,7 +66,7 @@ export type NativeTracksUpdate = {
 };
 // Buffering truth from the native demuxer (true while frames cannot flow).
 // progress is the native demuxer's 0-100 estimate when reported (Android).
-export type NativeBufferingUpdate = { active: boolean; progress?: number; playId?: string; videoReady?: boolean };
+export type NativeBufferingUpdate = { active: boolean; progress?: number; playId?: string };
 
 export type NativePlaybackBridge = {
   prepare?(title: string, playId: string, posterUrl?: string | null): Promise<void>;
@@ -196,14 +196,12 @@ export class NativePlaybackController {
   private publishBuffering(update: NativeBufferingUpdate): void {
     const progress = Number.isFinite(update.progress)
       ? Math.max(0, Math.min(100, update.progress!)) : undefined;
-    const videoReady = update.videoReady ?? this.currentBuffering.videoReady;
-    const active = videoReady === false || (update.active && progress !== 100);
+    const active = update.active && progress !== 100;
     if (active !== this.currentBuffering.active) {
       this.bufferingClock = null;
       this.advancingTicks = 0;
     }
-    this.currentBuffering = { active, progress, playId: this.currentPlayId,
-      ...(videoReady != null ? { videoReady } : {}) };
+    this.currentBuffering = { active, progress, playId: this.currentPlayId };
     for (const listener of Array.from(this.bufferingListeners)) {
       try { listener(this.currentBuffering); } catch { /* isolate UI listeners */ }
     }
@@ -227,7 +225,7 @@ export class NativePlaybackController {
 
   /** Play/pause toggle (native VLC, no restart). */
   togglePlayback(): void {
-    if (this.currentPlayId === '' || this.currentBuffering.videoReady === false) return;
+    if (this.currentPlayId === '') return;
     this.bridge.togglePlayback?.(this.currentPlayId).catch(() => {});
   }
 
@@ -542,9 +540,9 @@ export class NativePlaybackController {
     // away with the device).
     if (update.state === 'paused' || update.state === 'playing') {
       this.currentState = update.state;
-      // Older native engines have no frame-readiness signal. Preserve their
-      // fallback, but never let audio state override explicit iOS readiness.
-      if (this.currentBuffering.videoReady !== false) this.publishBuffering({ active: false });
+      // Playing is also a completion signal; a separate buffering=false
+      // callback is not guaranteed after a seek on every VLC platform.
+      this.publishBuffering({ active: false });
       for (const listener of Array.from(this.stateListeners)) {
         try {
           listener(update.state);
@@ -612,7 +610,7 @@ export class NativePlaybackController {
       // transition. Recover from actual clock movement, never from a timer
       // or a single resume/seek jump. Android's repeated stationary ticks
       // and a paused player's seek cannot dismiss a real stall.
-      if (this.currentBuffering.active && this.currentBuffering.videoReady !== false && this.currentState !== 'paused') {
+      if (this.currentBuffering.active && this.currentState !== 'paused') {
         const delta = this.bufferingClock == null ? 0 : update.currentTime - this.bufferingClock;
         this.bufferingClock = Number.isFinite(update.currentTime) ? update.currentTime : null;
         this.advancingTicks = delta > 0 && delta <= 2 ? this.advancingTicks + 1 : 0;

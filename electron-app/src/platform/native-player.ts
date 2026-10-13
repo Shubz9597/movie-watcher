@@ -57,7 +57,7 @@ export interface TorWatchNativePlugin {
   addListener(eventName: 'timeUpdate', callback: (event: { currentTime: number; duration: number; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'playbackState', callback: (event: { state: string; message?: string; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'tracksUpdate', callback: (event: { audio: Array<{ id: number; label?: string; language?: string }>; subtitles: Array<{ id: number; label?: string; language?: string }>; selectedAudioTrackId?: number | null; selectedSubtitleTrackId?: number | null; playId: string }) => void): Promise<PluginListenerHandle>;
-  addListener(eventName: 'buffering', callback: (event: { active: boolean; progress?: number; videoReady?: boolean; playId: string }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'buffering', callback: (event: { active: boolean; progress?: number; playId: string }) => void): Promise<PluginListenerHandle>;
 }
 
 export type PluginListenerHandle = { remove: () => Promise<void> | void };
@@ -144,7 +144,6 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
       bufferingListeners.forEach((cb) => cb({
         active: event.active === true,
         progress: typeof event.progress === 'number' ? event.progress : undefined,
-        ...(typeof event.videoReady === 'boolean' ? { videoReady: event.videoReady } : {}),
         playId: event.playId,
       }));
     }).then((handle) => { nativeListenerHandles.push(handle); }),
