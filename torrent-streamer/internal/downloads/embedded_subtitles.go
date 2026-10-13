@@ -121,6 +121,12 @@ func probeEmbeddedSubtitles(ctx context.Context, videoPath string) ([]embeddedSu
 
 // extractEmbeddedSubtitle returns the video's own lang track as WebVTT.
 func extractEmbeddedSubtitle(ctx context.Context, videoPath, lang string) ([]byte, error) {
+	return EmbeddedSubtitleWindow(ctx, videoPath, lang, 0)
+}
+
+// EmbeddedSubtitleWindow returns the video's own lang track as WebVTT, read
+// from the first seconds of input (a path or URL; 0 reads it all).
+func EmbeddedSubtitleWindow(ctx context.Context, videoPath, lang string, seconds int) ([]byte, error) {
 	tracks, err := probeEmbeddedSubtitles(ctx, videoPath)
 	if err != nil {
 		return nil, err
@@ -131,9 +137,11 @@ func extractEmbeddedSubtitle(ctx context.Context, videoPath, lang string) ([]byt
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, ffTool(config.FFmpegPath(), "ffmpeg"),
-		"-nostdin", "-v", "error", "-i", videoPath,
-		"-map", "0:"+strconv.Itoa(track.Index), "-f", "webvtt", "pipe:1")
+	args := []string{"-nostdin", "-v", "error", "-i", videoPath, "-map", "0:" + strconv.Itoa(track.Index)}
+	if seconds > 0 {
+		args = append(args, "-t", strconv.Itoa(seconds))
+	}
+	cmd := exec.CommandContext(ctx, ffTool(config.FFmpegPath(), "ffmpeg"), append(args, "-f", "webvtt", "pipe:1")...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard

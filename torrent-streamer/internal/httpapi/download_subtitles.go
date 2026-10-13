@@ -42,7 +42,78 @@ func (s DownloadSubtitleSource) FetchSubtitle(ctx context.Context, q downloads.S
 	}
 }
 
+// FetchSubtitleCandidates returns up to limit subtitles, best release match
+// first, so preparation can pick the one that fits the video's audio.
+func (s DownloadSubtitleSource) FetchSubtitleCandidates(ctx context.Context, q downloads.SubtitleQuery, limit int) ([]downloads.ProviderSubtitle, error) {
+	for attempt := 0; ; attempt++ {
+		found, err := s.fetchCandidatesOnce(ctx, q, limit)
+		if err == nil || errors.Is(err, downloads.ErrSubtitleNotFound) || attempt >= len(subtitleRetryDelays) {
+			return found, err
+		}
+		log.Printf("[downloads] subtitle %q candidates attempt %d failed, retrying: %v", q.Lang, attempt+1, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(subtitleRetryDelays[attempt]):
+		}
+	}
+}
+
+func (DownloadSubtitleSource) fetchCandidatesOnce(ctx context.Context, q downloads.SubtitleQuery, limit int) ([]downloads.ProviderSubtitle, error) {
+	ranked, apiKey, err := rankedDownloadSubtitles(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	var found []downloads.ProviderSubtitle
+	var lastErr error
+	for _, candidate := range ranked {
+		if len(found) >= limit {
+			break
+		}
+		var vtt string
+		if candidate.Source == "stremio" {
+			vtt, lastErr = subtitles.DownloadStremioSubtitle(ctx, candidate.ID)
+		} else {
+			vtt, lastErr = subtitles.DownloadOpenSubSubtitle(ctx, candidate.ID, apiKey)
+		}
+		if lastErr == nil && strings.TrimSpace(vtt) != "" {
+			found = append(found, downloads.ProviderSubtitle{Name: candidate.Source + ":" + candidate.ID, Data: []byte(vtt), Ext: "vtt"})
+		}
+	}
+	if len(found) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, downloads.ErrSubtitleNotFound
+	}
+	return found, nil
+}
+
 func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.SubtitleQuery) ([]byte, string, error) {
+	ranked, apiKey, err := rankedDownloadSubtitles(ctx, q)
+	if err != nil {
+		return nil, "", err
+	}
+	var vtt string
+	for _, candidate := range ranked[:min(len(ranked), downloadAttempts)] {
+		if candidate.Source == "stremio" {
+			vtt, err = subtitles.DownloadStremioSubtitle(ctx, candidate.ID)
+		} else {
+			vtt, err = subtitles.DownloadOpenSubSubtitle(ctx, candidate.ID, apiKey)
+		}
+		if err == nil && strings.TrimSpace(vtt) != "" {
+			return []byte(vtt), "vtt", nil
+		}
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return nil, "", downloads.ErrSubtitleNotFound
+}
+
+// rankedDownloadSubtitles searches both catalogs for a download's subtitle,
+// best release match first.
+func rankedDownloadSubtitles(ctx context.Context, q downloads.SubtitleQuery) ([]subtitles.SubResult, string, error) {
 	apiKey := openSubtitlesAPIKey()
 	query := subtitles.SearchQuery{
 		IMDBID: q.Hints.IMDBID,
@@ -87,31 +158,16 @@ func (DownloadSubtitleSource) fetchOnce(ctx context.Context, q downloads.Subtitl
 	ranked := rankSubtitleResults(candidates, q.Lang, q.VideoName)
 	if len(ranked) == 0 {
 		if openSubErr != nil {
-			return nil, "", openSubErr
+			return nil, apiKey, openSubErr
 		}
 		// Stremio failing (timeout, outage) is retried; Stremio answering
 		// with nothing, or having no IMDb id to search, is final.
 		if stremioErr != nil && !errors.Is(stremioErr, subtitles.ErrNoIMDbID) {
-			return nil, "", stremioErr
+			return nil, apiKey, stremioErr
 		}
-		return nil, "", downloads.ErrSubtitleNotFound
+		return nil, apiKey, downloads.ErrSubtitleNotFound
 	}
-	var vtt string
-	var err error
-	for _, candidate := range ranked[:min(len(ranked), downloadAttempts)] {
-		if candidate.Source == "stremio" {
-			vtt, err = subtitles.DownloadStremioSubtitle(ctx, candidate.ID)
-		} else {
-			vtt, err = subtitles.DownloadOpenSubSubtitle(ctx, candidate.ID, apiKey)
-		}
-		if err == nil && strings.TrimSpace(vtt) != "" {
-			return []byte(vtt), "vtt", nil
-		}
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	return nil, "", downloads.ErrSubtitleNotFound
+	return ranked, apiKey, nil
 }
 
 // downloadAttempts bounds how many ranked subtitles an offline download

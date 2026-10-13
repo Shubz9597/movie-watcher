@@ -197,6 +197,9 @@ func main() {
 	tasteStore := taste.New(db)
 	httpapi.RegisterRoutes(mux)         // /add, /files, /prefetch, /stream, /stats, /buffer/*
 	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external, /subtitles/import
+	// /subtitles/matched: the online subtitle that follows a video's audio
+	// (a dual-audio release's dub script), moved onto its dialogue.
+	httpapi.SubtitleMatchHandlers{Jobs: downloads.NewStore(db), Picks: pickRepo, ListenAddr: config.ListenAddr()}.Register(mux)
 	httpapi.RegisterTasteRoutes(mux, taste.New(db))
 	mux.HandleFunc("/skip-segments", skipsegments.Handler)
 	httpapi.TorrentSearchHandlers{Service: torrentSearch}.Register(mux)

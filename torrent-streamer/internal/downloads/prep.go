@@ -343,9 +343,8 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	}
 	var subtitleAssets []AssetRow
 	type providerSubtitle struct {
-		data []byte
-		ext  string
-		err  error
+		candidates []ProviderSubtitle // ranked by release name
+		err        error
 	}
 	var laterLangs []string // resolved after the video is staged
 	providerSubs := map[string]providerSubtitle{}
@@ -380,14 +379,28 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 				providerSubs[lang] = providerSubtitle{err: errors.New("no subtitle provider")}
 				continue
 			}
-			data, subExt, err := p.Subtitles.FetchSubtitle(jobCtx, SubtitleQuery{
+			query := SubtitleQuery{
 				SeriesID: job.SeriesID, Season: job.Season, Episode: job.Episode, Lang: lang,
 				VideoName: filepath.Base(file.Path()), Hints: job.SubtitleHints,
-			})
-			if err == nil && len(data) == 0 {
+			}
+			// Several candidates when the source offers them: the one that
+			// fits this video's audio is chosen once the video is staged.
+			var candidates []ProviderSubtitle
+			var err error
+			if many, ok := p.Subtitles.(SubtitleCandidates); ok {
+				candidates, err = many.FetchSubtitleCandidates(jobCtx, query, subtitleCandidateLimit)
+			} else {
+				var data []byte
+				var subExt string
+				data, subExt, err = p.Subtitles.FetchSubtitle(jobCtx, query)
+				if err == nil && len(data) > 0 {
+					candidates = []ProviderSubtitle{{Name: "provider", Data: data, Ext: subExt}}
+				}
+			}
+			if err == nil && len(candidates) == 0 {
 				err = ErrSubtitleNotFound
 			}
-			providerSubs[lang] = providerSubtitle{data: data, ext: subExt, err: err}
+			providerSubs[lang] = providerSubtitle{candidates: candidates, err: err}
 		}
 	}
 
@@ -413,16 +426,19 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	setProgressStage(job.ID, StageFinalizing, nil, nil)
 	for _, lang := range laterLangs {
 		url := "/v1/downloads/jobs/" + job.ID + "/assets/subtitles/" + lang
-		data, subExt := []byte(nil), ""
-		if embedded, err := extractEmbeddedSubtitle(jobCtx, filepath.Join(staged, "video"+ext), lang); err == nil {
-			data, subExt = embedded, "vtt"
-		} else if provided := providerSubs[lang]; provided.err == nil {
-			log.Printf("[downloads] job %s: no embedded %q subtitle (%v); using the provider's", job.ID, lang, err)
-			data, subExt = provided.data, provided.ext
-		} else {
-			fail(ReasonSubtitlesUnavailable, fmt.Errorf("subtitle %q: none embedded (%v), provider: %v", lang, err, provided.err))
+		videoPath := filepath.Join(staged, "video"+ext)
+		embedded, embeddedErr := extractEmbeddedSubtitle(jobCtx, videoPath, lang)
+		if embeddedErr != nil {
+			embedded = nil
+		}
+		provided := providerSubs[lang]
+		choice, ok := chooseSubtitle(jobCtx, job.ID, videoPath, lang, embedded, provided.candidates)
+		if !ok {
+			fail(ReasonSubtitlesUnavailable, fmt.Errorf("subtitle %q: none embedded (%v), provider: %v", lang, embeddedErr, provided.err))
 			return
 		}
+		log.Printf("[downloads] job %s: %s subtitle: %s", job.ID, lang, choice.why)
+		data, subExt := choice.data, choice.ext
 		if subExt != "vtt" && subExt != "srt" {
 			subExt = "vtt"
 		}
