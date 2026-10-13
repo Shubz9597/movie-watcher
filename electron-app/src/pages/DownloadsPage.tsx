@@ -6,7 +6,8 @@
 // downloads". Ready items play locally; server preparation and native
 // transfer states are merged into one concise queue.
 import { useEffect, useState } from 'react';
-import { ChevronRight, Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
+import type { HTMLAttributes } from 'react';
+import { Check, ChevronRight, Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from '../platform/contracts';
 import { SelectionSurface } from '../components/primitives';
@@ -17,6 +18,7 @@ import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
 import { downloadMeta, forgetDownloadMeta } from '../lib/offline-download-meta';
 import { describePreparing, preparingFraction } from '../lib/preparing-status';
+import { useLongPress } from '../lib/long-press';
 import {
   cancelPendingDownload,
   pendingDownloads,
@@ -124,6 +126,17 @@ function EpisodeStill({ src }: { src?: string }) {
 }
 
 // Unknown totals stay indeterminate (spec D2): no invented percentage.
+/** The tick circle a row shows while selecting (state is on the row). */
+function SelectMark({ checked }: { checked: boolean }) {
+  return (
+    <span aria-hidden="true" className="inline-flex h-12 w-12 shrink-0 items-center justify-center">
+      <span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition ${checked ? 'border-white bg-white text-black' : 'border-white/50'}`}>
+        {checked ? <Check className="h-4 w-4" strokeWidth={3} /> : null}
+      </span>
+    </span>
+  );
+}
+
 function DownloadProgress({ value, label }: { value?: number; label: string }) {
   const determinate = typeof value === 'number';
   return (
@@ -165,6 +178,18 @@ function transferStatus(item: DownloadItemSnapshot): string {
 }
 
 type EpisodeLike = { seriesId?: string; season?: number; episode?: number };
+
+/** Finished on this device: playable, and the only rows bulk delete takes. */
+function isReadyItem(item: DownloadItemSnapshot): boolean {
+  const inTransfer = item.transferState === 'queued'
+    || item.transferState === 'downloading'
+    || item.transferState === 'paused'
+    || item.transferState === 'verifying'
+    || (item.transferState == null && item.waitingForServer === true);
+  const needsRepair = item.transferState === 'failed'
+    || (item.transferState == null && item.state === 'needs-repair');
+  return !inTransfer && !needsRepair;
+}
 
 function isEpisode(item: EpisodeLike): boolean {
   return Boolean(item.seriesId) && ((item.season ?? 0) > 0 || (item.episode ?? 0) > 0);
@@ -255,6 +280,13 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   const [pendingRemoval, setPendingRemoval] = useState<DownloadItemSnapshot | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  // Bulk delete: holding a finished row (or Select) starts selecting; null
+  // means not selecting.
+  const [selection, setSelection] = useState<Set<string> | null>(null);
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const [bulkRemoving, setBulkRemoving] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const longPress = useLongPress();
   // D03 device-test hook: explicitly activated with ?downloads=native.
   const nativeHookActive = new URLSearchParams(window.location.search).get('downloads') === 'native'
     && getNativeDownloads() != null;
@@ -367,6 +399,69 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     }
   };
 
+  // Rows bulk delete can take on this screen: finished downloads only.
+  const selectableItems = (inventory?.items ?? []).filter((item) =>
+    isReadyItem(item) && (!seriesId || (item.seriesId === seriesId && isEpisode(item))));
+  const selectedItems = selection ? selectableItems.filter((item) => selection.has(item.downloadId)) : [];
+  const selectedBytes = selectedItems.reduce((total, item) => total + (item.sizeBytes ?? 0), 0);
+  const allSelected = selection != null && selectableItems.length > 0 && selectedItems.length === selectableItems.length;
+  const readyIdsOf = (items: DownloadItemSnapshot[]) => items.filter(isReadyItem).map((item) => item.downloadId);
+  // Toggles a row, or a whole show (all of its finished episodes).
+  const toggleSelected = (ids: string[]): void => {
+    if (!ids.length) return;
+    setSelection((current) => {
+      const next = new Set(current ?? []);
+      const allIn = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (allIn) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  };
+  const startSelecting = (ids: string[]): void => {
+    if (!downloads?.remove) return;
+    setBulkError(null);
+    setSelection(new Set(ids));
+  };
+  const stopSelecting = (): void => {
+    if (bulkRemoving) return;
+    setSelection(null);
+    setConfirmingBulk(false);
+    setBulkError(null);
+  };
+  // Leaving a show's screen ends a selection made there.
+  useEffect(() => {
+    setSelection(null);
+    setConfirmingBulk(false);
+  }, [seriesId]);
+
+  const confirmBulkRemoval = async (): Promise<void> => {
+    if (!downloads?.remove || bulkRemoving || !selectedItems.length) return;
+    setBulkRemoving(true);
+    setBulkError(null);
+    const failed: string[] = [];
+    // One at a time: each removal stops local playback and deletes files.
+    for (const item of selectedItems) {
+      try {
+        await downloads.remove(item.downloadId);
+        forgetOfflineSkipSegments(item.downloadId);
+        forgetDownloadMeta(item.downloadId);
+      } catch {
+        failed.push(item.downloadId);
+      }
+    }
+    setBulkRemoving(false);
+    setReloadKey((key) => key + 1);
+    if (failed.length) {
+      setSelection(new Set(failed));
+      setBulkError(`Couldn’t remove ${failed.length === 1 ? '1 download' : `${failed.length} downloads`}. Try again.`);
+      return;
+    }
+    setConfirmingBulk(false);
+    setSelection(null);
+  };
+
   const online = compat.status === 'ready';
   const seriesTitle = seriesId
     ? ((inventory?.items ?? []).find((item) => item.seriesId === seriesId)?.title
@@ -455,18 +550,47 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     const amount = size
       ? `${received || '0 MB'} of ${size}${typeof percent === 'number' ? ` · ${percent}%` : ''}`
       : received;
+    const label = episodeView ? episodeLabel(item.episode, downloadMeta(item.downloadId).episodeTitle) : item.title;
+    const selecting = selection != null;
+    const selectable = ready && downloads?.remove != null;
+    const checked = selecting && selection.has(item.downloadId);
+    // Selecting: the whole row ticks (its own buttons are inert); otherwise
+    // holding a finished row starts selecting with it ticked.
+    const rowProps: HTMLAttributes<HTMLLIElement> = selecting
+      ? selectable
+        ? {
+          role: 'checkbox',
+          'aria-checked': checked,
+          'aria-label': `Select ${label}`,
+          tabIndex: 0,
+          onClickCapture: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!longPress.consumeHold()) toggleSelected([item.downloadId]);
+          },
+          onKeyDown: (event) => {
+            if (event.key !== ' ' && event.key !== 'Enter') return;
+            event.preventDefault();
+            toggleSelected([item.downloadId]);
+          },
+        }
+        : { 'aria-disabled': true }
+      : selectable ? longPress.bind(() => startSelecting([item.downloadId])) : {};
+    const rowState = selecting ? (selectable ? `cursor-pointer ${checked ? 'ring-2 ring-white/80' : ''}` : 'pointer-events-none opacity-50') : '';
     return (
-      <li key={item.downloadId} className={ROW_CLASS}>
+      <li key={item.downloadId} className={`${ROW_CLASS} select-none [-webkit-touch-callout:none] ${rowState}`} {...rowProps}>
         {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="truncate text-base font-medium text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.downloadId).episodeTitle) : item.title}</p>
+              <p className="truncate text-base font-medium text-white">{label}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
               </p>
             </div>
-            {!ready && item.transferState !== 'verifying' ? (
+            {selecting && selectable ? (
+              <SelectMark checked={checked} />
+            ) : !ready && item.transferState !== 'verifying' ? (
               <button
                 type="button"
                 onClick={() => void runNativeAction(item.downloadId, 'cancel')}
@@ -501,7 +625,13 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
                   <div className="h-full bg-white" style={{ width: `${watchedPercent(item)}%` }} />
                 </div>
               ) : null}
-              <button type="button" onClick={() => playLocal(item)} className={`${ACTION_PRIMARY_CLASS} px-4`}>
+              <button
+                type="button"
+                onClick={() => playLocal(item)}
+                tabIndex={selecting ? -1 : undefined}
+                aria-hidden={selecting || undefined}
+                className={`${ACTION_PRIMARY_CLASS} px-4 ${selecting ? 'opacity-40' : ''}`}
+              >
                 <Play className="h-4 w-4 fill-current" aria-hidden="true" /> {watchedPercent(item) !== undefined && (watchedPercent(item) ?? 0) < 90 ? 'Resume' : 'Play'}
               </button>
             </div>
@@ -569,12 +699,28 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         {groups.map((group) => {
           if (group.kind === 'pending') return renderPending(group.item);
           if (group.kind === 'item') return renderItem(group.item);
+          // A show row selects all of its finished episodes at once.
+          const showIds = readyIdsOf((inventory?.items ?? []).filter((item) => item.seriesId === group.seriesId && isEpisode(item)));
+          const selecting = selection != null;
+          const selectable = showIds.length > 0 && downloads?.remove != null;
+          const checked = selecting && selectable && showIds.every((id) => selection.has(id));
           return (
             <li key={`show-${group.seriesId}`}>
               <button
                 type="button"
-                onClick={() => navigate('downloads-series', { series: group.seriesId })}
-                className={`${ROW_CLASS} w-full items-center text-left transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
+                {...(selecting
+                  ? {
+                    role: 'checkbox',
+                    'aria-checked': checked,
+                    'aria-label': `Select all downloaded episodes of ${group.title}`,
+                    disabled: !selectable,
+                    onClick: () => { if (!longPress.consumeHold()) toggleSelected(showIds); },
+                  }
+                  : {
+                    ...(selectable ? longPress.bind(() => startSelecting(showIds)) : {}),
+                    onClick: () => navigate('downloads-series', { series: group.seriesId }),
+                  })}
+                className={`${ROW_CLASS} w-full select-none items-center text-left transition [-webkit-touch-callout:none] hover:bg-white/[0.06] disabled:opacity-50 ${checked ? 'ring-2 ring-white/80' : ''} ${FOCUS_RING_CLASS}`}
               >
                 <DownloadPoster src={group.posterUrl} />
                 <div className="min-w-0 flex-1">
@@ -586,7 +732,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
                     <p className={`type-secondary mt-2 ${group.needsAttention ? 'text-red-300' : 'text-white/70'}`}>{group.summary}</p>
                   ) : null}
                 </div>
-                <ChevronRight className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />
+                {selecting ? (selectable ? <SelectMark checked={checked} /> : null) : <ChevronRight className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />}
               </button>
             </li>
           );
@@ -628,7 +774,41 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
 
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
-      <h1 className="type-section-title text-white">{seriesId ? seriesTitle : 'Downloads'}</h1>
+      {selection ? (
+        // Selecting: what is ticked, and the one destructive action.
+        <div className="flex min-h-12 flex-wrap items-center gap-2" role="toolbar" aria-label="Selected downloads">
+          <button type="button" onClick={stopSelecting} aria-label="Cancel selection" className={CANCEL_CLASS}>
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-white" aria-live="polite">
+            {selectedItems.length ? `${selectedItems.length} selected` : 'Select downloads'}
+          </h1>
+          <button
+            type="button"
+            onClick={() => setSelection(allSelected ? new Set() : new Set(selectableItems.map((item) => item.downloadId)))}
+            className={ROW_ACTION_CLASS}
+          >
+            {allSelected ? 'Clear' : 'Select all'}
+          </button>
+          <button
+            type="button"
+            disabled={!selectedItems.length}
+            onClick={() => { setBulkError(null); setConfirmingBulk(true); }}
+            className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-500 disabled:opacity-40 ${FOCUS_RING_CLASS}`}
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="type-section-title min-w-0 truncate text-white">{seriesId ? seriesTitle : 'Downloads'}</h1>
+          {downloads?.remove && selectableItems.length > 1 ? (
+            <button type="button" onClick={() => startSelecting([])} className={`${ROW_ACTION_CLASS} shrink-0`}>
+              Select
+            </button>
+          ) : null}
+        </div>
+      )}
       {!seriesId && storage && inventory?.items.length ? (
         <p className="type-secondary text-numeric mt-1 text-white/60">
           {formatSize(storage.usedBytes) ?? '0 MB'} used · {formatSize(storage.freeBytes) ?? '0 MB'} free
@@ -706,6 +886,32 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             </div>
           </div>
         ) : null}
+      </SelectionSurface>
+      <SelectionSurface
+        open={confirmingBulk && selectedItems.length > 0}
+        title={`Remove ${selectedItems.length === 1 ? '1 download' : `${selectedItems.length} downloads`}?`}
+        onClose={() => { if (!bulkRemoving) setConfirmingBulk(false); }}
+      >
+        <div className="pb-1">
+          <p className="type-secondary text-white/70">
+            {formatSize(selectedBytes) ? `Frees ${formatSize(selectedBytes)} on this device. ` : 'Deletes the files from this device. '}
+            Watch Later and Favourites stay as they are.
+          </p>
+          {bulkError ? <p className="type-secondary mt-3 text-red-300" role="alert">{bulkError}</p> : null}
+          <div className="mt-5 grid gap-3">
+            <button
+              type="button"
+              disabled={bulkRemoving}
+              onClick={() => void confirmBulkRemoval()}
+              className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-red-600 px-5 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-wait disabled:opacity-60 ${FOCUS_RING_CLASS}`}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" /> {bulkRemoving ? 'Removing…' : `Remove ${selectedItems.length === 1 ? 'download' : `${selectedItems.length} downloads`}`}
+            </button>
+            <button type="button" disabled={bulkRemoving} onClick={() => setConfirmingBulk(false)} className={ACTION_SECONDARY_CLASS}>
+              Keep
+            </button>
+          </div>
+        </div>
       </SelectionSurface>
       {nativeHookActive ? <NativeTestHook onDone={() => setReloadKey((key) => key + 1)} /> : null}
     </section>
