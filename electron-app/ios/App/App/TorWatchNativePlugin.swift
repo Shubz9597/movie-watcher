@@ -275,6 +275,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         makeWebViewTransparent(true)
 
         let media = VLCMedia(url: url)
+        // Open at the resume position. Seeking once Playing let the start
+        // play for a moment, then flushed audio and video mid-start: choppy
+        // sound while the picture caught up from the previous keyframe.
+        let startsAtResume = seekTo.map { $0.isFinite && $0 >= 1 } ?? false
+        if startsAtResume, let start = seekTo {
+            media.addOption(":start-time=\(String(format: "%.3f", start))")
+        }
         player.media = media
         player.drawable = surface.drawableView
 
@@ -295,7 +302,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             self.releaseVideoForBackground(player)
         }
         mediaPlayer = player
-        pendingSeek = seekTo
+        pendingSeek = startsAtResume ? nil : seekTo
         playbackRequested = true
         pausedPositionMs = nil
         player.play()
