@@ -3,6 +3,7 @@ package introdetect
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 // Kind is the part of an episode a song marks.
@@ -120,8 +121,14 @@ func Detect(target File, others []File, themes []Theme, profile Profile) (Result
 func searchThemes(parts []Part, themes []Theme, kind Kind, profile Profile) (Segment, bool) {
 	minimum, maximum := profile.limits(kind)
 	var best Segment
-	bestLength := 0.0
+	bestScore := 0.0
 	for _, theme := range themes {
+		// A release's creditless file is the whole song (exact start and
+		// end); a song learned from episodes is trimmed by a second or two.
+		bonus := 0.0
+		if strings.HasPrefix(theme.Source, "extra") {
+			bonus = 10000
+		}
 		if theme.Kind != kind || len(theme.Points) == 0 {
 			continue
 		}
@@ -133,14 +140,14 @@ func searchThemes(parts []Part, themes []Theme, kind Kind, profile Profile) (Seg
 				start := part.Start + bStart - math.Min(aStart, edgeSlack)
 				end := part.Start + bStart + length + math.Min(themeLength-(aStart+length), edgeSlack)
 				start = math.Max(start, part.Start)
-				if end-start > maximum || length <= bestLength {
+				if end-start > maximum || length+bonus <= bestScore {
 					continue
 				}
-				best, bestLength = Segment{Start: start, End: end, Method: "theme"}, length
+				best, bestScore = Segment{Start: start, End: end, Method: "theme"}, length+bonus
 			}
 		}
 	}
-	return best, bestLength > 0
+	return best, bestScore > 0
 }
 
 // candidate is one other episode's shared stretch, in target coordinates.

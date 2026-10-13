@@ -156,3 +156,13 @@ func TestSilenceNeverMatches(t *testing.T) {
 		t.Fatal("silence matched silence")
 	}
 }
+
+// The release's creditless file wins over a song learned from episodes
+// (learned before the extras were read, it is trimmed at both ends).
+func TestCreditlessSongBeatsALearnedOne(t *testing.T) {
+	episodes := dbzEpisodes(t)
+	_, learned := Detect(episodes[1], episodes, nil, AnimeProfile)
+	themes := append(learned, Theme{Kind: Intro, Points: fixture(t, "dbz_op1_ja"), Source: "extra:pack:3"})
+	result, _ := Detect(episodes[1], nil, themes, AnimeProfile)
+	near(t, "ep15 intro", result.Intro, 25.0, 112.0, 0.6)
+}
