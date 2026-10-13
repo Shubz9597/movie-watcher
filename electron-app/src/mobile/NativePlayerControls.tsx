@@ -10,7 +10,10 @@ import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, 
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
-import { preferredSubtitleTrack, trackDisplayNames } from '../lib/track-labels';
+import { languageNameForCode, trackDisplayNames, trackLanguageName } from '../lib/track-labels';
+import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
+import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
+import { getDeviceId } from '../lib/device-id';
 import { skipActionAt } from '../lib/skip-action';
 import { cacheOfflineSkipSegments, markCreditsLookedUp, needsCreditsLookup, offlineSkipSegments } from '../lib/offline-skip-segments';
 import { bffSearch, bffTitleDetail } from '../lib/services/catalog-bff';
@@ -117,6 +120,9 @@ async function downloadSkipQuery(seriesId: string, season: number, episode: numb
   return { kind: 'tv', tmdbId, ...(detail.imdbId ? { imdbId: detail.imdbId } : {}), season: String(season), episode: String(episode) };
 }
 
+/** Overlay key of the server-matched dub script (not a fetchable URL). */
+const MATCHED_DUB_KEY = 'matched:dub';
+
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
   const total = Math.floor(seconds);
@@ -168,6 +174,17 @@ export default function NativePlayerControls(props: Props) {
     preferencesRef.current = { ...preferencesRef.current, ...patch };
     saveVideoPlaybackPreferences(savedVideo.key, preferencesRef.current);
   };
+  // Audio language and subtitle style are also remembered per show, so the
+  // next episode starts with the same choice (dub script, regular, off).
+  const showKey = seriesId ?? (anilistId ? `anilist:${anilistId}` : tmdbId ? `tmdb:${cat === 'movie' ? 'movie' : 'tv'}:${tmdbId}` : null);
+  const showPrefs = useRef<ShowPlaybackPrefs | null>(readShowPlaybackPrefs(showKey));
+  const rememberForShow = (patch: ShowPlaybackPrefs) => {
+    showPrefs.current = { ...showPrefs.current, ...patch };
+    saveShowPlaybackPrefs(showKey, patch);
+  };
+  // Subtitles follow the audio until the viewer picks one for this video.
+  const subtitleAuto = useRef(!savedVideo.preferences?.subtitle);
+  const showAudioApplied = useRef(Boolean(savedVideo.preferences?.audioTrack));
 
   const [hasVideo, setHasVideo] = useState(false);
   const [buffering, setBuffering] = useState<{ active: boolean; progress?: number }>({ active: true });
@@ -459,26 +476,133 @@ export default function NativePlayerControls(props: Props) {
   const subtitleNames = useMemo(() => trackDisplayNames(embeddedSubs.map((track) => track.label)), [embeddedSubs]);
   const audioNames = useMemo(() => trackDisplayNames(embeddedAudio.map((track) => track.label)), [embeddedAudio]);
 
-  // Without a saved choice, show the video's own full-dialogue subtitle in
-  // the preferred language (VLC's own default can be a signs-only track or
-  // none). Once per video; never over a saved or manual choice.
-  const autoSubtitleDone = useRef(false);
-  useEffect(() => {
-    if (autoSubtitleDone.current || !hasVideo || embeddedSubs.length === 0) return;
-    autoSubtitleDone.current = true;
-    if (preferencesRef.current.subtitle || pendingSubtitleRestore.current || activeSubtitleUrl !== null) return;
-    let preferred = 'en';
+  // --- Subtitles that follow the audio ---
+  // Without a choice for this video: the show's remembered style, else the
+  // dub's script when English (the subtitle language) dub audio plays on a
+  // dual-audio release, else the video's own full-dialogue subtitle (VLC's
+  // own default can be signs-only or none). Re-evaluated when the audio
+  // changes, until the viewer picks subtitles here.
+  const subtitleLang = useMemo(() => {
     try {
-      preferred = window.localStorage.getItem('mw_download_subtitle_lang') || 'en';
+      return window.localStorage.getItem('mw_download_subtitle_lang') || 'en';
     } catch {
-      // English by default.
+      return 'en';
     }
-    const current = embeddedSubs.find((track) => track.id === selectedEmbeddedSub);
-    const best = preferredSubtitleTrack(embeddedSubs, preferred);
-    if (!best || (current && preferredSubtitleTrack([current], preferred))) return;
-    player.selectSubtitleTrack(best.id);
-    setSelectedEmbeddedSub(best.id);
-  }, [hasVideo, embeddedSubs, selectedEmbeddedSub, activeSubtitleUrl, player]);
+  }, []);
+  const audioLangs = useMemo(() => audioLanguages(embeddedAudio), [embeddedAudio]);
+  const currentAudioLanguage = trackLanguageName(embeddedAudio.find((track) => track.id === selectedEmbeddedAudio)?.label);
+  const subtitleStyle = defaultSubtitleStyle(showPrefs.current, currentAudioLanguage, audioLangs, subtitleLang);
+  // The server's dub script matched to this video (WebVTT), for videos
+  // without a Dub track of their own: streams and older downloads.
+  const [matchedDub, setMatchedDub] = useState<string | null>(null);
+  const embeddedDub = subtitleTrackFor(embeddedSubs, subtitleLang, 'dub');
+  const wantsMatchedDub = hasVideo && subtitleStyle === 'dub' && !embeddedDub && audioLangs.length > 1;
+
+  // Remembered audio language for the show (once, when nothing is saved for
+  // this video).
+  useEffect(() => {
+    if (showAudioApplied.current || !hasVideo || embeddedAudio.length < 2) return;
+    showAudioApplied.current = true;
+    const wanted = showPrefs.current?.audioLanguage;
+    if (!wanted || currentAudioLanguage === wanted) return;
+    const track = embeddedAudio.find((candidate) => trackLanguageName(candidate.label) === wanted);
+    if (!track) return;
+    player.selectAudioTrack(track.id);
+    setSelectedEmbeddedAudio(track.id);
+  }, [hasVideo, embeddedAudio, currentAudioLanguage, player]);
+
+  useEffect(() => {
+    if (!subtitleAuto.current || !hasVideo || pendingSubtitleRestore.current) return;
+    if (embeddedSubs.length === 0 && !matchedDub) return;
+    if (subtitleStyle === 'off') {
+      if (selectedEmbeddedSub !== null || activeSubtitleUrl !== null) {
+        subtitleOperation.current++;
+        setOverlayCues(null);
+        setActiveSubtitleUrl(null);
+        player.selectSubtitleTrack(null);
+        setSelectedEmbeddedSub(null);
+      }
+      return;
+    }
+    const track = subtitleTrackFor(embeddedSubs, subtitleLang, subtitleStyle);
+    if (track) {
+      if (selectedEmbeddedSub !== track.id || activeSubtitleUrl !== null) {
+        subtitleOperation.current++;
+        setOverlayCues(null);
+        setActiveSubtitleUrl(null);
+        player.selectSubtitleTrack(track.id);
+        setSelectedEmbeddedSub(track.id);
+      }
+      return;
+    }
+    if (subtitleStyle === 'dub' && matchedDub) {
+      if (activeSubtitleUrl !== MATCHED_DUB_KEY) showOverlayText(matchedDub, 'vtt', MATCHED_DUB_KEY, ++subtitleOperation.current);
+      return;
+    }
+    // Regular subtitles (also while the dub's script is being matched).
+    const current = embeddedSubs.find((candidate) => candidate.id === selectedEmbeddedSub);
+    const regular = subtitleTrackFor(embeddedSubs, subtitleLang, 'regular');
+    if (!regular || activeSubtitleUrl !== null || (current && styleOfTrack(current.label) === 'regular' && subtitleTrackFor([current], subtitleLang, 'regular'))) return;
+    player.selectSubtitleTrack(regular.id);
+    setSelectedEmbeddedSub(regular.id);
+  }, [hasVideo, embeddedSubs, selectedEmbeddedSub, activeSubtitleUrl, subtitleStyle, matchedDub, subtitleLang, player]);
+
+  // Ask the server for the dub's script matched to this video; it measures
+  // the audio in the background (poll while pending). A download's copy is
+  // kept on the device for offline playback.
+  useEffect(() => {
+    if (!wantsMatchedDub || matchedDub) return;
+    if (downloadId) {
+      const cached = cachedMatchedSubtitle(downloadId);
+      if (cached) {
+        setMatchedDub(cached);
+        return;
+      }
+    }
+    let cancelled = false;
+    let timer: number | null = null;
+    const params = new URLSearchParams({ lang: subtitleLang });
+    if (downloadId) {
+      params.set('downloadId', downloadId);
+      params.set('clientId', getDeviceId());
+    } else {
+      params.set('magnet', magnet);
+      params.set('cat', cat);
+      params.set('fileIndex', String(fileIndex ?? 0));
+      params.set('season', String(season));
+      params.set('episode', String(episode));
+      params.set('title', title);
+      if (year) params.set('year', String(year));
+      if (imdbId) params.set('imdbId', imdbId);
+      if (tmdbId) params.set('tmdbId', String(tmdbId));
+      if (cat === 'anime' && anilistId) params.set('anilistId', String(anilistId));
+    }
+    const poll = async (attempt: number): Promise<void> => {
+      try {
+        const res = await fetch(`${getVodBase()}/subtitles/matched?${params.toString()}`, { signal: AbortSignal.timeout(15000) });
+        const data = res.ok ? await res.json() as { status?: string; dub?: boolean; url?: string } : {};
+        if (cancelled) return;
+        if (data.status === 'pending' && attempt < 25) {
+          timer = window.setTimeout(() => void poll(attempt + 1), 6000);
+          return;
+        }
+        if (data.status !== 'ready' || !data.dub || !data.url) return;
+        const file = await fetch(`${getVodBase()}${data.url}`, { signal: AbortSignal.timeout(15000) });
+        if (!file.ok || cancelled) return;
+        const vtt = await file.text();
+        if (cancelled) return;
+        if (downloadId) cacheMatchedSubtitle(downloadId, vtt);
+        setMatchedDub(vtt);
+      } catch {
+        // Offline or the server is unreachable: regular subtitles stay.
+      }
+    };
+    void poll(0);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [wantsMatchedDub, matchedDub, downloadId, magnet, cat, fileIndex, season, episode, title, year, imdbId, tmdbId, anilistId, subtitleLang]);
 
   // --- Subtitle catalog (server /subtitles/list) ---
   useEffect(() => {
@@ -606,21 +730,42 @@ export default function NativePlayerControls(props: Props) {
   // Sheet-loaded tracks render as the WEB overlay (pinch-resizable); embedded
   // tracks stay VLC-rendered. Choosing one kind always clears the other so
   // subtitles never render twice.
-  const applyOverlayFromUrl = async (selection: Extract<SavedSubtitle, { kind: 'external' }>, operation: number): Promise<boolean> => {
-    const url = selection.url.startsWith('http') ? selection.url : `${getVodBase()}${selection.url}`;
-    const res = await fetch(url, { headers: { Accept: 'text/vtt, text/plain, */*' }, signal: AbortSignal.timeout(20000) });
-    if (!res.ok) throw new Error(`subtitle download failed (${res.status})`);
-    const raw = await res.text();
-    const cues = parseSubtitles(raw, selection.format);
+  // Shows subtitle text as the overlay under `key` (the selected row).
+  function showOverlayText(raw: string, format: SubtitleFormat, key: string, operation: number): boolean {
+    const cues = parseSubtitles(raw, format);
     if (cues.length === 0) throw new Error('That subtitle file has no readable cues.');
     // A late download must not override Off, a manual track choice, or a
     // replaced player (including automatic restore requests).
     if (operation !== subtitleOperation.current) return false;
     setOverlayCues(cues);
     setSelectedEmbeddedSub(null);
-    setActiveSubtitleUrl(selection.url);
+    setActiveSubtitleUrl(key);
     player.selectSubtitleTrack(null); // never double-render over the overlay
     return true;
+  }
+  const applyOverlayFromUrl = async (selection: Extract<SavedSubtitle, { kind: 'external' }>, operation: number): Promise<boolean> => {
+    const url = selection.url.startsWith('http') ? selection.url : `${getVodBase()}${selection.url}`;
+    const res = await fetch(url, { headers: { Accept: 'text/vtt, text/plain, */*' }, signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error(`subtitle download failed (${res.status})`);
+    return showOverlayText(await res.text(), selection.format, selection.url, operation);
+  };
+
+  // The matched dub script chosen in the panel: remembered for the show
+  // (its URL is server-side and short-lived, so not saved per video).
+  const chooseMatchedDub = () => {
+    if (!matchedDub || loadingSubtitleUrl || importing) return;
+    pendingSubtitleRestore.current = null;
+    subtitleAuto.current = false;
+    setSubtitleError('');
+    try {
+      showOverlayText(matchedDub, 'vtt', MATCHED_DUB_KEY, ++subtitleOperation.current);
+      rememberForShow({ subtitle: 'dub' });
+      // It is already moved onto the dialogue; a delay set for another
+      // subtitle would shift it twice.
+      if (subtitleDelay !== 0) adjustDelay('subtitle', 0);
+    } catch {
+      setSubtitleError('Couldn’t load this subtitle.');
+    }
   };
 
   // Restore only after the native player is ready. Embedded inventories can
@@ -673,6 +818,8 @@ export default function NativePlayerControls(props: Props) {
   const chooseCatalogSubtitle = async (track: CatalogSubtitleTrack) => {
     if (loadingSubtitleUrl || importing) return;
     pendingSubtitleRestore.current = null;
+    subtitleAuto.current = false;
+    rememberForShow({ subtitle: 'regular' });
     const operation = ++subtitleOperation.current;
     const selection: Extract<SavedSubtitle, { kind: 'external' }> = {
       kind: 'external', url: track.url, format: (track.format || 'vtt') as SubtitleFormat,
@@ -692,6 +839,8 @@ export default function NativePlayerControls(props: Props) {
 
   const chooseEmbeddedSubtitle = (track: NativeTrackInfo) => {
     pendingSubtitleRestore.current = null;
+    subtitleAuto.current = false;
+    rememberForShow({ subtitle: styleOfTrack(track.label) });
     subtitleOperation.current++;
     setLoadingSubtitleUrl(null);
     setOverlayCues(null);
@@ -703,6 +852,8 @@ export default function NativePlayerControls(props: Props) {
 
   const disableSubtitles = () => {
     pendingSubtitleRestore.current = null;
+    subtitleAuto.current = false;
+    rememberForShow({ subtitle: 'off' });
     subtitleOperation.current++;
     setLoadingSubtitleUrl(null);
     setOverlayCues(null);
@@ -714,6 +865,9 @@ export default function NativePlayerControls(props: Props) {
 
   const chooseEmbeddedAudio = (track: NativeTrackInfo) => {
     pendingAudioRestore.current = null;
+    showAudioApplied.current = true;
+    const language = trackLanguageName(track.label);
+    if (language) rememberForShow({ audioLanguage: language });
     player.selectAudioTrack(track.id);
     setSelectedEmbeddedAudio(track.id);
     savePreferences({ audioTrack: track });
@@ -730,6 +884,7 @@ export default function NativePlayerControls(props: Props) {
     }
     setImporting(true);
     pendingSubtitleRestore.current = null;
+    subtitleAuto.current = false;
     setSubtitleError('');
     const operation = ++subtitleOperation.current;
     const origin = getVodBase();
@@ -999,6 +1154,15 @@ export default function NativePlayerControls(props: Props) {
                   onClick={() => chooseEmbeddedSubtitle(track)}
                 />
               ))}
+              {matchedDub && !embeddedDub ? (
+                <TrackRow
+                  selected={activeSubtitleUrl === MATCHED_DUB_KEY}
+                  label={`${languageNameForCode(subtitleLang) || 'English'} · Dub`}
+                  detail="Matched to this video"
+                  disabled={!!loadingSubtitleUrl || importing}
+                  onClick={chooseMatchedDub}
+                />
+              ) : null}
               {!showOnlineList ? null : catalog.map((track) => (
                 <TrackRow
                   key={track.url}

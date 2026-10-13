@@ -54,6 +54,11 @@ try {
     const json = body => request.respond({status:200,contentType:'application/json',body:JSON.stringify(body)});
     if (url.pathname === '/subtitles/list') return json({tracks:[{source:'opensub',lang:'en',label:'English',fileName:'release-a.srt',url:'/subtitles/external?source=opensub&id=100',format:'vtt'}]});
     if (url.pathname === '/skip-segments') return json({segments:[]});
+    // The server matches a dub script only for the dual-audio stream scenario.
+    if (url.pathname === '/subtitles/matched') return json(url.searchParams.get('episode') === '32'
+      ? {status:'ready', lang:'en', dub:true, offset:-4, fit:0.77, url:'/subtitles/matched/file?key=smoke'}
+      : {status:'none', lang:'en'});
+    if (url.pathname === '/subtitles/matched/file') return request.respond({status:200,contentType:'text/vtt',body:'WEBVTT\n\nNOTE torwatch-variant: dub\n\n00:00:14.000 --> 00:00:16.000\nMatched dub line\n'});
     if (url.pathname === '/subtitles/external') {
       downloads++;
       const respond = () => request.respond({status:200,contentType:'text/vtt',body:'WEBVTT\n\n00:00:14.000 --> 00:00:16.000\nSaved subtitle dialogue\n'});
@@ -201,7 +206,33 @@ try {
   assert.equal(await page.evaluate(() => [...document.querySelectorAll('button[aria-pressed="true"] span')].map(el => el.textContent).includes('English · Full Subtitles')), true);
   await page.click('button[aria-label="Close Audio and subtitles"]');
   assert.deepEqual(errors, []);
-  console.log('Video preferences smoke passed: default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
+  // Dual-audio release, English dub audio: the dub's script is chosen; with
+  // Japanese audio the translation is.
+  const dualAudio = [{id:1,label:'Track 1 - [English]',language:'en'},{id:2,label:'Track 2 - [Japanese]',language:'ja'}];
+  await mount({episode:31});
+  await page.evaluate(audio => {
+    window.emit('State','paused');
+    window.emit('Time',{currentTime:10,duration:1400});
+    window.emit('Tracks',{audio, subtitles:[{id:4,label:'Track 1 - [English]',language:'en'},{id:5,label:'Dub - [English]',language:'en'}], selectedAudioTrackId:1, selectedSubtitleTrackId:4});
+  }, dualAudio);
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'selectSubtitleTrack' && value === 5));
+  await page.evaluate(audio => {
+    window.calls = [];
+    window.emit('Tracks',{audio, subtitles:[{id:4,label:'Track 1 - [English]',language:'en'},{id:5,label:'Dub - [English]',language:'en'}], selectedAudioTrackId:2, selectedSubtitleTrackId:5});
+  }, dualAudio);
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'selectSubtitleTrack' && value === 4));
+
+  // A stream without a Dub track: the server-matched dub script is shown.
+  await mount({episode:32});
+  await page.evaluate(audio => {
+    window.emit('State','paused');
+    window.emit('Tracks',{audio, subtitles:[{id:4,label:'Track 1 - [English]',language:'en'}], selectedAudioTrackId:1, selectedSubtitleTrackId:4});
+    window.emit('Time',{currentTime:15,duration:1400});
+  }, dualAudio);
+  await page.waitForFunction(() => document.body.innerText.includes('Matched dub line'));
+  assert.ok(await page.evaluate(() => window.calls.some(([name, value]) => name === 'selectSubtitleTrack' && value === null)), 'the embedded translation is turned off under the dub overlay');
+
+  console.log('Video preferences smoke passed: dub script for dub audio, translation for Japanese, matched dub for streams, default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
 } finally {
   await pendingResponse?.().catch(() => {});
   await browser?.close();

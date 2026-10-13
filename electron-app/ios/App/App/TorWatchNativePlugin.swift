@@ -93,6 +93,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // The video track switched off while the app is in the background (see
     // releaseVideoForBackground), restored when the app returns.
     private var videoTrackBeforeBackground: Int32?
+    // Names for a download's subtitle files, in attachment order. VLC lists
+    // them after the video's own tracks as plain "Track N".
+    private var localSidecarLabels: [String] = []
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -153,10 +156,27 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private func attachLocalSidecars(selecting lang: String) {
         guard let downloadId = localDownloadId,
               let files = try? DownloadCoordinator.shared.store.readyFileURLs(downloadId) else { return }
+        localSidecarLabels = []
         for sidecar in files.subtitles {
             let selected = !lang.isEmpty && sidecar.lang == lang
-            _ = mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: selected)
+            if mediaPlayer?.addPlaybackSlave(sidecar.url, type: .subtitle, enforce: selected) == 0 {
+                localSidecarLabels.append(Self.sidecarLabel(sidecar.url, lang: sidecar.lang))
+            }
         }
+    }
+
+    /// "Dub - [English]" for a subtitle the server matched to a dual-audio
+    /// release's dub (its WebVTT NOTE says so), else "Downloaded - [English]";
+    /// the web layer shows these as "English · Dub" / "English · Downloaded".
+    private static func sidecarLabel(_ url: URL, lang: String) -> String {
+        let language = Locale(identifier: "en_US").localizedString(forLanguageCode: lang) ?? lang
+        var head = ""
+        if let handle = try? FileHandle(forReadingFrom: url) {
+            head = String(decoding: (try? handle.read(upToCount: 512)) ?? Data(), as: UTF8.self)
+            try? handle.close()
+        }
+        let kind = head.contains("torwatch-variant: dub") ? "Dub" : "Downloaded"
+        return "\(kind) - [\(language)]"
     }
 
     /// Removal while playing: the surface must close BEFORE the files go
@@ -680,6 +700,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             guard let id = (subIndexes[index] as? NSNumber)?.int32Value, id >= 0 else { continue }
             subs.append(["id": id, "label": name])
         }
+        // A download's subtitle files are the last tracks, in attachment order.
+        if localDownloadId != nil, !localSidecarLabels.isEmpty, subs.count >= localSidecarLabels.count {
+            let first = subs.count - localSidecarLabels.count
+            for (offset, label) in localSidecarLabels.enumerated() {
+                subs[first + offset]["label"] = label
+            }
+        }
         reportedAudioTrack = player.currentAudioTrackIndex
         reportedSubtitleTrack = player.currentVideoSubTitleIndex
         notifyListeners("tracksUpdate", data: ["audio": audio, "subtitles": subs, "playId": playId,
@@ -765,6 +792,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pausedPositionMs = nil
         playbackRequested = false
         videoTrackBeforeBackground = nil
+        localSidecarLabels = []
         subtitleDownloads.forEach { $0.cancel() }
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }

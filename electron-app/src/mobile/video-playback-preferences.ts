@@ -86,7 +86,11 @@ export function saveVideoPlaybackPreferences(key: string | null, preferences: Vi
 
 /** IDs can change when a native engine enumerates the same file again. */
 export function matchingSavedTrack<T extends SavedTrack>(tracks: T[], saved: SavedTrack): T | null {
-  const matches = (track: T) => (!saved.label || track.label === saved.label)
+  // VLC's generic "Track N" says nothing about the track, and a download's
+  // subtitle files once named so are now labelled ("Dub - [English]"): such
+  // a choice matches by id.
+  const generic = !!saved.label && /^track \d+$/i.test(saved.label.trim());
+  const matches = (track: T) => (!saved.label || generic || track.label === saved.label)
     && (!saved.language || track.language === saved.language);
   const byId = tracks.find(track => track.id === saved.id && matches(track));
   if (byId) return byId;

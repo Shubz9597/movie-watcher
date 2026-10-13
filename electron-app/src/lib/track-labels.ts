@@ -62,6 +62,21 @@ export function trackDisplayNames(labels: ReadonlyArray<string | undefined>): st
   });
 }
 
+/** The English name of a track's language ("English"), or "" when unknown. */
+export function trackLanguageName(raw: string | undefined): string {
+  return raw ? parseTrack(raw).language : '';
+}
+
+/** English name for an ISO 639-1 code ("en" -> "English"), or "". */
+export function languageNameForCode(code: string): string {
+  return LANGUAGE_NAMES[code.toLowerCase()] ?? '';
+}
+
+/** A subtitle the server matched to a dual-audio release's dub ("Dub - [English]"). */
+export function isDubTrack(raw: string | undefined): boolean {
+  return raw ? /^dub\b/i.test(parseTrack(raw).title) : false;
+}
+
 const PARTIAL_TRACK = /\b(signs?|songs?|forced|karaoke|commentary)\b/i;
 
 /** True when the track carries the full dialogue in `language` (ISO 639-1). */

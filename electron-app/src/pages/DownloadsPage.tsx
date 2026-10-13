@@ -16,6 +16,7 @@ import { getNativeDownloads } from '../mobile/downloads-adapter';
 import { getDeviceId } from '../lib/device-id';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
+import { forgetMatchedSubtitle } from '../lib/subtitle-style';
 import { downloadMeta, forgetDownloadMeta } from '../lib/offline-download-meta';
 import { describePreparing, preparingFraction } from '../lib/preparing-status';
 import { useLongPress } from '../lib/long-press';
@@ -389,6 +390,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     try {
       await downloads.remove(item.downloadId);
       forgetOfflineSkipSegments(item.downloadId);
+      forgetMatchedSubtitle(item.downloadId);
       forgetDownloadMeta(item.downloadId);
       setPendingRemoval(null);
       setReloadKey((key) => key + 1);
@@ -446,6 +448,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       try {
         await downloads.remove(item.downloadId);
         forgetOfflineSkipSegments(item.downloadId);
+        forgetMatchedSubtitle(item.downloadId);
+      forgetMatchedSubtitle(item.downloadId);
         forgetDownloadMeta(item.downloadId);
       } catch {
         failed.push(item.downloadId);
