@@ -143,8 +143,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             }
             self.videoScaleMode = TorWatchNativePlugin.savedVideoScaleMode() // the viewer's last Fit/Fill choice
             self.currentMediaURL = files.video
-            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId)
-            self.attachLocalSidecars(selecting: subtitleLang)
+            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId, localSubtitleLang: subtitleLang)
             call.resolve(["resumedPositionS": seekTo ?? 0])
         }
     }
@@ -235,7 +234,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// recreation when embedded subtitles are active and the user pinch-
     /// resizes — libvlc has no runtime text-scale API, so the engine rebuilds
     /// at the current position with a ~1s hiccup).
-    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String, localDownloadId newLocalDownloadId: String?) {
+    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String, localDownloadId newLocalDownloadId: String?, localSubtitleLang: String? = nil) {
         // Replacement safety: tear the previous player down BEFORE creating
         // the new one; late events from it are ignored via terminalSent. The
         // orientation stays landscape: restoring portrait here rotated every
@@ -252,6 +251,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let player = VLCMediaPlayer(options: [
             "--audio-time-stretch",
             "--network-caching=1000", // server prebuffers the torrent; keep decoder catch-up bounded
+            // Downloads get the same start-up buffer as streams. VLC's 300 ms
+            // file default left too little time to start the hardware HEVC
+            // decoder and the 5.1 downmix: choppy sound and late frames at 0:00.
+            "--file-caching=1000",
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
         ])
@@ -305,6 +308,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pendingSeek = startsAtResume ? nil : seekTo
         playbackRequested = true
         pausedPositionMs = nil
+        // Downloaded subtitles join the media before it opens, not while
+        // playback is starting.
+        if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
         player.play()
     }
 
@@ -504,10 +510,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId, localDownloadId: currentLocalDownload)
         // Downloaded subtitles are playback slaves: a rebuilt engine has none
         // until they are attached again (resizing used to make them vanish).
-        if currentLocalDownload != nil { attachLocalSidecars(selecting: currentLocalLang) }
+        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId,
+            localDownloadId: currentLocalDownload, localSubtitleLang: currentLocalDownload != nil ? currentLocalLang : nil)
         call.resolve()
     }
 

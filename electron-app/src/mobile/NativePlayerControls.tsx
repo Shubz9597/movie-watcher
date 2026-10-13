@@ -628,8 +628,10 @@ export default function NativePlayerControls(props: Props) {
     if (!hasVideo) return;
     if (!timingRestored.current) {
       timingRestored.current = true;
-      player.setSubtitleDelay(preferencesRef.current.subtitleDelay);
-      player.setAudioDelay(preferencesRef.current.audioDelay);
+      // A new player has no delay; only a saved one is worth a live change
+      // while playback is starting.
+      if (preferencesRef.current.subtitleDelay !== 0) player.setSubtitleDelay(preferencesRef.current.subtitleDelay);
+      if (preferencesRef.current.audioDelay !== 0) player.setAudioDelay(preferencesRef.current.audioDelay);
     }
     const audio = pendingAudioRestore.current;
     if (audio) {
