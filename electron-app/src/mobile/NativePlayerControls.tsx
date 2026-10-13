@@ -286,14 +286,16 @@ export default function NativePlayerControls(props: Props) {
     };
   }, [player]);
 
-  // Brief cache refills should not flash a loading screen over a movie.
-  // Completion cancels the pending indicator immediately; no minimum stall.
+  // Brief cache refills and seeks should not flash a spinner over a movie.
+  // VLC's final "buffering done" event arrives once playback has resumed and
+  // clears after two clock steps (~0.75 s); 0.9 s keeps that from flashing
+  // while a real stall still shows. Completion cancels it immediately.
   useEffect(() => {
     if (!hasVideo || !buffering.active || !playing) {
       setShowRebuffering(false);
       return;
     }
-    const timer = window.setTimeout(() => setShowRebuffering(true), 450);
+    const timer = window.setTimeout(() => setShowRebuffering(true), 900);
     return () => window.clearTimeout(timer);
   }, [hasVideo, buffering.active, playing]);
 

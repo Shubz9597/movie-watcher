@@ -336,12 +336,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if playbackRequested {
             pausePlayback(player)
         } else {
-            // Flush queued pre-pause audio/video at the exact pause position.
-            // Normal unpause can replay the old decoder queue while its
-            // picture waits for the clock to catch up. Never rewind here.
-            if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
-                player.time = VLCTime(int: position)
-            }
+            // A plain unpause continues from the frames VLC already decoded:
+            // instant, for downloads and streams alike. Seeking here made
+            // every Play decode up from the previous keyframe (10 s apart in
+            // x265 anime releases) and flash the buffering spinner. The
+            // frozen picture that seek was meant to fix came from leaving the
+            // app; restoreVideoAfterBackground handles that.
             pausedPositionMs = nil
             playbackRequested = true
             player.play()
