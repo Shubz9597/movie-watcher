@@ -90,6 +90,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var activeObserver: NSObjectProtocol?
+    // The video track switched off while the app is in the background (see
+    // releaseVideoForBackground), restored when the app returns.
+    private var videoTrackBeforeBackground: Int32?
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -287,8 +290,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self = self, let player = self.mediaPlayer, self.playbackRequested else { return }
-            self.pausePlayback(player)
+            guard let self = self, let player = self.mediaPlayer else { return }
+            if self.playbackRequested { self.pausePlayback(player) }
+            self.releaseVideoForBackground(player)
         }
         mediaPlayer = player
         pendingSeek = seekTo
@@ -705,6 +709,35 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.requestOrientation(TorWatchPlaybackState.videoAttached)
+            // VLC's video view handles the same notification; restore after it.
+            DispatchQueue.main.async { self?.restoreVideoAfterBackground() }
+        }
+    }
+
+    /// iOS discards a backgrounded app's hardware video decoder. VLC then
+    /// rebuilds it on return and has no picture until the next keyframe:
+    /// after Play the sound ran for 5-10 s over a frozen frame. Switching the
+    /// video track off in the background leaves nothing to discard (as VLC
+    /// for iOS does).
+    private func releaseVideoForBackground(_ player: VLCMediaPlayer) {
+        guard !terminalSent, videoTrackBeforeBackground == nil else { return }
+        let track = player.currentVideoTrackIndex
+        guard track >= 0 else { return }
+        videoTrackBeforeBackground = track
+        player.currentVideoTrackIndex = -1
+    }
+
+    /// Back in the app: a fresh decoder for the video track, and the paused
+    /// position again so it decodes from the keyframe before it rather than
+    /// waiting for the next one.
+    private func restoreVideoAfterBackground() {
+        guard let player = mediaPlayer, !terminalSent, let track = videoTrackBeforeBackground,
+              UIApplication.shared.applicationState == .active else { return }
+        videoTrackBeforeBackground = nil
+        player.currentVideoTrackIndex = track
+        applyVideoScale(player)
+        if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
+            player.time = VLCTime(int: position)
         }
     }
 
@@ -718,6 +751,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pendingSeek = nil
         pausedPositionMs = nil
         playbackRequested = false
+        videoTrackBeforeBackground = nil
         subtitleDownloads.forEach { $0.cancel() }
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
