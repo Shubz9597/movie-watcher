@@ -52,8 +52,11 @@ func TestStoreKeepsWhatDetectionNeeds(t *testing.T) {
 	near(t, "ep15 intro", result.Intro, 26.3, 109.7, 1.5)
 	for i, theme := range learned {
 		theme.Source = "episodes:test:" + string(rune('a'+i))
-		if err := store.SaveTheme(ctx, series, theme); err != nil {
-			t.Fatal(err)
+		if added, err := store.SaveTheme(ctx, series, theme); err != nil || !added {
+			t.Fatalf("save: added=%v err=%v", added, err)
+		}
+		if added, _ := store.SaveTheme(ctx, series, theme); added {
+			t.Fatal("the same song was added twice")
 		}
 	}
 	themes, err := store.Themes(ctx, series)

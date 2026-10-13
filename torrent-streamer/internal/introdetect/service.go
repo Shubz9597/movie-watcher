@@ -36,6 +36,7 @@ type Service struct {
 	mu        sync.Mutex
 	flights   map[string]*flight
 	anime     map[int]animeIDs // MAL id -> AniList/TMDb ids
+	extras    map[string]bool  // torrents whose extras are learned or being learned
 }
 
 type flight struct {
@@ -66,6 +67,7 @@ func NewService(db *sql.DB, listenAddr string) *Service {
 		measuring: make(chan struct{}, 1),
 		flights:   map[string]*flight{},
 		anime:     map[int]animeIDs{},
+		extras:    map[string]bool{},
 	}
 }
 
@@ -125,7 +127,7 @@ func (s *Service) Detect(ctx context.Context, ref Ref, input string, source Sour
 	result, learned := Detect(file, others, themes, profile)
 	for i, theme := range learned {
 		theme.Source = "episodes:" + file.Key + ":" + strconv.Itoa(i)
-		if err := s.Store.SaveTheme(ctx, ref.SeriesKey, theme); err != nil {
+		if _, err := s.Store.SaveTheme(ctx, ref.SeriesKey, theme); err != nil {
 			log.Printf("[intro] saving a %s song for %s: %v", theme.Kind, ref.SeriesKey, err)
 		}
 	}
@@ -145,6 +147,16 @@ var extraName = regexp.MustCompile(`(?i)(^|[^a-z0-9])(nc ?op|nc ?ed|creditless|o
 // learnExtras turns a release's creditless openings and endings (OP1.mkv,
 // NCED2.mkv...) into the show's songs, once per file.
 func (s *Service) learnExtras(ctx context.Context, ref Ref, source Source) {
+	// Once per torrent and show: detections of several episodes of a pack
+	// run together and would all fetch the same files.
+	key := ref.SeriesKey + "|" + ref.InfoHash
+	s.mu.Lock()
+	if s.extras[key] {
+		s.mu.Unlock()
+		return
+	}
+	s.extras[key] = true
+	s.mu.Unlock()
 	cl, err := torrentx.GetClientFor(source.Cat)
 	if err != nil {
 		return
@@ -184,7 +196,7 @@ func (s *Service) learnExtras(ctx context.Context, ref Ref, source Source) {
 		if err != nil || len(points) < 10*PointsPerSecond {
 			continue
 		}
-		if err := s.Store.SaveTheme(ctx, ref.SeriesKey, Theme{Kind: kind, Points: points, Source: themeSource}); err == nil {
+		if added, err := s.Store.SaveTheme(ctx, ref.SeriesKey, Theme{Kind: kind, Points: points, Source: themeSource}); err == nil && added {
 			learned++
 			log.Printf("[intro] %s: %s song from %s", ref.SeriesKey, kind, name)
 		}

@@ -106,11 +106,16 @@ func (s *Store) HasTheme(ctx context.Context, seriesKey, source string) (bool, e
 	return n > 0, err
 }
 
-func (s *Store) SaveTheme(ctx context.Context, seriesKey string, theme Theme) error {
-	_, err := s.DB.ExecContext(ctx, `
+// SaveTheme keeps a song; added is false when the show already has it.
+func (s *Store) SaveTheme(ctx context.Context, seriesKey string, theme Theme) (added bool, err error) {
+	res, err := s.DB.ExecContext(ctx, `
 INSERT INTO skip_themes (series_key, kind, source, data) VALUES ($1,$2,$3,$4)
 ON CONFLICT (series_key, kind, source) DO NOTHING`, seriesKey, string(theme.Kind), theme.Source, EncodePoints(theme.Points))
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func fileKey(infoHash string, fileIndex int) string {
