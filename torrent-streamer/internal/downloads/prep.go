@@ -20,6 +20,7 @@ import (
 	"github.com/anacrolix/torrent"
 
 	"torrent-streamer/internal/config"
+	"torrent-streamer/internal/introdetect"
 	"torrent-streamer/internal/torrentx"
 )
 
@@ -36,7 +37,10 @@ type Prepper struct {
 	Repo  *torrentx.Repo
 	// Subtitles is the optional provider fallback for requested languages
 	// the torrent does not carry. Nil means torrent sidecars only.
-	Subtitles     SubtitleSource
+	Subtitles SubtitleSource
+	// Intro, when set, fingerprints each prepared episode to find its
+	// opening and ending (internal/introdetect).
+	Intro         *introdetect.Service
 	DownloadRoot  string        // resolved absolute downloads root
 	MaxConcurrent int           // bounded admission (default 1)
 	InfoTimeout   time.Duration // metadata wait per job (default 10m)
@@ -423,6 +427,17 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	if videoSize != file.Length() {
 		fail(ReasonPreparationFailed, fmt.Errorf("incomplete copy: %d of %d bytes", videoSize, file.Length()))
 		return
+	}
+	if p.Intro != nil {
+		// Opening/ending detection reads the staged copy (seconds of CPU);
+		// it never fails the download.
+		introCtx, cancelIntro := context.WithTimeout(jobCtx, 3*time.Minute)
+		p.Intro.DetectPrepared(introCtx, introdetect.Ref{
+			InfoHash: strings.ToLower(t.InfoHash().HexString()), FileIndex: fileIdx,
+			SeriesKey: job.SeriesID, Season: job.Season, Episode: job.Episode,
+			ShowKind: introdetect.ShowKindFor(job.SeriesID, cat),
+		}, filepath.Join(staged, "video"+ext), introdetect.Source{Magnet: pick.Magnet, Cat: cat})
+		cancelIntro()
 	}
 
 	setProgressStage(job.ID, StageFinalizing, nil, nil)

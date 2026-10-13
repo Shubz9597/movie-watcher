@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"torrent-streamer/internal/downloads"
 	"torrent-streamer/internal/httpapi"
 	"torrent-streamer/internal/imdb"
+	"torrent-streamer/internal/introdetect"
 	"torrent-streamer/internal/janitor"
 	"torrent-streamer/internal/library"
 	"torrent-streamer/internal/middleware"
@@ -202,6 +204,22 @@ func main() {
 	httpapi.SubtitleMatchHandlers{Jobs: downloads.NewStore(db), Picks: pickRepo, ListenAddr: config.ListenAddr()}.Register(mux)
 	httpapi.RegisterTasteRoutes(mux, taste.New(db))
 	mux.HandleFunc("/skip-segments", skipsegments.Handler)
+	// Openings and endings found in the show's own files replace the skip
+	// providers' (which miss episodes and use other releases' timings).
+	introService := introdetect.NewService(db, config.ListenAddr())
+	skipsegments.Detected = func(ctx context.Context, q url.Values) (*skipsegments.Segment, *skipsegments.Segment, bool) {
+		result, ok := introService.ForSkipRequest(ctx, q)
+		if !ok {
+			return nil, nil, false
+		}
+		convert := func(kind string, segment *introdetect.Segment) *skipsegments.Segment {
+			if segment == nil {
+				return nil
+			}
+			return &skipsegments.Segment{Type: kind, Start: segment.Start, End: segment.End, Provider: "torwatch"}
+		}
+		return convert("intro", result.Intro), convert("credits", result.Credits), true
+	}
 	httpapi.TorrentSearchHandlers{Service: torrentSearch}.Register(mux)
 	httpapi.IMDbRatingHandlers{Ratings: imdbStore}.Register(mux)
 
@@ -236,6 +254,7 @@ func main() {
 		// Requested subtitle languages missing from the torrent fall back to
 		// the OpenSubtitles credential the player already uses.
 		downloadPrepper.Subtitles = httpapi.DownloadSubtitleSource{}
+		downloadPrepper.Intro = introService
 		if released, err := downloadPrepper.ReconcileStartup(rootCtx); err != nil {
 			log.Printf("[boot] downloads.offline.v1 unavailable: reconciliation failed: %v", err)
 			downloadPrepper = nil

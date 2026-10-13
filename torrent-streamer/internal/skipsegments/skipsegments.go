@@ -292,6 +292,35 @@ func writeCache(key string, segments []Segment) {
 	delete(cache, oldestKey)
 }
 
+// Detected, when set, returns the intro and credits found in the episode's
+// own file (internal/introdetect); they replace a provider's of the same
+// kind (providers' timings come from other releases and miss episodes).
+var Detected func(ctx context.Context, q url.Values) (intro, credits *Segment, ok bool)
+
+// withDetected merges detected segments into a copy of the providers'.
+func withDetected(ctx context.Context, q url.Values, segments []Segment) []Segment {
+	if Detected == nil {
+		return segments
+	}
+	intro, credits, ok := Detected(ctx, q)
+	if !ok || (intro == nil && credits == nil) {
+		return segments
+	}
+	merged := make([]Segment, 0, len(segments)+2)
+	for _, s := range segments {
+		if (s.Type == "intro" && intro != nil) || (s.Type == "credits" && credits != nil) {
+			continue
+		}
+		merged = append(merged, s)
+	}
+	for _, s := range []*Segment{intro, credits} {
+		if s != nil {
+			merged = append(merged, *s)
+		}
+	}
+	return dedupeAndSort(merged)
+}
+
 // Handler serves GET /skip-segments.
 func Handler(w http.ResponseWriter, r *http.Request) {
 	middleware.EnableCORS(w)
@@ -319,7 +348,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	key := cacheKey(kind, q, duration, season, episode)
 	if cached := readCache(key); cached != nil {
-		writeSegments(w, cached)
+		writeSegments(w, withDetected(r.Context(), q, cached))
 		return
 	}
 
@@ -391,7 +420,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		segments = []Segment{}
 	}
 	writeCache(key, segments)
-	writeSegments(w, segments)
+	writeSegments(w, withDetected(r.Context(), q, segments))
 }
 
 var imdbIDPattern = regexp.MustCompile(`^tt\d{7,10}$`)
