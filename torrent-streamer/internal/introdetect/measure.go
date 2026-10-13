@@ -76,10 +76,10 @@ func Measure(ctx context.Context, ffmpeg, ffprobe, input string, profile Profile
 	return head, tail, duration, nil
 }
 
-// MeasureWhole fingerprints the first audio track of a short file (a
-// creditless opening or ending).
-func MeasureWhole(ctx context.Context, ffmpeg, input string, maxSeconds int) ([]uint32, error) {
-	pcm, err := decode(ctx, ffmpeg, input, 0, 0, maxSeconds)
+// MeasureWhole fingerprints one audio track of a short file (a creditless
+// opening or ending).
+func MeasureWhole(ctx context.Context, ffmpeg, input string, track, maxSeconds int) ([]uint32, error) {
+	pcm, err := decode(ctx, ffmpeg, input, track, 0, maxSeconds)
 	if err != nil {
 		return nil, err
 	}

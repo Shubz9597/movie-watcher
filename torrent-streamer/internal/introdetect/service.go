@@ -171,9 +171,9 @@ func (s *Service) learnExtras(ctx context.Context, ref Ref, source Source) {
 	if err != nil {
 		return
 	}
-	learned := 0
+	extraFiles := 0
 	for index, file := range t.Files() {
-		if learned >= maxExtras || index == ref.FileIndex || file.Length() > 150<<20 {
+		if extraFiles >= maxExtras || index == ref.FileIndex || file.Length() > 150<<20 {
 			continue
 		}
 		name := path.Base(file.DisplayPath())
@@ -188,17 +188,29 @@ func (s *Service) learnExtras(ctx context.Context, ref Ref, source Source) {
 		if word := strings.ToLower(strings.ReplaceAll(m[2], " ", "")); strings.HasSuffix(word, "ed") || word == "ending" {
 			kind = Credits
 		}
-		themeSource := "extra:" + ref.InfoHash + ":" + strconv.Itoa(index)
-		if has, err := s.Store.HasTheme(ctx, ref.SeriesKey, themeSource); err != nil || has {
+		extraFiles++
+		// Every audio track: a dub's opening can be another recording than
+		// the original's (Dragon Ball Z Kai's early English episodes).
+		input := s.StreamURL(source.Cat, source.Magnet, index)
+		tracks, _, err := Probe(ctx, ffTool(config.FFprobePath(), "ffprobe"), input)
+		if err != nil || tracks == 0 {
 			continue
 		}
-		points, err := MeasureWhole(ctx, ffTool(config.FFmpegPath(), "ffmpeg"), s.StreamURL(source.Cat, source.Magnet, index), extraSeconds)
-		if err != nil || len(points) < 10*PointsPerSecond {
-			continue
-		}
-		if added, err := s.Store.SaveTheme(ctx, ref.SeriesKey, Theme{Kind: kind, Points: points, Source: themeSource}); err == nil && added {
-			learned++
-			log.Printf("[intro] %s: %s song from %s", ref.SeriesKey, kind, name)
+		for track := range min(tracks, maxTracks) {
+			themeSource := "extra:" + ref.InfoHash + ":" + strconv.Itoa(index)
+			if track > 0 {
+				themeSource += ":t" + strconv.Itoa(track)
+			}
+			if has, err := s.Store.HasTheme(ctx, ref.SeriesKey, themeSource); err != nil || has {
+				continue
+			}
+			points, err := MeasureWhole(ctx, ffTool(config.FFmpegPath(), "ffmpeg"), input, track, extraSeconds)
+			if err != nil || len(points) < 10*PointsPerSecond {
+				continue
+			}
+			if added, err := s.Store.SaveTheme(ctx, ref.SeriesKey, Theme{Kind: kind, Points: points, Source: themeSource}); err == nil && added {
+				log.Printf("[intro] %s: %s song from %s (audio track %d)", ref.SeriesKey, kind, name, track+1)
+			}
 		}
 	}
 }
