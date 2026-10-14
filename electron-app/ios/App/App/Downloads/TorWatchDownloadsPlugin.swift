@@ -79,10 +79,18 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         ) { [weak self] _ in
             self?.coordinator.reconcile()
         }
+        // While the app stays open, check the queue now and then too: a
+        // transfer that stopped receiving data is restarted, and the next
+        // download starts when one ends (timers do not run in background).
+        queueTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard UIApplication.shared.applicationState == .active else { return }
+            self?.coordinator.startNextIfIdle()
+        }
     }
 
     private var routeObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
+    private var queueTimer: Timer?
 
     /// Retained until the web listener attaches (cold launch ordering).
     private func emitPendingRoute() {

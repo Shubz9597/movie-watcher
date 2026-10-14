@@ -20,7 +20,7 @@ import '/globals.css';
 setBackendOrigin(location.origin);
 const events = {};
 window.calls = [];
-const player = {seekTo(){}, seekBy(){}, togglePlayback(){window.calls.push(['togglePlayback']);}, setVideoScale(){}, setEmbeddedSubtitleScale(){}, loadSubtitle:async()=>null};
+const player = {seekTo(value){window.calls.push(['seekTo', value]);}, seekBy(){}, togglePlayback(){window.calls.push(['togglePlayback']);}, setVideoScale(){}, setEmbeddedSubtitleScale(){}, loadSubtitle:async()=>null};
 for (const name of ['setSubtitleDelay','setAudioDelay','selectSubtitleTrack','selectAudioTrack']) player[name] = value => window.calls.push([name, value]);
 for (const name of ['Time','State','Buffering','Tracks']) player['subscribe' + name] = callback => {events[name]=callback; return () => {delete events[name];};};
 const root = createRoot(document.getElementById('root'));
@@ -53,7 +53,9 @@ try {
     const url = new URL(request.url());
     const json = body => request.respond({status:200,contentType:'application/json',body:JSON.stringify(body)});
     if (url.pathname === '/subtitles/list') return json({tracks:[{source:'opensub',lang:'en',label:'English',fileName:'release-a.srt',url:'/subtitles/external?source=opensub&id=100',format:'vtt'}]});
-    if (url.pathname === '/skip-segments') return json({segments:[]});
+    if (url.pathname === '/skip-segments') return json(url.searchParams.get('episode') === '51'
+      ? {segments:[{type:'intro', start:25, end:112, provider:'torwatch'}]}
+      : {segments:[]});
     // The server matches a dub script only for the dual-audio stream scenario.
     if (url.pathname === '/subtitles/matched') return json(url.searchParams.get('episode') === '32'
       ? {status:'ready', lang:'en', dub:true, offset:-4, fit:0.77, url:'/subtitles/matched/file?key=smoke'}
@@ -232,7 +234,44 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes('Matched dub line'));
   assert.ok(await page.evaluate(() => window.calls.some(([name, value]) => name === 'selectSubtitleTrack' && value === null)), 'the embedded translation is turned off under the dub overlay');
 
-  console.log('Video preferences smoke passed: dub script for dub audio, translation for Japanese, matched dub for streams, default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
+  // The skip button takes taps anywhere on it, also while the controls
+  // (and their bottom bar) show: it used to sit under the bar's top part.
+  await page.setViewport({width:874,height:402});
+  await mount({episode:51});
+  await page.evaluate(() => window.emit('State','playing'));
+  await page.evaluate(() => window.emit('Time',{currentTime:30,duration:1400}));
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Skip intro'));
+  const skipHits = await page.evaluate(() => {
+    const button = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip intro');
+    const r = button.getBoundingClientRect();
+    return [0.15, 0.5, 0.85].flatMap(fy => [0.2, 0.8].map(fx => button.contains(document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy))));
+  });
+  assert.deepEqual(skipHits, [true, true, true, true, true, true], 'every part of the skip button is on top');
+  const box = await page.evaluate(() => {
+    const r = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip intro').getBoundingClientRect();
+    return {x: r.left + r.width / 2, y: r.top + r.height * 0.85};
+  });
+  await page.evaluate(() => { window.calls = []; });
+  await page.mouse.click(box.x, box.y);
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'seekTo' && Math.abs(value - 112.25) < 0.01));
+  assert.equal(await page.evaluate(() => window.calls.filter(([name]) => name === 'seekTo').length), 1, 'one tap, one skip');
+
+  // Seeking: a drag that ends in pointercancel (iOS takes over the slider
+  // gesture) still seeks; a drop with no ending event is applied anyway.
+  await mount({episode:41});
+  const drag = async (to, ending) => page.evaluate(([to, ending]) => {
+    window.calls = [];
+    const input = document.querySelector('input[aria-label="Seek"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(to));
+    input.dispatchEvent(new Event('input', {bubbles:true}));
+    if (ending) input.dispatchEvent(new PointerEvent(ending, {bubbles:true}));
+  }, [to, ending]);
+  await drag(1300, 'pointercancel');
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'seekTo' && value === 1300));
+  await drag(900, null);
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'seekTo' && value === 900), {timeout: 4000});
+
+  console.log('Video preferences smoke passed: skip button takes taps over the controls, seek commits on pointercancel and without a release event, dub script for dub audio, translation for Japanese, matched dub for streams, default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
 } finally {
   await pendingResponse?.().catch(() => {});
   await browser?.close();

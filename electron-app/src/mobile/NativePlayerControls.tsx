@@ -15,7 +15,7 @@ import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSub
 import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
 import { getDeviceId } from '../lib/device-id';
 import { skipActionAt } from '../lib/skip-action';
-import { cacheOfflineSkipSegments, markCreditsLookedUp, needsCreditsLookup, offlineSkipSegments } from '../lib/offline-skip-segments';
+import { cacheOfflineSkipSegments, needsSkipLookup, offlineSkipSegments, recordSkipLookup } from '../lib/offline-skip-segments';
 import { bffSearch, bffTitleDetail } from '../lib/services/catalog-bff';
 import { clampPlaybackDelay, matchingSavedTrack, readVideoPlaybackPreferences, saveVideoPlaybackPreferences, subtitleCueAtTime, videoPlaybackPreferenceKey } from './video-playback-preferences';
 import type { SavedSubtitle, VideoPlaybackPreferences } from './video-playback-preferences';
@@ -263,6 +263,24 @@ export default function NativePlayerControls(props: Props) {
       return null;
     });
   }, [player]);
+  // A drag ends in many ways on iOS: the WebView often sends pointercancel
+  // (it takes over the slider gesture), not pointerup, and the seek was
+  // never sent: the bar stayed where it was dropped while the video kept
+  // playing from where it was. Every ending commits (the slider's own
+  // "change" event included), and a drop left uncommitted is applied after
+  // a moment. A second commit finds nothing pending.
+  const seekInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const input = seekInputRef.current;
+    if (!input) return;
+    input.addEventListener('change', commitScrub);
+    return () => input.removeEventListener('change', commitScrub);
+  }, [commitScrub]);
+  useEffect(() => {
+    if (scrubTo == null) return;
+    const timer = window.setTimeout(commitScrub, 1500);
+    return () => window.clearTimeout(timer);
+  }, [scrubTo, commitScrub]);
 
   // --- Live native events ---
   useEffect(() => {
@@ -322,27 +340,44 @@ export default function NativePlayerControls(props: Props) {
     if (!downloadId) return;
     setSkipSegments(offlineSkipSegments(downloadId));
   }, [downloadId]);
-  // Downloads saved before credits were kept: look them up once while the
-  // server is reachable (offline, this fails quietly and retries next time).
+  // A download without an intro or credits yet asks the server while it is
+  // reachable (offline, this fails quietly and retries next time). The
+  // server finds them in the episode's own file; the first time that can
+  // outlast one request, so an empty answer is asked again a minute later
+  // and on later plays (a few times).
   useEffect(() => {
-    if (!downloadId || !seriesId || !needsCreditsLookup(downloadId)) return;
+    if (!downloadId || !seriesId) return;
     let cancelled = false;
-    void (async () => {
+    let timer: number | null = null;
+    const lookUp = async (again: boolean) => {
+      if (!needsSkipLookup(downloadId)) return;
       const query = await downloadSkipQuery(seriesId, season, episode);
       if (!query || cancelled) return;
-      if (await cacheOfflineSkipSegments(getVodBase(), downloadId, query)) markCreditsLookedUp(downloadId);
-      if (!cancelled) setSkipSegments(offlineSkipSegments(downloadId));
-    })().catch(() => {});
+      if (await cacheOfflineSkipSegments(getVodBase(), downloadId, query)) recordSkipLookup(downloadId);
+      if (cancelled) return;
+      setSkipSegments(offlineSkipSegments(downloadId));
+      if (again && needsSkipLookup(downloadId)) timer = window.setTimeout(() => void lookUp(false).catch(() => {}), 60_000);
+    };
+    void lookUp(true).catch(() => {});
     return () => {
       cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [downloadId, seriesId, season, episode]);
+  // Streams ask once the duration is known. The server finds the intro and
+  // credits in this file; the first time that can outlast one request, so
+  // an incomplete answer is asked again a minute later. Once per video; the
+  // retry outlives re-renders and stops when the player closes.
+  const streamSkips = useRef<{ started: boolean; closed: boolean; timer: number | null }>({ started: false, closed: false, timer: null });
+  useEffect(() => () => {
+    streamSkips.current.closed = true;
+    if (streamSkips.current.timer !== null) window.clearTimeout(streamSkips.current.timer);
+  }, []);
   useEffect(() => {
-    if (downloadId) return;
+    if (downloadId || streamSkips.current.started) return;
     const duration = time.duration;
     if (!duration || duration <= 0) return;
-    if (skipSegments.length > 0) return;
-    let cancelled = false;
+    streamSkips.current.started = true;
     const params = new URLSearchParams({ kind: cat === 'anime' ? 'anime' : 'tv' });
     if (cat === 'anime') {
       if (malId) params.set('malId', String(malId));
@@ -354,20 +389,24 @@ export default function NativePlayerControls(props: Props) {
       params.set('episode', String(episode));
     }
     params.set('durationSeconds', String(Math.round(duration)));
-    fetch(`${getVodBase()}/skip-segments?${params.toString()}`, { headers: { Accept: 'application/json' } })
-      .then((res) => (res.ok ? res.json() : { segments: [] }))
-      .then((data: { segments?: SkipSegment[] }) => {
-        if (!cancelled) setSkipSegments(Array.isArray(data?.segments) ? data.segments : []);
-      })
-      .catch(() => {
-        // Skip support is best-effort: no timestamps → no chip.
-        if (!cancelled) setSkipSegments([]);
-      });
-    return () => {
-      cancelled = true;
+    const load = (again: boolean) => {
+      fetch(`${getVodBase()}/skip-segments?${params.toString()}`, { headers: { Accept: 'application/json' } })
+        .then((res) => (res.ok ? res.json() : { segments: [] }))
+        .then((data: { segments?: SkipSegment[] }) => {
+          if (streamSkips.current.closed) return;
+          const segments = Array.isArray(data?.segments) ? data.segments : [];
+          if (segments.length > 0 || again) setSkipSegments(segments);
+          const complete = segments.some((s) => s.type === 'intro') && segments.some((s) => s.type === 'credits');
+          if (again && !complete) streamSkips.current.timer = window.setTimeout(() => load(false), 60_000);
+        })
+        .catch(() => {
+          // Skip support is best-effort: no timestamps → no chip.
+        });
     };
-  }, [downloadId, time.duration, skipSegments.length, cat, tmdbId, imdbId, malId, season, episode, absoluteEpisode]);
+    load(true);
+  }, [downloadId, time.duration, cat, tmdbId, imdbId, malId, season, episode, absoluteEpisode]);
 
+  const lastSkipAt = useRef(0);
   const skipAction = useMemo(
     () => skipActionAt(skipSegments, time.currentTime, time.duration, hasNextEpisode),
     [skipSegments, time.currentTime, time.duration, hasNextEpisode],
@@ -1041,13 +1080,25 @@ export default function NativePlayerControls(props: Props) {
         </div>
       ) : null}
 
-      {/* Skip chip (where timestamps exist) */}
+      {/* Skip chip (where timestamps exist). Above the bottom controls in
+          every sense: drawn over them (it sat under the bar's top 70% while
+          the controls showed, so only taps near its top edge worked) and
+          placed above the seek bar while they show, lower when hidden. */}
       {skipAction ? (
-        <div className="absolute bottom-28 right-4 z-20">
+        <div
+          className="absolute right-4 z-30 transition-[bottom] duration-200"
+          style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(9.5rem + env(safe-area-inset-bottom))' : 'calc(1.5rem + env(safe-area-inset-bottom))' }}
+        >
           <button
             type="button"
-            onPointerUp={(event) => {
+            // The surface's tap (show/hide controls, double-tap seek) must
+            // not also see this tap.
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => {
               event.stopPropagation();
+              const now = Date.now();
+              if (now - lastSkipAt.current < 600) return;
+              lastSkipAt.current = now;
               player.seekTo(skipAction.target);
             }}
             className="min-h-12 rounded-lg bg-white px-5 text-sm font-medium text-black shadow-lg transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
@@ -1110,8 +1161,14 @@ export default function NativePlayerControls(props: Props) {
             value={Math.min(scrubTo ?? time.currentTime, time.duration || 0)}
             aria-label="Seek"
             aria-valuetext={formatTime(scrubTo ?? time.currentTime)}
+            ref={seekInputRef}
             onChange={(event) => setScrubTo(Number(event.target.value))}
             onPointerUp={commitScrub}
+            onPointerCancel={commitScrub}
+            onTouchEnd={commitScrub}
+            onTouchCancel={commitScrub}
+            onMouseUp={commitScrub}
+            onBlur={commitScrub}
             onKeyUp={(event) => {
               // Keyboard scrubbing commits on arrow-release, not per tick.
               if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) commitScrub();

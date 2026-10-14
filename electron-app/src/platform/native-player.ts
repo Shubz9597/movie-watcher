@@ -53,7 +53,7 @@ export interface TorWatchNativePlugin {
   dismiss(options: { playId: string }): Promise<void>;
   // Offline-downloads D04: plays a VERIFIED local download (device-store
   // resolved; zero server requests). Optional so web-only builds typecheck.
-  playLocal?(options: { downloadId: string; playId: string; seekTo?: number; subtitleLang?: string }): Promise<{ resumedPositionS?: number }>;
+  playLocal?(options: { downloadId: string; playId: string; seekTo?: number; subtitleLang?: string; title?: string; posterUrl?: string }): Promise<{ resumedPositionS?: number }>;
   addListener(eventName: 'timeUpdate', callback: (event: { currentTime: number; duration: number; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'playbackState', callback: (event: { state: string; message?: string; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'tracksUpdate', callback: (event: { audio: Array<{ id: number; label?: string; language?: string }>; subtitles: Array<{ id: number; label?: string; language?: string }>; selectedAudioTrackId?: number | null; selectedSubtitleTrackId?: number | null; playId: string }) => void): Promise<PluginListenerHandle>;
@@ -191,6 +191,9 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
       await plugin.playLocal({
         downloadId: input.downloadId,
         playId: input.playId,
+        // Shown on the Lock Screen / Control Center if the device record lacks them.
+        title: input.title,
+        posterUrl: input.posterUrl ?? undefined,
       });
     },
     async setSubtitleScale(percent: number, playId: string) {

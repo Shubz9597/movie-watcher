@@ -44,7 +44,20 @@ final class DownloadCoordinator: NSObject {
     private var lastActivityRefresh: [String: Date] = [:]
     /// Automatic retries per asset ("downloadId|urlPath") in this process.
     private var retryAttempts: [String: Int] = [:]
-    private static let maxRetries = 6
+    /// Backoff 15 s ... 4 min: about 40 minutes of attempts before a
+    /// download is marked failed and the queue moves on.
+    private static let maxRetries = 12
+    /// Last time each download received bytes (or was started/retried).
+    private var lastByteAt: [String: Date] = [:]
+    /// Transfers cancelled as stalled; their completion is a retry, not a
+    /// pause or removal.
+    private var stallCancelled = Set<Int>()
+    /// A transfer that receives nothing for this long is restarted. A
+    /// background session waits for connectivity (up to 7 days) without
+    /// failing: when the server became unreachable mid-transfer (Tailscale
+    /// reconnecting, the server restarting), the transfer sat "running"
+    /// with no bytes and the one-at-a-time queue never moved on.
+    private static let stallLimit: TimeInterval = 90
     private let stateLock = NSLock()
     /// Serialises queue decisions; recursive because finishing one download
     /// starts the next from inside the same call chain.
@@ -173,6 +186,7 @@ final class DownloadCoordinator: NSObject {
             var owner: [Int: String] = [:]
             for mapping in self.store.allTaskMappings() { owner[mapping.taskId] = mapping.downloadId }
             var changed = false
+            if self.restartStalledTransfers(allTasks, owner: owner) { changed = true }
             var inFlight = Set<String>()
             var suspended: [String: [URLSessionTask]] = [:]
             for task in allTasks {
@@ -237,6 +251,7 @@ final class DownloadCoordinator: NSObject {
             }
             let task = session.downloadTask(with: url)
             try store.recordTask(Int(task.taskIdentifier), downloadId: record.downloadId, urlPath: asset.urlPath)
+            noteActivity(record.downloadId, at: Date())
             task.resume()
             startedTask = true
         }
@@ -489,6 +504,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         // plenty for bytes/percentage display and keeps flash writes bounded.
         stateLock.lock()
         let now = Date()
+        lastByteAt[mapping.downloadId] = now
         let taskId = Int(downloadTask.taskIdentifier)
         let last = lastProgressWrite[taskId] ?? .distantPast
         guard now.timeIntervalSince(last) > 0.5 else {
@@ -582,6 +598,10 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         let taskId = Int(task.taskIdentifier)
         guard let mapping = store.taskOwner(taskId) else { return }
         guard let error = error as NSError? else { return } // nil error = success path
+        stateLock.lock()
+        let stalled = stallCancelled.contains(taskId)
+        stateLock.unlock()
+        if stalled { return } // restartStalledTransfers retries it
         clearTaskMetrics(taskId)
         try? store.removeTask(taskId)
         if error.code == NSURLErrorCancelled {
@@ -600,6 +620,52 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         finishBackgroundEvents()
+    }
+
+    // MARK: - Stalled transfers
+
+    private func noteActivity(_ downloadId: String, at date: Date) {
+        stateLock.lock()
+        lastByteAt[downloadId] = date
+        stateLock.unlock()
+    }
+
+    /// Restarts running transfers that received nothing for stallLimit,
+    /// keeping the bytes already received (resume data). Called with every
+    /// queue check: on Downloads reads, transfer events, returning to the
+    /// app, and every 30 s while it is open. Returns whether one restarted.
+    private func restartStalledTransfers(_ tasks: [URLSessionTask], owner: [Int: String]) -> Bool {
+        let now = Date()
+        var restarted = false
+        for task in tasks where task.state == .running {
+            let taskId = Int(task.taskIdentifier)
+            guard let downloadId = owner[taskId], let download = task as? URLSessionDownloadTask,
+                  let mapping = store.taskOwner(taskId) else { continue }
+            stateLock.lock()
+            let last = lastByteAt[downloadId]
+            if last == nil { lastByteAt[downloadId] = now } // first seen since launch
+            let stalled = last.map { now.timeIntervalSince($0) > Self.stallLimit } ?? false
+            if stalled {
+                stallCancelled.insert(taskId)
+                lastByteAt[downloadId] = now
+            }
+            stateLock.unlock()
+            guard stalled else { continue }
+            restarted = true
+            download.cancel { [weak self] resumeData in
+                guard let self = self else { return }
+                // The replacement is recorded before the old task is dropped,
+                // so the queue never sees this download without a transfer.
+                let retried = self.scheduleRetry(downloadId: downloadId, urlPath: mapping.urlPath, resumeData: resumeData)
+                self.clearTaskMetrics(taskId)
+                try? self.store.removeTask(taskId)
+                self.stateLock.lock()
+                self.stallCancelled.remove(taskId)
+                self.stateLock.unlock()
+                if !retried { self.failDownload(downloadId, reason: "network_failed") }
+            }
+        }
+        return restarted
     }
 
     // MARK: - Retry
@@ -624,13 +690,15 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         } else {
             return false
         }
-        task.earliestBeginDate = Date().addingTimeInterval(min(240, 15 * pow(2, Double(attempt - 1))))
+        let begin = Date().addingTimeInterval(min(240, 15 * pow(2, Double(attempt - 1))))
+        task.earliestBeginDate = begin
         do {
             try store.recordTask(Int(task.taskIdentifier), downloadId: downloadId, urlPath: urlPath)
         } catch {
             task.cancel()
             return false
         }
+        noteActivity(downloadId, at: begin) // not stalled before it may begin
         task.resume()
         if #available(iOS 16.1, *) {
             DownloadLiveActivity.refresh(record, status: "Reconnecting")
