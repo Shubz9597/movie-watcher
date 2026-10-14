@@ -6,8 +6,11 @@
 export type StoredSkipSegment = { type: string; start: number; end: number; provider: string };
 
 const STORAGE_KEY = 'torwatch_offline_skip_segments_v1';
-// Downloads stored before credits were kept are looked up once more.
-const CREDITS_CHECKED_KEY = 'torwatch_offline_skip_credits_checked_v1';
+// Lookups made for a download while it still lacks an intro or credits.
+// The server finds them in the episode's own file, which can take longer
+// than one request waits the first time: an empty answer is retried later.
+const LOOKUPS_KEY = 'torwatch_offline_skip_lookups_v2';
+const MAX_LOOKUPS = 5;
 const STORED_TYPES = new Set(['intro', 'recap', 'credits']);
 
 function readAll(): Record<string, StoredSkipSegment[]> {
@@ -55,23 +58,29 @@ export async function cacheOfflineSkipSegments(origin: string, downloadId: strin
   return true;
 }
 
-/** True when a download has no stored credits and was not looked up again. */
-export function needsCreditsLookup(downloadId: string): boolean {
-  if (offlineSkipSegments(downloadId).some((segment) => segment.type === 'credits')) return false;
+function lookups(): Record<string, number> {
   try {
-    const checked = JSON.parse(localStorage.getItem(CREDITS_CHECKED_KEY) || '[]');
-    return !(Array.isArray(checked) && checked.includes(downloadId));
+    const parsed = JSON.parse(localStorage.getItem(LOOKUPS_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, number> : {};
   } catch {
-    return true;
+    return {};
   }
 }
 
-/** Records a finished lookup so a title without credits is not refetched. */
-export function markCreditsLookedUp(downloadId: string): void {
+/** True while a download lacks an intro or credits and lookups remain. */
+export function needsSkipLookup(downloadId: string): boolean {
+  const stored = offlineSkipSegments(downloadId);
+  const complete = stored.some((segment) => segment.type === 'intro') && stored.some((segment) => segment.type === 'credits');
+  return !complete && (lookups()[downloadId] ?? 0) < MAX_LOOKUPS;
+}
+
+/** Counts a lookup the server answered (with or without timestamps). */
+export function recordSkipLookup(downloadId: string): void {
   try {
-    const checked = JSON.parse(localStorage.getItem(CREDITS_CHECKED_KEY) || '[]');
-    const list = Array.isArray(checked) ? checked.filter((id) => typeof id === 'string') : [];
-    if (!list.includes(downloadId)) localStorage.setItem(CREDITS_CHECKED_KEY, JSON.stringify([...list, downloadId].slice(-500)));
+    const all = lookups();
+    all[downloadId] = (all[downloadId] ?? 0) + 1;
+    const kept = Object.entries(all).slice(-500);
+    localStorage.setItem(LOOKUPS_KEY, JSON.stringify(Object.fromEntries(kept)));
   } catch {
     // Without storage the lookup simply repeats next time.
   }
