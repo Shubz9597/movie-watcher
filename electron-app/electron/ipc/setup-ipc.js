@@ -8,6 +8,7 @@ export function registerSetupIpc(ipcMain, deps) {
     dialog,
     shell,
     runtimeManager,
+    externalServer = false,
     playbackController,
     vodBase,
     urls,
@@ -56,12 +57,17 @@ export function registerSetupIpc(ipcMain, deps) {
   }));
 
   ipcMain.handle("catalog-gate:open", (_event, message) => {
+    if (externalServer) {
+      createSetupWindow({ mode: "settings", issue: "Check the TMDb configuration on your server." });
+      return { ok: true };
+    }
     const issue = String(message || "TMDb needs attention before TorWatch can continue.").trim().slice(0, 320);
     requireTmdbSetup(issue);
     return { ok: true };
   });
 
   ipcMain.handle("setup:repair-tmdb", async (_event, replacement) => {
+    if (externalServer) return { ok: false, error: "Update the TMDb credential on your server, then retry." };
     const enteredTmdb = String(replacement || "").trim();
     const credentials = resolveSetupCredentials({ tmdbKey: enteredTmdb });
     // A new credential only reaches the local server through its
@@ -105,6 +111,7 @@ export function registerSetupIpc(ipcMain, deps) {
   });
 
   ipcMain.handle("setup:verify-saved-credentials", async () => {
+    if (externalServer) return {};
     const credentials = resolveSetupCredentials({});
     const results = {};
 
@@ -163,6 +170,7 @@ export function registerSetupIpc(ipcMain, deps) {
   });
 
   ipcMain.handle("subtitles:configure-provider", async (_event, rawAPIKey) => {
+    if (externalServer) return { ok: false, error: "Configure OpenSubtitles on your server, then retry subtitle discovery." };
     const openSubApiKey = String(rawAPIKey || "").trim();
     if (!openSubApiKey) return { ok: false, error: "Enter your OpenSubtitles API key." };
     try {
@@ -209,6 +217,7 @@ export function registerSetupIpc(ipcMain, deps) {
   ipcMain.handle("runtime:get-state", () => getRuntimeState());
 
   ipcMain.handle("runtime:retry", async () => {
+    if (externalServer) return startApplicationRuntime({ showStartup: false });
     if (!runtimeManager.isRuntimeConfigured()) {
       return {
         ok: false,
@@ -223,6 +232,7 @@ export function registerSetupIpc(ipcMain, deps) {
   });
 
   ipcMain.handle("setup:test", async (_event, configuration) => {
+    if (externalServer) return { ok: false, error: "Use the server connection settings for this desktop." };
     let candidateSaved = false;
     let activeCheck = "storage";
     let tmdbWarning = "";

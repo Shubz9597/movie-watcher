@@ -8,11 +8,13 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "dev:mobile": "node scripts/mobile-preview.mjs",
-    "build": "npm run build:backend && npm run build:renderer && npm run build:installer",
+    "build": "npm run generate:desktop-icons && npm run build:backend && npm run build:renderer && npm run build:installer && npm run build:bundle",
+    "build:bundle": "node scripts/build-windows-bundle.mjs",
     "build:backend": "node scripts/build-backend.mjs",
-    "build:installer": "npm run generate:icons && node scripts/build-windows-installer.mjs",
+    "build:installer": "npm run generate:desktop-icons && node scripts/build-windows-installer.mjs",
+    "generate:desktop-icons": "node scripts/generate-desktop-icons.mjs",
     "generate:icons": "node scripts/generate-brand-assets.mjs",
-    "build:renderer": "npm run generate:icons && vite build",
+    "build:renderer": "npm run generate:desktop-icons && vite build",
     "build:browser": "vite build --config vite.config.browser.mts",
     "build:mobile": "vite build --config vite.config.mobile.mts",
     "mobile:build": "node node_modules/vite/bin/vite.js build --config vite.config.mobile.mts && node scripts/mobile-postbuild.mjs && node scripts/setup-ios-vlc.mjs && node node_modules/@capacitor/cli/bin/capacitor sync",
@@ -24,6 +26,8 @@
     "cap:open:android": "node node_modules/@capacitor/cli/bin/capacitor open android",
     "test:skip-segments": "node --test scripts/skip-segments.test.mjs",
     "test:diagnostics": "node --test scripts/diagnostic-logger.test.mjs",
+    "test:desktop-connection": "node --test --experimental-strip-types scripts/desktop-connection.test.mjs scripts/desktop-playback-sync.test.mjs",
+    "smoke:desktop-connection": "node scripts/desktop-connection-smoke.mjs",
     "test:player-contracts": "node --test scripts/player-state-contracts.test.mjs",
     "test:native-video-layout": "node --test scripts/native-video-layout.test.mjs",
     "test:video-preferences": "node --test --experimental-strip-types scripts/characterization/video-playback-preferences.test.mjs",
@@ -96,12 +100,17 @@
       "dist/startup.html",
       "dist/assets/**/*",
       "main.js",
+      "backend-origin.mjs",
       "electron/**/*.js",
       "electron/**/*.cjs",
       "build/torwatch-icon.png",
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "desktop-server-guide.html",
+        "to": "desktop-server-guide.html"
+      },
       {
         "from": "../torrent-streamer/bin/torWatcher.exe",
         "to": "backend/torWatcher.exe"

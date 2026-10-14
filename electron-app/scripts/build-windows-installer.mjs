@@ -4,11 +4,12 @@ import path from "path";
 import process from "process";
 import { fileURLToPath } from "url";
 import { rcedit } from "rcedit";
+import { verifyWindowsPackage } from "./verify-windows-package.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.resolve(scriptDir, "..");
-const packageJson = JSON.parse(fs.readFileSync(path.join(projectDir, "package.json"), "utf8"));
-const version = String(packageJson.version || "1.0.0");
+// Desktop release metadata is independent of the Capacitor/mobile package.
+const version = process.env.TORWATCH_DESKTOP_VERSION || "2.0.1";
 const builderCli = path.join(projectDir, "node_modules", "electron-builder", "out", "cli", "cli.js");
 const outputDir = process.env.TORWATCH_PACKAGE_DIR
   ? path.resolve(projectDir, process.env.TORWATCH_PACKAGE_DIR)
@@ -24,7 +25,7 @@ const outputConfig = `-c.directories.output=${outputDir}`;
 const stagingOutputConfig = `-c.directories.output=${stagingOutputDir}`;
 
 function runBuilder(args) {
-  const result = spawnSync(process.execPath, [builderCli, ...args], {
+  const result = spawnSync(process.execPath, [builderCli, `-c.extraMetadata.version=${version}`, ...args], {
     cwd: projectDir,
     env: process.env,
     stdio: "inherit",
@@ -56,6 +57,15 @@ try {
       ProductName: "TorWatch",
     },
   });
+
+  verifyWindowsPackage(unpackedDir);
+  if (process.env.TORWATCH_VERIFY_DESKTOP === "1") {
+    const smoke = spawnSync(process.execPath, [path.join(scriptDir, "desktop-connection-smoke.mjs"), executable], {
+      cwd: projectDir, env: process.env, stdio: "inherit",
+    });
+    if (smoke.error) throw smoke.error;
+    if (smoke.status !== 0) throw new Error("Packaged desktop connection smoke failed; installer was not produced.");
+  }
 
   runBuilder([
     "--win",

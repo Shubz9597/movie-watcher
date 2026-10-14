@@ -13,6 +13,9 @@ import {
   verifyTmdbConnection,
 } from "./electron/config/index.js";
 import { installDiagnosticLogging } from "./electron/diagnostics/diagnostic-logger.js";
+import { createDesktopConnectionStore, probeDesktopServer } from "./electron/config/desktop-connection.js";
+import { createDesktopRendererFile } from "./electron/config/desktop-renderer.js";
+import { registerDesktopConnectionIpc } from "./electron/ipc/desktop-connection-ipc.js";
 import {
   registerConfigIpc,
   registerDiagnosticsIpc,
@@ -39,6 +42,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const appResourcePaths = createAppResourcePaths(__dirname);
 app.setName("TorWatch");
+// Optional isolated profile for desktop development and packaged smoke checks.
+if (process.env.TORWATCH_DESKTOP_PROFILE) app.setPath("userData", path.resolve(process.env.TORWATCH_DESKTOP_PROFILE));
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const diagnosticLog = installDiagnosticLogging({
   logDir: path.join(app.getPath("userData"), "logs"),
@@ -50,6 +55,12 @@ process.env.TORWATCH_DIAGNOSTIC_SESSION_ID = diagnosticLog.sessionId;
 const runtimeManager = new RuntimeManager({
   reportError: (scope, message, details, options) => diagnosticLog.write("error", scope, message, details, options),
 });
+const desktopConnectionStore = createDesktopConnectionStore(app.getPath("userData"));
+const desktopConnection = desktopConnectionStore.load();
+const vodBase = desktopConnection?.origin || VOD_BASE;
+const hasLegacySetup = runtimeManager.isConfigured();
+const desktopConnectionRequired = !desktopConnection && (fs.existsSync(desktopConnectionStore.filePath) || !hasLegacySetup);
+const useBuiltRenderer = app.isPackaged || Boolean(desktopConnection) || desktopConnectionRequired;
 
 app.on("web-contents-created", (_event, contents) => {
   const scope = `renderer:${contents.getType()}:${contents.id}`;
@@ -77,7 +88,7 @@ process.on("warning", (warning) => {
 
 // Load .env file if it exists
 const envPath = path.join(__dirname, ".env");
-if (fs.existsSync(envPath)) {
+if (!desktopConnection && fs.existsSync(envPath)) {
   const electronEnv = {};
   const result = dotenv.config({ path: envPath, processEnv: electronEnv });
   if (result.error) {
@@ -95,7 +106,7 @@ if (fs.existsSync(envPath)) {
     }
     console.log("[Config] Loaded .env file from:", envPath);
   }
-} else if (!app.isPackaged) {
+} else if (!desktopConnection && !app.isPackaged) {
   console.warn("[Config] .env file not found at:", envPath);
   console.warn("[Config] Please create .env file with TMDB_API_KEY and TMDB_ACCESS_TOKEN");
 }
@@ -154,9 +165,12 @@ startupController = createStartupController({
   createStartupBrowserWindow,
   getMainWindow: () => mainWindow,
   runtimeManager,
-  setupDevUrl: app.isPackaged ? "" : "http://localhost:5173/setup.html",
+  desktopConnection,
+  desktopConnectionRequired,
+  probeDesktopServer,
+  setupDevUrl: useBuiltRenderer ? "" : "http://localhost:5173/setup.html",
   setupFilePath: path.join(__dirname, "dist", "setup.html"),
-  startupDevUrl: app.isPackaged ? "" : "http://localhost:5173/startup.html",
+  startupDevUrl: useBuiltRenderer ? "" : "http://localhost:5173/startup.html",
   startupFilePath: path.join(__dirname, "dist", "startup.html"),
   verifyTmdbConnection: verifyTmdbWithFallback,
 });
@@ -171,7 +185,7 @@ const mpvSession = createMpvSessionManager({
 });
 playerSurface = createPlayerSurfaceController({
   appDirectory: __dirname,
-  controlsDevUrl: app.isPackaged ? "" : "http://localhost:5173/player-controls.html",
+  controlsDevUrl: useBuiltRenderer ? "" : "http://localhost:5173/player-controls.html",
   controlsFilePath: path.join(__dirname, "dist", "player-controls.html"),
   controlsPreloadPath: appResourcePaths.playerPreload,
   getMainWindow: () => mainWindow,
@@ -185,7 +199,8 @@ const playbackController = createPlaybackController({
   resumeToleranceSeconds: RESUME_TOLERANCE_SECONDS,
   resumeVerifyTimeoutMs: RESUME_VERIFY_TIMEOUT_MS,
   sleep,
-  vodBase: VOD_BASE,
+  vodBase,
+  getClientId: () => desktopConnectionStore.getClientId(),
 });
 const mpvIpc = registerMpvIpc(ipcMain, {
   getMainWindow: () => mainWindow,
@@ -193,7 +208,7 @@ const mpvIpc = registerMpvIpc(ipcMain, {
   playbackController,
   playerSurface,
   sleep,
-  vodBase: VOD_BASE,
+  vodBase,
 });
 
 function sleep(ms) {
@@ -214,7 +229,7 @@ function createMainWindow() {
 
     // In development, load from Vite dev server
     // In production, load from dist folder
-    if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
+    if (!useBuiltRenderer) {
       // Try to load from Vite, but don't fail if it's not ready
       mainWindow.loadURL('http://localhost:5173').catch((err) => {
         console.warn("[Main] Vite not ready yet, will retry:", err.message);
@@ -228,7 +243,10 @@ function createMainWindow() {
         }, 2000);
       });
     } else {
-      mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+      const rendererFile = desktopConnection
+        ? createDesktopRendererFile({ appDirectory: __dirname, userDataPath: app.getPath("userData"), origin: vodBase })
+        : path.join(__dirname, 'dist', 'index.html');
+      mainWindow.loadFile(rendererFile);
     }
 
     mainWindow.webContents.once("did-finish-load", () => {
@@ -300,7 +318,8 @@ let shutdownComplete = false;
 
 async function shutdownApplication() {
   await mpvIpc.shutdownPlayback();
-  await runtimeManager.shutdown();
+  // An external server (including Docker hosted on this PC) is operator-owned.
+  if (!desktopConnection) await runtimeManager.shutdown();
 }
 
 if (!hasSingleInstanceLock) {
@@ -332,7 +351,7 @@ app.on("before-quit", (event) => {
 
 app.whenReady().then(async () => {
   console.log("[App] Electron app ready, starting runtime...");
-  appConfigStore.hydrateSecureConfig();
+  if (!desktopConnection && !desktopConnectionRequired) appConfigStore.hydrateSecureConfig();
   await startupController.bootstrapApplication();
 
   app.on("activate", () => {
@@ -364,7 +383,8 @@ registerSetupIpc(ipcMain, {
   shell,
   runtimeManager,
   playbackController,
-  vodBase: VOD_BASE,
+  vodBase,
+  externalServer: Boolean(desktopConnection),
   urls: SETUP_GUIDE_URLS,
   getAppConfig: () => appConfigStore.getConfig(),
   getCatalogState: startupController.getCatalogState,
@@ -392,4 +412,22 @@ registerSetupIpc(ipcMain, {
   verifyOpenSubtitlesConnection,
   verifyStorageDirectory,
   verifyTmdbConnection: verifyTmdbWithFallback,
+});
+
+registerDesktopConnectionIpc(ipcMain, {
+  store: desktopConnectionStore,
+  activeConnection: desktopConnection,
+  vodBase,
+  hasLegacySetup,
+  restart: () => {
+    app.relaunch({ args: process.argv.slice(1).filter((argument) => argument !== "--setup") });
+    setTimeout(() => app.quit(), 250);
+  },
+  openGuide: async () => {
+    const guidePath = app.isPackaged
+      ? path.join(process.resourcesPath, "desktop-server-guide.html")
+      : path.join(__dirname, "desktop-server-guide.html");
+    const error = await shell.openPath(guidePath);
+    return error ? { ok: false, error } : { ok: true };
+  },
 });

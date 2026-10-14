@@ -2,7 +2,32 @@
 
 Tor Watch is a multi platform application for discovering and watching movies, series, and anime.
 
-## First-time setup
+## Windows Version 2 desktop
+
+Install `electron-app/release/TorWatch Setup 2.0.1.exe` and choose **Homeserver
+(recommended)** or **Server on this PC**. Enter the server gateway URL, test the connection,
+then select **Save and open TorWatch**. A homeserver connection uses the same
+URL as the phone; Docker and provider credentials stay on the server. To use
+the phone's existing Continue Watching records, also enter its `mw_device_id`
+under **Link Continue Watching from your phone**. The shared library uses the
+same server database; viewing progress is scoped to this profile ID.
+
+For a server hosted on Windows, extract `TorWatch Windows 2.0.1.zip`, follow
+`LocalServer/README.md`, and run its `Start-TorWatchServer.ps1`. It builds and
+starts the complete Docker stack with its own database. Connect to its gateway
+(normally `http://127.0.0.1:8080`). Closing
+the desktop app leaves this server running. See the [Windows connection and
+Docker setup guide](electron-app/desktop-server-guide.html) and
+[desktop implementation notes](docs/windows-desktop-v2.md).
+
+The Windows installer version is independent of the mobile package version.
+Phone native code and mobile build commands are unchanged.
+
+## Existing built-in local setup
+
+The following instructions describe the original Electron-managed runtime,
+which remains available for existing configured installations through
+**Manage existing built-in local services** in desktop connection settings.
 
 Allow about 10 minutes for the first setup. Docker Desktop may take longer the first time it opens.
 
@@ -18,7 +43,7 @@ End users do not need Node.js, Go, PostgreSQL, Prowlarr, or MPV installed separa
 
 ### 2. Install and open torWatch
 
-Run `torWatch Setup 1.2.0.exe`, finish the Windows installation, and open the torWatch desktop shortcut. Windows SmartScreen may warn because the current development installer is unsigned.
+Run the current `TorWatch Setup 2.0.1.exe`, finish the Windows installation, and open the TorWatch desktop shortcut. Windows SmartScreen may warn because the development installer is unsigned.
 
 ### 3. Enter the setup details
 
@@ -93,12 +118,14 @@ The `infra/` directory is ignored except for `infra/*.env.example`, so local sec
 Prerequisites for developers are Node.js, npm, Go, Docker Desktop, and the native MPV SDK files already expected by `electron-app/package.json`.
 
 ```powershell
-.\package.ps1
+cd electron-app
+npm ci
+npm run build
 ```
 
-The script installs Electron dependencies when needed, builds the backend and
-renderer, and generates the NSIS installer under the ignored root `package/`
-directory.
+This builds the backend and renderer and generates the NSIS installer under
+the ignored `electron-app/release/` directory. Windows icon generation writes
+only desktop resources.
 
 For development:
 

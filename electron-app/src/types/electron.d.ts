@@ -1,5 +1,8 @@
 // Type definitions for Electron API exposed via preload script
 export interface ElectronAPI {
+  backendOrigin?: string;
+  progressSubjectId?: string;
+  desktopClientId?: string;
   debugLog?: (...args: any[]) => void;
   // MPV controls
   playInMpv: (payload: { url: string; title: string; magnet?: string; cat?: string; fileIndex?: number; tmdbId?: number; imdbId?: string; malId?: number; anilistId?: number; year?: number; posterUrl?: string | null; subjectId?: string; seriesId?: string; season?: number; episode?: number; absoluteEpisode?: number; sourceName?: string; nextSeason?: number; nextEpisode?: number }) => Promise<{ ok: boolean; streamUrl?: string; resumedFrom?: number; error?: string }>;

@@ -10,6 +10,9 @@ export function createStartupController({
   createStartupBrowserWindow,
   getMainWindow,
   runtimeManager,
+  desktopConnection = null,
+  desktopConnectionRequired = false,
+  probeDesktopServer,
   setupDevUrl = "",
   setupFilePath = "",
   startupDevUrl = "",
@@ -201,10 +204,16 @@ export function createStartupController({
       if (showStartup) createStartupWindow();
       publishRuntimeState({ status: "starting", message: "Starting playback services...", code: "RUNTIME_STARTING" });
       try {
-        await runtimeManager.startBackend((message) => {
-          sendStartupStatus(message);
-          publishRuntimeState({ status: "starting", message, code: "RUNTIME_STARTING" });
-        });
+        if (desktopConnection) {
+          sendStartupStatus("Connecting to your server…");
+          await probeDesktopServer(desktopConnection);
+          publishCatalogState({ status: "ready", issue: "" });
+        } else {
+          await runtimeManager.startBackend((message) => {
+            sendStartupStatus(message);
+            publishRuntimeState({ status: "starting", message, code: "RUNTIME_STARTING" });
+          });
+        }
         publishRuntimeState({ status: "ready", message: "Playback is ready.", code: "RUNTIME_READY" });
         startupWindow?.close();
         if (!getMainWindow()) createMainWindow();
@@ -216,6 +225,9 @@ export function createStartupController({
           message: error.message || "Playback services could not start.",
           code: error.code || "RUNTIME_START_FAILED",
         });
+        // Let the server-backed UI display its honest unavailable states and
+        // keep Settings/Retry reachable; no local credential gate in V2 mode.
+        if (desktopConnection) publishCatalogState({ status: "ready", issue: "" });
         startupWindow?.close();
         const mainWindow = getMainWindow();
         if (!mainWindow) createMainWindow();
@@ -285,6 +297,15 @@ export function createStartupController({
   }
 
   async function bootstrapApplication() {
+    if (desktopConnection) {
+      if (process.argv.includes("--setup")) createSetupWindow({ mode: "settings" });
+      else await startApplicationRuntime();
+      return;
+    }
+    if (desktopConnectionRequired) {
+      createSetupWindow({ mode: "settings" });
+      return;
+    }
     if (process.argv.includes("--setup") || !runtimeManager.isConfigured()) {
       createSetupWindow({ mode: "settings" });
       return;

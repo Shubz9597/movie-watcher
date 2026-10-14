@@ -14,6 +14,30 @@
   --focus: #a0c3ec;
 }
 
+.desktop-connection .hint { color: #a8acb2; }
+.desktop-server-modes { margin: 0; padding: 0; border: 0; }
+.desktop-server-choice { display: flex; align-items: flex-start; gap: 14px; padding: 16px 0; cursor: pointer; }
+.desktop-server-choice + .desktop-server-choice { border-top: 1px solid var(--hairline); }
+.desktop-server-choice input { width: 18px; height: 18px; min-height: 18px; margin: 4px 0 0; accent-color: #fff; flex: 0 0 auto; }
+.desktop-server-choice strong { display: block; color: var(--ink); font-size: 16px; font-weight: 500; }
+.desktop-server-choice span span { display: block; margin-top: 4px; color: var(--body); }
+.desktop-server-url { margin-top: 24px; }
+.desktop-server-note { margin: 18px 0 6px; color: var(--body); }
+.desktop-current-server { margin: 20px 0 0; color: var(--body); overflow-wrap: anywhere; }
+.desktop-current-server span { color: var(--ink); }
+.desktop-server-status { min-height: 48px; padding-top: 20px; color: var(--body); overflow-wrap: anywhere; }
+.desktop-server-status[data-error="true"] { color: var(--danger); }
+.desktop-server-actions { justify-content: flex-end; margin-top: 20px; }
+.desktop-legacy-link { margin-top: 20px; }
+.desktop-legacy-back { position: relative; z-index: 11; margin: 48px 20px -48px; }
+.desktop-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.desktop-connection input::selection { background: #a0c3ec; color: #0a0a0a; }
+.desktop-connection input { caret-color: var(--focus); }
+@media (max-width: 700px) {
+  .desktop-connection h1 { font-size: 28px; line-height: 34px; }
+  .desktop-server-actions button { flex: 1 1 auto; }
+}
+
 * {
   box-sizing: border-box;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;

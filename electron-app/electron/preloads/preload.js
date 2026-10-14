@@ -25,7 +25,11 @@ window.addEventListener("unhandledrejection", (event) => {
   });
 });
 
+const desktopProfile = ipcRenderer.sendSync("desktop:get-profile");
 contextBridge.exposeInMainWorld("electronAPI", {
+  progressSubjectId: desktopProfile.subjectId,
+  desktopClientId: desktopProfile.clientId,
+  backendOrigin: ipcRenderer.sendSync("desktop:get-origin"),
   // Debug helper: forward renderer logs to main process terminal
   debugLog: (...args) => ipcRenderer.send("debug:log", args),
   // MPV controls

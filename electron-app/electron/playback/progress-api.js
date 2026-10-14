@@ -81,6 +81,9 @@ export async function postProgress(vodBase, progress, position, duration) {
         sourceFileIndex: progress.sourceFileIndex,
         nextSeason: progress.nextSeason,
         nextEpisode: progress.nextEpisode,
+        clientId: progress.clientId,
+        sessionId: progress.sessionId,
+        seq: progress.seq,
       }),
       signal: controller.signal,
     });

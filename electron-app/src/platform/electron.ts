@@ -15,11 +15,12 @@ import type {
 import { fetchServerVersion, rangesOverlap, CLIENT_SUPPORTED_PROTOCOL_RANGE } from '../lib/version-check.ts'
 import { getDeviceId } from '../lib/device-id.ts'
 import { getVodBase } from '../lib/api-client.ts'
+import { setBackendOrigin } from '../lib/connection-service.ts'
 import { connectionFailureMessage, fetchWithTimeout } from '../lib/connection-diagnostics.ts'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function electronAPI(): any {
-  return typeof window === 'undefined' ? null : (window as unknown as Record<string, any>);
+  return typeof window === 'undefined' ? null : window.electronAPI;
 }
 
 class ElectronStorage implements DeviceStorage {
@@ -83,6 +84,29 @@ function normalizeToCurrent(origin: string): string {
   return getVodBase();
 }
 
+// V1 watch endpoints key rows by subjectId. The existing shared pages obtain
+// that subject from mw_device_id. Scope this aliasing to the Electron entry;
+// preserve the desktop's own ID so disconnecting a phone profile restores it.
+export function applyDesktopViewingProfile(api: { progressSubjectId?: string; desktopClientId?: string } | null): void {
+  if (typeof window === 'undefined' || api?.progressSubjectId === undefined) return;
+  const storage = window.localStorage;
+  const requested = api.progressSubjectId;
+  const originalKey = 'torwatch_desktop_original_device_id';
+  const activeKey = 'torwatch_desktop_viewing_profile';
+  if (requested) {
+    if (!storage.getItem(originalKey)) {
+      storage.setItem(originalKey, storage.getItem('mw_device_id') || api.desktopClientId || getDeviceId());
+    }
+    storage.setItem('mw_device_id', requested);
+    storage.setItem(activeKey, requested);
+  } else if (storage.getItem(activeKey)) {
+    const original = storage.getItem(originalKey) || api.desktopClientId;
+    if (original) storage.setItem('mw_device_id', original);
+    storage.removeItem(activeKey);
+    storage.removeItem(originalKey);
+  }
+}
+
 export function compatibilityFromVersion(
   origin: string,
   version: { serverVersion?: string; supportedProtocolRange?: number[] } | null,
@@ -109,6 +133,10 @@ export function compatibilityFromVersion(
 
 export function createElectronPlatform(): Platform {
   const api = electronAPI();
+  // Desktop-only bootstrap: set the saved address before any stores mount.
+  // A server change relaunches Electron, recreating MPV and renderer together.
+  if (api?.backendOrigin) setBackendOrigin(api.backendOrigin);
+  applyDesktopViewingProfile(api);
   const desktop: DesktopChrome | undefined = api
     ? {
         openSetup: () => api.openSetup?.(),
@@ -124,7 +152,7 @@ export function createElectronPlatform(): Platform {
     ? {
         async start(request: PlayerRequest): Promise<void> {
           if (!api) throw new Error('The Electron playback bridge is unavailable. Restart TorWatch and try again.');
-          const result = await api.playInMpv(request);
+          const result = await api.playInMpv({ ...request, clientId: api.desktopClientId || getDeviceId() });
           if (!result?.ok) {
             throw new Error(result?.error || 'The selected source could not be played.');
           }

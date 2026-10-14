@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TorWatch Windows server setup</title>
+<style>body{font:16px/1.65 system-ui,sans-serif;max-width:780px;margin:48px auto;padding:0 24px;background:#0a0a0a;color:#dadbdf}h1,h2{color:#fff;font-weight:500}h2{margin-top:36px}a{color:#a0c3ec}pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;background:#191919;border-radius:8px}code{font-size:14px}li{margin:8px 0}</style></head><body>
+<h1>Connect TorWatch on Windows</h1>
+<p>The desktop app connects to the Version 2 server you choose. MPV plays video on Windows; the server owns catalog data, sources, library and watch progress.</p>
+<h2>Use your homeserver</h2>
+<ol><li>Connect this PC to the same network or Tailscale network as your phone.</li><li>In TorWatch, choose <strong>Homeserver</strong>.</li><li>Enter the same server gateway URL used by your phone, including the port if needed. Enter the base address, without a page path.</li><li>Select <strong>Test connection</strong>, then <strong>Save and open TorWatch</strong>. The desktop restarts with the saved address.</li></ol>
+<p>Docker and provider credentials belong on the server. They are not required on the Windows client. Closing TorWatch leaves your homeserver running.</p>
+<h2>Continue Watching from your phone</h2>
+<p>The household library is shared by the server. The current progress API also uses a viewing profile ID. To link the phone's existing Continue Watching records, expand <strong>Link Continue Watching from your phone</strong> in desktop setup and enter the phone's profile ID before saving. Leaving it blank keeps this desktop's separate progress profile on the same server.</p>
+<p>For an inspectable iPhone development build, open TorWatch on the phone, enable Web Inspector in the phone's Safari settings, connect it to the development Mac, and select the app under Safari's Develop menu. In the Console, read (do not change) its stored ID:</p>
+<pre><code>localStorage.getItem('mw_device_id')</code></pre>
+<p>The HTTPS server URL itself does not expose this value. A server administrator can alternatively read the existing <code>subject_id</code> values and recent activity from <code>watch_progress</code>. Do not change the phone's ID: link the desktop to the existing one to preserve the phone history. Desktop playback retains its own writer/session identity and ordered checkpoints.</p>
+<h2>Host a server on this Windows PC</h2>
+<p>For a shareable installation, extract <strong>TorWatch Windows 2.0.1.zip</strong>, open PowerShell in its <code>LocalServer</code> folder, and run:</p>
+<pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-TorWatchServer.ps1</code></pre>
+<p>The starter asks for your own provider keys, generates a database password and builds the included server source. It starts PostgreSQL, the backend, Prowlarr, FlareSolverr and the gateway. The image contains FFmpeg and FFprobe. An existing Gluetun container is left alone. This local server has its own database; use Homeserver for continuity with your phone.</p>
+<p>Keep the ZIP for sharing. The private configuration the starter creates under your local application data folder must stay on your computer. See <code>LocalServer/README.md</code> for status/stop commands and custom ports.</p>
+<h2>Advanced: run from a source checkout</h2>
+<p>This option requires <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> with Linux containers, and a checkout of the TorWatch source code. Start Docker Desktop before running these PowerShell commands.</p>
+<p>From the repository root, build the server image and create your own environment file:</p>
+<pre><code>docker build -f deploy/torwatch-server/Dockerfile -t torwatch-server:desktop-v2 --build-arg TORWATCH_VERSION=2.0.0 torrent-streamer
+Copy-Item deploy/torwatch-server/.env.example deploy/torwatch-server/.env
+notepad deploy/torwatch-server/.env</code></pre>
+<p>In that file set these values. Choose a strong PostgreSQL password and provide your TMDb API key:</p>
+<pre><code>TORWATCH_DATA_DIR=C:/TorWatchServer
+TORWATCH_IMAGE=torwatch-server:desktop-v2
+TORWATCH_VERSION=2.0.0
+POSTGRES_PASSWORD=your-own-strong-password
+TMDB_API_KEY=your-own-tmdb-api-key
+GATEWAY_PORT=8080</code></pre>
+<p>Keep the remaining defaults for a first installation. The data folder must have room for your downloads. Then start the stack:</p>
+<pre><code>docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml up -d
+curl.exe --fail http://127.0.0.1:8080/readyz
+curl.exe --fail http://127.0.0.1:8080/v1/version</code></pre>
+<p>Once the readiness check succeeds, choose <strong>Server on this PC</strong> in TorWatch and enter <code>http://127.0.0.1:8080</code>. Test, then save. The desktop does not manage the Docker stack.</p>
+<p>To inspect or stop your local stack:</p>
+<pre><code>docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml ps
+docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml logs --tail 100 vod
+docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml stop</code></pre>
+<h2>If connection fails</h2>
+<ul><li><strong>Server not ready:</strong> check the server database and container logs.</li><li><strong>Server unreachable:</strong> check its address, port and network/Tailscale access.</li><li><strong>Incompatible protocol:</strong> update the client or server to compatible versions.</li><li><strong>Connection test passes but the catalog fails:</strong> check the server's TMDb credential and CORS allowlist. A packaged desktop uses <code>Origin: null</code>; if your server has an explicit <code>TORWATCH_ALLOWED_CLIENT_ORIGINS</code>, add <code>null</code> alongside its existing phone origins and recreate the server container.</li></ul>
+<p>Keep server access within your trusted network or Tailscale. The current server package is designed for a trusted household.</p>
+<h2>Existing built-in local setup</h2>
+<p>Existing installations can keep their original managed local services. In connection settings, use <strong>Manage existing built-in local services</strong>. Selecting a Version 2 server saves the new connection and switches this desktop to the external-server flow.</p>
+</body></html>

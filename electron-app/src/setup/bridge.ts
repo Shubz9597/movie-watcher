@@ -37,6 +37,10 @@ function createPreviewSetupApi(): SetupApi {
   let checkListener: ((result: CheckResult) => void) | null = null;
 
   return {
+    getDesktopConnection: async () => ({ connection: null, hasLegacySetup: false }),
+    probeDesktopServer: async (connection) => ({ ok: true, connection: { ...connection, serverVersion: 'preview' } }),
+    connectDesktopServer: async () => ({ ok: false, error: 'This is a setup preview. Open the Windows app to save your server connection.' }),
+    openDesktopServerGuide: async () => ({ ok: false, error: 'The guide is available inside the Windows app.' }),
     getDefaults: async () => previewDefaults,
     getMode: async () => resolvedPreviewMode(),
     verifySavedCredentials: async () => ({}),

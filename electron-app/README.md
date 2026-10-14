@@ -2,6 +2,22 @@
 
 Desktop application with embedded MPV player for streaming movies and TV shows.
 
+## Version 2 server connections
+
+The current desktop supports a separately hosted Docker server on this PC or
+an existing LAN/Tailscale homeserver. Choose the mode, enter its gateway URL,
+test and save. Provider credentials stay on the selected server. See
+[the Windows setup guide](desktop-server-guide.html) and
+[implementation notes](../docs/windows-desktop-v2.md).
+
+Build with `npm run build`; install `release/TorWatch Setup 2.0.1.exe`.
+The resulting `release/TorWatch Windows 2.0.1.zip` also includes a standalone
+local Docker starter and backend source, without personal settings or keys.
+Homeserver is recommended for the same library database as your phone. Link
+the phone's `mw_device_id` in connection settings to use its existing Continue
+Watching records; the URL alone does not select that viewing profile.
+The Windows release version is independent of the Capacitor/mobile package.
+
 ## Setup Instructions
 
 ### 1. Get MPV DLLs
@@ -46,9 +62,14 @@ npm install
 
 ### 4. Run the App
 
-Make sure your backends are running:
-- Next.js server on `http://localhost:3000`
-- Go backend on `http://localhost:4001`
+For a Version 2 server connection, build the desktop renderer and run Electron:
+
+```powershell
+npm run build:renderer
+npm run electron
+```
+
+Existing managed local installations can use Vite development:
 
 Then run:
 ```bash
@@ -92,15 +113,15 @@ future native wrapper and a real device/emulator.
 npm run build
 ```
 
-This will create an installer in the `dist/` directory.
+This creates `release/TorWatch Setup 2.0.1.exe` and the shareable Windows ZIP.
 
 ## Requirements
 
-- **Node.js 18+**
+- **Node.js 22.12+** for source builds
 - **Rust toolchain** (for rebuilding native module if needed)
 - **MPV DLL** (`libmpv-2.dll`) - Download from https://mpv.io/installation/
-- **Next.js backend** running on `http://localhost:3000`
-- **Go backend** running on `http://localhost:4001`
+- **Version 2 TorWatch server** reachable at the saved gateway URL
+- **Docker Desktop** only when hosting a server on this PC
 
 ## File Structure
 
@@ -123,15 +144,13 @@ electron-app/
 
 ## API Endpoints Used
 
-### Next.js API (`http://localhost:3000/api`)
-- `GET /tmdb/movies` - Get movies (trending, search, etc.)
-- `GET /torrents/movie` - Get torrents for a movie
-- `POST /torrents/resolve` - Resolve torrent to stream URL
-- `GET /tmdb/tv/shows` - Get TV shows
-- `GET /torrents/tv` - Get torrents for TV shows
-- `GET /continue` - Get continue watching list
+### Version 2 catalog API (selected server gateway)
+- `GET /readyz` - Server readiness
+- `GET /v1/version` - Protocol and capability checks
+- `GET /v2/catalog/sections` - Browse catalog sections
+- `GET /v2/catalog/search` - Search the catalog
 
-### Go Backend (`http://localhost:4001`)
+### Go Backend (selected server gateway)
 - `GET /stream` - Stream video content
 - `POST /v1/session/start` - Start playback session
 - `POST /v1/session/heartbeat` - Update playback progress
@@ -192,8 +211,8 @@ single `429 Too Many Requests` response after the provider's requested delay.
 - Check that `index.node` exists in `native/mpv-embed/`
 
 ### Backend connection errors
-- Ensure Next.js is running on port 3000
-- Ensure Go backend is running on port 4001
+- Test the server connection in TorWatch Settings
+- Ensure the chosen gateway URL answers `/readyz` and `/v1/version`
 - Check firewall settings
 
 ### Video not playing

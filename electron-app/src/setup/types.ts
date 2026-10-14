@@ -62,6 +62,10 @@ export type SavedCredentialResults = {
 };
 
 export type SetupApi = {
+  getDesktopConnection?: () => Promise<{ connection: DesktopServerConnection | null; hasLegacySetup: boolean }>;
+  probeDesktopServer?: (candidate: DesktopServerConnection) => Promise<DesktopServerResult>;
+  connectDesktopServer?: (candidate: DesktopServerConnection) => Promise<DesktopServerResult>;
+  openDesktopServerGuide?: () => Promise<{ ok: boolean; error?: string }>;
   getDefaults: () => Promise<SetupDefaults>;
   getMode: () => Promise<SetupModeState>;
   verifySavedCredentials: () => Promise<SavedCredentialResults>;
@@ -80,3 +84,6 @@ export type SetupApi = {
   onCheck: (callback: (result: CheckResult) => void) => void;
   onMode: (callback: (state: SetupModeState) => void) => void;
 };
+
+export type DesktopServerConnection = { mode: 'local' | 'remote'; origin: string; progressSubjectId?: string };
+export type DesktopServerResult = { ok: boolean; error?: string; connection?: DesktopServerConnection & { serverVersion?: string } };

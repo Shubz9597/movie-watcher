@@ -3,7 +3,7 @@ import { pathToFileURL } from "url";
 
 import { downloadSubtitleForMpv } from "./subtitle-cache.js";
 import { fetchResumePosition, postProgress, progressFromPayload } from "./progress-api.js";
-import { getSkipSegments } from "./skip-segments.js";
+import { getServerSkipSegments, hasCompleteSkipSegments, skipSegmentsQuery } from "./server-skip-segments.js";
 import { resolveStreamUrl } from "./stream-url.js";
 
 export function createPlaybackController({
@@ -14,6 +14,8 @@ export function createPlaybackController({
   vodBase,
   resumeToleranceSeconds,
   resumeVerifyTimeoutMs,
+  getClientId = () => "",
+  skipRetryDelayMs = 60_000,
 }) {
   let currentStreamUrl = null;
   let currentMagnet = null;
@@ -28,6 +30,7 @@ export function createPlaybackController({
   let currentSkipSegmentLookup = null;
   let currentSkipSegmentAbortController = null;
   let currentSkipSegmentGeneration = 0;
+  let currentSkipSegmentRetry = null;
   let bufferPollInterval = null;
   let bufferPollAbortController = null;
   let progressHeartbeatInterval = null;
@@ -106,7 +109,7 @@ export function createPlaybackController({
       pendingResume = null;
     }
 
-    const progress = { ...currentProgress };
+    const progress = { ...currentProgress, seq: ++currentProgress.seq };
     const request = postProgress(vodBase, progress, position, duration)
       .catch((err) => console.warn("[Progress] Heartbeat failed:", err.message))
       .finally(() => {
@@ -126,7 +129,13 @@ export function createPlaybackController({
   async function prepareProgress(payload) {
     clearProgressHeartbeat();
     await saveCurrentProgress({ waitForPending: true });
-    currentProgress = progressFromPayload(payload);
+    const identity = progressFromPayload(payload);
+    currentProgress = identity ? {
+      ...identity,
+      clientId: String(payload?.clientId || getClientId()),
+      sessionId: crypto.randomUUID(),
+      seq: 0,
+    } : null;
     const session = ++progressSession;
     const resumePosition = await fetchResumePosition(vodBase, currentProgress);
     pendingResume = currentProgress && resumePosition > 0 ? { session, position: resumePosition } : null;
@@ -219,6 +228,8 @@ export function createPlaybackController({
   }
 
   function resetSkipSegmentLookup(payload, playbackIdentity) {
+    clearTimeout(currentSkipSegmentRetry);
+    currentSkipSegmentRetry = null;
     currentSkipSegmentGeneration += 1;
     currentSkipSegmentAbortController?.abort();
     currentSkipSegmentAbortController = null;
@@ -236,6 +247,8 @@ export function createPlaybackController({
   }
 
   function clearSkipSegmentLookup() {
+    clearTimeout(currentSkipSegmentRetry);
+    currentSkipSegmentRetry = null;
     currentSkipSegmentGeneration += 1;
     currentSkipSegmentAbortController?.abort();
     currentSkipSegmentAbortController = null;
@@ -250,10 +263,11 @@ export function createPlaybackController({
     if (!Number.isFinite(duration) || duration <= 0) return;
 
     const context = { ...currentSkipSegmentContext, durationSeconds: duration };
+    if (!skipSegmentsQuery(context)) return;
     const generation = currentSkipSegmentGeneration;
     const controller = new AbortController();
     currentSkipSegmentAbortController = controller;
-    currentSkipSegmentLookup = getSkipSegments(context, { signal: controller.signal })
+    const lookup = (attempt) => getServerSkipSegments(vodBase, context, { signal: controller.signal })
       .then((segments) => {
         if (generation !== currentSkipSegmentGeneration || controller.signal.aborted) return;
         const identity = context.kind === "anime"
@@ -263,11 +277,23 @@ export function createPlaybackController({
           `[SkipSegments] ${identity}: ${segments.length > 0 ? segments.map((segment) => segment.type).join(", ") : "no segments found"}`,
         );
         sendControls("mpv:skipSegments", segments);
+        if (attempt === 0 && !hasCompleteSkipSegments(segments)) {
+          // Detection may finish after the first response. Retry only once,
+          // and retire the timer when the episode or server session changes.
+          currentSkipSegmentRetry = setTimeout(() => {
+            currentSkipSegmentRetry = null;
+            if (generation === currentSkipSegmentGeneration && !controller.signal.aborted) {
+              currentSkipSegmentLookup = lookup(1);
+            }
+          }, skipRetryDelayMs);
+          currentSkipSegmentRetry.unref?.();
+        }
       })
       .finally(() => {
         if (generation !== currentSkipSegmentGeneration) return;
-        currentSkipSegmentAbortController = null;
+        if (!currentSkipSegmentRetry) currentSkipSegmentAbortController = null;
       });
+    currentSkipSegmentLookup = lookup(0);
   }
 
   function sendSubtitleState(payload) {
@@ -519,6 +545,7 @@ export function createPlaybackController({
   }
 
   function retireAsyncWork() {
+    clearSkipSegmentLookup();
     currentSubtitleRequest += 1;
     cancelSubtitleLoad();
     stopBufferPolling();
