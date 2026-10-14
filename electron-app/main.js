@@ -59,7 +59,12 @@ const desktopConnectionStore = createDesktopConnectionStore(app.getPath("userDat
 const desktopConnection = desktopConnectionStore.load();
 const vodBase = desktopConnection?.origin || VOD_BASE;
 const hasLegacySetup = runtimeManager.isConfigured();
-const desktopConnectionRequired = !desktopConnection && (fs.existsSync(desktopConnectionStore.filePath) || !hasLegacySetup);
+// Without a saved server the server screen opens at once. The built-in
+// services of an earlier version (Docker with its VPN container) start on
+// launch only once someone chose them there: starting them unasked kept the
+// window waiting for the VPN before anything could be chosen.
+const useBuiltInServices = !desktopConnection && hasLegacySetup && desktopConnectionStore.usesBuiltInServices();
+const desktopConnectionRequired = !desktopConnection && !useBuiltInServices;
 const useBuiltRenderer = app.isPackaged || Boolean(desktopConnection) || desktopConnectionRequired;
 
 app.on("web-contents-created", (_event, contents) => {

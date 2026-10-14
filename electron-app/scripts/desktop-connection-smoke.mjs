@@ -95,7 +95,7 @@ async function closeDesktop() {
 
 try {
   const setupDebugPort = await launch();
-  let page = await waitForPage('Connect TorWatch');
+  let page = await waitForPage('Set up TorWatch');
   await page.screenshot({ ...screenshotOptions, path: path.join(resultDirectory, 'setup-remote.png') });
   await page.click('input[name="server-mode"][value="local"]');
   assert.equal(await page.$eval('input[type="url"]', (input) => input.value), 'http://127.0.0.1:8080');
@@ -111,7 +111,7 @@ try {
   await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control');
   await page.type('input[type="url"]', origin);
   await page.click('button[type="submit"]');
-  await page.waitForFunction(() => document.body.innerText.includes('Connection saved'), { timeout: 10_000 }).catch(() => {});
+  await page.waitForFunction(() => document.body.innerText.includes('TorWatch is restarting'), { timeout: 10_000 }).catch(() => {});
   browser.disconnect(); browser = null;
   await delay(500);
   const restartDeadline = Date.now() + 25_000;

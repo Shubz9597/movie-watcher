@@ -66,6 +66,7 @@ export type SetupApi = {
   probeDesktopServer?: (candidate: DesktopServerConnection) => Promise<DesktopServerResult>;
   connectDesktopServer?: (candidate: DesktopServerConnection) => Promise<DesktopServerResult>;
   openDesktopServerGuide?: () => Promise<{ ok: boolean; error?: string }>;
+  useBuiltInServices?: () => Promise<{ ok: boolean; error?: string }>;
   getDefaults: () => Promise<SetupDefaults>;
   getMode: () => Promise<SetupModeState>;
   verifySavedCredentials: () => Promise<SavedCredentialResults>;

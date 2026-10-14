@@ -4,18 +4,19 @@ Desktop application with embedded MPV player for streaming movies and TV shows.
 
 ## Version 2 server connections
 
-The current desktop supports a separately hosted Docker server on this PC or
-an existing LAN/Tailscale homeserver. Choose the mode, enter its gateway URL,
-test and save. Provider credentials stay on the selected server. See
+On first launch the desktop asks which server to use: **Connect to an existing
+server** (another computer on the same network or VPN) or **Set up a new server
+on this computer** (a separately started Docker stack). Enter its address, test
+and save. Provider credentials stay on the selected server. See
 [the Windows setup guide](desktop-server-guide.html) and
 [implementation notes](../docs/windows-desktop-v2.md).
 
 Build with `npm run build`; install `release/TorWatch Setup 2.0.1.exe`.
 The resulting `release/TorWatch Windows 2.0.1.zip` also includes a standalone
 local Docker starter and backend source, without personal settings or keys.
-Homeserver is recommended for the same library database as your phone. Link
-the phone's `mw_device_id` in connection settings to use its existing Continue
-Watching records; the URL alone does not select that viewing profile.
+Devices using one server share its library. To continue another device's
+watch progress, enter its viewing profile ID under **Share watch progress with
+another device**; the address alone does not select a profile.
 The Windows release version is independent of the Capacitor/mobile package.
 
 ## Setup Instructions

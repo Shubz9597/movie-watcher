@@ -41,6 +41,7 @@ function createPreviewSetupApi(): SetupApi {
     probeDesktopServer: async (connection) => ({ ok: true, connection: { ...connection, serverVersion: 'preview' } }),
     connectDesktopServer: async () => ({ ok: false, error: 'This is a setup preview. Open the Windows app to save your server connection.' }),
     openDesktopServerGuide: async () => ({ ok: false, error: 'The guide is available inside the Windows app.' }),
+    useBuiltInServices: async () => ({ ok: true }),
     getDefaults: async () => previewDefaults,
     getMode: async () => resolvedPreviewMode(),
     verifySavedCredentials: async () => ({}),

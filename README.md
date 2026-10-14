@@ -4,13 +4,14 @@ Tor Watch is a multi platform application for discovering and watching movies, s
 
 ## Windows Version 2 desktop
 
-Install `electron-app/release/TorWatch Setup 2.0.1.exe` and choose **Homeserver
-(recommended)** or **Server on this PC**. Enter the server gateway URL, test the connection,
-then select **Save and open TorWatch**. A homeserver connection uses the same
-URL as the phone; Docker and provider credentials stay on the server. To use
-the phone's existing Continue Watching records, also enter its `mw_device_id`
-under **Link Continue Watching from your phone**. The shared library uses the
-same server database; viewing progress is scoped to this profile ID.
+Install `electron-app/release/TorWatch Setup 2.0.1.exe`. On first launch it asks
+which server to use: **Connect to an existing server** (a TorWatch server on
+another computer; enter the address your other devices use) or **Set up a new
+server on this computer** (Docker Desktop). Test the connection, then select
+**Save and start TorWatch**. Docker and provider keys stay on the server.
+Devices on one server share its library; to continue another device's watch
+progress, enter its viewing profile ID under **Share watch progress with
+another device**.
 
 For a server hosted on Windows, extract `TorWatch Windows 2.0.1.zip`, follow
 `LocalServer/README.md`, and run its `Start-TorWatchServer.ps1`. It builds and

@@ -33,4 +33,11 @@ export function registerDesktopConnectionIpc(ipcMain, {
     }
   });
   ipcMain.handle("desktop:open-server-guide", openGuide);
+  // Keep using the built-in services of an earlier version (remembered, so
+  // they start on later launches without this screen).
+  ipcMain.handle("desktop:use-builtin-services", () => {
+    if (!hasLegacySetup) return { ok: false, error: "No built-in services are set up on this computer." };
+    try { store.chooseBuiltInServices(); return { ok: true }; }
+    catch (error) { return { ok: false, error: error.message }; }
+  });
 }

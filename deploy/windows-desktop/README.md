@@ -1,10 +1,10 @@
 # TorWatch local server for Windows
 
-Use **Homeserver (recommended)** in the Windows app for your phone's shared
-library. Link its existing viewing profile in desktop setup for the same watch
-progress; the current API keys progress by profile as well as episode. Run this local server only when you
-want an independent installation, for example when sharing TorWatch with
-someone else. It has its own database and does not mirror your homeserver.
+Run this to set up a new TorWatch server on a Windows computer: for example
+when there is no other TorWatch server to connect to, or when sharing
+TorWatch with someone else. It has its own database, library and watch
+progress. If a TorWatch server already runs elsewhere, choose **Connect to an
+existing server** in the Windows app instead; nothing needs installing here.
 
 ## Start
 
@@ -22,7 +22,7 @@ and starts the five services. Node.js, Go and FFmpeg need not be installed on
 Windows: the server image builds Go and contains FFmpeg/FFprobe.
 
 Wait for `Server ready: http://127.0.0.1:8080`. In the desktop app choose
-**Server on this PC**, enter that address, test and save. The first build needs
+**Set up a new server on this computer**, enter that address, test and save. The first build needs
 internet access to download Docker images and Go dependencies.
 
 The startup can take several minutes on a fresh system. If it fails, run the
@@ -74,5 +74,5 @@ The same starter also runs from `deploy/windows-desktop/`; it locates the
 existing server Dockerfile/Compose files and `torrent-streamer/` source there.
 The complete ZIP is produced by `npm run build:bundle` in `electron-app` after
 building the Windows installer. The build copies only tracked backend source
-needed by Go; repository secrets, runtime data and the author's homeserver URL
+needed by Go; repository secrets, runtime data and personal server addresses
 are not included.

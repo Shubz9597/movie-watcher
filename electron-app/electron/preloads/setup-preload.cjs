@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("setupAPI", {
   probeDesktopServer: (candidate) => ipcRenderer.invoke("desktop:probe-server", candidate),
   connectDesktopServer: (candidate) => ipcRenderer.invoke("desktop:connect-server", candidate),
   openDesktopServerGuide: () => ipcRenderer.invoke("desktop:open-server-guide"),
+  useBuiltInServices: () => ipcRenderer.invoke("desktop:use-builtin-services"),
   getDefaults: () => ipcRenderer.invoke("setup:get-defaults"),
   getMode: () => ipcRenderer.invoke("setup:get-mode"),
   verifySavedCredentials: () => ipcRenderer.invoke("setup:verify-saved-credentials"),

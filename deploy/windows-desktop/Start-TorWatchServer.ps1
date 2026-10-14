@@ -99,5 +99,5 @@ $origin = "http://127.0.0.1:$Port"
 $ready = Invoke-RestMethod -Uri "$origin/readyz" -TimeoutSec 15
 $version = Invoke-RestMethod -Uri "$origin/v1/version" -TimeoutSec 15
 Write-Host "Server ready: $origin (version $($version.serverVersion))"
-Write-Host 'In the Windows app choose Server on this PC, enter this URL, test and save.'
-Write-Host 'This server has its own database. To resume your phone history, use its homeserver and link its existing viewing profile in the desktop app.'
+Write-Host 'In TorWatch choose "Set up a new server on this computer", enter this address, test and save.'
+Write-Host 'This server keeps its own library and watch progress, separate from any other TorWatch server.'

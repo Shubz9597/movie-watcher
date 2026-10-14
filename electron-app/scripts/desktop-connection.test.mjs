@@ -38,6 +38,32 @@ test('saved server survives a new store and failed validation preserves it', () 
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('choosing the earlier built-in services is remembered until a server is saved', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'torwatch-builtin-'));
+  try {
+    const store = createDesktopConnectionStore(directory);
+    assert.equal(store.usesBuiltInServices(), false, 'nothing starts unasked on a fresh profile');
+    store.chooseBuiltInServices();
+    assert.equal(createDesktopConnectionStore(directory).usesBuiltInServices(), true, 'the choice survives a restart');
+    store.save({ mode: 'remote', origin: 'http://192.168.1.20:8080' });
+    assert.equal(store.usesBuiltInServices(), false, 'a saved server replaces it');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the built-in services can be chosen only where they exist', async () => {
+  const handlers = new Map();
+  const ipcMain = { on: () => {}, handle: (name, fn) => handlers.set(name, fn) };
+  let chosen = 0;
+  const store = { getClientId: () => 'id', chooseBuiltInServices: () => { chosen++; } };
+  registerDesktopConnectionIpc(ipcMain, { store, activeConnection: null, vodBase: 'http://localhost:4001', hasLegacySetup: false, restart: () => {}, openGuide: () => ({ ok: true }) });
+  assert.equal((await handlers.get('desktop:use-builtin-services')()).ok, false);
+  registerDesktopConnectionIpc(ipcMain, { store, activeConnection: null, vodBase: 'http://localhost:4001', hasLegacySetup: true, restart: () => {}, openGuide: () => ({ ok: true }) });
+  assert.equal((await handlers.get('desktop:use-builtin-services')()).ok, true);
+  assert.equal(chosen, 1);
+});
+
 test('phone viewing profile is desktop-only and unlinking restores the original desktop identity', () => {
   const previousWindow = globalThis.window;
   const values = new Map([['mw_device_id', 'desktop-original']]);

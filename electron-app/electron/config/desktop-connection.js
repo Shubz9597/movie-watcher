@@ -6,7 +6,7 @@ export const DESKTOP_PROTOCOL_RANGE = [1, 1];
 
 export function normalizeDesktopConnection(input) {
   if (input?.mode !== "local" && input?.mode !== "remote") {
-    throw new Error("Choose a server on this PC or a homeserver.");
+    throw new Error("Choose whether to connect to an existing server or set up a new one on this computer.");
   }
   const raw = String(input.origin || "").trim();
   if (!/^https?:\/\//i.test(raw)) throw new Error("Enter a complete server URL starting with http:// or https://.");
@@ -16,12 +16,12 @@ export function normalizeDesktopConnection(input) {
     throw new Error("Enter only the server address and port, without a path, password or query.");
   }
   if (input.mode === "local" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
-    throw new Error("For a server on this PC, use localhost or a loopback address. Choose Homeserver for another computer.");
+    throw new Error("A server on this computer uses a localhost address, for example http://127.0.0.1:8080. For a server on another computer, choose Connect to an existing server.");
   }
   const connection = { mode: input.mode, origin: url.origin };
   const progressSubjectId = String(input.progressSubjectId || '').trim();
   if (input.mode === 'remote' && progressSubjectId) {
-    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(progressSubjectId)) throw new Error('Enter the phone viewing profile ID without spaces or punctuation.');
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(progressSubjectId)) throw new Error('Enter the viewing profile ID without spaces or punctuation.');
     connection.progressSubjectId = progressSubjectId;
   }
   return connection;
@@ -29,8 +29,18 @@ export function normalizeDesktopConnection(input) {
 
 export function createDesktopConnectionStore(userDataPath) {
   const filePath = path.join(userDataPath, "desktop-server.json");
+  // Chosen on the server screen: keep using the built-in services set up by
+  // an earlier version (they then start on launch, as before).
+  const builtInPath = path.join(userDataPath, "desktop-builtin-services");
   return {
     filePath,
+    usesBuiltInServices() {
+      return fs.existsSync(builtInPath);
+    },
+    chooseBuiltInServices() {
+      fs.mkdirSync(userDataPath, { recursive: true });
+      fs.writeFileSync(builtInPath, "built-in services chosen on the server screen\n", { mode: 0o600 });
+    },
     getClientId() {
       const clientPath = path.join(userDataPath, "desktop-client-id");
       try {
@@ -56,6 +66,7 @@ export function createDesktopConnectionStore(userDataPath) {
       try {
         fs.writeFileSync(temporary, `${JSON.stringify(connection)}\n`, { mode: 0o600 });
         fs.renameSync(temporary, filePath);
+        fs.rmSync(builtInPath, { force: true }); // a saved server replaces that choice
       } finally {
         fs.rmSync(temporary, { force: true });
       }
@@ -74,7 +85,7 @@ export async function probeDesktopServer(input, { fetchImpl = fetch, timeoutMs =
         redirect: "error",
       });
     } catch {
-      throw new Error("The server could not be reached. Check its URL, start the server, and connect to the same network or Tailscale.");
+      throw new Error("The server could not be reached. Check the address and that the server is running, and that this computer can reach it (same network, or a VPN such as Tailscale).");
     }
   };
   const ready = await request("/readyz");

@@ -39,13 +39,13 @@ export function DesktopConnectionSetup({ api }: { api: SetupApi }) {
     const action = save ? api.connectDesktopServer : api.probeDesktopServer;
     if (!action) { setStatus({ error: true, message: 'The desktop connection bridge is unavailable. Restart TorWatch.' }); return; }
     setBusy(save ? 'save' : 'test');
-    setStatus({ error: false, message: save ? 'Checking your server before saving…' : 'Checking server readiness and compatibility…' });
+    setStatus({ error: false, message: save ? 'Checking the server before saving…' : 'Checking the server…' });
     try {
       const result = await action(connection);
       if (!result.ok) throw new Error(result.error || 'The server could not be connected.');
       setStatus({ error: false, message: save
-        ? 'Connection saved. TorWatch is restarting…'
-        : `Connected to TorWatch ${result.connection?.serverVersion || 'server'}. Ready to save.` });
+        ? 'Saved. TorWatch is restarting…'
+        : `Connected to TorWatch server ${result.connection?.serverVersion || ''}. Ready to save.`.replace(' .', '.') });
       if (!save) setBusy(null);
     } catch (error) {
       setBusy(null);
@@ -61,69 +61,76 @@ export function DesktopConnectionSetup({ api }: { api: SetupApi }) {
     }
   };
 
+  const useBuiltIn = async () => {
+    const result = await api.useBuiltInServices?.().catch(() => null);
+    if (result && !result.ok) { setStatus({ error: true, message: result.error || 'The built-in services could not be selected.' }); return; }
+    setLegacy(true);
+  };
+
   if (legacy) return <>
-    <div className="desktop-legacy-back"><button type="button" onClick={() => setLegacy(false)}>Back to server connection</button></div>
+    <div className="desktop-legacy-back"><button type="button" onClick={() => setLegacy(false)}>Back to server choice</button></div>
     <SetupApp api={api} />
   </>;
 
+  const local = connection.mode === 'local';
   return <>
     <div className="window-chrome"><img src={appIcon} alt="" /><span>TorWatch</span></div>
     <main className="desktop-connection">
       <header>
         <img className="brand-mark" src={appIcon} alt="" />
-        <div className="header-copy"><h1>Connect TorWatch</h1>
-          <p className="intro">Choose where your server runs. Your movies, library and watch progress come from that server.</p>
+        <div className="header-copy"><h1>Set up TorWatch</h1>
+          <p className="intro">TorWatch plays video on this computer. A TorWatch server finds and streams the torrents and keeps your library and watch progress. Connect to a server you already run, or set up a new one on this computer.</p>
         </div>
       </header>
       <form onSubmit={(event: FormEvent) => { event.preventDefault(); void connect(true); }}>
         <section aria-labelledby="desktop-server-heading">
-          <div className="section-heading"><h2 id="desktop-server-heading">Your server</h2></div>
+          <div className="section-heading"><h2 id="desktop-server-heading">Server</h2></div>
           <fieldset className="desktop-server-modes" disabled={Boolean(busy) || loading || loadFailed}>
-            <legend className="desktop-sr-only">Where does your server run?</legend>
+            <legend className="desktop-sr-only">Which server should TorWatch use?</legend>
             <label className="desktop-server-choice">
-              <input type="radio" name="server-mode" value="remote" checked={connection.mode === 'remote'} onChange={() => changeMode('remote')} />
-              <span><strong>Homeserver (recommended)</strong><span>Use your phone's server for a shared library. Link its viewing profile below for Continue Watching.</span></span>
+              <input type="radio" name="server-mode" value="remote" checked={!local} onChange={() => changeMode('remote')} />
+              <span><strong>Connect to an existing server</strong><span>A TorWatch server running on another computer, such as a home server or NAS. Every device that uses it shares the same library.</span></span>
             </label>
             <label className="desktop-server-choice">
-              <input type="radio" name="server-mode" value="local" checked={connection.mode === 'local'} onChange={() => changeMode('local')} />
-              <span><strong>Server on this PC</strong><span>Run an independent server with Docker Desktop and your own database.</span></span>
+              <input type="radio" name="server-mode" value="local" checked={local} onChange={() => changeMode('local')} />
+              <span><strong>Set up a new server on this computer</strong><span>Runs a TorWatch server here with Docker Desktop. It keeps its own library and watch progress.</span></span>
             </label>
           </fieldset>
-          <label className="desktop-server-url">Server URL
+          <label className="desktop-server-url">Server address
             <input type="url" value={connection.origin} required autoComplete="url" spellCheck={false}
-              placeholder={connection.mode === 'local' ? 'http://127.0.0.1:8080' : 'https://your-homeserver.ts.net'}
+              placeholder={local ? 'http://127.0.0.1:8080' : 'http://192.168.1.20:8080'}
               disabled={Boolean(busy) || loading || loadFailed} aria-describedby="desktop-server-hint"
               onChange={(event) => { setConnection({ ...connection, origin: event.target.value }); setStatus({ error: false, message: '' }); }} />
-            <span className="hint" id="desktop-server-hint">{connection.mode === 'local'
-              ? 'Start your Docker server first. Use its gateway address and port.'
-              : 'Use the same server URL as your phone, including its port if needed.'}</span>
+            <span className="hint" id="desktop-server-hint">{local
+              ? 'Start the server with the local server starter (see the setup guide), then enter the address it shows, normally http://127.0.0.1:8080.'
+              : 'The address your other devices use for this server, including its port. If it is only reachable over a VPN such as Tailscale, connect this computer to it first.'}</span>
           </label>
-          {connection.mode === 'remote' && <details><summary>Link Continue Watching from your phone</summary><div className="grid"><label className="wide">Phone viewing profile ID <span className="optional">Optional</span>
+          {!local && <details><summary>Share watch progress with another device (optional)</summary><div className="grid"><label className="wide">Viewing profile ID <span className="optional">Optional</span>
             <input value={connection.progressSubjectId || ''} autoComplete="off" spellCheck={false}
               disabled={Boolean(busy) || loading || loadFailed} maxLength={128}
-              placeholder="Your phone's mw_device_id"
+              placeholder="Profile ID of the other device"
               aria-describedby="desktop-profile-hint"
               onChange={(event) => { setConnection({ ...connection, progressSubjectId: event.target.value }); setStatus({ error: false, message: '' }); }} />
-            <span className="hint" id="desktop-profile-hint">Use your phone's existing profile to share Continue Watching and resume positions. Leave blank for this desktop's own progress.</span>
+            <span className="hint" id="desktop-profile-hint">To continue the same Continue Watching list as a device that already uses this server, enter that device's viewing profile ID. Leave empty to give this computer its own progress.</span>
           </label></div></details>}
-          <p className="desktop-server-note">{connection.mode === 'local'
-            ? 'This server has its own library and progress. Use the local server starter from the Windows ZIP to set it up. Closing the desktop app leaves it running.'
-            : 'Video plays on this Windows PC. Provider credentials stay on the server. Connect this PC to its network or Tailscale first.'}</p>
+          <p className="desktop-server-note">{local
+            ? 'Closing TorWatch leaves this server running in Docker. The setup guide explains how to start, stop and update it.'
+            : 'Video plays on this computer and streams from the server. Provider keys such as TMDb stay on the server.'}</p>
           <button className="help-link" type="button" onClick={() => void openGuide()}>Server setup guide</button>
         </section>
         {active && <p className="desktop-current-server">Current server: <span>{active.origin}</span></p>}
         <div className="desktop-server-status" role="status" aria-live="polite" aria-atomic="true" data-error={status.error}>
-          {loading ? 'Loading saved connection…' : status.message || 'The address is checked before it is saved. Saving restarts the desktop app.'}
+          {loading ? 'Loading saved settings…' : status.message || 'TorWatch checks the server before saving, then restarts.'}
         </div>
         <div className="button-row desktop-server-actions">
           <button type="button" onClick={() => void connect(false)} disabled={!connection.origin.trim() || Boolean(busy) || loading || loadFailed}>
             {busy === 'test' ? 'Checking…' : 'Test connection'}
           </button>
           <button className="primary" type="submit" disabled={!connection.origin.trim() || Boolean(busy) || loading || loadFailed}>
-            {busy === 'save' ? 'Connecting…' : 'Save and open TorWatch'}
+            {busy === 'save' ? 'Connecting…' : 'Save and start TorWatch'}
           </button>
         </div>
-        {hasLegacySetup && !active && <button className="help-link desktop-legacy-link" type="button" disabled={Boolean(busy)} onClick={() => setLegacy(true)}>Manage existing built-in local services</button>}
+        {hasLegacySetup && !active && <button className="help-link desktop-legacy-link" type="button" disabled={Boolean(busy)} onClick={() => void useBuiltIn()}>Keep using the built-in services set up earlier on this computer</button>}
       </form>
     </main>
   </>;

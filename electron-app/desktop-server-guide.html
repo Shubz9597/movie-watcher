@@ -1,21 +1,21 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TorWatch Windows server setup</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>TorWatch on Windows: server setup</title>
 <style>body{font:16px/1.65 system-ui,sans-serif;max-width:780px;margin:48px auto;padding:0 24px;background:#0a0a0a;color:#dadbdf}h1,h2{color:#fff;font-weight:500}h2{margin-top:36px}a{color:#a0c3ec}pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;background:#191919;border-radius:8px}code{font-size:14px}li{margin:8px 0}</style></head><body>
-<h1>Connect TorWatch on Windows</h1>
-<p>The desktop app connects to the Version 2 server you choose. MPV plays video on Windows; the server owns catalog data, sources, library and watch progress.</p>
-<h2>Use your homeserver</h2>
-<ol><li>Connect this PC to the same network or Tailscale network as your phone.</li><li>In TorWatch, choose <strong>Homeserver</strong>.</li><li>Enter the same server gateway URL used by your phone, including the port if needed. Enter the base address, without a page path.</li><li>Select <strong>Test connection</strong>, then <strong>Save and open TorWatch</strong>. The desktop restarts with the saved address.</li></ol>
-<p>Docker and provider credentials belong on the server. They are not required on the Windows client. Closing TorWatch leaves your homeserver running.</p>
-<h2>Continue Watching from your phone</h2>
-<p>The household library is shared by the server. The current progress API also uses a viewing profile ID. To link the phone's existing Continue Watching records, expand <strong>Link Continue Watching from your phone</strong> in desktop setup and enter the phone's profile ID before saving. Leaving it blank keeps this desktop's separate progress profile on the same server.</p>
-<p>For an inspectable iPhone development build, open TorWatch on the phone, enable Web Inspector in the phone's Safari settings, connect it to the development Mac, and select the app under Safari's Develop menu. In the Console, read (do not change) its stored ID:</p>
-<pre><code>localStorage.getItem('mw_device_id')</code></pre>
-<p>The HTTPS server URL itself does not expose this value. A server administrator can alternatively read the existing <code>subject_id</code> values and recent activity from <code>watch_progress</code>. Do not change the phone's ID: link the desktop to the existing one to preserve the phone history. Desktop playback retains its own writer/session identity and ordered checkpoints.</p>
-<h2>Host a server on this Windows PC</h2>
-<p>For a shareable installation, extract <strong>TorWatch Windows 2.0.1.zip</strong>, open PowerShell in its <code>LocalServer</code> folder, and run:</p>
+<h1>Set up TorWatch on Windows</h1>
+<p>TorWatch on Windows plays video on this computer. A TorWatch server does the rest: it finds and streams the torrents and keeps your library and watch progress. You can connect to a server you already run, or set up a new one on this computer.</p>
+<h2>Connect to an existing server</h2>
+<p>Use this when a TorWatch server already runs on another computer, for example a home server or NAS.</p>
+<ol><li>Make sure this computer can reach the server: the same home network, or the same VPN (such as Tailscale) if the server is only reachable that way.</li><li>In TorWatch, choose <strong>Connect to an existing server</strong>.</li><li>Enter the server's address with its port, for example <code>http://192.168.1.20:8080</code>: the same address your other devices use. Enter only the address, without a page path.</li><li>Select <strong>Test connection</strong>, then <strong>Save and start TorWatch</strong>. TorWatch restarts with the saved address.</li></ol>
+<p>Docker and provider keys (such as TMDb) belong on the server; this computer needs neither. Closing TorWatch leaves the server running.</p>
+<h2>Sharing watch progress between devices</h2>
+<p>Devices using the same server share its library. Watch progress (Continue Watching and resume points) is kept per viewing profile, and each device starts with its own. To continue another device's list on this computer, open <strong>Share watch progress with another device</strong> in TorWatch setup and enter that device's viewing profile ID before saving. Leave it empty to give this computer its own progress.</p>
+<p>The person who runs the server can find the profile IDs in the server's <code>watch_progress</code> table (<code>subject_id</code>, with recent activity). Link to an existing ID; never change it on the other device.</p>
+<h2>Set up a new server on this computer</h2>
+<p>Use this to run your own server here, for example on a computer without access to another TorWatch server. It needs <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> with Linux containers.</p>
+<p>Extract <strong>TorWatch Windows 2.0.1.zip</strong>, open PowerShell in its <code>LocalServer</code> folder, and run:</p>
 <pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-TorWatchServer.ps1</code></pre>
-<p>The starter asks for your own provider keys, generates a database password and builds the included server source. It starts PostgreSQL, the backend, Prowlarr, FlareSolverr and the gateway. The image contains FFmpeg and FFprobe. An existing Gluetun container is left alone. This local server has its own database; use Homeserver for continuity with your phone.</p>
-<p>Keep the ZIP for sharing. The private configuration the starter creates under your local application data folder must stay on your computer. See <code>LocalServer/README.md</code> for status/stop commands and custom ports.</p>
+<p>The starter asks for your own provider keys (a TMDb API key; OpenSubtitles is optional), creates a database password and builds the included server. It starts the database, the TorWatch backend, Prowlarr, FlareSolverr and the gateway. Wait for <code>Server ready: http://127.0.0.1:8080</code>, then choose <strong>Set up a new server on this computer</strong> in TorWatch, enter that address, test and save.</p>
+<p>This server keeps its own library and watch progress. The private settings the starter creates stay in your local application data folder; never share them. See <code>LocalServer/README.md</code> for status and stop commands and custom ports.</p>
 <h2>Advanced: run from a source checkout</h2>
 <p>This option requires <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> with Linux containers, and a checkout of the TorWatch source code. Start Docker Desktop before running these PowerShell commands.</p>
 <p>From the repository root, build the server image and create your own environment file:</p>
@@ -33,14 +33,14 @@ GATEWAY_PORT=8080</code></pre>
 <pre><code>docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml up -d
 curl.exe --fail http://127.0.0.1:8080/readyz
 curl.exe --fail http://127.0.0.1:8080/v1/version</code></pre>
-<p>Once the readiness check succeeds, choose <strong>Server on this PC</strong> in TorWatch and enter <code>http://127.0.0.1:8080</code>. Test, then save. The desktop does not manage the Docker stack.</p>
+<p>Once the readiness check succeeds, choose <strong>Set up a new server on this computer</strong> in TorWatch and enter <code>http://127.0.0.1:8080</code>. Test, then save. The desktop does not manage the Docker stack.</p>
 <p>To inspect or stop your local stack:</p>
 <pre><code>docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml ps
 docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml logs --tail 100 vod
 docker compose --env-file deploy/torwatch-server/.env -f deploy/torwatch-server/compose.yaml stop</code></pre>
 <h2>If connection fails</h2>
-<ul><li><strong>Server not ready:</strong> check the server database and container logs.</li><li><strong>Server unreachable:</strong> check its address, port and network/Tailscale access.</li><li><strong>Incompatible protocol:</strong> update the client or server to compatible versions.</li><li><strong>Connection test passes but the catalog fails:</strong> check the server's TMDb credential and CORS allowlist. A packaged desktop uses <code>Origin: null</code>; if your server has an explicit <code>TORWATCH_ALLOWED_CLIENT_ORIGINS</code>, add <code>null</code> alongside its existing phone origins and recreate the server container.</li></ul>
+<ul><li><strong>Server not ready:</strong> check the server database and container logs.</li><li><strong>Server unreachable:</strong> check its address and port, and that this computer is on the server's network (or VPN).</li><li><strong>Incompatible protocol:</strong> update the client or server to compatible versions.</li><li><strong>Connection test passes but the catalog fails:</strong> check the server's TMDb credential and CORS allowlist. A packaged desktop uses <code>Origin: null</code>; if your server has an explicit <code>TORWATCH_ALLOWED_CLIENT_ORIGINS</code>, add <code>null</code> alongside its existing allowed origins and recreate the server container.</li></ul>
 <p>Keep server access within your trusted network or Tailscale. The current server package is designed for a trusted household.</p>
-<h2>Existing built-in local setup</h2>
-<p>Existing installations can keep their original managed local services. In connection settings, use <strong>Manage existing built-in local services</strong>. Selecting a Version 2 server saves the new connection and switches this desktop to the external-server flow.</p>
+<h2>Built-in services from an earlier version</h2>
+<p>Computers set up with an earlier TorWatch version can keep its built-in services. On the server screen, choose <strong>Keep using the built-in services set up earlier on this computer</strong>; TorWatch then starts them on every launch, as before. Saving a server address later switches this computer to that server.</p>
 </body></html>
