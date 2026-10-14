@@ -406,6 +406,7 @@ export default function NativePlayerControls(props: Props) {
     load(true);
   }, [downloadId, time.duration, cat, tmdbId, imdbId, malId, season, episode, absoluteEpisode]);
 
+  const lastSkipAt = useRef(0);
   const skipAction = useMemo(
     () => skipActionAt(skipSegments, time.currentTime, time.duration, hasNextEpisode),
     [skipSegments, time.currentTime, time.duration, hasNextEpisode],
@@ -1079,13 +1080,25 @@ export default function NativePlayerControls(props: Props) {
         </div>
       ) : null}
 
-      {/* Skip chip (where timestamps exist) */}
+      {/* Skip chip (where timestamps exist). Above the bottom controls in
+          every sense: drawn over them (it sat under the bar's top 70% while
+          the controls showed, so only taps near its top edge worked) and
+          placed above the seek bar while they show, lower when hidden. */}
       {skipAction ? (
-        <div className="absolute bottom-28 right-4 z-20">
+        <div
+          className="absolute right-4 z-30 transition-[bottom] duration-200"
+          style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(9.5rem + env(safe-area-inset-bottom))' : 'calc(1.5rem + env(safe-area-inset-bottom))' }}
+        >
           <button
             type="button"
-            onPointerUp={(event) => {
+            // The surface's tap (show/hide controls, double-tap seek) must
+            // not also see this tap.
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => {
               event.stopPropagation();
+              const now = Date.now();
+              if (now - lastSkipAt.current < 600) return;
+              lastSkipAt.current = now;
               player.seekTo(skipAction.target);
             }}
             className="min-h-12 rounded-lg bg-white px-5 text-sm font-medium text-black shadow-lg transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
