@@ -20,7 +20,7 @@ import '/globals.css';
 setBackendOrigin(location.origin);
 const events = {};
 window.calls = [];
-const player = {seekTo(){}, seekBy(){}, togglePlayback(){window.calls.push(['togglePlayback']);}, setVideoScale(){}, setEmbeddedSubtitleScale(){}, loadSubtitle:async()=>null};
+const player = {seekTo(value){window.calls.push(['seekTo', value]);}, seekBy(){}, togglePlayback(){window.calls.push(['togglePlayback']);}, setVideoScale(){}, setEmbeddedSubtitleScale(){}, loadSubtitle:async()=>null};
 for (const name of ['setSubtitleDelay','setAudioDelay','selectSubtitleTrack','selectAudioTrack']) player[name] = value => window.calls.push([name, value]);
 for (const name of ['Time','State','Buffering','Tracks']) player['subscribe' + name] = callback => {events[name]=callback; return () => {delete events[name];};};
 const root = createRoot(document.getElementById('root'));
@@ -232,7 +232,22 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes('Matched dub line'));
   assert.ok(await page.evaluate(() => window.calls.some(([name, value]) => name === 'selectSubtitleTrack' && value === null)), 'the embedded translation is turned off under the dub overlay');
 
-  console.log('Video preferences smoke passed: dub script for dub audio, translation for Japanese, matched dub for streams, default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
+  // Seeking: a drag that ends in pointercancel (iOS takes over the slider
+  // gesture) still seeks; a drop with no ending event is applied anyway.
+  await mount({episode:41});
+  const drag = async (to, ending) => page.evaluate(([to, ending]) => {
+    window.calls = [];
+    const input = document.querySelector('input[aria-label="Seek"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(to));
+    input.dispatchEvent(new Event('input', {bubbles:true}));
+    if (ending) input.dispatchEvent(new PointerEvent(ending, {bubbles:true}));
+  }, [to, ending]);
+  await drag(1300, 'pointercancel');
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'seekTo' && value === 1300));
+  await drag(900, null);
+  await page.waitForFunction(() => window.calls.some(([name, value]) => name === 'seekTo' && value === 900), {timeout: 4000});
+
+  console.log('Video preferences smoke passed: seek commits on pointercancel and without a release event, dub script for dub audio, translation for Japanese, matched dub for streams, default full-dialogue track, readable names, external selection, real overlay delay, reload/restore, Off, delayed embedded inventory, audio, episode isolation, stale-download cancellation.');
 } finally {
   await pendingResponse?.().catch(() => {});
   await browser?.close();

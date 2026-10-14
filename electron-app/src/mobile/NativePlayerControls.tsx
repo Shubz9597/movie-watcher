@@ -263,6 +263,24 @@ export default function NativePlayerControls(props: Props) {
       return null;
     });
   }, [player]);
+  // A drag ends in many ways on iOS: the WebView often sends pointercancel
+  // (it takes over the slider gesture), not pointerup, and the seek was
+  // never sent: the bar stayed where it was dropped while the video kept
+  // playing from where it was. Every ending commits (the slider's own
+  // "change" event included), and a drop left uncommitted is applied after
+  // a moment. A second commit finds nothing pending.
+  const seekInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const input = seekInputRef.current;
+    if (!input) return;
+    input.addEventListener('change', commitScrub);
+    return () => input.removeEventListener('change', commitScrub);
+  }, [commitScrub]);
+  useEffect(() => {
+    if (scrubTo == null) return;
+    const timer = window.setTimeout(commitScrub, 1500);
+    return () => window.clearTimeout(timer);
+  }, [scrubTo, commitScrub]);
 
   // --- Live native events ---
   useEffect(() => {
@@ -1110,8 +1128,14 @@ export default function NativePlayerControls(props: Props) {
             value={Math.min(scrubTo ?? time.currentTime, time.duration || 0)}
             aria-label="Seek"
             aria-valuetext={formatTime(scrubTo ?? time.currentTime)}
+            ref={seekInputRef}
             onChange={(event) => setScrubTo(Number(event.target.value))}
             onPointerUp={commitScrub}
+            onPointerCancel={commitScrub}
+            onTouchEnd={commitScrub}
+            onTouchCancel={commitScrub}
+            onMouseUp={commitScrub}
+            onBlur={commitScrub}
             onKeyUp={(event) => {
               // Keyboard scrubbing commits on arrow-release, not per tick.
               if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) commitScrub();
