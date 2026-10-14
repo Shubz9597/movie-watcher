@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import UIKit
 import Capacitor
+import MediaPlayer
 import MobileVLCKit
 import VLCSupport
 
@@ -100,6 +101,18 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // VLC's audio output must be rebuilt before playing again.
     private var interruptionObserver: NSObjectProtocol?
     private var audioNeedsRestart = false
+    // System media controls: AirPods, Control Center, Lock Screen, car and
+    // headphone buttons (MPRemoteCommandCenter + Now Playing).
+    private struct NowPlayingItem {
+        var title: String
+        var subtitle: String
+        var posterURL: URL?
+    }
+    private var nowPlayingItem: NowPlayingItem?
+    private var nowPlayingArtwork: MPMediaItemArtwork?
+    private var remoteTargets: [(MPRemoteCommand, Any)] = []
+    private var routeObserver: NSObjectProtocol?
+    private var lastNowPlayingUpdate = Date.distantPast
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -150,7 +163,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             }
             self.videoScaleMode = TorWatchNativePlugin.savedVideoScaleMode() // the viewer's last Fit/Fill choice
             self.currentMediaURL = files.video
-            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId, localSubtitleLang: subtitleLang)
+            let record = try? DownloadCoordinator.shared.store.get(downloadId)
+            let item = NowPlayingItem(
+                title: record?.title ?? call.getString("title") ?? "TorWatch",
+                subtitle: record?.subtitleLabel ?? "",
+                posterURL: URL(string: record?.posterURL ?? call.getString("posterUrl") ?? ""))
+            self.startPlaybackSurface(rootVC: rootVC, url: files.video, seekTo: seekTo, playId: newPlayId, localDownloadId: downloadId, localSubtitleLang: subtitleLang, nowPlaying: item)
             call.resolve(["resumedPositionS": seekTo ?? 0])
         }
     }
@@ -248,7 +266,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 return
             }
             self.videoScaleMode = TorWatchNativePlugin.savedVideoScaleMode() // the viewer's last Fit/Fill choice
-            self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId, localDownloadId: nil)
+            let item = NowPlayingItem(title: call.getString("title") ?? "TorWatch", subtitle: "",
+                                      posterURL: URL(string: call.getString("posterUrl") ?? ""))
+            self.startPlaybackSurface(rootVC: rootVC, url: url, seekTo: seekTo, playId: newPlayId, localDownloadId: nil, nowPlaying: item)
             call.resolve()
         }
     }
@@ -258,7 +278,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// recreation when embedded subtitles are active and the user pinch-
     /// resizes — libvlc has no runtime text-scale API, so the engine rebuilds
     /// at the current position with a ~1s hiccup).
-    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String, localDownloadId newLocalDownloadId: String?, localSubtitleLang: String? = nil) {
+    private func startPlaybackSurface(rootVC: UIViewController, url: URL, seekTo: Double?, playId newPlayId: String, localDownloadId newLocalDownloadId: String?, localSubtitleLang: String? = nil, nowPlaying item: NowPlayingItem? = nil) {
         // Replacement safety: tear the previous player down BEFORE creating
         // the new one; late events from it are ignored via terminalSent. The
         // orientation stays landscape: restoring portrait here rotated every
@@ -341,6 +361,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // playback is starting.
         if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
         player.play()
+        nowPlayingItem = item
+        startSystemControls()
     }
 
     @objc func seek(_ call: CAPPluginCall) {
@@ -365,19 +387,24 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if playbackRequested {
             pausePlayback(player)
         } else {
-            restartAudioOutputIfNeeded()
-            // Flush queued pre-pause audio/video at the exact pause position.
-            // A plain unpause froze the picture while the sound ran on, in
-            // the app as well as after Home (tried 2026-10-13, reverted on
-            // device feedback). Never rewind here.
-            if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
-                player.time = VLCTime(int: position)
-            }
-            pausedPositionMs = nil
-            playbackRequested = true
-            player.play()
+            resumeFromPause(player)
         }
         call.resolve()
+    }
+
+    /// Play after a pause, from the app or a system control.
+    private func resumeFromPause(_ player: VLCMediaPlayer) {
+        restartAudioOutputIfNeeded()
+        // Flush queued pre-pause audio/video at the exact pause position.
+        // A plain unpause froze the picture while the sound ran on, in the
+        // app as well as after Home (tried 2026-10-13, reverted on device
+        // feedback). Never rewind here.
+        if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
+            player.time = VLCTime(int: position)
+        }
+        pausedPositionMs = nil
+        playbackRequested = true
+        player.play()
     }
 
     private func pausePlayback(_ player: VLCMediaPlayer) {
@@ -532,6 +559,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let positionMs = mediaPlayer?.time.intValue ?? 0
         let currentLocalDownload = localDownloadId
         let currentLocalLang = mediaPlayer.map { currentLocalSubtitleLang($0) } ?? ""
+        let currentNowPlaying = nowPlayingItem
         // Same session continues server-side: no terminal event, just an
         // in-place engine rebuild at the current position (playback resumes).
         teardown(restoreOrientation: false)
@@ -544,7 +572,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // Downloaded subtitles are playback slaves: a rebuilt engine has none
         // until they are attached again (resizing used to make them vanish).
         startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId,
-            localDownloadId: currentLocalDownload, localSubtitleLang: currentLocalDownload != nil ? currentLocalLang : nil)
+            localDownloadId: currentLocalDownload, localSubtitleLang: currentLocalDownload != nil ? currentLocalLang : nil,
+            nowPlaying: currentNowPlaying)
         call.resolve()
     }
 
@@ -629,6 +658,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             || player.currentAudioTrackIndex != reportedAudioTrack {
             emitTracks()
         }
+        // The system's Now Playing clock runs on its own; correct it now and
+        // then (and once the duration is known).
+        if Date().timeIntervalSince(lastNowPlayingUpdate) >= 15 { updateNowPlaying() }
         // D04: periodic local-progress checkpoints every 10s (VLC reports
         // time several times a second; each save is a database write).
         if localDownloadId != nil, Date().timeIntervalSince(lastLocalProgressSave) >= 10 {
@@ -652,10 +684,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         case .playing:
             applyPendingSeek(player)
             applyVideoScale(player) // the video size is known from here
+            updateNowPlaying()
             notifyListeners("buffering", data: ["active": false, "playId": playId])
             notifyListeners("playbackState", data: ["state": "playing", "playId": playId])
             emitTracks()
         case .paused:
+            updateNowPlaying()
             if localDownloadId != nil { persistLocalProgress(state: "paused") }
             notifyListeners("playbackState", data: ["state": "paused", "playId": playId])
         case .ended:
@@ -827,6 +861,123 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
     }
 
+    // MARK: - System media controls
+
+    /// AirPods (tap, squeeze, double/triple press, taking one out), Control
+    /// Center, the Lock Screen, car and headphone buttons all arrive as
+    /// remote commands; the Now Playing card shows the title, poster and
+    /// progress. Video does not play in the background, so Play from the
+    /// Lock Screen is refused there.
+    private func startSystemControls() {
+        stopSystemControls()
+        let center = MPRemoteCommandCenter.shared()
+        func add(_ command: MPRemoteCommand, _ handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) {
+            command.isEnabled = true
+            remoteTargets.append((command, command.addTarget(handler: handler)))
+        }
+        add(center.playCommand) { [weak self] _ in self?.remoteSetPlaying(true) ?? .commandFailed }
+        add(center.pauseCommand) { [weak self] _ in self?.remoteSetPlaying(false) ?? .commandFailed }
+        add(center.togglePlayPauseCommand) { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            return self.remoteSetPlaying(!self.playbackRequested)
+        }
+        center.skipForwardCommand.preferredIntervals = [10]
+        center.skipBackwardCommand.preferredIntervals = [10]
+        add(center.skipForwardCommand) { [weak self] _ in self?.remoteSkip(10) ?? .commandFailed }
+        add(center.skipBackwardCommand) { [weak self] _ in self?.remoteSkip(-10) ?? .commandFailed }
+        // AirPods double/triple press and car "next/previous" buttons.
+        add(center.nextTrackCommand) { [weak self] _ in self?.remoteSkip(10) ?? .commandFailed }
+        add(center.previousTrackCommand) { [weak self] _ in self?.remoteSkip(-10) ?? .commandFailed }
+        add(center.changePlaybackPositionCommand) { [weak self] event in
+            guard let self = self, let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            return self.remoteSeek(to: event.positionTime)
+        }
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            self?.handleRouteChange(notification)
+        }
+        loadNowPlayingArtwork()
+        updateNowPlaying()
+    }
+
+    private func stopSystemControls() {
+        for (command, target) in remoteTargets {
+            command.removeTarget(target)
+            command.isEnabled = false
+        }
+        remoteTargets.removeAll()
+        if let observer = routeObserver { NotificationCenter.default.removeObserver(observer) }
+        routeObserver = nil
+        nowPlayingArtwork = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    private func remoteSetPlaying(_ play: Bool) -> MPRemoteCommandHandlerStatus {
+        guard let player = mediaPlayer, !terminalSent else { return .noActionableNowPlayingItem }
+        if play {
+            guard UIApplication.shared.applicationState != .background else { return .commandFailed }
+            if !playbackRequested { resumeFromPause(player) }
+        } else if playbackRequested {
+            pausePlayback(player)
+        }
+        updateNowPlaying()
+        return .success
+    }
+
+    private func remoteSkip(_ seconds: Double) -> MPRemoteCommandHandlerStatus {
+        guard let player = mediaPlayer, !terminalSent else { return .noActionableNowPlayingItem }
+        return remoteSeek(to: Double(player.time.intValue) / 1000.0 + seconds)
+    }
+
+    private func remoteSeek(to seconds: Double) -> MPRemoteCommandHandlerStatus {
+        guard let player = mediaPlayer, !terminalSent, seconds.isFinite else { return .noActionableNowPlayingItem }
+        pendingSeek = max(0, seconds)
+        applyPendingSeek(player)
+        updateNowPlaying()
+        return .success
+    }
+
+    /// Unplugging headphones or AirPods disconnecting pauses, as iOS's own
+    /// players do, instead of continuing out of the speaker.
+    private func handleRouteChange(_ notification: Notification) {
+        guard let player = mediaPlayer, !terminalSent, playbackRequested,
+              let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+        pausePlayback(player)
+        updateNowPlaying()
+    }
+
+    private func updateNowPlaying() {
+        guard let player = mediaPlayer, !terminalSent, let item = nowPlayingItem else { return }
+        lastNowPlayingUpdate = Date()
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: item.title,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(max(0, player.time.intValue)) / 1000.0,
+            MPNowPlayingInfoPropertyPlaybackRate: playbackRequested ? 1.0 : 0.0,
+        ]
+        if !item.subtitle.isEmpty { info[MPMediaItemPropertyArtist] = item.subtitle }
+        let duration = Double(player.media?.length.intValue ?? 0) / 1000.0
+        if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
+        if let artwork = nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = artwork }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func loadNowPlayingArtwork() {
+        guard let url = nowPlayingItem?.posterURL, url.scheme == "http" || url.scheme == "https" else { return }
+        let expectedPlayId = playId
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data, let image = UIImage(data: data) else { return }
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            DispatchQueue.main.async {
+                guard let self = self, self.playId == expectedPlayId else { return }
+                self.nowPlayingArtwork = artwork
+                self.updateNowPlaying()
+            }
+        }.resume()
+    }
+
     /** Full teardown: bounded, idempotent, surface + background restored.
      *  restoreOrientation is false when a new engine replaces this one. */
     private func teardown(restoreOrientation: Bool = true) {
@@ -842,6 +993,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         audioNeedsRestart = false
         if let observer = interruptionObserver { NotificationCenter.default.removeObserver(observer) }
         interruptionObserver = nil
+        stopSystemControls()
         subtitleDownloads.forEach { $0.cancel() }
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
