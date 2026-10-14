@@ -14,9 +14,7 @@ and save. Provider credentials stay on the selected server. See
 Build with `npm run build`; install `release/TorWatch Setup 2.0.1.exe`.
 The resulting `release/TorWatch Windows 2.0.1.zip` also includes a standalone
 local Docker starter and backend source, without personal settings or keys.
-Devices using one server share its library. To continue another device's
-watch progress, enter its viewing profile ID under **Share watch progress with
-another device**; the address alone does not select a profile.
+Devices using one server share its library and watch progress.
 The Windows release version is independent of the Capacitor/mobile package.
 
 ## Setup Instructions

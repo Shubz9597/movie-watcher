@@ -139,6 +139,7 @@ func main() {
 	imdbStore := imdb.NewStore(db)
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
+	progressDB.Shared = watch.HouseholdSubject // one viewer: every device shares progress
 	httpapi.SetProgressStore(progressDB) // Enable server-side progress tracking for VLC
 	prowlarrURL := serverConfig.ProwlarrURL
 	prowlarrAPIKey := serverConfig.ProwlarrAPIKey

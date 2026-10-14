@@ -89,7 +89,7 @@ export function DesktopConnectionSetup({ api }: { api: SetupApi }) {
             <legend className="desktop-sr-only">Which server should TorWatch use?</legend>
             <label className="desktop-server-choice">
               <input type="radio" name="server-mode" value="remote" checked={!local} onChange={() => changeMode('remote')} />
-              <span><strong>Connect to an existing server</strong><span>A TorWatch server running on another computer, such as a home server or NAS. Every device that uses it shares the same library.</span></span>
+              <span><strong>Connect to an existing server</strong><span>A TorWatch server running on another computer, such as a home server or NAS. Every device that uses it shares the same library and watch progress.</span></span>
             </label>
             <label className="desktop-server-choice">
               <input type="radio" name="server-mode" value="local" checked={local} onChange={() => changeMode('local')} />
@@ -105,14 +105,6 @@ export function DesktopConnectionSetup({ api }: { api: SetupApi }) {
               ? 'Start the server with the local server starter (see the setup guide), then enter the address it shows, normally http://127.0.0.1:8080.'
               : 'The address your other devices use for this server, including its port. If it is only reachable over a VPN such as Tailscale, connect this computer to it first.'}</span>
           </label>
-          {!local && <details><summary>Share watch progress with another device (optional)</summary><div className="grid"><label className="wide">Viewing profile ID <span className="optional">Optional</span>
-            <input value={connection.progressSubjectId || ''} autoComplete="off" spellCheck={false}
-              disabled={Boolean(busy) || loading || loadFailed} maxLength={128}
-              placeholder="Profile ID of the other device"
-              aria-describedby="desktop-profile-hint"
-              onChange={(event) => { setConnection({ ...connection, progressSubjectId: event.target.value }); setStatus({ error: false, message: '' }); }} />
-            <span className="hint" id="desktop-profile-hint">To continue the same Continue Watching list as a device that already uses this server, enter that device's viewing profile ID. Leave empty to give this computer its own progress.</span>
-          </label></div></details>}
           <p className="desktop-server-note">{local
             ? 'Closing TorWatch leaves this server running in Docker. The setup guide explains how to start, stop and update it.'
             : 'Video plays on this computer and streams from the server. Provider keys such as TMDb stay on the server.'}</p>

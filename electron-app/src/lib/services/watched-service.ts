@@ -1,8 +1,9 @@
 // Watched state (server /v1/watched): per-title items this device has
 // started or finished, manual marking, and offline-progress sync. Episodes
 // at or past the server threshold (90%) count as watched; movies use
-// season 0 / episode 0. The subject is this device, matching playback
-// progress and Continue watching.
+// season 0 / episode 0. The device ID is sent as the subject; the server
+// maps every device to its one shared profile, so all devices see the same
+// watched state, playback progress and Continue watching.
 import { getVodBase } from '../api-client';
 import { getDeviceId } from '../device-id';
 

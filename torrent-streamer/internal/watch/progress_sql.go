@@ -10,9 +10,29 @@ import (
 	"time"
 )
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB *sql.DB
+	// Shared, when set, is the one subject every device reads and writes:
+	// progress started on the phone resumes on the desktop and back.
+	// Devices still send their own IDs; they are kept only as writer
+	// metadata (writer_client_id).
+	Shared string
+}
+
+// HouseholdSubject is the shared subject of a server with one viewer
+// (migration 015 moved every device's rows to it).
+const HouseholdSubject = "household"
 
 func NewStore(db *sql.DB) *Store { return &Store{DB: db} }
+
+// subject maps a device's subject to the shared one; empty stays empty so
+// the required-field checks still apply.
+func (s *Store) subject(id string) string {
+	if s.Shared != "" && strings.TrimSpace(id) != "" {
+		return s.Shared
+	}
+	return id
+}
 
 func (s *Store) SaveProgress(ctx context.Context, subjectID, seriesID string, season, episode, pos, dur int) error {
 	_, err := s.SaveProgressUpdate(ctx, ProgressUpdate{
@@ -84,7 +104,7 @@ type SaveResult struct {
 // monotonic progress_revision; per-session seq guard; deliberate rewind is a
 // valid write; furthest-position-wins is prohibited.
 func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) (SaveResult, error) {
-	subjectID := strings.TrimSpace(update.SubjectID)
+	subjectID := strings.TrimSpace(s.subject(update.SubjectID))
 	seriesID := strings.TrimSpace(update.SeriesID)
 	if subjectID == "" || seriesID == "" {
 		return SaveResult{}, fmt.Errorf("subjectID and seriesID are required")
@@ -283,6 +303,7 @@ func (s *Store) GetEpisodeResume(ctx context.Context, subjectID, seriesID string
 }
 
 func (s *Store) getResume(ctx context.Context, subjectID, seriesID string, season, episode *int) (Resume, bool, error) {
+	subjectID = s.subject(subjectID)
 	var r Resume
 	query := `
 SELECT series_id, season, episode, position_s, duration_s, percent, updated_at
@@ -321,6 +342,7 @@ type ContinueItem struct {
 }
 
 func (s *Store) ListContinue(ctx context.Context, subjectID string, limit int) ([]ContinueItem, error) {
+	subjectID = s.subject(subjectID)
 	if limit <= 0 {
 		limit = 30
 	}
@@ -369,6 +391,7 @@ LIMIT $2`, subjectID, limit)
 }
 
 func (s *Store) GetProgressSource(ctx context.Context, subjectID, seriesID string, season, episode int) (ProgressSource, bool, error) {
+	subjectID = s.subject(subjectID)
 	var source ProgressSource
 	var fileIndex sql.NullInt64
 	err := s.DB.QueryRowContext(ctx, `
@@ -394,6 +417,7 @@ LIMIT 1`, subjectID, seriesID, season, episode).Scan(
 }
 
 func (s *Store) Dismiss(ctx context.Context, subjectID, seriesID string, season, episode int, reason string) error {
+	subjectID = s.subject(subjectID)
 	if reason == "" {
 		reason = "manual"
 	}
@@ -416,6 +440,7 @@ type WatchedEpisode struct {
 // ListWatched returns the items of one title the subject has started or
 // finished (movies use season 0, episode 0).
 func (s *Store) ListWatched(ctx context.Context, subjectID, seriesID string) ([]WatchedEpisode, error) {
+	subjectID = s.subject(subjectID)
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT season, episode, position_s, duration_s, percent
 FROM watch_progress
@@ -441,6 +466,7 @@ ORDER BY season, episode`, subjectID, seriesID)
 // unwatched (progress cleared). Marking watched with a next episode queues it
 // in Continue watching, the same way finishing an episode does.
 func (s *Store) SetWatched(ctx context.Context, subjectID, seriesID string, items []EpisodeRef, watched bool, next *EpisodeRef) error {
+	subjectID = s.subject(subjectID)
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -499,6 +525,7 @@ type OfflineProgress struct {
 // server record is older than the offline watch. A completed item is never
 // moved back to partial. Returns how many items were applied.
 func (s *Store) SyncOffline(ctx context.Context, subjectID string, items []OfflineProgress) (int, error) {
+	subjectID = s.subject(subjectID)
 	applied := 0
 	for _, item := range items {
 		if item.SeriesID == "" || item.DurationS <= 0 || item.PositionS <= 0 {

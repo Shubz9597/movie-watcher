@@ -7,9 +7,8 @@
 <p>Use this when a TorWatch server already runs on another computer, for example a home server or NAS.</p>
 <ol><li>Make sure this computer can reach the server: the same home network, or the same VPN (such as Tailscale) if the server is only reachable that way.</li><li>In TorWatch, choose <strong>Connect to an existing server</strong>.</li><li>Enter the server's address with its port, for example <code>http://192.168.1.20:8080</code>: the same address your other devices use. Enter only the address, without a page path.</li><li>Select <strong>Test connection</strong>, then <strong>Save and start TorWatch</strong>. TorWatch restarts with the saved address.</li></ol>
 <p>Docker and provider keys (such as TMDb) belong on the server; this computer needs neither. Closing TorWatch leaves the server running.</p>
-<h2>Sharing watch progress between devices</h2>
-<p>Devices using the same server share its library. Watch progress (Continue Watching and resume points) is kept per viewing profile, and each device starts with its own. To continue another device's list on this computer, open <strong>Share watch progress with another device</strong> in TorWatch setup and enter that device's viewing profile ID before saving. Leave it empty to give this computer its own progress.</p>
-<p>The person who runs the server can find the profile IDs in the server's <code>watch_progress</code> table (<code>subject_id</code>, with recent activity). Link to an existing ID; never change it on the other device.</p>
+<h2>Watch progress on several devices</h2>
+<p>Every device that uses the same server shares its library and watch progress: an episode finished on one device shows as watched on the others, and Continue Watching resumes where any of them stopped.</p>
 <h2>Set up a new server on this computer</h2>
 <p>Use this to run your own server here, for example on a computer without access to another TorWatch server. It needs <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> with Linux containers.</p>
 <p>Extract <strong>TorWatch Windows 2.0.1.zip</strong>, open PowerShell in its <code>LocalServer</code> folder, and run:</p>
