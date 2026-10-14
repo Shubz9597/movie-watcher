@@ -96,6 +96,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // Names for a download's subtitle files, in attachment order. VLC lists
     // them after the video's own tracks as plain "Track N".
     private var localSidecarLabels: [String] = []
+    // A call or another app took the audio (AVAudioSession interruption);
+    // VLC's audio output must be rebuilt before playing again.
+    private var interruptionObserver: NSObjectProtocol?
+    private var audioNeedsRestart = false
     private var subtitleDownloads: [URLSessionDownloadTask] = []
     private var subtitleFiles: [URL] = []
     // Offline-downloads D04: when set, the current playback is a LOCAL
@@ -324,6 +328,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             if self.playbackRequested { self.pausePlayback(player) }
             self.releaseVideoForBackground(player)
         }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            self?.handleAudioInterruption(notification)
+        }
         mediaPlayer = player
         pendingSeek = startsAtResume ? nil : seekTo
         playbackRequested = true
@@ -356,6 +365,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if playbackRequested {
             pausePlayback(player)
         } else {
+            restartAudioOutputIfNeeded()
             // Flush queued pre-pause audio/video at the exact pause position.
             // A plain unpause froze the picture while the sound ran on, in
             // the app as well as after Home (tried 2026-10-13, reverted on
@@ -751,8 +761,43 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         ) { [weak self] _ in
             self?.requestOrientation(TorWatchPlaybackState.videoAttached)
             // VLC's video view handles the same notification; restore after it.
-            DispatchQueue.main.async { self?.restoreVideoAfterBackground() }
+            DispatchQueue.main.async {
+                self?.restoreVideoAfterBackground()
+                self?.restartAudioOutputIfNeeded()
+            }
         }
+    }
+
+    /// A WhatsApp or phone call (or another app) took the audio. VLC marks
+    /// its output paused and resumes it only when iOS says "should resume",
+    /// which a call's end often omits; iOS also stopped the audio unit. The
+    /// next Play then flushed into a stopped output and waited forever: the
+    /// video loaded endlessly and closing it froze the app. The player
+    /// pauses when the interruption begins; its audio output is rebuilt
+    /// once the app is back.
+    private func handleAudioInterruption(_ notification: Notification) {
+        guard let player = mediaPlayer, !terminalSent,
+              let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        audioNeedsRestart = true
+        if type == .began {
+            if playbackRequested { pausePlayback(player) }
+        } else if UIApplication.shared.applicationState == .active {
+            restartAudioOutputIfNeeded()
+        }
+    }
+
+    /// Re-selecting the audio track makes VLC start a new audio output (and
+    /// audio unit) on a re-activated session.
+    private func restartAudioOutputIfNeeded() {
+        guard audioNeedsRestart, let player = mediaPlayer, !terminalSent else { return }
+        let track = player.currentAudioTrackIndex
+        guard track >= 0 else { return }
+        audioNeedsRestart = false
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player.currentAudioTrackIndex = -1
+        player.currentAudioTrackIndex = track
     }
 
     /// iOS discards a backgrounded app's hardware video decoder. VLC then
@@ -794,15 +839,30 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         playbackRequested = false
         videoTrackBeforeBackground = nil
         localSidecarLabels = []
+        audioNeedsRestart = false
+        if let observer = interruptionObserver { NotificationCenter.default.removeObserver(observer) }
+        interruptionObserver = nil
         subtitleDownloads.forEach { $0.cancel() }
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
         backgroundObserver = nil
         UIApplication.shared.isIdleTimerDisabled = false
-        if let player = mediaPlayer {
+        let stopping = mediaPlayer
+        if let player = stopping {
             player.delegate = nil
-            player.stop()
-            player.drawable = nil
+            // stop() waits for VLC's threads. A stalled audio output (after a
+            // call) made it wait forever on the main thread: the whole app
+            // froze until force-quit. Stop off the main thread; the session
+            // is released once VLC has stopped, unless a new video started.
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                player.stop()
+                DispatchQueue.main.async {
+                    player.drawable = nil
+                    if restoreOrientation, self?.mediaPlayer == nil {
+                        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                    }
+                }
+            }
         }
         mediaPlayer = nil
         subtitleFiles.forEach { try? FileManager.default.removeItem(at: $0) }
@@ -811,8 +871,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         surfaceView = nil
         makeWebViewTransparent(false)
         guard restoreOrientation else { return }
-        // Let music or podcasts the player interrupted resume.
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Let music or podcasts the player interrupted resume (once stopped,
+        // above, when there was a player).
+        if stopping == nil {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         if TorWatchPlaybackState.videoAttached {
             requestOrientation(false)
         }
