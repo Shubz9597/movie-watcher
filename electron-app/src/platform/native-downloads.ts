@@ -64,4 +64,6 @@ export interface TorWatchDownloadsPluginInterface extends Plugin {
   saveProgress(options: { downloadId: string; positionS: number; durationS: number; subtitleLang?: string }): Promise<void>;
   loadProgress(options: { downloadId: string }): Promise<{ found: boolean; positionS?: number; durationS?: number; subtitleLang?: string }>;
   localPlayablePath(options: { downloadId: string }): Promise<{ videoPath: string; subtitles: Array<{ lang: string; path: string }> }>;
+  /** Moves a download to another show id/season/episode (older builds lack it). */
+  relocate?(options: { downloadId: string; seriesId: string; season: number; episode: number; subtitleLabel?: string }): Promise<void>;
 }

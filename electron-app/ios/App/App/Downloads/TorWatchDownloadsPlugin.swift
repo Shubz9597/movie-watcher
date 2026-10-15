@@ -55,6 +55,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveProgress", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "loadProgress", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "localPlayablePath", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "relocate", returnType: CAPPluginReturnPromise),
     ]
 
     private var coordinator: DownloadCoordinator { DownloadCoordinator.shared }
@@ -269,6 +270,25 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func storage(_ call: CAPPluginCall) {
         let info = coordinator.storageInfo()
         call.resolve(["freeBytes": info.free, "usedBytes": info.used])
+    }
+
+    /// Moves a download to its show's id, season and episode (downloads
+    /// saved under an AniList entry before shows took their seasons).
+    @objc func relocate(_ call: CAPPluginCall) {
+        guard let id = call.getString("downloadId"),
+              let seriesId = call.getString("seriesId"), !seriesId.isEmpty,
+              let season = call.getInt("season"),
+              let episode = call.getInt("episode") else {
+            call.reject("The new place of the download is incomplete.")
+            return
+        }
+        do {
+            try coordinator.store.relocate(id, seriesId: seriesId, season: season, episode: episode,
+                                           subtitleLabel: call.getString("subtitleLabel") ?? "S\(season) E\(episode)")
+            call.resolve()
+        } catch {
+            call.reject("The download could not be moved.")
+        }
     }
 
     // MARK: - Local playback progress (D04)

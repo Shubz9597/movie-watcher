@@ -957,9 +957,15 @@ export default function EpisodePanel({
       subtitleHints: { title, year, imdbId },
       ...(activeEpisode.name ? { episodeTitle: activeEpisode.name } : {}),
       ...(activeEpisode.stillUrl ? { stillUrl: activeEpisode.stillUrl } : {}),
-      skipQuery: kind === 'anime'
-        ? { kind: 'anime', ...(malId ? { malId: String(malId) } : {}), episode: String(activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber) }
-        : { kind: 'tv', ...(tmdbId ? { tmdbId: String(tmdbId) } : {}), ...(imdbId ? { imdbId } : {}), season: String(season), episode: String(episode) },
+      skipQuery: {
+        kind: kind === 'anime' ? 'anime' : 'tv',
+        ...(tmdbId ? { tmdbId: String(tmdbId) } : {}),
+        ...(imdbId ? { imdbId } : {}),
+        ...(kind === 'anime' && malId ? { malId: String(malId) } : {}),
+        season: String(season),
+        episode: String(episode),
+        ...(kind === 'anime' ? { absoluteEpisode: String(activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber) } : {}),
+      },
       // A season pack can be tens of gigabytes, but offline download stores
       // only the resolved episode. Use that file for storage checks and copy.
       sizeBytes: selectedSize,

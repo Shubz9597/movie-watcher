@@ -268,6 +268,17 @@ final class DownloadStore {
         }
     }
 
+    /// Moves a download to another show id and episode (an AniList entry's
+    /// download becomes its season of the show). Its order is kept.
+    func relocate(_ downloadId: String, seriesId: String, season: Int, episode: Int, subtitleLabel: String) throws {
+        try onQueue {
+            try exec("""
+            UPDATE downloads SET series_id='\(_esc(seriesId))', season=\(max(0, season)), episode=\(max(0, episode)),
+            subtitle_label='\(_esc(subtitleLabel))' WHERE download_id='\(_esc(downloadId))'
+            """)
+        }
+    }
+
     func setReceivedBytes(_ downloadId: String, _ bytes: Int64) throws {
         try onQueue {
             try exec("""

@@ -64,6 +64,7 @@ func (s *Service) showOf(title Title) (showID string, film bool) {
 func (s *Service) collapseShows(ctx context.Context, titles []Title) []Title {
 	out := make([]Title, 0, len(titles))
 	at := map[string]int{}
+	fromEntry := map[string]bool{} // the show's card stands in from a later season's entry
 	films := map[string]bool{}
 	for _, title := range titles {
 		if show, film := s.showOf(title); film && show == title.ID {
@@ -77,10 +78,18 @@ func (s *Service) collapseShows(ctx context.Context, titles []Title) []Title {
 			continue
 		}
 		if position, ok := at[show]; ok {
+			if fromEntry[show] && s.entrySeason(title) == 1 {
+				// Name and picture the show after its first season.
+				card := s.entryAsShow(ctx, title, show)
+				addAltTitles(&card, out[position])
+				out[position], fromEntry[show] = card, false
+				continue
+			}
 			addAltTitles(&out[position], title)
 			continue
 		}
 		if title.ID != show {
+			fromEntry[show] = s.entrySeason(title) != 1
 			title = s.entryAsShow(ctx, title, show)
 		}
 		if s.animeMap() != nil && (title.Anime || title.Type == TypeAnime) {
@@ -154,4 +163,18 @@ func stremioFirst(titles []Title, order []string) []Title {
 		return 0
 	})
 	return titles
+}
+
+// entrySeason is the show season an AniList entry card fills (0: not an
+// entry, or not placed in one season).
+func (s *Service) entrySeason(title Title) int {
+	anilist, err := strconv.Atoi(title.ProviderIDs["anilist"])
+	if err != nil {
+		return 0
+	}
+	entry, ok := s.animeMap().AniList(anilist)
+	if !ok || !entry.HasSeason {
+		return 0
+	}
+	return entry.Season
 }

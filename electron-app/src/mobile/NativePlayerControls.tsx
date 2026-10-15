@@ -16,7 +16,7 @@ import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
 import { getDeviceId } from '../lib/device-id';
 import { skipActionAt } from '../lib/skip-action';
 import { cacheOfflineSkipSegments, needsSkipLookup, offlineSkipSegments, recordSkipLookup } from '../lib/offline-skip-segments';
-import { bffSearch, bffTitleDetail } from '../lib/services/catalog-bff';
+import { bffTitleDetail } from '../lib/services/catalog-bff';
 import { clampPlaybackDelay, matchingSavedTrack, readVideoPlaybackPreferences, saveVideoPlaybackPreferences, subtitleCueAtTime, videoPlaybackPreferenceKey } from './video-playback-preferences';
 import type { SavedSubtitle, VideoPlaybackPreferences } from './video-playback-preferences';
 
@@ -101,23 +101,18 @@ type Props = {
   onClose: () => void;
 };
 
-/** The /skip-segments query for a download, as built when it was saved:
- *  anime by MAL id and episode, shows by TMDb/IMDb id, season and episode.
- *  A TMDb anime gets its MAL id from anime search, as its title page did. */
+/** The /skip-segments query for a download: an AniList entry by MAL id and
+ *  episode, a show (anime too) by TMDb/IMDb id, season and episode. */
 async function downloadSkipQuery(seriesId: string, season: number, episode: number): Promise<Record<string, string> | null> {
   const detail = await bffTitleDetail(seriesId);
-  let malId = detail.providerIds?.jikan;
+  const malId = detail.providerIds?.jikan;
   if (seriesId.startsWith('anilist:')) {
     return malId ? { kind: 'anime', malId, episode: String(episode) } : null;
   }
   const tmdbId = /^tmdb:tv:(\d+)$/.exec(seriesId)?.[1];
   if (!tmdbId) return null;
-  if (!malId && detail.title) {
-    const results = await bffSearch(detail.title, 'anime', 10).catch(() => []);
-    malId = results.find((result) => result.id === seriesId)?.providerIds?.jikan;
-  }
-  if (malId) return { kind: 'anime', malId, episode: String(episode) };
-  return { kind: 'tv', tmdbId, ...(detail.imdbId ? { imdbId: detail.imdbId } : {}), season: String(season), episode: String(episode) };
+  // A show page: its TMDb id and Stremio's season and episode find it.
+  return { kind: detail.anime ? 'anime' : 'tv', tmdbId, ...(detail.imdbId ? { imdbId: detail.imdbId } : {}), season: String(season), episode: String(episode) };
 }
 
 /** Overlay key of the server-matched dub script (not a fetchable URL). */
@@ -379,14 +374,16 @@ export default function NativePlayerControls(props: Props) {
     if (!duration || duration <= 0) return;
     streamSkips.current.started = true;
     const params = new URLSearchParams({ kind: cat === 'anime' ? 'anime' : 'tv' });
+    // A show page (anime too) is found by its TMDb id and Stremio's season
+    // and episode; an AniList entry page by its MyAnimeList id and the
+    // entry's own (absolute) number.
+    if (tmdbId) params.set('tmdbId', String(tmdbId));
+    if (imdbId) params.set('imdbId', imdbId);
+    params.set('season', String(season));
+    params.set('episode', String(episode));
     if (cat === 'anime') {
       if (malId) params.set('malId', String(malId));
-      params.set('episode', String(absoluteEpisode ?? episode));
-    } else {
-      if (tmdbId) params.set('tmdbId', String(tmdbId));
-      if (imdbId) params.set('imdbId', imdbId);
-      params.set('season', String(season));
-      params.set('episode', String(episode));
+      params.set('absoluteEpisode', String(absoluteEpisode ?? episode));
     }
     params.set('durationSeconds', String(Math.round(duration)));
     const load = (again: boolean) => {

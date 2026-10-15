@@ -491,3 +491,13 @@ func (s *Service) IsAnimeShow(id string) bool {
 	tmdbTV := tmdbTVNumber(id)
 	return tmdbTV > 0 && len(s.animeMap().ForTMDbTV(tmdbTV)) > 0
 }
+
+// EntryShow is the show an AniList entry belongs to, also when the entry
+// spans several of its seasons.
+func (s *Service) EntryShow(ctx context.Context, seriesID string) (string, bool) {
+	placement, found := s.EntryPlacement(ctx, seriesID)
+	if !found {
+		return "", false
+	}
+	return placement.Show, true
+}

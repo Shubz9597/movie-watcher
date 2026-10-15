@@ -322,18 +322,15 @@ func (s *Service) ForSkipRequest(ctx context.Context, q url.Values) (Result, boo
 	}
 	season, _ := strconv.Atoi(q.Get("season"))
 	episode, _ := strconv.Atoi(q.Get("episode"))
-	if abs, err := strconv.Atoi(q.Get("absoluteEpisode")); kind == "anime" && err == nil && abs > 0 {
-		episode = abs
-	}
-	if episode <= 0 {
-		return Result{}, false
-	}
 	var series []string
-	if kind == "tv" {
-		if id := q.Get("tmdbId"); id != "" {
-			series = append(series, "tmdb:tv:"+id)
+	if id := q.Get("tmdbId"); id != "" {
+		// A show page (anime too): Stremio's season and episode.
+		series = append(series, "tmdb:tv:"+id)
+	} else if mal, err := strconv.Atoi(q.Get("malId")); kind == "anime" && err == nil && mal > 0 {
+		// An AniList entry page: the entry's own (absolute) numbering.
+		if abs, err := strconv.Atoi(q.Get("absoluteEpisode")); err == nil && abs > 0 {
+			episode = abs
 		}
-	} else if mal, err := strconv.Atoi(q.Get("malId")); err == nil && mal > 0 {
 		ids := s.animeIDs(ctx, mal)
 		if ids.anilist > 0 {
 			series = append(series, "anilist:"+strconv.Itoa(ids.anilist))
@@ -342,6 +339,9 @@ func (s *Service) ForSkipRequest(ctx context.Context, q url.Values) (Result, boo
 			series = append(series, "tmdb:tv:"+strconv.Itoa(ids.tmdb))
 		}
 		season = 0 // anime picks number episodes per entry
+	}
+	if episode <= 0 {
+		return Result{}, false
 	}
 	if len(series) == 0 {
 		return Result{}, false

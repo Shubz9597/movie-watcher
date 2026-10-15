@@ -141,8 +141,15 @@ async function start(): Promise<void> {
       // Production mobile playback: native AVPlayer/Media3 through the shared
       // session client. The browser staging player object is discarded.
       composed.platform.player = new native.NativePlayer();
-      void import('./download-queue').then(({ resumePendingDownloads }) => resumePendingDownloads());
-      void import('./offline-progress-sync').then(({ startOfflineProgressSync }) => startOfflineProgressSync(composed.platform.connection));
+      // Downloads saved under an AniList entry move to their show first, so
+      // the queue and the offline sync only ever see the show's ids.
+      void import('./show-migration')
+        .then(({ moveEntriesToShows }) => moveEntriesToShows())
+        .catch((error: unknown) => console.warn('[Downloads] Moving downloads to their shows failed; retried next start.', error))
+        .finally(() => {
+          void import('./download-queue').then(({ resumePendingDownloads }) => resumePendingDownloads());
+          void import('./offline-progress-sync').then(({ startOfflineProgressSync }) => startOfflineProgressSync(composed.platform.connection));
+        });
     }
     root.render(<MobileShell composed={composed} browser={browser} />);
     // Live Activity / notification taps (torwatch://downloads) open the

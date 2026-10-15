@@ -184,3 +184,25 @@ func TestStremioOrderLeads(t *testing.T) {
 		t.Fatalf("order = %v", ids)
 	}
 }
+
+// A home rail lists Attack on Titan once, named after its first season,
+// even when a later season's entry ranks first.
+func TestRailListsTheShowOnce(t *testing.T) {
+	service, server := kaiService(t, &MemoryLayouts{})
+	defer server.Close()
+	anilist := service.providers[1].(*fakeProvider)
+	anilist.sectionFn = func(context.Context, string) ([]Title, error) {
+		entry := func(id, name string) Title {
+			return Title{ID: "anilist:" + id, Type: TypeAnime, Title: name, ProviderIDs: map[string]string{"anilist": id}, MergedFrom: []string{"anilist"}}
+		}
+		return []Title{entry("110277", "Attack on Titan Final Season"), entry("20958", "Attack on Titan Season 2"), entry("16498", "Attack on Titan"), entry("1535", "Death Note")}, nil
+	}
+	result := service.Section(context.Background(), "popular")
+	var got []string
+	for _, title := range result.Titles {
+		got = append(got, title.ID+"="+title.Title)
+	}
+	if strings.Join(got, ",") != "tmdb:tv:1429=Attack on Titan,anilist:1535=Death Note" {
+		t.Fatalf("rail = %v", got)
+	}
+}

@@ -358,7 +358,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case "anime":
 		malID, _ := strconv.Atoi(q.Get("malId"))
 		if malID <= 0 {
-			writeSegments(w, []Segment{})
+			// A show page's anime has no MyAnimeList id: only the
+			// server's own detection answers.
+			writeSegments(w, withDetected(r.Context(), q, []Segment{}))
 			return
 		}
 		base := aniskipBaseURL + "/" + strconv.Itoa(malID) + "/" + strconv.Itoa(episode)

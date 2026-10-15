@@ -174,6 +174,17 @@ function writePending(items: PendingDownload[]): void {
   notify();
 }
 
+/** The AniList entry ids still in the queue; with `move`, rewrites each
+ *  queued download (see show-migration.ts). */
+export function remapPendingDownloads(move: ((item: PendingDownload) => PendingDownload) | null): string[] {
+  const items = readPending();
+  if (move) {
+    const moved = items.map(move);
+    if (moved.some((item, i) => item !== items[i])) writePending(moved);
+  }
+  return [...new Set(items.map((item) => item.seriesId).filter((id) => id?.startsWith('anilist:')))];
+}
+
 function upsertPending(item: PendingDownload): void {
   const items = readPending().filter((current) => current.jobId !== item.jobId);
   items.push(item);

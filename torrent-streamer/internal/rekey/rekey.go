@@ -29,6 +29,9 @@ func Run(ctx context.Context, db *sql.DB, placer watch.Placer) error {
 		{"library", moveLibrary},
 		{"skip songs", moveSkipThemes},
 		{"skip fingerprints", moveSkipFingerprints},
+		{"picked sources", movePicks},
+		{"server download jobs", moveDownloadJobs},
+		{"taste signals", moveTaste},
 	}
 	for _, step := range steps {
 		n, err := step.run(ctx, db, placer)
@@ -162,9 +165,20 @@ ON CONFLICT DO NOTHING`, r.subject, r.series, r.season, r.episode, show, season,
 	return moved, nil
 }
 
-// entryShow is the show an entry id belongs to ("" when it cannot be
-// placed in one season).
+// ShowPlacer also names the show of an entry spanning several seasons
+// (One Piece, Bleach): enough for whole-show state such as a library place.
+type ShowPlacer interface {
+	EntryShow(ctx context.Context, seriesID string) (show string, ok bool)
+}
+
+// entryShow is the show an entry id belongs to ("" when unknown).
 func entryShow(ctx context.Context, placer watch.Placer, id string) string {
+	if shows, ok := placer.(ShowPlacer); ok {
+		if show, found := shows.EntryShow(ctx, id); found {
+			return show
+		}
+		return ""
+	}
 	show, _, _, ok := placer.EntrySeason(ctx, id)
 	if !ok {
 		return ""
@@ -259,6 +273,119 @@ WHERE series_key=$1 AND episode > 0`, id, show, season, offset)
 			return moved, err
 		}
 		n, _ := result.RowsAffected()
+		moved += int(n)
+	}
+	return moved, nil
+}
+
+// movePicks moves each episode's chosen source (skip detection finds an
+// episode's file through it). Where the show already has a pick for the
+// episode, that one was chosen since and stays.
+func movePicks(ctx context.Context, db *sql.DB, placer watch.Placer) (int, error) {
+	type row struct {
+		id      int64
+		series  string
+		episode int
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT id, series_id, episode FROM picks WHERE series_id LIKE 'anilist:%' AND season > 0 AND episode > 0`)
+	if err != nil {
+		return 0, err
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.series, &r.episode); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	rows.Close()
+	moved := 0
+	for _, r := range pending {
+		show, season, episode, ok := placer.PlaceEpisode(ctx, r.series, r.episode)
+		if !ok {
+			continue
+		}
+		if err := inTx(ctx, db, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `
+DELETE FROM picks o USING picks t
+WHERE o.id=$1 AND t.series_id=$2 AND t.season=$3 AND t.episode=$4 AND t.profile_hash=o.profile_hash`, r.id, show, season, episode); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `UPDATE picks SET series_id=$2, season=$3, episode=$4 WHERE id=$1`, r.id, show, season, episode)
+			return err
+		}); err != nil {
+			return moved, err
+		}
+		moved++
+	}
+	return moved, nil
+}
+
+// moveDownloadJobs moves the server's prepared-download records.
+func moveDownloadJobs(ctx context.Context, db *sql.DB, placer watch.Placer) (int, error) {
+	type row struct {
+		id      string
+		series  string
+		episode int
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT id::text, series_id, episode FROM download_jobs WHERE series_id LIKE 'anilist:%' AND season > 0 AND episode > 0`)
+	if err != nil {
+		return 0, err
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.series, &r.episode); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	rows.Close()
+	moved := 0
+	for _, r := range pending {
+		show, season, episode, ok := placer.PlaceEpisode(ctx, r.series, r.episode)
+		if !ok {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE download_jobs SET series_id=$2, season=$3, episode=$4 WHERE id::text=$1`, r.id, show, season, episode); err != nil {
+			return moved, err
+		}
+		moved++
+	}
+	return moved, nil
+}
+
+// moveTaste moves "opened this title" signals (recommendation seeds).
+func moveTaste(ctx context.Context, db *sql.DB, placer watch.Placer) (int, error) {
+	ids, err := distinct(ctx, db, `SELECT DISTINCT canonical_id FROM taste_events WHERE canonical_id LIKE 'anilist:%'`)
+	if err != nil {
+		return 0, err
+	}
+	moved := 0
+	for _, id := range ids {
+		show := entryShow(ctx, placer, id)
+		if show == "" {
+			continue
+		}
+		var n int64
+		if err := inTx(ctx, db, func(tx *sql.Tx) error {
+			result, err := tx.ExecContext(ctx, `
+UPDATE taste_events t SET canonical_id=$2 WHERE canonical_id=$1 AND NOT EXISTS (
+  SELECT 1 FROM taste_events o WHERE o.subject_id=t.subject_id AND o.canonical_id=$2 AND o.created_at=t.created_at)`, id, show)
+			if err != nil {
+				return err
+			}
+			n, _ = result.RowsAffected()
+			_, err = tx.ExecContext(ctx, `DELETE FROM taste_events WHERE canonical_id=$1`, id) // same moment twice
+			return err
+		}); err != nil {
+			return moved, err
+		}
 		moved += int(n)
 	}
 	return moved, nil

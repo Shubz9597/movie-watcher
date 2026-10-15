@@ -770,7 +770,8 @@ func (s *Service) SectionQuery(ctx context.Context, query SectionQuery) SectionR
 			}
 		}
 	}
-	merged := MergeTitles(groups)
+	// One card per show, as in search (AniList lists each season apart).
+	merged := s.collapseShows(ctx, s.markAnime(MergeTitles(groups)))
 	ids := make([]string, 0, len(merged))
 	for _, title := range merged {
 		ids = append(ids, title.ID)
