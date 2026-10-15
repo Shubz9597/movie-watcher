@@ -302,11 +302,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
             // Text subtitles look like the app's overlay ones (streaming-app
-            // style): white monospaced text on a semi-transparent black box.
+            // style): white monospaced text on a semi-transparent (60%) black
+            // box.
             "--freetype-font=Menlo",
             "--freetype-color=16777215",
             "--freetype-background-color=0",
-            "--freetype-background-opacity=191",
+            "--freetype-background-opacity=153",
             "--freetype-outline-thickness=0",
             "--freetype-shadow-opacity=0",
         ])
