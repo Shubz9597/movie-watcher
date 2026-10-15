@@ -154,3 +154,45 @@ func EmbeddedSubtitleWindow(ctx context.Context, videoPath, lang string, seconds
 	}
 	return vtt, nil
 }
+
+// ErrStyledSubtitle reports an ASS/SSA track: its positioned signs and
+// styling only survive in the player's own renderer.
+var ErrStyledSubtitle = errors.New("styled subtitle track")
+
+// SubtitleTrack is one subtitle stream of a video, in container order.
+type SubtitleTrack struct {
+	Codec, Lang, Title string
+}
+
+// ExtractSubtitleTrack returns the video's ordinal-th subtitle stream
+// (container order, as players list them) as WebVTT, so the app can draw a
+// torrent's own subtitles exactly like the ones it downloads. Picture
+// subtitles cannot be turned into text; styled ones (ASS/SSA) report
+// ErrStyledSubtitle. Reads the whole stream (subtitles are interleaved).
+func ExtractSubtitleTrack(ctx context.Context, video string, ordinal int) ([]byte, SubtitleTrack, error) {
+	tracks, err := probeEmbeddedSubtitles(ctx, video)
+	if err != nil {
+		return nil, SubtitleTrack{}, err
+	}
+	if ordinal < 0 || ordinal >= len(tracks) {
+		return nil, SubtitleTrack{}, errors.New("no such subtitle track")
+	}
+	track := tracks[ordinal]
+	info := SubtitleTrack{Codec: track.Codec, Lang: track.Lang, Title: track.Title}
+	switch {
+	case track.Codec == "ass" || track.Codec == "ssa":
+		return nil, info, ErrStyledSubtitle
+	case !textSubtitleCodecs[track.Codec]:
+		return nil, info, errors.New("picture subtitle track")
+	}
+	out, err := exec.CommandContext(ctx, ffTool(config.FFmpegPath(), "ffmpeg"),
+		"-nostdin", "-v", "error", "-i", video,
+		"-map", "0:"+strconv.Itoa(track.Index), "-f", "webvtt", "-").Output()
+	if err != nil {
+		return nil, info, fmt.Errorf("ffmpeg: %w", err)
+	}
+	if !bytes.Contains(out, []byte("-->")) {
+		return nil, info, errors.New("subtitle track has no cues")
+	}
+	return out, info, nil
+}

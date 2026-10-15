@@ -64,6 +64,8 @@ var matchCache = struct {
 func (h SubtitleMatchHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/subtitles/matched", h.handleMatched)
 	mux.HandleFunc("/subtitles/matched/file", handleMatchedFile)
+	mux.HandleFunc("/subtitles/embedded", h.handleEmbedded)
+	mux.HandleFunc("/subtitles/embedded/file", handleEmbeddedFile)
 }
 
 // matchSource is the video and the subtitle search for one request.

@@ -14,7 +14,10 @@ import { EMBEDDED_SCALE_DEFAULT } from '../platform/native-player';
 import { audioDisplayNames, languageNameForCode, trackDisplayNames, trackLanguageName, withoutDownloadedCopies } from '../lib/track-labels';
 import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
 import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
+import { Capacitor } from '@capacitor/core';
 import { getDeviceId } from '../lib/device-id';
+import { cacheOwnSubtitle, cachedOwnSubtitle, fetchOwnTrack, ownTrackSource } from '../lib/own-subtitles';
+import { getNativeDownloads } from './downloads-adapter';
 import { skipActionAt } from '../lib/skip-action';
 import { cacheOfflineSkipSegments, needsSkipLookup, offlineSkipSegments, recordSkipLookup } from '../lib/offline-skip-segments';
 import { bffTitleDetail } from '../lib/services/catalog-bff';
@@ -187,6 +190,11 @@ export default function NativePlayerControls(props: Props) {
   const [embeddedAudio, setEmbeddedAudio] = useState<NativeTrackInfo[]>([]);
   const [embeddedSubs, setEmbeddedSubs] = useState<NativeTrackInfo[]>([]);
   const [selectedEmbeddedSub, setSelectedEmbeddedSub] = useState<number | null>(null);
+  // A torrent's own subtitle drawn by the app (see lib/own-subtitles): its
+  // cues, and the track it stands for while the player draws nothing.
+  const [ownSubtitle, setOwnSubtitle] = useState<{ trackId: number; cues: SubtitleCue[] } | null>(null);
+  const ownTrackRef = useRef<number | null>(null);
+  const rawSubsRef = useRef<NativeTrackInfo[]>([]);
   const [selectedEmbeddedAudio, setSelectedEmbeddedAudio] = useState<number | null>(null);
   const [catalog, setCatalog] = useState<CatalogSubtitleTrack[]>([]);
   const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -289,6 +297,7 @@ export default function NativePlayerControls(props: Props) {
     });
     const detachTracks = player.subscribeTracks((update) => {
       setEmbeddedAudio(update.audio);
+      rawSubsRef.current = update.subtitles;
       setEmbeddedSubs(withoutDownloadedCopies(update.subtitles));
       // Authoritative selection state (optimistic echoes are overwritten by
       // the player's own report; -1 = none selected).
@@ -298,10 +307,12 @@ export default function NativePlayerControls(props: Props) {
         // Auto-select the first embedded audio track (VLC usually does this).
         setSelectedEmbeddedAudio((current) => current ?? update.audio[0]?.id ?? null);
       }
+      // While the app draws a torrent subtitle, the player shows none, yet
+      // that track stays the chosen one.
       setSelectedEmbeddedSub(
         update.selectedSubtitleTrackId != null && update.selectedSubtitleTrackId !== -1
           ? update.selectedSubtitleTrackId
-          : null,
+          : ownTrackRef.current,
       );
     });
     return () => {
@@ -408,9 +419,10 @@ export default function NativePlayerControls(props: Props) {
   // --- Web subtitle overlay: the active cue for the current playback time,
   // derived (not stored) so a 500ms clock tick never misses a cue.
   const activeOverlayCue = useMemo(() => {
-    if (!overlayCues) return null;
-    return subtitleCueAtTime(overlayCues, time.currentTime, subtitleDelay);
-  }, [overlayCues, time.currentTime, subtitleDelay]);
+    const cues = overlayCues ?? (ownSubtitle && ownSubtitle.trackId === selectedEmbeddedSub ? ownSubtitle.cues : null);
+    if (!cues) return null;
+    return subtitleCueAtTime(cues, time.currentTime, subtitleDelay);
+  }, [overlayCues, ownSubtitle, selectedEmbeddedSub, time.currentTime, subtitleDelay]);
 
   // --- Pinch on the video: spread to fill the screen, pinch in for the
   // whole picture (streaming apps have no Fit/Fill button). A pinch
@@ -607,6 +619,64 @@ export default function NativePlayerControls(props: Props) {
     setSelectedEmbeddedSub(regular.id);
   }, [hasVideo, embeddedSubs, selectedEmbeddedSub, activeSubtitleUrl, subtitleStyle, matchedDub, subtitleLang, player]);
 
+  // A new video: its track ids say nothing about the last one's subtitle.
+  useEffect(() => {
+    ownTrackRef.current = null;
+    setOwnSubtitle(null);
+  }, [magnet, downloadId, fileIndex]);
+
+  // A torrent subtitle the player is drawing: read its text and draw it in
+  // the app's own subtitle box instead (one look everywhere). Until the text
+  // arrives (the server reads the video the first time), the player keeps
+  // drawing it.
+  useEffect(() => {
+    const trackId = selectedEmbeddedSub;
+    if (trackId === null || activeSubtitleUrl !== null || ownSubtitle?.trackId === trackId) return;
+    const source = ownTrackSource(rawSubsRef.current, trackId);
+    if (!source) return;
+    let cancelled = false;
+    const stillWanted = () => !cancelled && selectedEmbeddedSubRef.current === trackId;
+    const show = (text: string, format: SubtitleFormat) => {
+      const cues = parseSubtitles(text, format);
+      if (!cues.length || !stillWanted()) return;
+      ownTrackRef.current = trackId;
+      setOwnSubtitle({ trackId, cues });
+      player.selectSubtitleTrack(null); // the app draws it now
+    };
+    void (async () => {
+      try {
+        if (source.kind === 'file') {
+          // A download's subtitle file, on the phone.
+          if (!downloadId) return;
+          const files = await getNativeDownloads()?.localPlayablePath({ downloadId });
+          const file = files?.subtitles.find((candidate) =>
+            languageNameForCode(candidate.lang) === source.language || candidate.lang.toLowerCase() === source.language.toLowerCase());
+          if (!file || !stillWanted()) return;
+          const res = await fetch(Capacitor.convertFileSrc(file.path));
+          if (res.ok) show(await res.text(), file.path.toLowerCase().endsWith('.srt') ? 'srt' : 'vtt');
+          return;
+        }
+        const cacheKey = downloadId ? `${downloadId}#${source.ordinal}` : '';
+        const cached = cacheKey ? cachedOwnSubtitle(cacheKey) : null;
+        if (cached) {
+          show(cached, 'vtt');
+          return;
+        }
+        const query = downloadId
+          ? { downloadId, clientId: getDeviceId() }
+          : magnet ? { magnet, fileIndex: fileIndex ?? 0, cat } : null;
+        if (!query) return;
+        const text = await fetchOwnTrack(getVodBase(), query, source.ordinal, () => !stillWanted());
+        if (!text || !stillWanted()) return;
+        if (cacheKey) cacheOwnSubtitle(cacheKey, text);
+        show(text, 'vtt');
+      } catch {
+        // Offline or unreadable: the player keeps drawing it.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedEmbeddedSub, activeSubtitleUrl, ownSubtitle, downloadId, magnet, fileIndex, cat, player]);
+
   // Ask the server for the dub's script matched to this video; it measures
   // the audio in the background (poll while pending). A download's copy is
   // kept on the device for offline playback.
@@ -797,6 +867,7 @@ export default function NativePlayerControls(props: Props) {
     // A late download must not override Off, a manual track choice, or a
     // replaced player (including automatic restore requests).
     if (operation !== subtitleOperation.current) return false;
+    ownTrackRef.current = null;
     setOverlayCues(cues);
     setSelectedEmbeddedSub(null);
     setActiveSubtitleUrl(key);
@@ -902,6 +973,7 @@ export default function NativePlayerControls(props: Props) {
     subtitleAuto.current = false;
     rememberForShow({ subtitle: styleOfTrack(track.label) });
     subtitleOperation.current++;
+    ownTrackRef.current = null;
     setLoadingSubtitleUrl(null);
     setOverlayCues(null);
     setActiveSubtitleUrl(null);
@@ -915,6 +987,7 @@ export default function NativePlayerControls(props: Props) {
     subtitleAuto.current = false;
     rememberForShow({ subtitle: 'off' });
     subtitleOperation.current++;
+    ownTrackRef.current = null;
     setLoadingSubtitleUrl(null);
     setOverlayCues(null);
     setActiveSubtitleUrl(null);
