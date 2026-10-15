@@ -35,6 +35,8 @@ const dialogueSeconds = 30 * 60
 
 // subtitleChoice is the sidecar packaged for one language.
 type subtitleChoice struct {
+	// own: the video's own track (no sidecar needed: the player lists it).
+	own  bool
 	data []byte
 	ext  string
 	why  string // for the log
@@ -119,7 +121,7 @@ func chooseSubtitle(ctx context.Context, jobID, videoPath, lang string, embedded
 		}
 	}
 	if embedded != nil {
-		return subtitleChoice{data: embedded, ext: "vtt", why: "the video's own track"}, true
+		return subtitleChoice{data: embedded, ext: "vtt", why: "the video's own track", own: true}, true
 	}
 	if len(candidates) == 0 {
 		return subtitleChoice{}, false
@@ -149,7 +151,7 @@ func chooseSubtitle(ctx context.Context, jobID, videoPath, lang string, embedded
 // the provider's first by release name.
 func fallbackSubtitle(embedded []byte, candidates []ProviderSubtitle) (subtitleChoice, bool) {
 	if embedded != nil {
-		return subtitleChoice{data: embedded, ext: "vtt", why: "the video's own track"}, true
+		return subtitleChoice{data: embedded, ext: "vtt", why: "the video's own track", own: true}, true
 	}
 	if len(candidates) > 0 {
 		return subtitleChoice{data: candidates[0].Data, ext: candidates[0].Ext, why: "provider's first match (not synced)"}, true

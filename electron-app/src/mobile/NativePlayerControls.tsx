@@ -10,7 +10,7 @@ import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, 
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
-import { languageNameForCode, trackDisplayNames, trackLanguageName } from '../lib/track-labels';
+import { languageNameForCode, trackDisplayNames, trackLanguageName, withoutDownloadedCopies } from '../lib/track-labels';
 import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
 import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
 import { getDeviceId } from '../lib/device-id';
@@ -293,7 +293,7 @@ export default function NativePlayerControls(props: Props) {
     });
     const detachTracks = player.subscribeTracks((update) => {
       setEmbeddedAudio(update.audio);
-      setEmbeddedSubs(update.subtitles);
+      setEmbeddedSubs(withoutDownloadedCopies(update.subtitles));
       // Authoritative selection state (optimistic echoes are overwritten by
       // the player's own report; -1 = none selected).
       if (update.selectedAudioTrackId != null) {
@@ -1006,9 +1006,12 @@ export default function NativePlayerControls(props: Props) {
       {/* Web-rendered subtitle overlay (sheet-loaded tracks): pinch anywhere
           on the video to resize — the size persists per device. */}
       {hasVideo && activeOverlayCue ? (
-        <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-all duration-200" style={{ bottom: controlsVisible || activeSheet !== 'none' ? '9.5rem' : '3rem' }}>
+        // Stays where it is when the controls show (it used to rise into the
+        // play button) and looks like the player's own subtitles: white text
+        // with a black outline, no box.
+        <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6" style={{ bottom: 'calc(2.5rem + env(safe-area-inset-bottom))' }}>
           <span
-            className="whitespace-pre-line rounded bg-black/55 px-3 py-1 text-center leading-snug text-white [text-shadow:_0_1px_3px_rgb(0_0_0/90%)]"
+            className="whitespace-pre-line px-1 text-center font-medium leading-snug text-white [text-shadow:_-1px_-1px_0_#000,1px_-1px_0_#000,-1px_1px_0_#000,1px_1px_0_#000,0_0_3px_#000,0_1px_4px_rgb(0_0_0/80%)]"
             style={{ fontSize: `${overlaySize}px` }}
           >
             {activeOverlayCue.text}
@@ -1083,8 +1086,10 @@ export default function NativePlayerControls(props: Props) {
           placed above the seek bar while they show, lower when hidden. */}
       {skipAction ? (
         <div
-          className="absolute right-4 z-30 transition-[bottom] duration-200"
-          style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(9.5rem + env(safe-area-inset-bottom))' : 'calc(1.5rem + env(safe-area-inset-bottom))' }}
+          // One place, above the seek bar and the screen-size button, whether
+          // or not the controls show (it used to jump when they appeared).
+          className="absolute right-4 z-30"
+          style={{ bottom: 'calc(9.5rem + env(safe-area-inset-bottom))' }}
         >
           <button
             type="button"
@@ -1212,7 +1217,6 @@ export default function NativePlayerControls(props: Props) {
                 <TrackRow
                   selected={activeSubtitleUrl === MATCHED_DUB_KEY}
                   label={`${languageNameForCode(subtitleLang) || 'English'} · Dub`}
-                  detail="Matched to this video"
                   disabled={!!loadingSubtitleUrl || importing}
                   onClick={chooseMatchedDub}
                 />

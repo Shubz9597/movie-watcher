@@ -455,6 +455,10 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 			return
 		}
 		log.Printf("[downloads] job %s: %s subtitle: %s", job.ID, lang, choice.why)
+		if choice.own {
+			// The video carries it: a copy would list the same subtitle twice.
+			continue
+		}
 		data, subExt := choice.data, choice.ext
 		if subExt != "vtt" && subExt != "srt" {
 			subExt = "vtt"

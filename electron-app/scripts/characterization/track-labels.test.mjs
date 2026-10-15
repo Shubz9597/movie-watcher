@@ -21,3 +21,13 @@ test("the default built-in subtitle is the full dialogue in the preferred langua
   assert.equal(isFullDialogueTrack("Forced - [English]", "en"), false);
   assert.equal(isFullDialogueTrack("Track 3", "en"), false, "an unnamed track is not assumed to be English");
 });
+
+// Dragon Ball Z Kai downloads listed the video's own English twice: the
+// server had saved it again as "Downloaded - [English]".
+test("a download's copy of the video's own subtitle is dropped", async () => {
+  const { withoutDownloadedCopies } = await import("../../src/lib/track-labels.ts");
+  const tracks = [{ id: 1, label: "English" }, { id: 2, label: "Downloaded - [English]" }, { id: 3, label: "Dub - [English]" }];
+  assert.deepEqual(withoutDownloadedCopies(tracks).map((track) => track.id), [1, 3]);
+  const onlyCopy = [{ id: 2, label: "Downloaded - [English]" }, { id: 4, label: "Japanese" }];
+  assert.deepEqual(withoutDownloadedCopies(onlyCopy).map((track) => track.id), [2, 4], "kept when the video has no English of its own");
+});

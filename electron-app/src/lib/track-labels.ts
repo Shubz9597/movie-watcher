@@ -92,3 +92,17 @@ export function isFullDialogueTrack(raw: string | undefined, language: string): 
 export function preferredSubtitleTrack<T extends { id: number; label?: string }>(tracks: ReadonlyArray<T>, language: string): T | null {
   return tracks.find((track) => isFullDialogueTrack(track.label, language)) ?? null;
 }
+
+/** Drops a download's copy of a subtitle the video itself carries
+ *  ("Downloaded - [English]" beside the video's own English track): earlier
+ *  servers saved the video's track again as a file, listing it twice. */
+export function withoutDownloadedCopies<T extends { label?: string }>(tracks: ReadonlyArray<T>): T[] {
+  const own = new Set(tracks
+    .map((track) => parseTrack(track.label ?? ''))
+    .filter((parsed) => parsed.language && !/^(downloaded|dub)\b/i.test(parsed.title))
+    .map((parsed) => parsed.language));
+  return tracks.filter((track) => {
+    const parsed = parseTrack(track.label ?? '');
+    return !(/^downloaded\b/i.test(parsed.title) && own.has(parsed.language));
+  });
+}
