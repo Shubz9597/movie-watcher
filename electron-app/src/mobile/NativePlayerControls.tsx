@@ -1086,10 +1086,11 @@ export default function NativePlayerControls(props: Props) {
           placed above the seek bar while they show, lower when hidden. */}
       {skipAction ? (
         <div
-          // One place, above the seek bar and the screen-size button, whether
-          // or not the controls show (it used to jump when they appeared).
+          // One place, just above the screen-size button at the bottom right,
+          // whether or not the controls show (it used to jump when they
+          // appeared; 9.5rem put it mid-screen in landscape).
           className="absolute right-4 z-30"
-          style={{ bottom: 'calc(9.5rem + env(safe-area-inset-bottom))' }}
+          style={{ bottom: 'calc(6rem + env(safe-area-inset-bottom))' }}
         >
           <button
             type="button"

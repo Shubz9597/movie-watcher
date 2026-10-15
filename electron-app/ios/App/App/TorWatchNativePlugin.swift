@@ -427,7 +427,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         if delta.isFinite {
-            pendingSeek = Double(player.time.intValue) / 1000.0 + delta
+            // From where the controls show (while paused, the last seek's
+            // target: repeated taps back each step back again).
+            pendingSeek = Double(displayTimeMs(player)) / 1000.0 + delta
             applyPendingSeek(player)
         }
         call.resolve()
@@ -672,9 +674,22 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             lastLocalProgressSave = Date()
             persistLocalProgress(state: "checkpoint")
         }
+        emitTime(player)
+    }
+
+    /// The position the controls show. While paused it is the anchor Play
+    /// resumes from: after a seek VLC shows the new picture but keeps
+    /// reporting the old time until it plays, which snapped the seek bar
+    /// back to where it was paused.
+    private func displayTimeMs(_ player: VLCMediaPlayer) -> Int32 {
+        if !playbackRequested, let anchor = pausedPositionMs { return anchor }
+        return player.time.intValue
+    }
+
+    private func emitTime(_ player: VLCMediaPlayer) {
         let duration = player.media?.length.intValue ?? 0
         notifyListeners("timeUpdate", data: [
-            "currentTime": Double(player.time.intValue) / 1000.0,
+            "currentTime": Double(displayTimeMs(player)) / 1000.0,
             "duration": Double(max(duration, 0)) / 1000.0,
             "playId": playId,
         ])
@@ -728,8 +743,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let upper = duration > 0 ? duration : Double(Int32.max)
         player.time = VLCTime(int: Int32(max(0, min(upper, seconds * 1000))))
         if !playbackRequested {
-            // A scrub while paused becomes the new resume anchor.
+            // A scrub while paused becomes the new resume anchor, shown at
+            // once (VLC sends no time change while paused).
             pausedPositionMs = Int32(max(0, min(upper, seconds * 1000)))
+            emitTime(player)
         }
     }
 
