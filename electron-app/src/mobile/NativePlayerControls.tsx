@@ -6,11 +6,11 @@
 // the skip-intro chip when timestamps exist (server /skip-segments).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, Scan, Proportions, MoveHorizontal, HeartPulse, X, RotateCcw, RotateCw, Check } from 'lucide-react';
+import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, HeartPulse, X, RotateCcw, RotateCw, Check } from 'lucide-react';
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
-import { languageNameForCode, trackDisplayNames, trackLanguageName, withoutDownloadedCopies } from '../lib/track-labels';
+import { audioDisplayNames, languageNameForCode, trackDisplayNames, trackLanguageName, withoutDownloadedCopies } from '../lib/track-labels';
 import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
 import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
 import { getDeviceId } from '../lib/device-id';
@@ -134,16 +134,9 @@ function formatDelay(seconds: number): string {
 }
 
 
-// Fit keeps the whole picture; Fill crops to cover; Stretch fills both axes.
-const SCALE_MODES = {
-  fit: 'Fit',
-  fill: 'Fill',
-  stretch: 'Stretch',
-} as const;
-
-function nextScaleMode(mode: 'fit' | 'fill' | 'stretch'): 'fit' | 'fill' | 'stretch' {
-  return mode === 'fit' ? 'fill' : mode === 'fill' ? 'stretch' : 'fit';
-}
+// Pinch the picture, as on streaming apps: spread to fill the screen
+// (cropping the edges), pinch in for the whole picture again.
+const SCALE_TOASTS = { fit: 'Original', fill: 'Zoomed to fill' } as const;
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, seriesId, hasNextEpisode = false, onClose } = props;
@@ -209,14 +202,16 @@ export default function NativePlayerControls(props: Props) {
   });
   const [scrubTo, setScrubTo] = useState<number | null>(null);
   // Mirror the saved native sizing preference for the button.
-  const [scaleMode, setScaleMode] = useState<'fit' | 'fill' | 'stretch'>(() => {
+  const [scaleMode, setScaleMode] = useState<'fit' | 'fill'>(() => {
     try {
       const saved = window.localStorage.getItem('mw_video_scale');
-      return saved === 'fill' || saved === 'stretch' ? saved : 'fit';
+      return saved === 'fill' || saved === 'stretch' ? 'fill' : 'fit';
     } catch {
       return 'fit';
     }
   });
+  const scaleModeRef = useRef(scaleMode);
+  scaleModeRef.current = scaleMode;
   // Names the new mode for a moment: three similar icons need a word.
   const [scaleToast, setScaleToast] = useState<string | null>(null);
   const scaleToastTimer = useRef<number | null>(null);
@@ -416,18 +411,30 @@ export default function NativePlayerControls(props: Props) {
     return subtitleCueAtTime(overlayCues, time.currentTime, subtitleDelay);
   }, [overlayCues, time.currentTime, subtitleDelay]);
 
-  // --- Pinch-to-resize on the video surface: two-finger spread adjusts the
-  // overlay font size live and persists per device. A pinch suppresses the
-  // tap gestures for a short guard window afterwards.
-  const pinchRef = useRef<{ dist0: number; size0: number } | null>(null);
+  // --- Pinch on the video: spread to fill the screen, pinch in for the
+  // whole picture (streaming apps have no Fit/Fill button). A pinch
+  // suppresses the tap gestures for a short guard window afterwards.
+  const pinchRef = useRef<{ dist0: number; applied: boolean } | null>(null);
   const touchDist = (touches: React.TouchList): number => {
     const a = touches[0];
     const b = touches[1];
     return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
   };
+  const applyScale = (next: 'fit' | 'fill') => {
+    setScaleMode(next);
+    player.setVideoScale(next);
+    setScaleToast(SCALE_TOASTS[next]);
+    if (scaleToastTimer.current) window.clearTimeout(scaleToastTimer.current);
+    scaleToastTimer.current = window.setTimeout(() => setScaleToast(null), 1200);
+    try {
+      window.localStorage.setItem('mw_video_scale', next);
+    } catch {
+      // The native player still remembers the choice.
+    }
+  };
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     if (event.touches.length === 2) {
-      pinchRef.current = { dist0: touchDist(event.touches), size0: overlaySizeRef.current };
+      pinchRef.current = { dist0: touchDist(event.touches), applied: false };
       if (singleTapTimer.current !== null) {
         window.clearTimeout(singleTapTimer.current);
         singleTapTimer.current = null;
@@ -437,28 +444,38 @@ export default function NativePlayerControls(props: Props) {
   };
   const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
     const pinch = pinchRef.current;
-    if (!pinch || event.touches.length < 2) return;
+    if (!pinch || pinch.applied || event.touches.length < 2) return;
     const ratio = touchDist(event.touches) / pinch.dist0;
-    const next = Math.round(Math.max(12, Math.min(48, pinch.size0 * ratio)));
-    if (next !== overlaySizeRef.current) {
-      overlaySizeRef.current = next;
-      setOverlaySize(next);
-    }
+    const next = ratio > 1.15 ? 'fill' : ratio < 0.87 ? 'fit' : null;
+    if (!next) return;
+    pinch.applied = true;
+    if (next !== scaleModeRef.current) applyScale(next);
   };
   const handleTouchEnd = () => {
     if (pinchRef.current) {
       pinchRef.current = null;
       pinchGuardRef.current = Date.now() + 400; // ignore trailing taps
-      window.localStorage.setItem('mw_sub_overlay_px', String(overlaySizeRef.current));
-      // Embedded subs scale via the same gesture: one engine recreate at the
-      // current position when an embedded track is actually selected.
-      if (selectedEmbeddedSubRef.current !== null) {
-        const percent = Math.round(75 * (overlaySizeRef.current / 18));
-        player.setEmbeddedSubtitleScale(Math.max(25, Math.min(200, percent)));
-      }
     }
   };
 
+  // Subtitle text size (the subtitle menu's − / +): the app's overlay in
+  // pixels, the player's own subtitles as a percentage (one engine recreate
+  // at the current position when one of them is showing).
+  const changeSubtitleSize = (step: number) => {
+    const next = Math.max(12, Math.min(48, overlaySizeRef.current + step));
+    if (next === overlaySizeRef.current) return;
+    overlaySizeRef.current = next;
+    setOverlaySize(next);
+    try {
+      window.localStorage.setItem('mw_sub_overlay_px', String(next));
+    } catch {
+      // Size applies for this video only.
+    }
+    if (selectedEmbeddedSubRef.current !== null) {
+      const percent = Math.round(75 * (next / 18));
+      player.setEmbeddedSubtitleScale(Math.max(25, Math.min(200, percent)));
+    }
+  };
 
   // --- Torrent telemetry (desktop TorrentHealthMenu parity) ---
   // Polls GET /buffer/info on the same 4s cadence as the desktop player,
@@ -510,7 +527,10 @@ export default function NativePlayerControls(props: Props) {
   const [showOnline, setShowOnline] = useState(false);
   const showOnlineList = !local && (embeddedSubs.length === 0 || showOnline || activeSubtitleUrl !== null);
   const subtitleNames = useMemo(() => trackDisplayNames(embeddedSubs.map((track) => track.label)), [embeddedSubs]);
-  const audioNames = useMemo(() => trackDisplayNames(embeddedAudio.map((track) => track.label)), [embeddedAudio]);
+  const audioNames = useMemo(
+    () => audioDisplayNames(embeddedAudio.map((track) => track.label), cat === 'anime' ? 'ja' : undefined),
+    [embeddedAudio, cat],
+  );
 
   // --- Subtitles that follow the audio ---
   // Without a choice for this video: the show's remembered style, else the
@@ -1007,15 +1027,15 @@ export default function NativePlayerControls(props: Props) {
           on the video to resize — the size persists per device. */}
       {hasVideo && activeOverlayCue ? (
         // At the bottom of the picture; with the controls showing, just above
-        // the seek bar (not up into the play button). Looks like the
-        // player's own subtitles: white text with a firm black outline, no
-        // box, readable on bright scenes without looking bold.
+        // the seek bar (not up into the play button). Streaming-app look,
+        // shared with the player's own subtitles: plain white monospaced
+        // text, a soft dark edge, no box.
         <div
           className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-[bottom] duration-200"
           style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(2.5rem + env(safe-area-inset-bottom))' : 'calc(0.5rem + env(safe-area-inset-bottom))' }}
         >
           <span
-            className="whitespace-pre-line px-1 text-center font-medium leading-snug text-white [text-shadow:_-1.5px_-1.5px_0_#000,0_-1.5px_0_#000,1.5px_-1.5px_0_#000,1.5px_0_0_#000,1.5px_1.5px_0_#000,0_1.5px_0_#000,-1.5px_1.5px_0_#000,-1.5px_0_0_#000,0_0_4px_rgb(0_0_0/80%)]"
+            className="whitespace-pre-line px-1 text-center font-normal leading-snug tracking-tight text-white [font-family:ui-monospace,Menlo,monospace] [text-shadow:_0_0_1px_#000,0_0_3px_#000,0_0_3px_#000,0_1px_4px_rgb(0_0_0/90%)]"
             style={{ fontSize: `${overlaySize}px` }}
           >
             {activeOverlayCue.text}
@@ -1125,29 +1145,6 @@ export default function NativePlayerControls(props: Props) {
           <span className="text-numeric rounded-full bg-black/45 px-3 py-1 text-sm font-medium text-white">
             {formatTime(scrubTo ?? time.currentTime)} / {formatTime(time.duration)}
           </span>
-            {/* Scale sits LAST — the convention in mainstream players. */}
-            <IconButton
-              label={SCALE_MODES[nextScaleMode(scaleMode)]}
-              onClick={() => {
-                const next = nextScaleMode(scaleMode);
-                setScaleMode(next);
-                player.setVideoScale(next);
-                setScaleToast(SCALE_MODES[next]);
-                if (scaleToastTimer.current) window.clearTimeout(scaleToastTimer.current);
-                scaleToastTimer.current = window.setTimeout(() => setScaleToast(null), 1600);
-                try {
-                  window.localStorage.setItem('mw_video_scale', next);
-                } catch {
-                  // The native player still remembers the choice.
-                }
-              }}
-            >
-              {scaleMode === 'fit'
-                ? <Scan className="h-6 w-6" aria-hidden="true" />
-                : scaleMode === 'fill'
-                  ? <Proportions className="h-6 w-6" aria-hidden="true" />
-                  : <MoveHorizontal className="h-6 w-6" aria-hidden="true" />}
-            </IconButton>
         </div>
         {/* Seek bar — dragging scrubs locally; ONE seek commits on release
             so a drag cannot flood the player (or, via heartbeats, the server). */}
@@ -1200,7 +1197,13 @@ export default function NativePlayerControls(props: Props) {
             </ul>
           </section>
           <section aria-labelledby="subtitleTracksHeading" className="min-h-0 overflow-y-auto pr-2">
-            <h2 id="subtitleTracksHeading" className="text-2xl font-semibold text-white">Subtitles</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="subtitleTracksHeading" className="text-2xl font-semibold text-white">Subtitles</h2>
+              <div className="flex items-center gap-1" role="group" aria-label="Subtitle size">
+                <button type="button" aria-label="Smaller subtitles" onClick={() => changeSubtitleSize(-2)} className="min-h-12 min-w-12 rounded-lg text-sm text-white/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A−</button>
+                <button type="button" aria-label="Larger subtitles" onClick={() => changeSubtitleSize(2)} className="min-h-12 min-w-12 rounded-lg text-lg text-white/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A+</button>
+              </div>
+            </div>
             {subtitleError ? <p role="alert" className="type-secondary mt-3 text-red-300">{subtitleError}</p> : null}
             <ul className="mt-4 space-y-1">
               <TrackRow
@@ -1221,7 +1224,7 @@ export default function NativePlayerControls(props: Props) {
               {matchedDub && !embeddedDub ? (
                 <TrackRow
                   selected={activeSubtitleUrl === MATCHED_DUB_KEY}
-                  label={`${languageNameForCode(subtitleLang) || 'English'} · Dub`}
+                  label={`${languageNameForCode(subtitleLang) || 'English'} (Dub)`}
                   disabled={!!loadingSubtitleUrl || importing}
                   onClick={chooseMatchedDub}
                 />

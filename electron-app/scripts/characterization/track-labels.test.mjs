@@ -5,8 +5,9 @@ import { isFullDialogueTrack, preferredSubtitleTrack, trackDisplayNames } from "
 
 test("track names read as languages, with the track title when it adds something", () => {
   assert.deepEqual(trackDisplayNames(["Track 2 - [English]", "Signs & Songs - [English]", "Japanese", "Track 4", "", "eng"]),
-    ["English 1", "English · Signs & Songs", "Japanese", "Track 4", "Track 5", "English 2"]);
-  assert.deepEqual(trackDisplayNames(["Full Subtitles - [English]", "English - [English]"]), ["English · Full Subtitles", "English"]);
+    ["English 1", "English (Signs & Songs)", "Japanese", "Track 4", "Track 5", "English 2"]);
+  assert.deepEqual(trackDisplayNames(["Full Subtitles - [English]", "English - [English]"]), ["English (Full Subtitles)", "English"]);
+  assert.deepEqual(trackDisplayNames(["SDH - [English]", "Dub - [English]", "Downloaded - [Spanish]"]), ["English (CC)", "English (Dub)", "Spanish"]);
 });
 
 test("the default built-in subtitle is the full dialogue in the preferred language", () => {
@@ -30,4 +31,11 @@ test("a download's copy of the video's own subtitle is dropped", async () => {
   assert.deepEqual(withoutDownloadedCopies(tracks).map((track) => track.id), [1, 3]);
   const onlyCopy = [{ id: 2, label: "Downloaded - [English]" }, { id: 4, label: "Japanese" }];
   assert.deepEqual(withoutDownloadedCopies(onlyCopy).map((track) => track.id), [2, 4], "kept when the video has no English of its own");
+});
+
+test("the original language's audio is marked, as on streaming services", async () => {
+  const { audioDisplayNames } = await import("../../src/lib/track-labels.ts");
+  assert.deepEqual(audioDisplayNames(["Track 1 - [English]", "Track 2 - [Japanese]"], "ja"), ["English", "Japanese [Original]"]);
+  assert.deepEqual(audioDisplayNames(["Track 1 - [Japanese]"], "ja"), ["Japanese"], "one track: nothing to tell apart");
+  assert.deepEqual(audioDisplayNames(["English", "Japanese"]), ["English", "Japanese"]);
 });

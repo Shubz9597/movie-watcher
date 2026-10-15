@@ -42,9 +42,18 @@ function parseTrack(raw: string): Parsed {
   return { language, title };
 }
 
+// Closed captions (dialogue plus speaker names and sounds), as streaming
+// services label them: "English (CC)".
+const CAPTIONS = /^(sdh|cc|closed captions?|hearing impaired|hi)$|\b(sdh|closed captions?|hearing impaired)\b/i;
+
 function singleName(raw: string, position: number): string {
   const { language, title } = parseTrack(raw);
-  if (language && title) return `${language} · ${title}`;
+  if (language && title) {
+    if (CAPTIONS.test(title)) return `${language} (CC)`;
+    // A download's saved copy is the language's subtitle; "Dub" stays.
+    if (/^downloaded$/i.test(title)) return language;
+    return `${language} (${title})`;
+  }
   return language || title || `Track ${position}`;
 }
 
@@ -105,4 +114,15 @@ export function withoutDownloadedCopies<T extends { label?: string }>(tracks: Re
     const parsed = parseTrack(track.label ?? '');
     return !(/^downloaded\b/i.test(parsed.title) && own.has(parsed.language));
   });
+}
+
+/** Audio track names, the show's original language marked as streaming
+ *  services do: "Japanese [Original]" beside "English". */
+export function audioDisplayNames(labels: ReadonlyArray<string | undefined>, originalLanguage?: string): string[] {
+  const names = trackDisplayNames(labels);
+  const original = originalLanguage ? (LANGUAGE_NAMES[originalLanguage.toLowerCase()] ?? originalLanguage) : '';
+  if (!original || labels.length < 2) return names;
+  const index = labels.findIndex((label) => parseTrack(label ?? '').language === original);
+  if (index >= 0) names[index] = `${names[index]} [Original]`;
+  return names;
 }

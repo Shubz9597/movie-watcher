@@ -301,11 +301,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--file-caching=1000",
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
-            // Text subtitles look like the app's overlay ones: white with a
-            // firm black outline (not bold), never a box behind them.
+            // Text subtitles look like the app's overlay ones (streaming-app
+            // style): plain white monospaced text, a thin dark edge and a
+            // soft shadow, never a box behind them.
+            "--freetype-font=Menlo",
             "--freetype-background-opacity=0",
             "--freetype-color=16777215",
-            "--freetype-outline-thickness=4",
+            "--freetype-outline-thickness=2",
         ])
         player.delegate = self
         reportedAudioTrack = Int32.min // a new player reports its tracks afresh
@@ -493,7 +495,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// Every video starts with the viewer's last sizing choice.
     private static func savedVideoScaleMode() -> String {
         let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "fit"
-        return saved == "fill" || saved == "stretch" ? saved : "fit"
+        // Stretch is gone (pinch is fit or fill): an old choice of it fills.
+        return saved == "fill" || saved == "stretch" ? "fill" : "fit"
     }
 
     @objc func setVideoScale(_ call: CAPPluginCall) {

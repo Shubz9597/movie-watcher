@@ -48,7 +48,7 @@ test("the show's remembered style wins", () => {
 test("dub tracks read as such and display cleanly", () => {
   assert.equal(styleOfTrack("Dub - [English]"), "dub");
   assert.equal(styleOfTrack("Track 1 - [English]"), "regular");
-  assert.deepEqual(trackDisplayNames(subs.map((t) => t.label)), ["English", "English · Dub"]);
+  assert.deepEqual(trackDisplayNames(subs.map((t) => t.label)), ["English", "English (Dub)"]);
 });
 
 test("choices are remembered per show", () => {
