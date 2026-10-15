@@ -127,3 +127,31 @@ func addAltTitles(title *Title, other Title) {
 		}
 	}
 }
+
+// stremioFirst lists Stremio's hits first, in Stremio's order, then the
+// other providers' results in their ranked order.
+func stremioFirst(titles []Title, order []string) []Title {
+	if len(order) == 0 {
+		return titles
+	}
+	position := make(map[string]int, len(order))
+	for i, id := range order {
+		if _, seen := position[id]; !seen {
+			position[id] = i
+		}
+	}
+	slices.SortStableFunc(titles, func(a, b Title) int {
+		pa, okA := position[a.ID]
+		pb, okB := position[b.ID]
+		switch {
+		case okA && okB:
+			return pa - pb
+		case okA:
+			return -1
+		case okB:
+			return 1
+		}
+		return 0
+	})
+	return titles
+}

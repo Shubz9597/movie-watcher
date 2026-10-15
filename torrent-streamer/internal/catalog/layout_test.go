@@ -171,3 +171,16 @@ func TestSearchListsTheShowOnce(t *testing.T) {
 		t.Fatalf("the season's name stays searchable: %v", result.Titles[0].AltTitles)
 	}
 }
+
+// Stremio's hits lead in Stremio's order; other results follow as ranked.
+func TestStremioOrderLeads(t *testing.T) {
+	titles := []Title{{ID: "tmdb:movie:95993"}, {ID: "tmdb:tv:85937"}, {ID: "anilist:1"}, {ID: "tmdb:movie:635302"}}
+	got := stremioFirst(titles, []string{"tmdb:tv:85937", "tmdb:movie:635302"})
+	var ids []string
+	for _, title := range got {
+		ids = append(ids, title.ID)
+	}
+	if strings.Join(ids, ",") != "tmdb:tv:85937,tmdb:movie:635302,tmdb:movie:95993,anilist:1" {
+		t.Fatalf("order = %v", ids)
+	}
+}

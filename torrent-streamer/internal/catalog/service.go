@@ -126,6 +126,9 @@ type Options struct {
 	Layouts LayoutStore
 	// AnimeMap returns the community anime list (nil: none loaded).
 	AnimeMap func() *animemap.Map
+	// NoSearch names providers left out of search (an unreachable one
+	// would hold every search to the full budget).
+	NoSearch []string
 }
 
 func (o Options) withDefaults() Options {
@@ -220,11 +223,18 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		if typed, ok := provider.(TypedSearchProvider); ok && !typed.SupportsSearchType(query.Type) {
 			return providerReply{}
 		}
+		if slices.Contains(s.options.NoSearch, provider.Name()) {
+			return providerReply{}
+		}
 		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
 	})
 	groups := make([][]Title, 0, len(replies)+1)
-	if titles := <-stremioResult; len(titles) > 0 {
-		groups = append(groups, filterByType(titles, query.Type))
+	var stremioOrder []string
+	if titles := filterByType(<-stremioResult, query.Type); len(titles) > 0 {
+		groups = append(groups, titles)
+		for _, title := range titles {
+			stremioOrder = append(stremioOrder, title.ID)
+		}
 	}
 	degraded := []string{}
 	cachedAt := map[string]time.Time{}
@@ -245,7 +255,7 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 	sort.Strings(degraded)
 	titles := MergeTitles(groups)
 	rankSearchTitles(titles, query.Query, groups)
-	titles = s.collapseShows(ctx, titles)
+	titles = stremioFirst(s.collapseShows(ctx, titles), stremioOrder)
 	if len(titles) > query.Limit {
 		titles = titles[:query.Limit]
 	}

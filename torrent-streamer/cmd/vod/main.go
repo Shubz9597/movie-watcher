@@ -237,6 +237,9 @@ func main() {
 		Links:    &catalog.SQLIDLinks{DB: db},
 		Layouts:  &catalog.SQLLayouts{DB: db},
 		AnimeMap: animeList.Current,
+		// Jikan (MyAnimeList) is unreachable from here even through WARP;
+		// AniList covers anime search.
+		NoSearch: []string{"jikan"},
 	})
 	introdetect.AnimeShow = catalogService.IsAnimeShow
 	progressDB.Placer = catalogService // AniList entry ids read and write as their show
