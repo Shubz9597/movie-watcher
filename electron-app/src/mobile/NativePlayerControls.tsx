@@ -1028,17 +1028,20 @@ export default function NativePlayerControls(props: Props) {
       {hasVideo && activeOverlayCue ? (
         // At the bottom of the picture; with the controls showing, just above
         // the seek bar (not up into the play button). Streaming-app look,
-        // shared with the player's own subtitles: plain white monospaced
-        // text, a soft dark edge, no box.
+        // shared with the player's own subtitles: white monospaced text on a
+        // semi-transparent black box behind each line.
         <div
           className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-[bottom] duration-200"
           style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(2.5rem + env(safe-area-inset-bottom))' : 'calc(0.5rem + env(safe-area-inset-bottom))' }}
         >
           <span
-            className="whitespace-pre-line px-1 text-center font-normal leading-snug tracking-tight text-white [font-family:ui-monospace,Menlo,monospace] [text-shadow:_0_0_1px_#000,0_0_3px_#000,0_0_3px_#000,0_1px_4px_rgb(0_0_0/90%)]"
+            className="whitespace-pre-line text-center font-normal leading-[1.6] tracking-tight text-white [font-family:ui-monospace,Menlo,monospace]"
             style={{ fontSize: `${overlaySize}px` }}
           >
-            {activeOverlayCue.text}
+            {/* Inline, so each line gets its own box (as on streaming apps). */}
+            <span className="bg-black/75 px-2 py-0.5 [-webkit-box-decoration-break:clone] [box-decoration-break:clone]">
+              {activeOverlayCue.text}
+            </span>
           </span>
         </div>
       ) : null}
