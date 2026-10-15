@@ -54,6 +54,8 @@ export type Detail = {
   networks?: string[];
   totalEpisodes?: number | null;
   malId?: number | null;
+  // Anime by the community anime list, whatever page it opened from.
+  anime?: boolean;
 };
 
 export type BackendTitleDetail = {
@@ -73,6 +75,7 @@ export type BackendTitleDetail = {
   ratings?: { imdb?: { rating?: number; votes?: number; imdbId?: string } };
   seasons?: Array<{ number: number; name?: string; episodeCount?: number; airDate?: string; poster?: string }>;
   altTitles?: string[];
+  anime?: boolean;
 };
 
 // detailFromBackendTitle maps the BFF title detail onto the renderer Detail
@@ -118,5 +121,6 @@ export function detailFromBackendTitle(row: BackendTitleDetail): Detail {
     ])),
     totalEpisodes: totalEpisodes > 0 ? totalEpisodes : null,
     malId: providerIds.jikan ? Number(providerIds.jikan) : null,
+    anime: row.anime === true,
   };
 }

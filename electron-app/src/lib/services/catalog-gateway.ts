@@ -119,6 +119,7 @@ export function createCatalogGateway() {
           season_number: season,
           episodes: episodes.map((episode) => ({
             episode_number: episode.episode,
+            absolute_number: episode.absolute,
             season_number: episode.season,
             name: episode.title ?? '',
             air_date: episode.airDate ?? null,

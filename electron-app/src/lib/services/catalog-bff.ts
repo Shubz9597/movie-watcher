@@ -77,8 +77,11 @@ type BffTitle = {
   externalLinks?: Record<string, string>;
   ratings?: { imdb?: { rating?: number; votes?: number; imdbId?: string } };
   seasons?: BffSeason[];
-  // An anime entry's season within the TMDb show that groups the franchise.
-  series?: { id: string; season: number; episodeOffset?: number };
+  // An anime entry's season within the show (Stremio's seasons); absolute:
+  // the entry spans several seasons (its episode N is the show's Nth).
+  series?: { id: string; season: number; episodeOffset?: number; absolute?: boolean };
+  // A show or film the community anime list knows as anime.
+  anime?: boolean;
 };
 
 export type BffSeason = {
@@ -98,6 +101,8 @@ type BffEpisode = {
   still?: string;
   overview?: string;
   duration_s?: number;
+  // The episode's place among all of the show's regular episodes.
+  absolute?: number;
   providerIds?: Record<string, string>;
 };
 

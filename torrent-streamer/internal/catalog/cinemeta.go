@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -48,13 +49,14 @@ type cinemetaMetaResponse struct {
 		Genre       []string      `json:"genre"`
 		MovieDBID   jsonRawNumber `json:"moviedb_id"`
 		Videos      []struct {
-			ID        string        `json:"id"`
-			Season    jsonRawNumber `json:"season"`
-			Episode   jsonRawNumber `json:"episode"`
-			Name      string        `json:"name"`
-			Released  string        `json:"released"`
-			Thumbnail jsonRawString `json:"thumbnail"`
-			Overview  string        `json:"overview"`
+			ID          string        `json:"id"`
+			Season      jsonRawNumber `json:"season"`
+			Episode     jsonRawNumber `json:"episode"`
+			Name        string        `json:"name"`
+			Released    string        `json:"released"`
+			Thumbnail   jsonRawString `json:"thumbnail"`
+			Overview    string        `json:"overview"`
+			Description string        `json:"description"`
 		} `json:"videos"`
 	} `json:"meta"`
 }
@@ -272,7 +274,7 @@ func (p *Cinemeta) Episodes(ctx context.Context, request EpisodeRequest) ([]Epis
 			Title:       video.Name,
 			AirDate:     video.Released,
 			Still:       string(video.Thumbnail),
-			Overview:    video.Overview,
+			Overview:    cmp.Or(video.Overview, video.Description),
 			ProviderIDs: map[string]string{"imdb": externalID},
 		})
 	}

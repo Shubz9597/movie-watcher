@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
+	"torrent-streamer/internal/animemap"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -122,6 +122,10 @@ type Options struct {
 	// still resolves through another provider when one is unreachable
 	// (nil: no links).
 	Links IDLinks
+	// Layouts keeps each show's last Stremio layout (nil: none kept).
+	Layouts LayoutStore
+	// AnimeMap returns the community anime list (nil: none loaded).
+	AnimeMap func() *animemap.Map
 }
 
 func (o Options) withDefaults() Options {
@@ -198,12 +202,15 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		query.Limit = s.options.SearchLimit
 	}
 	key := searchCacheKey(query)
-	// TMDb search stand-in: started the moment TMDb's search fails, so it
-	// runs alongside slower providers; with TMDb answering it never runs.
-	fallback := s.searchFallbackSource()
-	fallbackResult := make(chan []Title, 1) // buffered: a late starter never blocks
-	var startFallback sync.Once
-	var fallbackStarted atomic.Bool
+	// Stremio's search (Cinemeta) runs on every query, beside the others,
+	// and its order leads: the show lists as Stremio lists it.
+	stremio := s.searchFallbackSource()
+	stremioResult := make(chan []Title, 1)
+	if stremio != nil {
+		go func() { stremioResult <- s.runSearchFallback(ctx, stremio, query, key) }()
+	} else {
+		stremioResult <- nil
+	}
 	replies := parallelReplies(len(s.providers), func(i int) providerReply {
 		provider := s.providers[i]
 		searcher, ok := provider.(SearchProvider)
@@ -213,16 +220,12 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		if typed, ok := provider.(TypedSearchProvider); ok && !typed.SupportsSearchType(query.Type) {
 			return providerReply{}
 		}
-		reply := s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
-		if provider.Name() == "tmdb" && fallback != nil && tmdbSearchFailed(reply) {
-			startFallback.Do(func() {
-				fallbackStarted.Store(true)
-				go func() { fallbackResult <- s.runSearchFallback(ctx, fallback, query, key) }()
-			})
-		}
-		return reply
+		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
 	})
-	groups := make([][]Title, 0, len(replies))
+	groups := make([][]Title, 0, len(replies)+1)
+	if titles := <-stremioResult; len(titles) > 0 {
+		groups = append(groups, filterByType(titles, query.Type))
+	}
 	degraded := []string{}
 	cachedAt := map[string]time.Time{}
 	for i, reply := range replies {
@@ -231,7 +234,7 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 			degraded = append(degraded, provider)
 		}
 		if titles, ok := reply.value.([]Title); ok {
-			groups = append(groups, filterByType(titles, query.Type))
+			groups = append(groups, filterByType(s.markAnime(titles), query.Type))
 		}
 		if reply.stale {
 			if at, ok := s.cache.FetchedAt(provider, key); ok {
@@ -239,16 +242,10 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 			}
 		}
 	}
-	// Only a fallback that actually started is waited for (it has its own
-	// bounded budget); a search that timed out before TMDb answered skips it.
-	if fallbackStarted.Load() {
-		if titles := <-fallbackResult; len(titles) > 0 {
-			groups = append(groups, filterByType(titles, query.Type))
-		}
-	}
 	sort.Strings(degraded)
 	titles := MergeTitles(groups)
 	rankSearchTitles(titles, query.Query, groups)
+	titles = s.collapseShows(ctx, titles)
 	if len(titles) > query.Limit {
 		titles = titles[:query.Limit]
 	}
@@ -287,10 +284,15 @@ func (s *Service) searchFallbackSource() TMDbSearchFallback {
 func (s *Service) runSearchFallback(ctx context.Context, fallback TMDbSearchFallback, query SearchQuery, key string) []Title {
 	fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.options.RequestTimeout)
 	defer cancel()
-	reply := s.fetchCached(fallbackCtx, "cinemeta-search", key, func(callCtx context.Context) (any, error) {
-		return fallback.SearchAsTMDb(callCtx, query)
+	asked := query
+	if asked.Type == TypeAnime {
+		asked.Type = TypeSeries // Cinemeta has no anime type; the anime list marks them
+	}
+	reply := s.fetchCached(fallbackCtx, "cinemeta-search", searchCacheKey(asked), func(callCtx context.Context) (any, error) {
+		return fallback.SearchAsTMDb(callCtx, asked)
 	})
 	titles, _ := reply.value.([]Title)
+	titles = s.markAnime(slices.Clone(titles))
 	if s.options.Links != nil {
 		for _, title := range titles {
 			if _, known := s.options.Links.GetLink(fallbackCtx, title.ID); !known { // TMDb's own link knows the exact type
@@ -455,7 +457,12 @@ func (s *Service) computeDetail(ctx context.Context, id string) DetailResult {
 	}
 	unconfirmed := false
 	if found {
-		merged.Series, unconfirmed = s.confirmSeries(ctx, providerName, merged.Series)
+		if link, known := s.placeEntry(ctx, providerName, externalID); known {
+			merged.Series = link
+		} else {
+			merged.Series, unconfirmed = s.confirmSeries(ctx, providerName, merged.Series)
+		}
+		s.applyLayout(ctx, id, &merged)
 	}
 	sort.Strings(degraded)
 	return DetailResult{Title: merged, Found: found, NotFound: !found && len(degraded) == 0, DegradedProviders: degraded, unconfirmed: unconfirmed}
@@ -521,6 +528,9 @@ func (s *Service) computeEpisodes(ctx context.Context, id string, season int) Ep
 	providerName, externalID, err := ParseTitleID(id)
 	if err != nil {
 		return EpisodeResult{Episodes: []Episode{}}
+	}
+	if result, ok := s.layoutEpisodes(ctx, id, season); ok {
+		return result
 	}
 	ids := map[string]string{providerName: externalID}
 	if link, ok := s.link(ctx, id); ok && link.ProviderIDs["imdb"] != "" && ids["imdb"] == "" {

@@ -21,6 +21,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver
 	"github.com/joho/godotenv"
 
+	"torrent-streamer/internal/animemap"
 	"torrent-streamer/internal/apiproxy"
 	"torrent-streamer/internal/bootstrap"
 	"torrent-streamer/internal/buildinfo"
@@ -35,6 +36,7 @@ import (
 	"torrent-streamer/internal/middleware"
 	"torrent-streamer/internal/playback"
 	"torrent-streamer/internal/recommendations"
+	"torrent-streamer/internal/rekey"
 	"torrent-streamer/internal/search"
 	"torrent-streamer/internal/skipsegments"
 	"torrent-streamer/internal/taste"
@@ -140,7 +142,7 @@ func main() {
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
 	progressDB.Shared = watch.HouseholdSubject // one viewer: every device shares progress
-	httpapi.SetProgressStore(progressDB) // Enable server-side progress tracking for VLC
+	httpapi.SetProgressStore(progressDB)       // Enable server-side progress tracking for VLC
 	prowlarrURL := serverConfig.ProwlarrURL
 	prowlarrAPIKey := serverConfig.ProwlarrAPIKey
 	prowlarrHTTP := &http.Client{Timeout: 25 * time.Second}
@@ -228,7 +230,30 @@ func main() {
 	// catalog.bff.v2 is advertised from the catalog phase onward; further
 	// capabilities are added only when they actually land.
 	catalogProviders := buildCatalogProviders(prowlarrHTTP)
-	catalogService := catalog.NewService(catalogProviders, catalog.Options{Links: &catalog.SQLIDLinks{DB: db}})
+	// Community anime list: places each AniList season or arc in its show.
+	animeList := animemap.NewSource(filepath.Join(config.DataRoot(), "catalog-maps", "anime-list-full.json"), envOr("TORWATCH_ANIME_LIST_URL", ""), nil)
+	animeList.Start(rootCtx)
+	catalogService := catalog.NewService(catalogProviders, catalog.Options{
+		Links:    &catalog.SQLIDLinks{DB: db},
+		Layouts:  &catalog.SQLLayouts{DB: db},
+		AnimeMap: animeList.Current,
+	})
+	introdetect.AnimeShow = catalogService.IsAnimeShow
+	progressDB.Placer = catalogService // AniList entry ids read and write as their show
+	// Saved state under AniList entry ids moves to the shows once the anime
+	// list is loaded (first start downloads it).
+	go func() {
+		for animeList.Current() == nil {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-time.After(10 * time.Second):
+			}
+		}
+		if err := rekey.Run(rootCtx, db, catalogService); err != nil {
+			log.Printf("[catalog] moving AniList entries to shows: %v", err)
+		}
+	}()
 	defer catalogService.Close()
 	// Household library (feature 002 M3.2): advertise library.household.v1
 	// ONLY when the schema is initialized and the storage-backed service

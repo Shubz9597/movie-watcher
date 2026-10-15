@@ -79,7 +79,8 @@ func TestSearchFallsBackToCinemetaAsTMDbTitles(t *testing.T) {
 		t.Fatalf("search = %+v", result.Titles)
 	}
 	detail := service.Detail(context.Background(), "tmdb:tv:13916")
-	if !detail.Found || detail.Title.ID != "tmdb:tv:13916" || len(detail.Title.Seasons) != 1 {
+	// Stremio's seasons: Specials (5) and season 1 (37).
+	if !detail.Found || detail.Title.ID != "tmdb:tv:13916" || len(detail.Title.Seasons) != 2 || detail.Title.Seasons[1].EpisodeCount != 37 {
 		t.Fatalf("the found title's page must open while TMDb is down: %+v", detail)
 	}
 }

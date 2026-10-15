@@ -17,6 +17,9 @@ type Store struct {
 	// Devices still send their own IDs; they are kept only as writer
 	// metadata (writer_client_id).
 	Shared string
+	// Placer writes and reads AniList entry ids as their show (nil: ids
+	// are kept as sent).
+	Placer Placer
 }
 
 // HouseholdSubject is the shared subject of a server with one viewer
@@ -113,6 +116,11 @@ func (s *Store) SaveProgressUpdate(ctx context.Context, update ProgressUpdate) (
 	if season < 0 || episode < 0 {
 		return SaveResult{}, fmt.Errorf("season and episode cannot be negative")
 	}
+	if next := update.Next; next != nil && isEntryID(seriesID) {
+		_, nextSeason, nextEpisode := s.place(ctx, seriesID, next.Season, next.Episode)
+		update.Next = &EpisodeRef{Season: nextSeason, Episode: nextEpisode}
+	}
+	seriesID, season, episode = s.place(ctx, seriesID, season, episode)
 	pos, dur := update.Position, update.Duration
 	if pos < 0 {
 		pos = 0
@@ -304,6 +312,23 @@ func (s *Store) GetEpisodeResume(ctx context.Context, subjectID, seriesID string
 
 func (s *Store) getResume(ctx context.Context, subjectID, seriesID string, season, episode *int) (Resume, bool, error) {
 	subjectID = s.subject(subjectID)
+	if show, showSeason, offset, ok := s.entryView(ctx, seriesID); ok {
+		var r Resume
+		var found bool
+		var err error
+		if season != nil && episode != nil {
+			showEpisode := *episode + offset
+			r, found, err = s.getResume(ctx, subjectID, show, &showSeason, &showEpisode)
+		} else {
+			r, found, err = s.getResume(ctx, subjectID, show, nil, nil)
+			found = found && r.Season == showSeason && r.Episode > offset
+		}
+		if !found || err != nil {
+			return Resume{}, false, err
+		}
+		r.SeriesID, r.Season, r.Episode = seriesID, 1, r.Episode-offset
+		return r, true, nil
+	}
 	var r Resume
 	query := `
 SELECT series_id, season, episode, position_s, duration_s, percent, updated_at
@@ -392,6 +417,7 @@ LIMIT $2`, subjectID, limit)
 
 func (s *Store) GetProgressSource(ctx context.Context, subjectID, seriesID string, season, episode int) (ProgressSource, bool, error) {
 	subjectID = s.subject(subjectID)
+	seriesID, season, episode = s.place(ctx, seriesID, season, episode)
 	var source ProgressSource
 	var fileIndex sql.NullInt64
 	err := s.DB.QueryRowContext(ctx, `
@@ -418,6 +444,7 @@ LIMIT 1`, subjectID, seriesID, season, episode).Scan(
 
 func (s *Store) Dismiss(ctx context.Context, subjectID, seriesID string, season, episode int, reason string) error {
 	subjectID = s.subject(subjectID)
+	seriesID, season, episode = s.place(ctx, seriesID, season, episode)
 	if reason == "" {
 		reason = "manual"
 	}
@@ -441,6 +468,20 @@ type WatchedEpisode struct {
 // finished (movies use season 0, episode 0).
 func (s *Store) ListWatched(ctx context.Context, subjectID, seriesID string) ([]WatchedEpisode, error) {
 	subjectID = s.subject(subjectID)
+	if show, season, offset, ok := s.entryView(ctx, seriesID); ok {
+		items, err := s.ListWatched(ctx, subjectID, show)
+		if err != nil {
+			return nil, err
+		}
+		out := []WatchedEpisode{}
+		for _, item := range items {
+			if item.Season == season && item.Episode > offset {
+				item.Season, item.Episode = 1, item.Episode-offset
+				out = append(out, item)
+			}
+		}
+		return out, nil
+	}
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT season, episode, position_s, duration_s, percent
 FROM watch_progress
@@ -467,6 +508,26 @@ ORDER BY season, episode`, subjectID, seriesID)
 // in Continue watching, the same way finishing an episode does.
 func (s *Store) SetWatched(ctx context.Context, subjectID, seriesID string, items []EpisodeRef, watched bool, next *EpisodeRef) error {
 	subjectID = s.subject(subjectID)
+	if isEntryID(seriesID) && s.Placer != nil {
+		entry := seriesID
+		placed := make([]EpisodeRef, 0, len(items))
+		for _, item := range items {
+			show, season, episode := s.place(ctx, entry, item.Season, item.Episode)
+			if show != entry {
+				seriesID = show
+			}
+			placed = append(placed, EpisodeRef{Season: season, Episode: episode})
+		}
+		if seriesID != entry {
+			items = placed
+			if next != nil {
+				_, season, episode := s.place(ctx, entry, next.Season, next.Episode)
+				next = &EpisodeRef{Season: season, Episode: episode}
+			}
+		} else {
+			seriesID = entry
+		}
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -528,6 +589,7 @@ func (s *Store) SyncOffline(ctx context.Context, subjectID string, items []Offli
 	subjectID = s.subject(subjectID)
 	applied := 0
 	for _, item := range items {
+		item.SeriesID, item.Season, item.Episode = s.place(ctx, item.SeriesID, item.Season, item.Episode)
 		if item.SeriesID == "" || item.DurationS <= 0 || item.PositionS <= 0 {
 			continue
 		}

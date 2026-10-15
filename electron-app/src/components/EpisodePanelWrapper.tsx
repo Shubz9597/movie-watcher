@@ -100,11 +100,17 @@ const episodeReleaseTime = (episode: EpisodeSummary): number | null =>
   releaseTime(episode.availableAt || episode.airDate);
 
 const episodeFromTmdb = (episode: any, fallbackSeason: number): EpisodeSummary => ({
-  id: episode.id,
+  id: episode.id ?? episode.episode_number,
   name: episode.name || `Episode ${episode.episode_number ?? ''}`,
   overview: episode.overview || '',
-  stillUrl: episode.still_path ? `https://image.tmdb.org/t/p/w780${episode.still_path}` : undefined,
+  // The server sends whole image URLs; a bare TMDb path gets TMDb's host.
+  stillUrl: episode.still_path
+    ? (String(episode.still_path).startsWith('http') ? episode.still_path : `https://image.tmdb.org/t/p/w780${episode.still_path}`)
+    : undefined,
   episodeNumber: episode.episode_number,
+  // The episode's place among all regular episodes (anime releases are
+  // often numbered this way); the server's, else the season's own number.
+  absoluteNumber: episode.absolute_number || episode.episode_number,
   seasonNumber: episode.season_number ?? fallbackSeason,
   airDate: episode.air_date,
   runtime: typeof episode.runtime === 'number' ? episode.runtime : null,

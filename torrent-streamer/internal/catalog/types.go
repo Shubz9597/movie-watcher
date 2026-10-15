@@ -47,6 +47,9 @@ type Title struct {
 	// Series places one AniList entry (an arc or cour) inside the TMDb show
 	// that groups the whole franchise, so clients can open that show instead.
 	Series *SeriesLink `json:"series,omitempty"`
+	// Anime marks a show or film listed in the community anime list (it is
+	// otherwise typed by its catalog: a TMDb show stays "series").
+	Anime bool `json:"anime,omitempty"`
 }
 
 // SeriesLink is a season of a grouped TMDb show: the entry's episode N is the
@@ -55,6 +58,9 @@ type SeriesLink struct {
 	ID            string `json:"id"`
 	Season        int    `json:"season"`
 	EpisodeOffset int    `json:"episodeOffset,omitempty"`
+	// Absolute: the entry spans several of the show's seasons (One Piece);
+	// its episode N is the show's Nth regular episode, not one season's.
+	Absolute bool `json:"absolute,omitempty"`
 	// episodes is the entry's episode count, checked against the show.
 	episodes int
 }
@@ -74,15 +80,18 @@ type Season struct {
 // Episode is a playable unit of a series/anime title (data-model.md Episode).
 // The owning title is implied by the request path and never serialized.
 type Episode struct {
-	ID          string            `json:"id"`
-	TitleID     string            `json:"-"`
-	Season      int               `json:"season"`
-	Episode     int               `json:"episode"`
-	Title       string            `json:"title"`
-	AirDate     string            `json:"airDate,omitempty"`
-	Still       string            `json:"still,omitempty"`
-	Overview    string            `json:"overview,omitempty"`
-	DurationS   int               `json:"duration_s,omitempty"`
+	ID        string `json:"id"`
+	TitleID   string `json:"-"`
+	Season    int    `json:"season"`
+	Episode   int    `json:"episode"`
+	Title     string `json:"title"`
+	AirDate   string `json:"airDate,omitempty"`
+	Still     string `json:"still,omitempty"`
+	Overview  string `json:"overview,omitempty"`
+	DurationS int    `json:"duration_s,omitempty"`
+	// Absolute is the episode's place among all of the show's regular
+	// episodes (anime releases are often numbered this way); 0 for specials.
+	Absolute    int               `json:"absolute,omitempty"`
 	ProviderIDs map[string]string `json:"providerIds"`
 }
 

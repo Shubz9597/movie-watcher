@@ -190,7 +190,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       return rows.map((episode) => ({
         id: episode.episode,
         episodeNumber: episode.episode,
-        absoluteNumber: episode.episode,
+        absoluteNumber: episode.absolute || episode.episode,
         seasonNumber: episode.season || season,
         name: episode.title || `Episode ${episode.episode}`,
         overview: episode.overview,
@@ -258,17 +258,24 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           return [] as BffEpisodeRow[];
         }),
       ]);
-      // An arc or cour of a show TMDb groups as one series opens as its
-      // season there (one page with every season). Resume links keep the
-      // AniList page they were saved against.
+      // An AniList entry (one season or arc) opens as its season of the
+      // show, the one page with every season as Stremio lists them; the
+      // show also holds its watch progress, so resume links follow.
       const series = row.series;
-      if (series?.id.startsWith('tmdb:tv:') && series.season > 0 && !params?.resumeSubjectId) {
+      if (series?.id.startsWith('tmdb:tv:') && series.season > 0) {
+        const offset = series.episodeOffset ?? 0;
         const next: Record<string, string> = {
           kind: 'anime', provider: 'tmdb', mediaKind: 'tv',
           id: series.id.slice('tmdb:tv:'.length), season: String(series.season),
         };
-        if (Number.isInteger(requestedEpisode) && requestedEpisode > 0) {
-          next.episode = String(requestedEpisode + (series.episodeOffset ?? 0));
+        if (!series.absolute && Number.isInteger(requestedEpisode) && requestedEpisode > 0) {
+          next.episode = String(requestedEpisode + offset);
+        }
+        if (params?.resumeSubjectId && !series.absolute && Number.isInteger(resumeEpisode) && resumeEpisode > 0) {
+          next.resumeSubjectId = params.resumeSubjectId;
+          next.resumeSeriesId = series.id;
+          next.resumeSeason = String(series.season);
+          next.resumeEpisode = String(resumeEpisode + offset);
         }
         navigate('title', next, { replace: true });
         return;
@@ -737,7 +744,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
               <EpisodePanel
                 openRequest={openRequest}
                 onNextUpChange={setNextUp}
-                kind={kind === 'anime' ? 'anime' : 'tv'}
+                kind={kind === 'anime' || detail.anime ? 'anime' : 'tv'}
                 title={detail.title}
                 posterUrl={detail.posterUrl}
                 titleAliases={detail.altTitles}

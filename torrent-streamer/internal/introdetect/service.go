@@ -90,9 +90,15 @@ func ShowKindFor(seriesKey, cat string) string {
 		return "movie"
 	case strings.HasPrefix(seriesKey, "anilist:"), strings.HasPrefix(seriesKey, "jikan:"), cat == "anime":
 		return "anime"
+	case AnimeShow != nil && AnimeShow(seriesKey):
+		return "anime"
 	}
 	return "tv"
 }
+
+// AnimeShow reports a show page (tmdb:tv:N) the anime list knows as anime
+// (nil: only the id form and category decide).
+var AnimeShow func(seriesKey string) bool
 
 // Source is where a file's torrent can be read (for its creditless extras).
 type Source struct {

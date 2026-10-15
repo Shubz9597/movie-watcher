@@ -9,10 +9,13 @@ import (
 )
 
 // Cinemeta answers every season request with the whole show; Specials (season
-// 0) showed every regular episode of The Wire after TMDb's specials.
+// 0) showed every regular episode of The Wire after TMDb's specials. Each
+// season now lists exactly Stremio's episodes of that season.
 func TestSeasonListsHoldOnlyThatSeason(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"meta":{"id":"tt0306414","type":"series","name":"The Wire","videos":[
+			{"season":0,"episode":1,"name":"It's All Connected","released":"2006-09-10T00:00:00.000Z"},
+			{"season":0,"episode":2,"name":"When Bunk Met McNulty","released":"2008-01-06T00:00:00.000Z"},
 			{"season":1,"episode":1,"name":"The Target","released":"2002-06-02T00:00:00.000Z"},
 			{"season":1,"episode":2,"name":"The Detail","released":"2002-06-09T00:00:00.000Z"},
 			{"season":5,"episode":1,"name":"More With Less","released":"2008-01-06T00:00:00.000Z"}]}}`))
