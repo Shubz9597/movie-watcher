@@ -1006,12 +1006,16 @@ export default function NativePlayerControls(props: Props) {
       {/* Web-rendered subtitle overlay (sheet-loaded tracks): pinch anywhere
           on the video to resize — the size persists per device. */}
       {hasVideo && activeOverlayCue ? (
-        // Stays where it is when the controls show (it used to rise into the
-        // play button) and looks like the player's own subtitles: white text
-        // with a black outline, no box.
-        <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6" style={{ bottom: 'calc(2.5rem + env(safe-area-inset-bottom))' }}>
+        // At the bottom of the picture; with the controls showing, just above
+        // the seek bar (not up into the play button). Looks like the
+        // player's own subtitles: bold white text, a heavy black outline, no
+        // box, readable on bright scenes.
+        <div
+          className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-[bottom] duration-200"
+          style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(2.5rem + env(safe-area-inset-bottom))' : 'calc(0.5rem + env(safe-area-inset-bottom))' }}
+        >
           <span
-            className="whitespace-pre-line px-1 text-center font-medium leading-snug text-white [text-shadow:_-1px_-1px_0_#000,1px_-1px_0_#000,-1px_1px_0_#000,1px_1px_0_#000,0_0_3px_#000,0_1px_4px_rgb(0_0_0/80%)]"
+            className="whitespace-pre-line px-1 text-center font-semibold leading-snug text-white [text-shadow:_-2px_-2px_0_#000,0_-2px_0_#000,2px_-2px_0_#000,2px_0_0_#000,2px_2px_0_#000,0_2px_0_#000,-2px_2px_0_#000,-2px_0_0_#000,0_0_6px_rgb(0_0_0/90%)]"
             style={{ fontSize: `${overlaySize}px` }}
           >
             {activeOverlayCue.text}
