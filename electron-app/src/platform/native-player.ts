@@ -63,12 +63,16 @@ export interface TorWatchNativePlugin {
 export type PluginListenerHandle = { remove: () => Promise<void> | void };
 
 /** Embedded-subtitle text scale preference (% of default), per device. */
+/** The player's own subtitles at this % of VLC's size match the app's 18 px
+ *  subtitles (75 drew them huge in landscape). */
+export const EMBEDDED_SCALE_DEFAULT = 55;
+
 export function readEmbeddedScalePref(): number {
   try {
-    const saved = Number(window.localStorage.getItem('mw_sub_embedded_scale'));
-    return Number.isFinite(saved) && saved >= 25 && saved <= 200 ? saved : 75;
+    const saved = Number(window.localStorage.getItem('mw_sub_embedded_scale_v2'));
+    return Number.isFinite(saved) && saved >= 25 && saved <= 200 ? saved : EMBEDDED_SCALE_DEFAULT;
   } catch {
-    return 75;
+    return EMBEDDED_SCALE_DEFAULT;
   }
 }
 

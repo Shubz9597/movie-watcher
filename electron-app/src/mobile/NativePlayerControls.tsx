@@ -10,6 +10,7 @@ import { ChevronLeft, Pause, Play, Captions, Timer, Upload, LoaderCircle, HeartP
 import { getVodBase } from '../lib/api-client';
 import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/subtitle-parser';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
+import { EMBEDDED_SCALE_DEFAULT } from '../platform/native-player';
 import { audioDisplayNames, languageNameForCode, trackDisplayNames, trackLanguageName, withoutDownloadedCopies } from '../lib/track-labels';
 import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
 import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
@@ -134,9 +135,10 @@ function formatDelay(seconds: number): string {
 }
 
 
-// Pinch the picture, as on streaming apps: spread to fill the screen
-// (cropping the edges), pinch in for the whole picture again.
-const SCALE_TOASTS = { fit: 'Original', fill: 'Zoomed to fill' } as const;
+// Pinch the picture, as on streaming apps: the picture fills the screen (no
+// black bars, nothing cropped) by default; pinch in for the original shape
+// with bars, spread to fill again.
+const SCALE_TOASTS = { fit: 'Original', stretch: 'Fill screen' } as const;
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, seriesId, hasNextEpisode = false, onClose } = props;
@@ -202,12 +204,11 @@ export default function NativePlayerControls(props: Props) {
   });
   const [scrubTo, setScrubTo] = useState<number | null>(null);
   // Mirror the saved native sizing preference for the button.
-  const [scaleMode, setScaleMode] = useState<'fit' | 'fill'>(() => {
+  const [scaleMode, setScaleMode] = useState<'fit' | 'stretch'>(() => {
     try {
-      const saved = window.localStorage.getItem('mw_video_scale');
-      return saved === 'fill' || saved === 'stretch' ? 'fill' : 'fit';
+      return window.localStorage.getItem('mw_video_scale') === 'fit' ? 'fit' : 'stretch';
     } catch {
-      return 'fit';
+      return 'stretch';
     }
   });
   const scaleModeRef = useRef(scaleMode);
@@ -420,7 +421,7 @@ export default function NativePlayerControls(props: Props) {
     const b = touches[1];
     return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
   };
-  const applyScale = (next: 'fit' | 'fill') => {
+  const applyScale = (next: 'fit' | 'stretch') => {
     setScaleMode(next);
     player.setVideoScale(next);
     setScaleToast(SCALE_TOASTS[next]);
@@ -446,7 +447,7 @@ export default function NativePlayerControls(props: Props) {
     const pinch = pinchRef.current;
     if (!pinch || pinch.applied || event.touches.length < 2) return;
     const ratio = touchDist(event.touches) / pinch.dist0;
-    const next = ratio > 1.15 ? 'fill' : ratio < 0.87 ? 'fit' : null;
+    const next = ratio > 1.15 ? 'stretch' : ratio < 0.87 ? 'fit' : null;
     if (!next) return;
     pinch.applied = true;
     if (next !== scaleModeRef.current) applyScale(next);
@@ -471,10 +472,13 @@ export default function NativePlayerControls(props: Props) {
     } catch {
       // Size applies for this video only.
     }
-    if (selectedEmbeddedSubRef.current !== null) {
-      const percent = Math.round(75 * (next / 18));
-      player.setEmbeddedSubtitleScale(Math.max(25, Math.min(200, percent)));
+    const percent = Math.max(25, Math.min(200, Math.round(EMBEDDED_SCALE_DEFAULT * (next / 18))));
+    try {
+      window.localStorage.setItem('mw_sub_embedded_scale_v2', String(percent));
+    } catch {
+      // Size applies for this video only.
     }
+    if (selectedEmbeddedSubRef.current !== null) player.setEmbeddedSubtitleScale(percent);
   };
 
   // --- Torrent telemetry (desktop TorrentHealthMenu parity) ---

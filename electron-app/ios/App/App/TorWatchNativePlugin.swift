@@ -87,7 +87,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // Current media + subtitle text scale (% of default), kept so the engine
     // can be recreated in place when the user pinch-resizes embedded subs.
     private var currentMediaURL: URL?
-    private var currentSubTextScale: Int = 75
+    private var currentSubTextScale: Int = 55
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var activeObserver: NSObjectProtocol?
@@ -301,15 +301,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--file-caching=1000",
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
-            // Text subtitles look like the app's overlay ones (streaming-app
-            // style): white monospaced text on a semi-transparent (60%) black
-            // box.
+            // Text subtitles in the app's monospaced font. VLC draws a
+            // background as a band across the whole picture, not a box around
+            // the text, so its subtitles get a thin outline and soft shadow
+            // instead (the app-drawn ones keep the box).
             "--freetype-font=Menlo",
             "--freetype-color=16777215",
-            "--freetype-background-color=0",
-            "--freetype-background-opacity=153",
-            "--freetype-outline-thickness=0",
-            "--freetype-shadow-opacity=0",
+            "--freetype-background-opacity=0",
+            "--freetype-outline-thickness=2",
         ])
         player.delegate = self
         reportedAudioTrack = Int32.min // a new player reports its tracks afresh
@@ -496,9 +495,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     /// Every video starts with the viewer's last sizing choice.
     private static func savedVideoScaleMode() -> String {
-        let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "fit"
-        // Stretch is gone (pinch is fit or fill): an old choice of it fills.
-        return saved == "fill" || saved == "stretch" ? "fill" : "fit"
+        // The picture fills the screen unless the viewer pinched in for the
+        // original shape (an old Fill choice also fills the screen).
+        let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "stretch"
+        return saved == "fit" ? "fit" : "stretch"
     }
 
     @objc func setVideoScale(_ call: CAPPluginCall) {
