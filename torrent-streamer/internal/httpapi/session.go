@@ -288,13 +288,19 @@ func (h *SessionHandlers) Watched(w http.ResponseWriter, r *http.Request) {
 			DurationS int     `json:"duration_s"`
 			Percent   float64 `json:"percent"`
 			Watched   bool    `json:"watched"`
+			// UpdatedAt: when it was last played or marked (Unix seconds).
+			UpdatedAt int64 `json:"updated_at,omitempty"`
 		}
 		body := struct {
 			Threshold float64    `json:"threshold"`
 			Items     []itemBody `json:"items"`
 		}{Threshold: watch.CompletedPercent, Items: make([]itemBody, 0, len(items))}
 		for _, item := range items {
-			body.Items = append(body.Items, itemBody{item.Season, item.Episode, item.PositionS, item.DurationS, item.Percent, item.Watched})
+			var updated int64
+			if !item.UpdatedAt.IsZero() {
+				updated = item.UpdatedAt.Unix()
+			}
+			body.Items = append(body.Items, itemBody{item.Season, item.Episode, item.PositionS, item.DurationS, item.Percent, item.Watched, updated})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)

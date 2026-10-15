@@ -209,7 +209,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       if (kind === 'movie' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'movie')) {
         const row = await bffTitleDetail(`tmdb:movie:${id}`);
         publishDetail(detailFromBackendTitle(row));
-        setIsAnimeMovie(isTmdbBackedAnime);
+        setIsAnimeMovie(isTmdbBackedAnime || row.anime === true);
         setSeasons([]);
         setInitialEpisodes([]);
         return;
@@ -218,7 +218,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       if (kind === 'tv' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'tv')) {
         const row = await bffTitleDetail(`tmdb:tv:${id}`);
         publishDetail(detailFromBackendTitle(row));
-        setIsAnimeMovie(isTmdbBackedAnime);
+        setIsAnimeMovie(false); // a show, anime or not
         const seasonsData = (row.seasons ?? [])
           .filter((season) => season.number >= 0 && (season.episodeCount ?? 0) > 0)
           .map((season) => ({
@@ -491,7 +491,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
     const params: Record<string, string> = {
       magnet: resumeSource.sourceUri,
       title: detail.title,
-      cat: isAnimeMovie ? 'anime' : kind === 'movie' ? 'movie' : 'tv',
+      cat: isAnimeMovie || kind === 'anime' || detail.anime ? 'anime' : kind === 'movie' ? 'movie' : 'tv',
       sourceName: resumeSource.sourceName || 'Previously used source',
     };
     if (resumeContext) {
@@ -532,7 +532,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           <div className={platform.desktop ? 'hidden lg:block' : 'hidden'}><PageBackButton /></div>
           <div className="type-caption text-numeric flex flex-wrap items-center gap-2 font-medium text-white/70">
             <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">
-              {kind === 'tv' ? 'Series' : kind === 'anime' ? (isAnimeMovie ? 'Anime Movie' : 'Anime Series') : 'Movie'}
+              {isAnimeMovie ? 'Anime Movie' : kind === 'anime' || detail.anime ? (isMovie ? 'Anime Movie' : 'Anime Series') : kind === 'tv' ? 'Series' : 'Movie'}
             </span>
             {languageName ? (
               <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">{languageName}</span>

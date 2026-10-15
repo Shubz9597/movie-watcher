@@ -283,7 +283,7 @@ export default function EpisodePanel({
     const wasWatched = watchedMap.get(key)?.watched === true;
     const optimistic = new Map(watchedMap);
     if (wasWatched) optimistic.delete(key);
-    else optimistic.set(key, { season, episode: episode.episodeNumber, percent: 100, watched: true });
+    else optimistic.set(key, { season, episode: episode.episodeNumber, percent: 100, watched: true, updated_at: Date.now() / 1000 });
     setWatchedMap(optimistic);
     setWatchedError(null);
     // Marking watched moves Continue watching on to the following episode.
@@ -344,7 +344,7 @@ export default function EpisodePanel({
     const optimistic = new Map(watchedMap);
     for (const ref of refs) {
       const key = watchedKey(ref.season, ref.episode);
-      if (marking) optimistic.set(key, { ...ref, percent: 100, watched: true });
+      if (marking) optimistic.set(key, { ...ref, percent: 100, watched: true, updated_at: Date.now() / 1000 });
       else optimistic.delete(key);
     }
     const followingSeason = normalizedSeasons

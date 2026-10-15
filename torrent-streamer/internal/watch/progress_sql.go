@@ -462,6 +462,7 @@ type WatchedEpisode struct {
 	DurationS int
 	Percent   float64
 	Watched   bool
+	UpdatedAt time.Time // when it was last played or marked
 }
 
 // ListWatched returns the items of one title the subject has started or
@@ -483,7 +484,7 @@ func (s *Store) ListWatched(ctx context.Context, subjectID, seriesID string) ([]
 		return out, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, `
-SELECT season, episode, position_s, duration_s, percent
+SELECT season, episode, position_s, duration_s, percent, updated_at
 FROM watch_progress
 WHERE subject_id=$1 AND series_id=$2 AND (percent > 0 OR position_s > 0)
 ORDER BY season, episode`, subjectID, seriesID)
@@ -494,7 +495,7 @@ ORDER BY season, episode`, subjectID, seriesID)
 	out := []WatchedEpisode{}
 	for rows.Next() {
 		var item WatchedEpisode
-		if err := rows.Scan(&item.Season, &item.Episode, &item.PositionS, &item.DurationS, &item.Percent); err != nil {
+		if err := rows.Scan(&item.Season, &item.Episode, &item.PositionS, &item.DurationS, &item.Percent, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		item.Watched = item.Percent >= CompletedPercent

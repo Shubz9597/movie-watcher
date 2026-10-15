@@ -12,6 +12,8 @@ export type WatchedItem = {
   episode: number;
   percent: number;
   watched: boolean;
+  /** When it was last played or marked (Unix seconds). */
+  updated_at?: number;
 };
 
 export type EpisodeRef = { season: number; episode: number };

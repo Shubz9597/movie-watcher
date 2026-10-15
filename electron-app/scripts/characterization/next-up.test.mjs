@@ -25,3 +25,13 @@ test("specials do not move the show on; the last season's end has no next", () =
   assert.deepEqual(nextUpEpisode([mark(1, 2), mark(0, 9)], seasons, length), { season: 1, episode: 3, started: false });
   assert.equal(nextUpEpisode([mark(3, 8)], seasons, length), null);
 });
+
+// Dragon Ball Z Kai: watched up to 40, stopped in 41 last night; a stray
+// start of episode 97 the day before must not make it "Continue E97".
+test("the episode played most recently is where you are", () => {
+  const at = (m, t) => ({ ...m, updated_at: t });
+  const marks = [at(mark(1, 40), 100), at(mark(1, 41, false, 59), 200), at(mark(1, 97, false, 2), 50)];
+  assert.deepEqual(nextUpEpisode(marks, [1, 2], (s) => (s === 1 ? 98 : 61)), { season: 1, episode: 41, started: true });
+  assert.deepEqual(nextUpEpisode([at(mark(1, 40), 300), ...marks.slice(1)], [1, 2], () => 98), { season: 1, episode: 41, started: false },
+    "marked 40 watched last: the next after it");
+});
