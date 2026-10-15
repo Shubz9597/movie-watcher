@@ -41,6 +41,11 @@ export function createCatalogGateway() {
       });
     },
 
+    // Search results in the server's order (Stremio's first), every kind.
+    async searchOrdered(query: string, dispatch?: GatewayDispatch) {
+      return route(dispatch, async () => (await bffSearch(query, 'all', 40, dispatch)).map(backendTitleToCard));
+    },
+
     async getMovies(page = 1, sort = 'trending', dispatch?: GatewayDispatch): Promise<CatalogPage> {
       return route(dispatch, async () => {
         const section = await bffSectionPage(sort, page, dispatch, 'movie');

@@ -9,11 +9,10 @@ import { History, Search, X } from 'lucide-react';
 import PosterCard from '../components/PosterCard';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
 import { catalogGateway } from '../lib/services/catalog-gateway';
-import { isTmdbAnime, selectAniListCatalog } from '../lib/anime-catalog';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { loadTitlePage } from '../lib/route-loaders';
-import { organizeSearchResults } from '../lib/search-franchise';
-import { rankSearchResults, uniqueRecentSearches } from '../lib/search-order';
+import { resultLabel } from '../lib/search-franchise';
+import { uniqueRecentSearches } from '../lib/search-order';
 
 type Basic = {
   id: number;
@@ -26,6 +25,8 @@ type Basic = {
   genreIds?: number[];
   sourceProvider?: 'tmdb' | 'anilist';
   sourceKind?: 'movie' | 'tv' | 'anime';
+  /** For a TMDb-backed anime: its TMDb media type. */
+  mediaKind?: 'movie' | 'tv';
   sourceLabel?: string;
   malId?: number | null;
   format?: string;
@@ -76,7 +77,6 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
   const [query, setQuery] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [tmdbState, setTmdbState] = React.useState<SourceState>(IDLE_SOURCE);
-  const [animeState, setAnimeState] = React.useState<SourceState>(IDLE_SOURCE);
   const [recent, setRecent] = React.useState<RecentEntry[]>(() => loadRecent());
 
   React.useEffect(() => {
@@ -93,83 +93,51 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
   React.useEffect(() => {
     if (!active) {
       setTmdbState(IDLE_SOURCE);
-      setAnimeState(IDLE_SOURCE);
         return;
     }
     let cancelled = false;
     setTmdbState(PENDING_SOURCE);
-    setAnimeState(PENDING_SOURCE);
-    const mapTmdb = (cards: NonNullable<Awaited<ReturnType<typeof catalogGateway.searchMulti>>>) => {
-      const mapped: Basic[] = [];
-      for (const card of [...(cards.movie ?? []), ...(cards.tv ?? [])]) {
-        if (isTmdbAnime(card)) continue;
-        mapped.push({
-          id: card.id,
-          title: card.title,
-          year: card.year,
-          rating: card.rating ?? null,
-          posterUrl: card.posterPath ?? null,
-          backdropUrl: card.backdropUrl ?? null,
-          originalLanguage: card.originalLanguage,
-          genreIds: card.genreIds,
-          sourceProvider: 'tmdb',
-          sourceKind: card.sourceKind ?? 'movie',
-          format: card.format,
-          popularity: card.popularity,
-        });
-      }
-      return mapped;
-    };
-    const mapAnime = (items: Awaited<ReturnType<typeof catalogGateway.searchAnime>>['items']) =>
-      selectAniListCatalog(
-        items.map((card) => ({
-          id: card.id,
-          title: card.title,
-          year: card.year,
-          rating: card.rating ?? null,
-          posterUrl: card.posterPath ?? null,
-          backdropUrl: card.backdropUrl ?? null,
-          originalLanguage: card.originalLanguage,
-          genreIds: card.genreIds,
-          sourceProvider: 'anilist' as const,
-          sourceKind: 'anime' as const,
-          format: card.format,
-          popularity: card.popularity,
-        })),
-        24,
-      ).map((item) => ({
-        id: item.id,
-        title: item.title,
-        year: item.year,
-        rating: item.rating ?? null,
-        posterUrl: item.posterUrl,
-        backdropUrl: item.backdropUrl,
-        originalLanguage: item.originalLanguage,
-        genreIds: item.genreIds,
-        sourceProvider: 'anilist' as const,
-        sourceKind: 'anime' as const,
-        format: item.format,
-        popularity: item.popularity,
-      }));
-    // Both searches run concurrently; each renders as IT settles, so the
-    // slower source can never block the faster one behind a full-page skeleton.
-    catalogGateway.searchMulti(debounced, 1).then(
-      (cards) => { if (!cancelled) setTmdbState({ status: 'ready', items: mapTmdb(cards) }); },
+    // One search, shown in the server's order: Stremio's results first, each
+    // show once (its AniList seasons fold into it). Each card keeps its own
+    // provider, so a show opens as the show and an AniList-only entry as
+    // that entry.
+    catalogGateway.searchOrdered(debounced).then(
+      (cards) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const items: Basic[] = [];
+        for (const card of cards) {
+          const provider = card.sourceProvider === 'anilist' ? 'anilist' as const : 'tmdb' as const;
+          const key = `${provider}:${card.sourceKind}:${card.id}`;
+          if (!card.id || seen.has(key)) continue;
+          seen.add(key);
+          items.push({
+            id: card.id,
+            title: card.title,
+            year: card.year,
+            rating: card.rating ?? null,
+            posterUrl: card.posterPath ?? null,
+            backdropUrl: card.backdropUrl ?? null,
+            originalLanguage: card.originalLanguage,
+            genreIds: card.genreIds,
+            sourceProvider: provider,
+            sourceKind: card.sourceKind ?? 'movie',
+            mediaKind: String((card as { catalogId?: string }).catalogId ?? '').startsWith('tmdb:movie:') ? 'movie' : 'tv',
+            malId: card.malId ?? null,
+            format: card.format,
+            popularity: card.popularity,
+          });
+        }
+        setTmdbState({ status: 'ready', items });
+      },
       () => { if (!cancelled) setTmdbState(FAILED_SOURCE); },
-    );
-    catalogGateway.searchAnime(debounced, 1, 24).then(
-      (page) => { if (!cancelled) setAnimeState({ status: 'ready', items: mapAnime(page.items) }); },
-      () => { if (!cancelled) setAnimeState(FAILED_SOURCE); },
     );
     return () => { cancelled = true; };
   }, [active, debounced]);
 
-  const searching = tmdbState.status === 'pending' || animeState.status === 'pending';
-  const failedCount = (tmdbState.status === 'failed' ? 1 : 0) + (animeState.status === 'failed' ? 1 : 0);
-  const results = React.useMemo(
-    () => rankSearchResults([...tmdbState.items, ...animeState.items], debounced),
-    [tmdbState, animeState, debounced],
-  );
+  const searching = tmdbState.status === 'pending';
+  const failed = tmdbState.status === 'failed';
+  const results = tmdbState.items;
 
   // rerender-memo: read the frequently-changing values through a ref so the
   // per-item callbacks (and thus the memoized PosterCards) stay stable while
@@ -191,28 +159,25 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
     if (kind === 'anime' && item.malId) params.malId = String(item.malId);
     if (kind === 'anime' && item.sourceProvider === 'tmdb') {
       params.provider = 'tmdb';
-      params.mediaKind = item.sourceKind === 'movie' ? 'movie' : 'tv';
+      params.mediaKind = item.mediaKind ?? (item.sourceKind === 'movie' ? 'movie' : 'tv');
     }
     navigate('title', params);
   }, [navigate]);
 
   // Stable per-item cards + callbacks: a keystroke re-renders this component,
   // but every memoized PosterCard now bails out (no fresh objects/closures).
-  // Franchise-aware organization: labels, cross-provider dedupe, main
-  // series first, long franchises collapsed (lib/search-franchise).
-  const [expandedFranchises, setExpandedFranchises] = React.useState<ReadonlySet<string>>(() => new Set());
-  React.useEffect(() => { setExpandedFranchises(new Set()); }, [debounced]);
+  // The server's order is kept (no re-ranking or franchise regrouping);
+  // each result only gets its label.
   const organized = React.useMemo(
-    () => organizeSearchResults(results, expandedFranchises),
-    [results, expandedFranchises],
+    () => results.map((item) => ({ item, label: resultLabel(item) })),
+    [results],
   );
   const cards = React.useMemo(
     () =>
       organized.map((entry) => {
-        if (entry.kind === 'more') return { key: `more-${entry.groupKey}`, more: entry };
         const item = entry.item;
         const kind: SearchKind =
-          item.sourceProvider === 'anilist' ? 'anime' : item.sourceKind === 'tv' ? 'tv' : 'movie';
+          item.sourceProvider === 'anilist' || item.sourceKind === 'anime' ? 'anime' : item.sourceKind === 'tv' ? 'tv' : 'movie';
         return {
           key: `${kind}-${item.id}`,
           label: entry.label,
@@ -306,31 +271,20 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
             {/* Progressive: partial results show while the slower source is
                 still in flight — the fast source never waits behind it. */}
             {searching ? <span className="text-white/60">{results.length ? 'Showing more results…' : 'Searching…'}</span> : null}
-            {!searching && failedCount === 2 ? <span className="text-[#ffc285]">Search is unavailable.</span> : null}
-            {!searching && failedCount === 1 ? <span className="text-[#ffc285]">Some results are missing.</span> : null}
-            {!searching && failedCount === 0 && results.length ? (
+            {!searching && failed ? <span className="text-[#ffc285]">Search is unavailable.</span> : null}
+            {!searching && !failed && results.length ? (
               <span className="text-white/60">Results for “{debounced}”</span>
             ) : null}
-            {!searching && failedCount === 0 && !results.length ? (
+            {!searching && !failed && !results.length ? (
               <span className="text-white/60">No results for “{debounced}”</span>
             ) : null}
           </div>
           <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
-            {cards.map((entry) => ('more' in entry && entry.more ? (
-              <li key={entry.key} className="search-more col-span-full">
-                <button
-                  type="button"
-                  onClick={() => setExpandedFranchises((current) => new Set(current).add(entry.more.groupKey))}
-                  className={`inline-flex min-h-12 items-center gap-2 rounded-lg px-1 text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
-                >
-                  Show {entry.more.hidden} more from {entry.more.name}
-                </button>
-              </li>
-            ) : 'card' in entry && entry.card ? (
+            {cards.map((entry) => (
               <li key={entry.key}>
                 <PosterCard movie={entry.card} label={entry.label} onOpen={entry.onOpen} />
               </li>
-            ) : null))}
+            ))}
           </ul>
         </div>
       )}

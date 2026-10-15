@@ -229,12 +229,9 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
 	})
 	groups := make([][]Title, 0, len(replies)+1)
-	var stremioOrder []string
-	if titles := filterByType(<-stremioResult, query.Type); len(titles) > 0 {
-		groups = append(groups, titles)
-		for _, title := range titles {
-			stremioOrder = append(stremioOrder, title.ID)
-		}
+	stremioHits := filterByType(<-stremioResult, query.Type)
+	if len(stremioHits) > 0 {
+		groups = append(groups, stremioHits)
 	}
 	degraded := []string{}
 	cachedAt := map[string]time.Time{}
@@ -255,7 +252,7 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 	sort.Strings(degraded)
 	titles := MergeTitles(groups)
 	rankSearchTitles(titles, query.Query, groups)
-	titles = stremioFirst(s.collapseShows(ctx, titles), stremioOrder)
+	titles = stremioFirst(s.collapseShows(ctx, titles), stremioHits, query.Query)
 	if len(titles) > query.Limit {
 		titles = titles[:query.Limit]
 	}

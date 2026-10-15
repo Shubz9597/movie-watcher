@@ -137,24 +137,49 @@ func addAltTitles(title *Title, other Title) {
 	}
 }
 
-// stremioFirst lists Stremio's hits first, in Stremio's order, then the
-// other providers' results in their ranked order.
-func stremioFirst(titles []Title, order []string) []Title {
-	if len(order) == 0 {
+// stremioFirst lists Stremio's hits first, then the other providers'
+// results in their ranked order. Stremio answers films and shows as two
+// lists; its hits are ordered by how closely the title matches the query,
+// then by their place in Stremio's own list, a show before a film on a tie
+// ("dragon ball z kai": the show, then the Dragon Ball Z films).
+func stremioFirst(titles []Title, stremio []Title, query string) []Title {
+	if len(stremio) == 0 {
 		return titles
 	}
-	position := make(map[string]int, len(order))
-	for i, id := range order {
-		if _, seen := position[id]; !seen {
-			position[id] = i
+	query = normalizeSearchText(query)
+	type place struct{ score, rank, film int }
+	places := make(map[string]place, len(stremio))
+	ranks := map[bool]int{}
+	for _, hit := range stremio {
+		if _, seen := places[hit.ID]; seen {
+			continue
+		}
+		film := strings.HasPrefix(hit.ID, "tmdb:movie:")
+		filmFlag := 0
+		if film {
+			filmFlag = 1
+		}
+		places[hit.ID] = place{rank: ranks[film], film: filmFlag}
+		ranks[film]++
+	}
+	for _, title := range titles {
+		if p, ok := places[title.ID]; ok {
+			p.score = max(searchMatchScore(title.Title, query), searchMatchScore(title.OriginalTitle, query))
+			places[title.ID] = p
 		}
 	}
 	slices.SortStableFunc(titles, func(a, b Title) int {
-		pa, okA := position[a.ID]
-		pb, okB := position[b.ID]
+		pa, okA := places[a.ID]
+		pb, okB := places[b.ID]
 		switch {
 		case okA && okB:
-			return pa - pb
+			if pa.score != pb.score {
+				return pb.score - pa.score
+			}
+			if pa.rank != pb.rank {
+				return pa.rank - pb.rank
+			}
+			return pa.film - pb.film
 		case okA:
 			return -1
 		case okB:

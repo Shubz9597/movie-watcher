@@ -172,15 +172,22 @@ func TestSearchListsTheShowOnce(t *testing.T) {
 	}
 }
 
-// Stremio's hits lead in Stremio's order; other results follow as ranked.
+// Stremio's hits lead: closest title first, then Stremio's own order (a
+// show before a film on a tie); other results follow as ranked.
 func TestStremioOrderLeads(t *testing.T) {
-	titles := []Title{{ID: "tmdb:movie:95993"}, {ID: "tmdb:tv:85937"}, {ID: "anilist:1"}, {ID: "tmdb:movie:635302"}}
-	got := stremioFirst(titles, []string{"tmdb:tv:85937", "tmdb:movie:635302"})
+	titles := []Title{
+		{ID: "tmdb:movie:39108", Title: "Dragon Ball Z: Wrath of the Dragon"},
+		{ID: "anilist:1", Title: "Dragon Ball Z Kai: Peace for the Future"},
+		{ID: "tmdb:movie:303857", Title: "Dragon Ball Z: Resurrection 'F'"},
+		{ID: "tmdb:tv:12971", Title: "Dragon Ball Z"},
+		{ID: "tmdb:tv:61709", Title: "Dragon Ball Z Kai"},
+	}
+	stremio := []Title{{ID: "tmdb:movie:303857"}, {ID: "tmdb:movie:39108"}, {ID: "tmdb:tv:61709"}, {ID: "tmdb:tv:12971"}}
 	var ids []string
-	for _, title := range got {
+	for _, title := range stremioFirst(titles, stremio, "dragon ball z kai") {
 		ids = append(ids, title.ID)
 	}
-	if strings.Join(ids, ",") != "tmdb:tv:85937,tmdb:movie:635302,tmdb:movie:95993,anilist:1" {
+	if strings.Join(ids, ",") != "tmdb:tv:61709,tmdb:movie:303857,tmdb:tv:12971,tmdb:movie:39108,anilist:1" {
 		t.Fatalf("order = %v", ids)
 	}
 }
