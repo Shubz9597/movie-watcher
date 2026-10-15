@@ -1008,14 +1008,14 @@ export default function NativePlayerControls(props: Props) {
       {hasVideo && activeOverlayCue ? (
         // At the bottom of the picture; with the controls showing, just above
         // the seek bar (not up into the play button). Looks like the
-        // player's own subtitles: bold white text, a heavy black outline, no
-        // box, readable on bright scenes.
+        // player's own subtitles: white text with a firm black outline, no
+        // box, readable on bright scenes without looking bold.
         <div
           className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-[bottom] duration-200"
           style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(2.5rem + env(safe-area-inset-bottom))' : 'calc(0.5rem + env(safe-area-inset-bottom))' }}
         >
           <span
-            className="whitespace-pre-line px-1 text-center font-semibold leading-snug text-white [text-shadow:_-2px_-2px_0_#000,0_-2px_0_#000,2px_-2px_0_#000,2px_0_0_#000,2px_2px_0_#000,0_2px_0_#000,-2px_2px_0_#000,-2px_0_0_#000,0_0_6px_rgb(0_0_0/90%)]"
+            className="whitespace-pre-line px-1 text-center font-medium leading-snug text-white [text-shadow:_-1.5px_-1.5px_0_#000,0_-1.5px_0_#000,1.5px_-1.5px_0_#000,1.5px_0_0_#000,1.5px_1.5px_0_#000,0_1.5px_0_#000,-1.5px_1.5px_0_#000,-1.5px_0_0_#000,0_0_4px_rgb(0_0_0/80%)]"
             style={{ fontSize: `${overlaySize}px` }}
           >
             {activeOverlayCue.text}
