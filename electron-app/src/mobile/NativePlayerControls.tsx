@@ -138,10 +138,10 @@ function formatDelay(seconds: number): string {
 }
 
 
-// Pinch the picture, as on streaming apps: the picture fills the screen (no
-// black bars, nothing cropped) by default; pinch in for the original shape
-// with bars, spread to fill again.
-const SCALE_TOASTS = { fit: 'Original', stretch: 'Fill screen' } as const;
+// The picture fills the screen by default (no black bars, nothing cropped);
+// spread two fingers to zoom it over the whole screen edge to edge (the
+// edges cropped), pinch in to return.
+const SCALE_TOASTS = { stretch: 'Fit to screen', fill: 'Zoomed' } as const;
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, seriesId, hasNextEpisode = false, onClose } = props;
@@ -212,9 +212,9 @@ export default function NativePlayerControls(props: Props) {
   });
   const [scrubTo, setScrubTo] = useState<number | null>(null);
   // Mirror the saved native sizing preference for the button.
-  const [scaleMode, setScaleMode] = useState<'fit' | 'stretch'>(() => {
+  const [scaleMode, setScaleMode] = useState<'stretch' | 'fill'>(() => {
     try {
-      return window.localStorage.getItem('mw_video_scale') === 'fit' ? 'fit' : 'stretch';
+      return window.localStorage.getItem('mw_video_scale') === 'fill' ? 'fill' : 'stretch';
     } catch {
       return 'stretch';
     }
@@ -238,7 +238,7 @@ export default function NativePlayerControls(props: Props) {
   // stay VLC-rendered at the engine's fixed size.
   const [overlayCues, setOverlayCues] = useState<SubtitleCue[] | null>(null);
   const [overlaySize, setOverlaySize] = useState<number>(() => {
-    const saved = Number(window.localStorage.getItem('mw_sub_overlay_px'));
+    const saved = Number(window.localStorage.getItem('mw_sub_overlay_px_v2'));
     return Number.isFinite(saved) && saved >= 12 && saved <= 48 ? saved : 18;
   });
   const overlaySizeRef = useRef(overlaySize);
@@ -433,7 +433,7 @@ export default function NativePlayerControls(props: Props) {
     const b = touches[1];
     return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
   };
-  const applyScale = (next: 'fit' | 'stretch') => {
+  const applyScale = (next: 'stretch' | 'fill') => {
     setScaleMode(next);
     player.setVideoScale(next);
     setScaleToast(SCALE_TOASTS[next]);
@@ -459,7 +459,7 @@ export default function NativePlayerControls(props: Props) {
     const pinch = pinchRef.current;
     if (!pinch || pinch.applied || event.touches.length < 2) return;
     const ratio = touchDist(event.touches) / pinch.dist0;
-    const next = ratio > 1.15 ? 'stretch' : ratio < 0.87 ? 'fit' : null;
+    const next = ratio > 1.15 ? 'fill' : ratio < 0.87 ? 'stretch' : null;
     if (!next) return;
     pinch.applied = true;
     if (next !== scaleModeRef.current) applyScale(next);
@@ -480,7 +480,7 @@ export default function NativePlayerControls(props: Props) {
     overlaySizeRef.current = next;
     setOverlaySize(next);
     try {
-      window.localStorage.setItem('mw_sub_overlay_px', String(next));
+      window.localStorage.setItem('mw_sub_overlay_px_v2', String(next));
     } catch {
       // Size applies for this video only.
     }
@@ -774,9 +774,13 @@ export default function NativePlayerControls(props: Props) {
       if (activeSheet === 'none' && playing) setControlsVisible(false);
     }, 4000);
   }, [activeSheet, playing]);
+  // Pausing shows the controls once; a tap may still hide them (forcing
+  // them back on every change made each tap while paused flicker).
+  useEffect(() => {
+    if (!playing) setControlsVisible(true);
+  }, [playing]);
   useEffect(() => {
     if (controlsHideTimer.current !== null) window.clearTimeout(controlsHideTimer.current);
-    if (!playing) setControlsVisible(true);
     if (hasVideo && playing && controlsVisible && activeSheet === 'none') {
       controlsHideTimer.current = window.setTimeout(() => setControlsVisible(false), 3000);
     }
@@ -1108,7 +1112,7 @@ export default function NativePlayerControls(props: Props) {
         // shared with the player's own subtitles: white monospaced text on
         // one semi-transparent black box around the whole cue.
         <div
-          className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-6 transition-[bottom] duration-200"
+          className="pointer-events-none absolute inset-x-0 z-[15] flex justify-center px-6 transition-[bottom] duration-200"
           style={{ bottom: controlsVisible || activeSheet !== 'none' ? 'calc(2.5rem + env(safe-area-inset-bottom))' : 'calc(0.5rem + env(safe-area-inset-bottom))' }}
         >
           <span

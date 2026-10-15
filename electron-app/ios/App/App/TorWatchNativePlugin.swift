@@ -495,10 +495,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     /// Every video starts with the viewer's last sizing choice.
     private static func savedVideoScaleMode() -> String {
-        // The picture fills the screen unless the viewer pinched in for the
-        // original shape (an old Fill choice also fills the screen).
+        // The picture fills the screen; a spread zooms it edge to edge.
         let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "stretch"
-        return saved == "fit" ? "fit" : "stretch"
+        return saved == "fill" ? "fill" : "stretch"
     }
 
     @objc func setVideoScale(_ call: CAPPluginCall) {
@@ -1085,7 +1084,8 @@ final class VideoSurfaceView: UIView {
     func apply(aspect: CGFloat, mode: String) {
         // Symmetric gutters keep the picture centered and clear of the
         // Dynamic Island/notch, whichever side it occupies in landscape.
-        let sideInset = max(safeAreaInsets.left, safeAreaInsets.right)
+        // Zoomed (fill) covers the whole screen, the notch side included.
+        let sideInset = mode == "fill" ? 0 : max(safeAreaInsets.left, safeAreaInsets.right)
         let availableWidth = max(0, bounds.width - sideInset * 2)
         let layout = torwatch_video_layout(Double(availableWidth), Double(bounds.height),
             Double(aspect), mode == "fill" ? 1 : mode == "stretch" ? 2 : 0)
