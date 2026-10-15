@@ -495,15 +495,16 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     /// Every video starts with the viewer's last sizing choice.
     private static func savedVideoScaleMode() -> String {
-        // The picture fills the screen; a spread zooms it edge to edge.
+        // The picture fills the screen (never cropped); a spread stretches it
+        // edge to edge. Older choices (fit, fill) start at the default.
         let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "stretch"
-        return saved == "fill" ? "fill" : "stretch"
+        return saved == "edge" ? "edge" : "stretch"
     }
 
     @objc func setVideoScale(_ call: CAPPluginCall) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.setVideoScale(call) }; return }
         let mode = call.getString("mode") ?? "fit"
-        guard mode == "fit" || mode == "fill" || mode == "stretch" else {
+        guard mode == "fit" || mode == "fill" || mode == "stretch" || mode == "edge" else {
             call.reject("Unknown video scale mode.")
             return
         }
@@ -1084,11 +1085,11 @@ final class VideoSurfaceView: UIView {
     func apply(aspect: CGFloat, mode: String) {
         // Symmetric gutters keep the picture centered and clear of the
         // Dynamic Island/notch, whichever side it occupies in landscape.
-        // Zoomed (fill) covers the whole screen, the notch side included.
-        let sideInset = mode == "fill" ? 0 : max(safeAreaInsets.left, safeAreaInsets.right)
+        // Edge to edge covers the whole screen, the notch side included.
+        let sideInset = mode == "edge" ? 0 : max(safeAreaInsets.left, safeAreaInsets.right)
         let availableWidth = max(0, bounds.width - sideInset * 2)
         let layout = torwatch_video_layout(Double(availableWidth), Double(bounds.height),
-            Double(aspect), mode == "fill" ? 1 : mode == "stretch" ? 2 : 0)
+            Double(aspect), mode == "fill" ? 1 : mode == "stretch" ? 2 : mode == "edge" ? 3 : 0)
         guard layout.width > 0, layout.height > 0 else { return }
         let viewportFrame = CGRect(x: (bounds.width - CGFloat(layout.viewport_width)) / 2,
             y: 0, width: CGFloat(layout.viewport_width), height: bounds.height)

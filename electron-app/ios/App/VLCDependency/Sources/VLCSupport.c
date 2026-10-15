@@ -17,8 +17,11 @@ TorWatchVideoLayout torwatch_video_layout(double viewport_width,
     if (mode == 1) {
         layout.scale_x = layout.scale_y = fmax(viewport_width / layout.width,
             viewport_height / layout.height);
-    } else if (mode == 2) {
-        layout.viewport_width = fmin(viewport_width, viewport_height * (16.0 / 9.0));
+    } else if (mode == 2 || mode == 3) {
+        /* 2: stretched to at most 16:9; 3: stretched to the whole screen.
+           Never cropped: the full picture stays visible, only widened. */
+        layout.viewport_width = mode == 3 ? viewport_width
+            : fmin(viewport_width, viewport_height * (16.0 / 9.0));
         layout.scale_x = layout.viewport_width / layout.width;
         layout.scale_y = viewport_height / layout.height;
     }

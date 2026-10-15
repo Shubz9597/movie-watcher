@@ -47,7 +47,7 @@ export interface TorWatchNativePlugin {
   selectSubtitleTrack?(options: { trackId: number | null; playId: string }): Promise<void>;
   setSubtitleDelay?(options: { seconds: number; playId: string }): Promise<void>;
   setAudioDelay?(options: { seconds: number; playId: string }): Promise<void>;
-  setVideoScale?(options: { mode: 'fit' | 'fill' | 'stretch'; playId: string }): Promise<void>;
+  setVideoScale?(options: { mode: 'fit' | 'fill' | 'stretch' | 'edge'; playId: string }): Promise<void>;
   setPlaybackOrientation?(options: { landscape: boolean }): Promise<void>;
   loadSubtitle?(options: { url: string; label?: string; language?: string; playId: string }): Promise<{ trackId?: number | null }>;
   dismiss(options: { playId: string }): Promise<void>;
@@ -232,7 +232,7 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
       if (currentPlayId !== playId) return;
       await plugin.setAudioDelay?.({ seconds, playId });
     },
-    async setVideoScale(mode: 'fit' | 'fill' | 'stretch', playId: string) {
+    async setVideoScale(mode: 'fit' | 'fill' | 'stretch' | 'edge', playId: string) {
       if (currentPlayId !== playId) return;
       await plugin.setVideoScale?.({ mode, playId });
     },
@@ -364,7 +364,7 @@ export class NativePlayer implements PlayerPort {
     this.controller.setAudioDelay(seconds);
   }
 
-  setVideoScale(mode: 'fit' | 'fill' | 'stretch'): void {
+  setVideoScale(mode: 'fit' | 'fill' | 'stretch' | 'edge'): void {
     this.controller.setVideoScale(mode);
   }
 

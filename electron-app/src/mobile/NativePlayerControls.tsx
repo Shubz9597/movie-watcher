@@ -34,7 +34,7 @@ export type NativePlayerControlsSurface = {
   setAudioDelay(seconds: number): void;
   selectAudioTrack(trackId: number): void;
   selectSubtitleTrack(trackId: number | null): void;
-  setVideoScale(mode: 'fit' | 'fill' | 'stretch'): void;
+  setVideoScale(mode: 'fit' | 'fill' | 'stretch' | 'edge'): void;
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null>;
   /** Embedded-subtitle text scale (% of default) — engine recreate at position. */
   setEmbeddedSubtitleScale(percent: number): void;
@@ -138,10 +138,10 @@ function formatDelay(seconds: number): string {
 }
 
 
-// The picture fills the screen by default (no black bars, nothing cropped);
-// spread two fingers to zoom it over the whole screen edge to edge (the
-// edges cropped), pinch in to return.
-const SCALE_TOASTS = { stretch: 'Fit to screen', fill: 'Zoomed' } as const;
+// The picture fills the screen by default; spread two fingers to stretch it
+// edge to edge, pinch in to return. Never cropped: the whole picture stays
+// visible, only widened.
+const SCALE_TOASTS = { stretch: 'Fill screen', edge: 'Edge to edge' } as const;
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, seriesId, hasNextEpisode = false, onClose } = props;
@@ -212,9 +212,9 @@ export default function NativePlayerControls(props: Props) {
   });
   const [scrubTo, setScrubTo] = useState<number | null>(null);
   // Mirror the saved native sizing preference for the button.
-  const [scaleMode, setScaleMode] = useState<'stretch' | 'fill'>(() => {
+  const [scaleMode, setScaleMode] = useState<'stretch' | 'edge'>(() => {
     try {
-      return window.localStorage.getItem('mw_video_scale') === 'fill' ? 'fill' : 'stretch';
+      return window.localStorage.getItem('mw_video_scale') === 'edge' ? 'edge' : 'stretch';
     } catch {
       return 'stretch';
     }
@@ -433,7 +433,7 @@ export default function NativePlayerControls(props: Props) {
     const b = touches[1];
     return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
   };
-  const applyScale = (next: 'stretch' | 'fill') => {
+  const applyScale = (next: 'stretch' | 'edge') => {
     setScaleMode(next);
     player.setVideoScale(next);
     setScaleToast(SCALE_TOASTS[next]);
@@ -459,7 +459,7 @@ export default function NativePlayerControls(props: Props) {
     const pinch = pinchRef.current;
     if (!pinch || pinch.applied || event.touches.length < 2) return;
     const ratio = touchDist(event.touches) / pinch.dist0;
-    const next = ratio > 1.15 ? 'fill' : ratio < 0.87 ? 'stretch' : null;
+    const next = ratio > 1.15 ? 'edge' : ratio < 0.87 ? 'stretch' : null;
     if (!next) return;
     pinch.applied = true;
     if (next !== scaleModeRef.current) applyScale(next);
@@ -544,7 +544,12 @@ export default function NativePlayerControls(props: Props) {
   const showOnlineList = !local && (embeddedSubs.length === 0 || showOnline || activeSubtitleUrl !== null);
   const subtitleNames = useMemo(() => trackDisplayNames(embeddedSubs.map((track) => track.label)), [embeddedSubs]);
   const audioNames = useMemo(
-    () => audioDisplayNames(embeddedAudio.map((track) => track.label), cat === 'anime' ? 'ja' : undefined),
+    // Anime is Japanese at heart; a release with a Japanese track among
+    // several is anime (or a Japanese film) whatever page opened it.
+    () => audioDisplayNames(
+      embeddedAudio.map((track) => track.label),
+      cat === 'anime' || embeddedAudio.some((track) => trackLanguageName(track.label) === 'Japanese') ? 'ja' : undefined,
+    ),
     [embeddedAudio, cat],
   );
 
@@ -1278,13 +1283,7 @@ export default function NativePlayerControls(props: Props) {
             </ul>
           </section>
           <section aria-labelledby="subtitleTracksHeading" className="min-h-0 overflow-y-auto pr-2">
-            <div className="flex items-center justify-between gap-3">
-              <h2 id="subtitleTracksHeading" className="text-2xl font-semibold text-white">Subtitles</h2>
-              <div className="flex items-center gap-1" role="group" aria-label="Subtitle size">
-                <button type="button" aria-label="Smaller subtitles" onClick={() => changeSubtitleSize(-2)} className="min-h-12 min-w-12 rounded-lg text-sm text-white/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A−</button>
-                <button type="button" aria-label="Larger subtitles" onClick={() => changeSubtitleSize(2)} className="min-h-12 min-w-12 rounded-lg text-lg text-white/80 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A+</button>
-              </div>
-            </div>
+            <h2 id="subtitleTracksHeading" className="text-2xl font-semibold text-white">Subtitles</h2>
             {subtitleError ? <p role="alert" className="type-secondary mt-3 text-red-300">{subtitleError}</p> : null}
             <ul className="mt-4 space-y-1">
               <TrackRow
@@ -1321,6 +1320,13 @@ export default function NativePlayerControls(props: Props) {
                 />
               ))}
             </ul>
+            {/* Text size: its own row under the list, far from the close
+                button in the corner. */}
+            <div className="mt-4 flex items-center gap-3 border-t border-white/[0.12] pt-3" role="group" aria-label="Subtitle size">
+              <span className="text-base text-white/75">Text size</span>
+              <button type="button" aria-label="Smaller subtitles" onClick={() => changeSubtitleSize(-2)} className="min-h-12 min-w-14 rounded-lg border border-white/15 text-sm text-white/85 hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A−</button>
+              <button type="button" aria-label="Larger subtitles" onClick={() => changeSubtitleSize(2)} className="min-h-12 min-w-14 rounded-lg border border-white/15 text-lg text-white/85 hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A+</button>
+            </div>
             {local ? (
               embeddedSubs.length === 0 ? <p className="type-secondary mt-2 text-white/60">No subtitles in this download.</p> : null
             ) : !showOnlineList ? (

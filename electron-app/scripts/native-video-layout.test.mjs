@@ -52,6 +52,15 @@ int main(int argc, char **argv) {
       close(stretch[0] * stretch[2], stretch[4]);
       close(stretch[1] * stretch[3], height);
       assert.deepEqual(layout(width, height, aspect, 0), fit, 'returning to Fit removes all transforms');
+      // Edge to edge (the spread gesture): the whole screen width and height,
+      // the picture only widened, never cropped.
+      const edge = layout(width, height, aspect, 3);
+      assert.deepEqual(edge.slice(0, 2), fit.slice(0, 2));
+      close(edge[4], width);
+      close(edge[0] * edge[2], width);
+      close(edge[1] * edge[3], height);
+      // The default (Stretch) shows the whole picture height too: no crop.
+      assert.ok(stretch[1] * stretch[3] <= height + 0.000001 && stretch[0] * stretch[2] <= width + 0.000001, 'Stretch crops nothing');
     }
     for (const dimensions of [[0, 390, 4 / 3], [844, 0, 4 / 3], [844, 390, 0], [844, 390, -1], ['nan', 390, 4 / 3], [844, 390, 'inf']]) {
       assert.deepEqual(layout(...dimensions, 2), [0, 0, 1, 1, 0]);
