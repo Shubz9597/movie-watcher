@@ -78,6 +78,9 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         foregroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            // Back in the app: what failed while away for lack of network
+            // goes back in line, then the queue is checked.
+            self?.coordinator.requeueNetworkFailures()
             self?.coordinator.reconcile()
         }
         // While the app stays open, check the queue now and then too: a

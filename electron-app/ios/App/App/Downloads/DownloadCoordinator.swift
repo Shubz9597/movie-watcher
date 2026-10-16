@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Network
 
 /**
  * DownloadCoordinator (offline-downloads D03) — native background transfers.
@@ -58,6 +59,13 @@ final class DownloadCoordinator: NSObject {
     /// reconnecting, the server restarting), the transfer sat "running"
     /// with no bytes and the one-at-a-time queue never moved on.
     private static let stallLimit: TimeInterval = 90
+    /// Right after the network changes (Wi-Fi to mobile data, a new Wi-Fi,
+    /// back from no signal) the old connections are dead: a transfer silent
+    /// for this long is restarted at once instead of after stallLimit.
+    private static let networkChangeStallLimit: TimeInterval = 8
+    private var quickStallChecksUntil = Date.distantPast
+    private var pathMonitor: NWPathMonitor?
+    private var lastPathSignature = ""
     private let stateLock = NSLock()
     /// Serialises queue decisions; recursive because finishing one download
     /// starts the next from inside the same call chain.
@@ -79,7 +87,51 @@ final class DownloadCoordinator: NSObject {
             configuration.waitsForConnectivity = true
             configuration.timeoutIntervalForResource = 7 * 24 * 3600
             self.session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+            watchNetwork()
         }
+    }
+
+    // MARK: - Network changes
+
+    /// A new network (or the network coming back) restarts what it broke:
+    /// transfers gone silent restart at once, downloads that ran out of
+    /// retries while offline go back in line, and the retry count starts
+    /// over. Before, an episode that failed during a long outage stayed
+    /// failed, and a dead transfer held the one-at-a-time queue for 90 s.
+    private func watchNetwork() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            let signature = "\(path.status)|\(path.availableInterfaces.map { $0.name }.joined(separator: ","))|\(path.isExpensive)"
+            self.stateLock.lock()
+            let changed = signature != self.lastPathSignature
+            self.lastPathSignature = signature
+            self.stateLock.unlock()
+            guard changed, path.status == .satisfied else { return }
+            self.networkChanged()
+        }
+        monitor.start(queue: DispatchQueue(label: "torwatch.downloads.network"))
+        pathMonitor = monitor
+    }
+
+    private func networkChanged() {
+        stateLock.lock()
+        retryAttempts.removeAll()
+        quickStallChecksUntil = Date().addingTimeInterval(60)
+        stateLock.unlock()
+        requeueNetworkFailures()
+        startNextIfIdle()
+    }
+
+    /// Downloads that failed only because the network was away go back in
+    /// line (finished parts are kept).
+    func requeueNetworkFailures() {
+        var changed = false
+        for record in (try? store.list()) ?? [] where record.state == .failed && record.reason == "network_failed" {
+            try? store.setState(record.downloadId, .queued)
+            changed = true
+        }
+        if changed { emitChange() }
     }
 
     // MARK: - Background session lifecycle (AppDelegate forwards this)
@@ -637,6 +689,9 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
     private func restartStalledTransfers(_ tasks: [URLSessionTask], owner: [Int: String]) -> Bool {
         let now = Date()
         var restarted = false
+        stateLock.lock()
+        let limit = now < quickStallChecksUntil ? Self.networkChangeStallLimit : Self.stallLimit
+        stateLock.unlock()
         for task in tasks where task.state == .running {
             let taskId = Int(task.taskIdentifier)
             guard let downloadId = owner[taskId], let download = task as? URLSessionDownloadTask,
@@ -644,7 +699,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             stateLock.lock()
             let last = lastByteAt[downloadId]
             if last == nil { lastByteAt[downloadId] = now } // first seen since launch
-            let stalled = last.map { now.timeIntervalSince($0) > Self.stallLimit } ?? false
+            let stalled = last.map { now.timeIntervalSince($0) > limit } ?? false
             if stalled {
                 stallCancelled.insert(taskId)
                 lastByteAt[downloadId] = now

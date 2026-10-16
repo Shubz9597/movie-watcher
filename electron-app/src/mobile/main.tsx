@@ -147,7 +147,10 @@ async function start(): Promise<void> {
         .then(({ moveEntriesToShows }) => moveEntriesToShows())
         .catch((error: unknown) => console.warn('[Downloads] Moving downloads to their shows failed; retried next start.', error))
         .finally(() => {
-          void import('./download-queue').then(({ resumePendingDownloads }) => resumePendingDownloads());
+          void import('./download-queue').then(({ resumePendingDownloads, keepPendingDownloadsMoving }) => {
+            resumePendingDownloads();
+            keepPendingDownloadsMoving();
+          });
           void import('./offline-progress-sync').then(({ startOfflineProgressSync }) => startOfflineProgressSync(composed.platform.connection));
         });
       // Back after an outage: downloads that lost the server resume.

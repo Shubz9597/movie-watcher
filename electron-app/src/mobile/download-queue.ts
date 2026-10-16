@@ -298,14 +298,37 @@ export function resumePendingDownloads(): void {
   }
 }
 
-/** The server is back (a power cut, a restart): downloads that lost it
- *  while preparing pick up again on their own. A job the server itself
- *  failed still waits for Retry. */
+/** The server is back (a power cut, a restart), the network changed, or
+ *  the app came back to the front: downloads that lost the server while it
+ *  prepared them pick up again on their own (one check per download at a
+ *  time). A job the server itself failed still waits for Retry. */
 export function resumeDownloadsAfterReconnect(): void {
   for (const pending of readPending()) {
     if (pending.state === 'preparing') void resumePendingDownload(pending);
-    else if (pending.state === 'failed' && !pending.jobFailed) void retryPendingDownload(pending);
+    else if (pending.state === 'failed' && !pending.jobFailed && !/space|storage/i.test(pending.reason ?? '')) {
+      void retryPendingDownload(pending); // a full phone waits for the viewer
+    }
   }
+}
+
+let keepMovingStarted = false;
+
+/** Keeps the server-preparation queue moving: on returning to the app, when
+ *  the network comes back or changes, and every minute while the app is
+ *  open. A quick Wi-Fi/mobile switch used to leave an episode failed (its
+ *  check broke mid-way) until Retry. */
+export function keepPendingDownloadsMoving(): void {
+  if (keepMovingStarted || typeof window === 'undefined') return;
+  keepMovingStarted = true;
+  const nudge = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    resumeDownloadsAfterReconnect();
+  };
+  window.addEventListener('online', nudge);
+  document.addEventListener('visibilitychange', nudge);
+  const connection = (navigator as Navigator & { connection?: EventTarget }).connection;
+  connection?.addEventListener?.('change', nudge);
+  window.setInterval(nudge, 60_000);
 }
 
 /**
