@@ -5,6 +5,8 @@
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ConnectionBanner } from '../components/shared/ConnectionBanner';
+import { usePullToRefresh } from '../lib/pull-to-refresh';
 import type { ErrorInfo, ReactElement, ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { X } from 'lucide-react';
@@ -285,7 +287,6 @@ function BrowserApp({
   // mounts for the rest of the session (a reload resolves 'shell' from
   // durable configuration).
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
-  const [retrying, setRetrying] = useState(false);
   // rerender-memo-with-default-value: stable deps object so the memoized
   // recommendation components don't re-render (or refetch) on every render.
   const recommendationDeps = useMemo(() => (recsFetch ? { fetchImpl: recsFetch } : undefined), [recsFetch]);
@@ -304,11 +305,6 @@ function BrowserApp({
   // WF02/spec C2: unreachable and incompatible servers both collapse Home
   // into the recovery block; Downloads stays an ordinary local page.
   const serverDown = compat.status === 'unreachable' || compat.status === 'incompatible';
-  const onRetry = useCallback(() => {
-    if (retrying) return;
-    setRetrying(true);
-    void connection.check().finally(() => setRetrying(false));
-  }, [connection, retrying]);
 
   // WF01: the full-screen setup screen renders ONLY for first installation
   // (no saved configuration, no local downloads). A configured user ALWAYS
@@ -408,14 +404,11 @@ function BrowserApp({
           recovery block (Server unavailable / Retry / Go to settings) instead
           of repeating errors per rail. Other routes keep the slim banner
           (WF07: stay on the current route; local media stays playable). */}
+      {/* One connection banner on every page: Reconnecting… / Server
+          offline / Connected (then it slides away) / Server needs an update. */}
+      <ConnectionBanner offlineNote={route.path === 'downloads' ? 'downloads still play' : undefined} />
       {route.path === 'home' && serverDown ? (
-        <HomeRecovery incompatible={compat.status === 'incompatible'} retrying={retrying} onRetry={onRetry} onOpenSettings={onOpenSettings} />
-      ) : null}
-      {route.path !== 'home' && route.path !== 'downloads' && serverDown ? (
-        <div className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-[#ffc285]/10 px-4 py-2 text-sm text-[#ffc285]" role="status">
-          <span className="inline-block h-2 w-2 rounded-full bg-[#ffc285] motion-safe:animate-pulse" aria-hidden="true" />
-          {compat.status === 'incompatible' ? 'Server needs an update' : 'Reconnecting…'}
-        </div>
+        <HomeRecovery incompatible={compat.status === 'incompatible'} onOpenSettings={onOpenSettings} />
       ) : null}
       {resumeNotice ? (
         <div className="sticky top-0 z-30 mx-5 mt-3 flex items-center justify-between gap-3 rounded-lg border border-white/15 bg-[var(--surface-raised)] py-1 pl-4 pr-1 md:mx-8" role="status">
@@ -576,35 +569,29 @@ function RouteFallback() {
 // WF02: Home under a server failure is exactly this block — no explanatory
 // paragraphs, no rail repetition. The header, destinations and Settings stay
 // reachable (spec C4/C6).
-function HomeRecovery({ incompatible, retrying, onRetry, onOpenSettings }: {
+function HomeRecovery({ incompatible, onOpenSettings }: {
   incompatible: boolean;
-  retrying: boolean;
-  onRetry: () => void;
   onOpenSettings: () => void;
 }) {
+  // Pull down to ask the server again (the banner above shows the result).
+  const { indicator } = usePullToRefresh(() => undefined);
   return (
     <section
       className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-6 text-center"
       aria-live="polite"
     >
-      <h1 className="type-section-title text-white">{incompatible ? 'Server needs an update' : 'Server unavailable'}</h1>
-      <div className="mt-6 flex w-full max-w-xs flex-col gap-3">
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying}
-          className="min-h-12 rounded-lg bg-white px-5 py-2.5 text-sm text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-        >
-          {retrying ? 'Checking…' : 'Retry'}
-        </button>
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="min-h-12 rounded-lg border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-        >
-          Go to settings
-        </button>
-      </div>
+      {indicator}
+      <h1 className="type-section-title text-white">{incompatible ? 'Server needs an update' : 'Can’t reach your server'}</h1>
+      <p className="type-secondary mt-3 text-white/60">
+        {incompatible ? 'Update the TorWatch server, then pull down to try again.' : 'Pull down to try again. Downloads still play.'}
+      </p>
+      <button
+        type="button"
+        onClick={onOpenSettings}
+        className="mt-6 min-h-12 rounded-lg border border-white/20 px-5 py-2.5 text-sm text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+      >
+        Server settings
+      </button>
     </section>
   );
 }

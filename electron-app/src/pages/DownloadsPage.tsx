@@ -5,6 +5,7 @@
 // failed inventory read surfaces a storage error — never a false "no
 // downloads". Ready items play locally; server preparation and native
 // transfer states are merged into one concise queue.
+import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { useEffect, useState } from 'react';
 import type { HTMLAttributes } from 'react';
 import { Check, ChevronRight, Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
@@ -272,6 +273,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   const compat = useConnectionStatus();
   const [inventory, setInventory] = useState<DownloadsInventory | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Pull down: re-read the downloads and ask the server again.
+  const { indicator: pullIndicator } = usePullToRefresh(() => setReloadKey((key) => key + 1));
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<PendingDownload[]>(() => pendingDownloads());
   const [acting, setActing] = useState<Set<string>>(() => new Set());
@@ -778,6 +781,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
 
   return (
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
+      {pullIndicator}
       {selection ? (
         // Selecting: what is ticked, and the one destructive action.
         <div className="flex min-h-12 flex-wrap items-center gap-2" role="toolbar" aria-label="Selected downloads">

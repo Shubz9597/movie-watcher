@@ -18,6 +18,7 @@
 import { memo, useEffect, useRef } from 'react';
 import type { ReactElement, RefObject } from 'react';
 import { LoaderCircle } from 'lucide-react';
+import { requestReconnect } from './connection-banner';
 
 const THRESHOLD_PX = 70;
 const MAX_PULL_PX = 130;
@@ -151,6 +152,9 @@ export function usePullToRefresh(onRefresh: () => Promise<unknown> | unknown, en
       setSpinning(true);
       pullRef.current = SPINNER_REST_PX;
       paint();
+      // Every pull also asks the server again (the connection banner shows
+      // Reconnecting… / Connected / Server offline while it is away).
+      requestReconnect();
       Promise.resolve(refreshRef.current())
         .catch(() => {})
         .finally(() => {
