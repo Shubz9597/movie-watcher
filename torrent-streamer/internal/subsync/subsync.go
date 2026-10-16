@@ -253,8 +253,23 @@ func PickDub(judged []Judged, baselineR float64) (Judged, bool) {
 		return Judged{}, false
 	}
 	best := judged[0]
-	return best, best.R >= DubMinR && best.R >= 2*baselineR
+	if best.R >= DubMinR && best.R >= 2*baselineR {
+		return best, true
+	}
+	// A fight-heavy episode: music and blasts outweigh the voices, so even a
+	// dub's own script scores low (Dragon Ball Z Kai episode 50: the dub
+	// captions 0.21, the video's own translation -0.24, another English
+	// file -0.23). It still wins by a wide margin over everything else.
+	clear := best.R >= SyncMinR && best.R-baselineR >= ClearMargin
+	if clear && len(judged) > 1 {
+		clear = best.R-judged[1].R >= ClearMargin*2/3
+	}
+	return best, clear
 }
+
+// ClearMargin: how far a low-scoring subtitle must beat the video's own
+// track (and two thirds of it, the runner-up) to be taken as this audio's.
+const ClearMargin = 0.3
 
 // Offset is the shift to apply: the best one when it is a real improvement
 // on the timing as published, else 0.
