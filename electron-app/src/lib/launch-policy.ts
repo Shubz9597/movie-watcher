@@ -2,7 +2,7 @@
 //
 // Deterministic and reachability-free BY CONSTRUCTION: the input type has no
 // connection status. Reachability is a separate observable used for
-// contextual availability (ConnectionChip, per-page recovery) and NEVER
+// contextual availability (the Reconnecting banner, per-page recovery) and NEVER
 // chooses a tab, never gates the shell, and never triggers a redirect.
 // The previous three-second routing deadline / interaction-latch proposal is
 // deleted: there is no connection-triggered navigation to arbitrate.

@@ -7,7 +7,6 @@
 // iOS navigation-bar convention. Gesture/hardware back still works.
 import { ChevronLeft, Download, Home, Library, Search, Settings2 } from 'lucide-react';
 import AppHeader from '../AppHeader';
-import { ConnectionChip } from './ConnectionChip';
 import torWatchLogo from '../../assets/torwatch-app-icon.png';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import { useSearchViewport } from '../../lib/use-search-viewport';
@@ -67,8 +66,6 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
               <img src={torWatchLogo} alt="" className="h-9 w-9 -translate-y-1 object-contain" />
             </button>
           )}
-          {/* M1.4 UI pass: connection status at a glance (mobile header). */}
-          <ConnectionChip onOpenSettings={onOpenSettings} />
         </div>
         <div className="flex items-center">
           {!search ? (
