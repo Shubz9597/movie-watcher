@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"torrent-streamer/internal/config"
 )
 
 // Service is the storage contract the D02 HTTP handlers consume. The SQL
@@ -437,4 +441,19 @@ func (s *Store) CompleteCleanup(ctx context.Context, jobID string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// VideoFile is a prepared download's video on this server's disk ("" when
+// it has none, or it is gone): measuring it reads the disk, not the torrent.
+func (s *Store) VideoFile(ctx context.Context, jobID string) string {
+	var diskPath string
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT disk_path FROM download_assets WHERE job_id=$1 AND kind=$2 LIMIT 1`, jobID, AssetKindVideo).Scan(&diskPath); err != nil {
+		return ""
+	}
+	path := filepath.Join(config.DownloadsRoot(), filepath.FromSlash(diskPath))
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return ""
+	}
+	return path
 }
