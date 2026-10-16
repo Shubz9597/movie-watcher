@@ -132,6 +132,8 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
                     "receivedBytes": record.receivedBytes,
                     "totalBytes": record.totalBytes,
                     "bytesPerSecond": metrics.bytesPerSecond,
+                    // Handed over before the server finished preparing it.
+                    "awaitingServer": record.assets.isEmpty,
                 ]
                 if let eta = metrics.etaSeconds { body["etaSeconds"] = eta }
                 if let progress = coordinator.store.loadProgress(record.downloadId) {
@@ -157,13 +159,21 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
               originURL.scheme == "http" || originURL.scheme == "https",
               let clientId = call.getString("clientId"), !clientId.isEmpty,
               let seriesId = call.getString("seriesId"), !seriesId.isEmpty,
-              let title = call.getString("title"), !title.isEmpty,
-              let video = call.getObject("video"),
-              let videoPath = video["path"] as? String, videoPath.hasPrefix("/v1/downloads/jobs/"),
-              let videoSize = (video["sizeBytes"] as? NSNumber)?.int64Value, videoSize > 0,
-              let videoSHA = video["sha256"] as? String, videoSHA.count == 64 else {
+              let title = call.getString("title"), !title.isEmpty else {
             call.reject("The download request is incomplete.")
             return
+        }
+        // No video yet: the server is still preparing it, and the downloader
+        // waits for it itself (with the app closed too).
+        var videoAsset: (urlPath: String, sizeBytes: Int64, sha256: String)?
+        if let video = call.getObject("video") {
+            guard let videoPath = video["path"] as? String, videoPath.hasPrefix("/v1/downloads/jobs/"),
+                  let videoSize = (video["sizeBytes"] as? NSNumber)?.int64Value, videoSize > 0,
+                  let videoSHA = video["sha256"] as? String, videoSHA.count == 64 else {
+                call.reject("The download request is incomplete.")
+                return
+            }
+            videoAsset = (urlPath: videoPath, sizeBytes: videoSize, sha256: videoSHA.lowercased())
         }
         var subtitles: [(lang: String, urlPath: String, sizeBytes: Int64, sha256: String)] = []
         for raw in (call.getArray("subtitles") ?? []) {
@@ -188,7 +198,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             title: title,
             posterURL: call.getString("posterUrl") ?? "",
             subtitleLabel: call.getString("subtitleLabel") ?? "",
-            video: (urlPath: videoPath, sizeBytes: videoSize, sha256: videoSHA.lowercased()),
+            video: videoAsset,
             subtitles: subtitles)
         do {
             try coordinator.enqueue(request)

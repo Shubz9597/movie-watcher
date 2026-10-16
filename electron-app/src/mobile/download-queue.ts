@@ -198,6 +198,7 @@ export function removePendingDownload(jobId: string): void {
 export async function cancelPendingDownload(pending: PendingDownload): Promise<void> {
   cancelledJobs.add(pending.jobId);
   removePendingDownload(pending.jobId);
+  void getNativeDownloads()?.remove({ downloadId: pending.jobId }).catch(() => {});
   try {
     await fetch(
       `${pending.origin}/v1/downloads/jobs/${encodeURIComponent(pending.jobId)}/cancel?clientId=${encodeURIComponent(pending.clientId)}`,
@@ -292,6 +293,28 @@ export async function queueNativeDownload(
   return pending;
 }
 
+/** Hands a download to the phone's own downloader as soon as the server has
+ *  the job: it waits for the server to prepare it and downloads it with the
+ *  app closed or the phone locked (an iOS background transfer). The app's
+ *  own check below only adds live progress while it is open. */
+function handOverToDownloader(pending: PendingDownload): void {
+  void getNativeDownloads()?.enqueue({
+    downloadId: pending.jobId,
+    instanceId: pending.instanceId,
+    origin: pending.origin,
+    clientId: pending.clientId,
+    seriesId: pending.seriesId,
+    season: pending.season,
+    episode: pending.episode,
+    title: pending.title,
+    posterUrl: pending.posterUrl || undefined,
+    subtitleLabel: pending.subtitleLabel,
+  }).catch(() => {
+    // An older native build needs the package first: the app's check hands
+    // it over once the server is done.
+  });
+}
+
 export function resumePendingDownloads(): void {
   for (const pending of readPending()) {
     if (pending.state === 'preparing') void resumePendingDownload(pending);
@@ -349,6 +372,7 @@ export async function retryPendingDownload(pending: PendingDownload, overrides: 
     reasonCode: _reasonCode, jobFailed: _jobFailed, queuedAt: _queuedAt, ...selection
   } = pending;
   removePendingDownload(pending.jobId);
+  void getNativeDownloads()?.remove({ downloadId: pending.jobId }).catch(() => {});
   try {
     await queueNativeDownload(
       { ...selection, ...(overrides.subtitles !== undefined ? { subtitles: overrides.subtitles } : {}) },
@@ -361,6 +385,7 @@ export async function retryPendingDownload(pending: PendingDownload, overrides: 
 }
 
 async function resumePendingDownload(pending: PendingDownload): Promise<void> {
+  if (pending.state === 'preparing') handOverToDownloader(pending);
   const existing = activeJobs.get(pending.jobId);
   if (existing) return existing;
   const task = monitorAndEnqueue(pending).finally(() => activeJobs.delete(pending.jobId));

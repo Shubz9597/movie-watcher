@@ -28,6 +28,8 @@ export type NativeDownloadItem = {
   /** When local playback last saved the position (epoch seconds). */
   progressUpdatedAt?: number;
   subtitleLang?: string;
+  /** Handed over before the server finished preparing it. */
+  awaitingServer?: boolean;
 };
 
 export type NativeManifestAsset = {
@@ -48,7 +50,8 @@ export type NativeEnqueueRequest = {
   title: string;
   posterUrl?: string;
   subtitleLabel?: string;
-  video: NativeManifestAsset;
+  /** Absent: the server is still preparing it; the downloader waits. */
+  video?: NativeManifestAsset;
   subtitles?: NativeManifestAsset[];
 };
 

@@ -128,6 +128,8 @@ export type DownloadItemSnapshot = {
   repairReason?: string;
   /** Interrupted/partial transfer: shows Waiting for server, never Play (WF06). */
   waitingForServer?: boolean;
+  /** Handed to the downloader while the server still prepares it. */
+  awaitingServer?: boolean;
   /** Series identity: episodes group under one show in Downloads. */
   seriesId?: string;
   season?: number;

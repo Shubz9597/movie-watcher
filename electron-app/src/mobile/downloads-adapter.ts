@@ -46,6 +46,8 @@ function repairMessage(reason: string): string {
       return 'File check failed';
     case 'storage_failed':
       return 'Couldn’t save the finished file';
+    case 'server_failed':
+      return 'The server couldn’t prepare it';
     default:
       return 'Download interrupted';
   }
@@ -82,6 +84,7 @@ export class NativeDownloadsAdapter implements DownloadsPort {
           etaSeconds: item.etaSeconds,
           repairReason: item.state === 'failed' ? repairMessage(item.reason) : undefined,
           waitingForServer: item.state === 'queued' || item.state === 'downloading' || item.state === 'paused',
+          awaitingServer: item.awaitingServer === true,
         })),
       };
     } catch (error) {

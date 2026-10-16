@@ -86,6 +86,9 @@ final class DownloadCoordinator: NSObject {
             configuration.sessionSendsLaunchEvents = true
             configuration.waitsForConnectivity = true
             configuration.timeoutIntervalForResource = 7 * 24 * 3600
+            // The manifest request waits on the server for up to 240 s while
+            // it prepares an episode (no bytes meanwhile).
+            configuration.timeoutIntervalForRequest = 300
             self.session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
             watchNetwork()
         }
@@ -176,20 +179,44 @@ final class DownloadCoordinator: NSObject {
         let title: String
         let posterURL: String
         let subtitleLabel: String
-        let video: (urlPath: String, sizeBytes: Int64, sha256: String)
+        /// nil: the server is still preparing it; the downloader asks for the
+        /// manifest itself (with the app closed too) and then downloads.
+        let video: (urlPath: String, sizeBytes: Int64, sha256: String)?
         let subtitles: [(lang: String, urlPath: String, sizeBytes: Int64, sha256: String)]
+    }
+
+    /// The task "path" of a manifest request (not an asset).
+    static let manifestMarker = "manifest"
+
+    static func manifestURL(origin: String, downloadId: String, clientId: String) -> URL? {
+        guard var components = URLComponents(string: origin.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) else { return nil }
+        components.path = components.path + "/v1/downloads/jobs/" + downloadId + "/manifest"
+        components.queryItems = [URLQueryItem(name: "clientId", value: clientId), URLQueryItem(name: "wait", value: "240")]
+        return components.url
+    }
+
+    private func taskURL(_ record: DownloadStore.Record, urlPath: String) -> URL? {
+        urlPath == Self.manifestMarker
+            ? Self.manifestURL(origin: record.origin, downloadId: record.downloadId, clientId: record.clientId)
+            : Self.assetURL(origin: record.origin, urlPath: urlPath, clientId: record.clientId)
     }
 
     /// Records the manifest and starts one background task per asset.
     func enqueue(_ request: EnqueueRequest) throws {
-        var assets: [DownloadStore.Asset] = [
-            DownloadStore.Asset(urlPath: request.video.urlPath,
-                                diskName: Self.assetDiskName(urlPath: request.video.urlPath, lang: ""),
-                                sizeBytes: request.video.sizeBytes,
-                                sha256: request.video.sha256,
-                                lang: "")
-        ]
-        for sub in request.subtitles {
+        if let existing = try? store.get(request.downloadId) {
+            // Already handed over (the downloader may be further along than
+            // the app knows): only a missing manifest is filled in.
+            guard existing.assets.isEmpty, request.video != nil else { return }
+        }
+        var assets: [DownloadStore.Asset] = []
+        if let video = request.video {
+            assets.append(DownloadStore.Asset(urlPath: video.urlPath,
+                                              diskName: Self.assetDiskName(urlPath: video.urlPath, lang: ""),
+                                              sizeBytes: video.sizeBytes,
+                                              sha256: video.sha256,
+                                              lang: ""))
+        }
+        for sub in request.subtitles where request.video != nil {
             assets.append(DownloadStore.Asset(urlPath: sub.urlPath,
                                               diskName: Self.assetDiskName(urlPath: sub.urlPath, lang: sub.lang),
                                               sizeBytes: sub.sizeBytes,
@@ -292,6 +319,17 @@ final class DownloadCoordinator: NSObject {
         let staging = try DownloadStore.stagingDirectory(downloadId: record.downloadId)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try store.setState(record.downloadId, .downloading)
+        if record.assets.isEmpty {
+            // Still preparing on the server: wait for its manifest.
+            guard let url = Self.manifestURL(origin: record.origin, downloadId: record.downloadId, clientId: record.clientId) else {
+                throw URLError(.badURL)
+            }
+            let task = session.downloadTask(with: url)
+            try store.recordTask(Int(task.taskIdentifier), downloadId: record.downloadId, urlPath: Self.manifestMarker)
+            noteActivity(record.downloadId, at: Date())
+            task.resume()
+            return
+        }
         var startedTask = false
         for asset in record.assets {
             let done = try isAssetDone(record.downloadId, asset)
@@ -603,6 +641,10 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
+        if let mapping = store.taskOwner(Int(downloadTask.taskIdentifier)), mapping.urlPath == Self.manifestMarker {
+            finishManifest(downloadTask, mapping: mapping, location: location)
+            return
+        }
         guard let mapping = store.taskOwner(Int(downloadTask.taskIdentifier)),
               let record = try? store.get(mapping.downloadId),
               let asset = record.asset(forPath: mapping.urlPath) else {
@@ -664,7 +706,8 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         }
         // Connection drops and server restarts are routine on a home server:
         // continue from the bytes already received instead of failing.
-        let resumeData = error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+        // A manifest request starts over (its answer may have changed).
+        let resumeData = mapping.urlPath == Self.manifestMarker ? nil : error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
         if !scheduleRetry(downloadId: mapping.downloadId, urlPath: mapping.urlPath, resumeData: resumeData) {
             failDownload(mapping.downloadId, reason: "network_failed")
         }
@@ -672,6 +715,86 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         finishBackgroundEvents()
+    }
+
+    // MARK: - Waiting for the server
+
+    /// The server's answer to a manifest request: the package (download it
+    /// now), still preparing (ask again), or the job failed.
+    private func finishManifest(_ task: URLSessionDownloadTask, mapping: DownloadStore.TaskMapping, location: URL) {
+        let taskId = Int(task.taskIdentifier)
+        let data = try? Data(contentsOf: location)
+        try? FileManager.default.removeItem(at: location)
+        try? store.removeTask(taskId)
+        clearTaskMetrics(taskId)
+        guard let record = try? store.get(mapping.downloadId),
+              record.state == .downloading || record.state == .queued else { return }
+        if !record.assets.isEmpty {
+            // The app handed the package over meanwhile: its transfers run.
+            startNextIfIdle()
+            return
+        }
+        let status = (task.response as? HTTPURLResponse)?.statusCode ?? 0
+        switch status {
+        case 200:
+            guard let data = data, let assets = Self.manifestAssets(data), !assets.isEmpty else {
+                failDownload(record.downloadId, reason: "server_error")
+                return
+            }
+            var updated = record
+            updated.assets = assets
+            do {
+                try store.upsert(updated)
+                stateLock.lock()
+                retryAttempts.removeValue(forKey: record.downloadId + "|" + Self.manifestMarker)
+                stateLock.unlock()
+                try startTasks(for: updated)
+            } catch {
+                failDownload(record.downloadId, reason: "storage_failed")
+                return
+            }
+            emitChange()
+        case 202:
+            // Still preparing: ask again (the server waits up to 240 s).
+            guard let url = taskURL(record, urlPath: Self.manifestMarker) else {
+                failDownload(record.downloadId, reason: "server_error")
+                return
+            }
+            let next = session.downloadTask(with: url)
+            next.earliestBeginDate = Date().addingTimeInterval(2)
+            try? store.recordTask(Int(next.taskIdentifier), downloadId: record.downloadId, urlPath: Self.manifestMarker)
+            noteActivity(record.downloadId, at: Date())
+            next.resume()
+        case 410:
+            failDownload(record.downloadId, reason: "server_failed")
+        case 500...599:
+            if !scheduleRetry(downloadId: record.downloadId, urlPath: Self.manifestMarker, resumeData: nil) {
+                failDownload(record.downloadId, reason: "server_error")
+            }
+        default:
+            failDownload(record.downloadId, reason: "server_error")
+        }
+    }
+
+    /// The assets of a version-1 manifest (contracts.md §4).
+    static func manifestAssets(_ data: Data) -> [DownloadStore.Asset]? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (json["manifestVersion"] as? NSNumber)?.intValue == 1,
+              let video = json["video"] as? [String: Any],
+              let videoPath = video["path"] as? String, videoPath.hasPrefix("/v1/downloads/jobs/"),
+              let videoSize = (video["sizeBytes"] as? NSNumber)?.int64Value, videoSize > 0,
+              let videoSHA = video["sha256"] as? String, videoSHA.count == 64 else { return nil }
+        var assets = [DownloadStore.Asset(urlPath: videoPath, diskName: assetDiskName(urlPath: videoPath, lang: ""),
+                                          sizeBytes: videoSize, sha256: videoSHA.lowercased(), lang: "")]
+        for raw in (json["subtitles"] as? [[String: Any]]) ?? [] {
+            guard let lang = raw["lang"] as? String, lang.count == 2,
+                  let path = raw["path"] as? String, path.hasPrefix("/v1/downloads/jobs/"),
+                  let size = (raw["sizeBytes"] as? NSNumber)?.int64Value, size > 0,
+                  let sha = raw["sha256"] as? String, sha.count == 64 else { return nil }
+            assets.append(DownloadStore.Asset(urlPath: path, diskName: assetDiskName(urlPath: path, lang: lang.lowercased()),
+                                              sizeBytes: size, sha256: sha.lowercased(), lang: lang.lowercased()))
+        }
+        return assets
     }
 
     // MARK: - Stalled transfers
@@ -696,6 +819,9 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             let taskId = Int(task.taskIdentifier)
             guard let downloadId = owner[taskId], let download = task as? URLSessionDownloadTask,
                   let mapping = store.taskOwner(taskId) else { continue }
+            // A manifest request is silent while the server prepares; the
+            // request timeout (300 s) ends a dead one.
+            if mapping.urlPath == Self.manifestMarker { continue }
             stateLock.lock()
             let last = lastByteAt[downloadId]
             if last == nil { lastByteAt[downloadId] = now } // first seen since launch
@@ -740,7 +866,7 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         let task: URLSessionDownloadTask
         if let resumeData = resumeData {
             task = session.downloadTask(withResumeData: resumeData)
-        } else if let url = Self.assetURL(origin: record.origin, urlPath: urlPath, clientId: record.clientId) {
+        } else if let url = taskURL(record, urlPath: urlPath) {
             task = session.downloadTask(with: url)
         } else {
             return false
@@ -766,7 +892,8 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
 
     private func tryMaybeFinalize(_ record: DownloadStore.Record) {
         guard let fresh = try? store.get(record.downloadId),
-              fresh.state == .downloading || fresh.state == .queued || fresh.state == .verifying else { return }
+              fresh.state == .downloading || fresh.state == .queued || fresh.state == .verifying,
+              !fresh.assets.isEmpty else { return } // still waiting for the server
         let allDone = fresh.assets.allSatisfy { asset in
             (try? isAssetDone(record.downloadId, asset)) ?? false
         }

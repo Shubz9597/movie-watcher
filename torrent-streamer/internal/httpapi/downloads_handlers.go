@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -252,12 +253,47 @@ func (h DownloadsHandlers) handleManifest(w http.ResponseWriter, r *http.Request
 	if !negotiationContext(w, r, h.Build) {
 		return
 	}
-	manifest, err := h.Store.Manifest(r.Context(), h.clientID(r), r.PathValue("id"))
-	if err != nil {
-		h.writeStoreError(w, err)
-		return
+	clientID, jobID := h.clientID(r), r.PathValue("id")
+	// ?wait=N (seconds, at most 240): the phone's own downloader asks with
+	// the app closed (an iOS background transfer, which wakes the app only
+	// when it ends), so it waits here while the server prepares instead of
+	// asking every two seconds. Still preparing at the end: 202.
+	wait, _ := strconv.Atoi(r.URL.Query().Get("wait"))
+	wait = max(0, min(wait, 240))
+	deadline := time.Now().Add(time.Duration(wait) * time.Second)
+	for {
+		manifest, err := h.Store.Manifest(r.Context(), clientID, jobID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, manifest)
+			return
+		}
+		if wait == 0 || (!errors.Is(err, downloads.ErrNotFound) && !errors.Is(err, downloads.ErrNotReady)) {
+			h.writeStoreError(w, err)
+			return
+		}
+		job, jobErr := h.Store.Get(r.Context(), clientID, jobID)
+		if jobErr != nil {
+			h.writeStoreError(w, jobErr)
+			return
+		}
+		if job.State != downloads.StatePreparing {
+			if job.State == downloads.StateReady {
+				h.writeStoreError(w, err) // ready but no valid manifest
+				return
+			}
+			writeJSON(w, http.StatusGone, map[string]any{"state": job.State, "reasonCode": job.ReasonCode})
+			return
+		}
+		if time.Now().After(deadline) {
+			writeJSON(w, http.StatusAccepted, map[string]any{"state": job.State})
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
 	}
-	writeJSON(w, http.StatusOK, manifest)
 }
 
 // handleAsset serves one prepared asset file (contracts.md §4.1): exact

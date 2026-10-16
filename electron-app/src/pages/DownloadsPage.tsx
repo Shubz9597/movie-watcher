@@ -698,9 +698,17 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     );
   };
 
+  // One row per episode: a download handed to the phone's downloader while
+  // the server still prepares it shows as the preparing row (with its
+  // progress); once the downloader has the package, as the download.
+  const nativeById = new Map((inventory?.items ?? []).map((item) => [item.downloadId, item]));
+  const shownPending = pending.filter((item) => nativeById.get(item.jobId)?.awaitingServer !== false);
+  const pendingIds = new Set(pending.map((item) => item.jobId));
+  const shownItems = (inventory?.items ?? []).filter((item) => !(item.awaitingServer && pendingIds.has(item.downloadId)));
+
   // Overview: movies as rows, episodes grouped into one row per show.
   const renderOverview = () => {
-    const groups = groupDownloads(pending, inventory?.items ?? []);
+    const groups = groupDownloads(shownPending, shownItems);
     return (
       <ul className="space-y-3">
         {groups.map((group) => {
@@ -750,8 +758,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
 
   // A show's screen: episodes grouped by season, newest season last.
   const renderSeries = (id: string) => {
-    const showPending = pending.filter((item) => item.seriesId === id && isEpisode(item));
-    const showItems = (inventory?.items ?? []).filter((item) => item.seriesId === id && isEpisode(item));
+    const showPending = shownPending.filter((item) => item.seriesId === id && isEpisode(item));
+    const showItems = shownItems.filter((item) => item.seriesId === id && isEpisode(item));
     if (!showPending.length && !showItems.length) {
       return (
         <div>
