@@ -298,6 +298,16 @@ export function resumePendingDownloads(): void {
   }
 }
 
+/** The server is back (a power cut, a restart): downloads that lost it
+ *  while preparing pick up again on their own. A job the server itself
+ *  failed still waits for Retry. */
+export function resumeDownloadsAfterReconnect(): void {
+  for (const pending of readPending()) {
+    if (pending.state === 'preparing') void resumePendingDownload(pending);
+    else if (pending.state === 'failed' && !pending.jobFailed) void retryPendingDownload(pending);
+  }
+}
+
 /**
  * Retries a failed download. A terminal server job cannot be revived, so it
  * is replaced by a NEW job (contracts.md §3); a polling/network failure

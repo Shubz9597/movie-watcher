@@ -8,7 +8,68 @@ import type { ConnectionState, Platform } from './contracts.ts'
 const PlatformContext = createContext<Platform | null>(null);
 
 export function PlatformProvider({ platform, children }: { platform: Platform; children: ReactNode }) {
+  useAutoReconnect(platform);
   return <PlatformContext.Provider value={platform}>{children}</PlatformContext.Provider>;
+}
+
+// Reconnect on its own: while the server is unreachable (a power cut, the
+// server restarting) it is asked again every few seconds, sooner when the
+// app returns to the foreground or the network comes back. Before this a
+// screen checked only when it opened, so "Reconnecting…" stayed until the
+// viewer changed pages. One loop for the whole app; the coordinator shares
+// concurrent probes.
+const RECONNECT_DELAYS_MS = [3000, 5000, 10000, 15000];
+const INCOMPATIBLE_RECHECK_MS = 60000;
+
+function useAutoReconnect(platform: Platform) {
+  useEffect(() => {
+    const { connection } = platform;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    let down = false;
+    let disposed = false;
+    const clear = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
+    const check = () => {
+      clear();
+      if (!disposed) void connection.check().catch(() => schedule('unreachable'));
+    };
+    const schedule = (status: string) => {
+      clear();
+      down = status === 'unreachable' || status === 'incompatible';
+      if (!down) {
+        attempt = 0;
+        return;
+      }
+      const delay = status === 'incompatible'
+        ? INCOMPATIBLE_RECHECK_MS
+        : RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
+      attempt++;
+      timer = setTimeout(check, delay);
+    };
+    const unsubscribe = connection.subscribe((compat) => schedule(compat.status));
+    const onWake = () => {
+      if (down && (typeof document === 'undefined' || document.visibilityState !== 'hidden')) {
+        attempt = 0;
+        check();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', onWake);
+      document.addEventListener('visibilitychange', onWake);
+    }
+    return () => {
+      disposed = true;
+      clear();
+      unsubscribe();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onWake);
+        document.removeEventListener('visibilitychange', onWake);
+      }
+    };
+  }, [platform]);
 }
 
 export function usePlatform(): Platform {

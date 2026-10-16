@@ -150,6 +150,15 @@ async function start(): Promise<void> {
           void import('./download-queue').then(({ resumePendingDownloads }) => resumePendingDownloads());
           void import('./offline-progress-sync').then(({ startOfflineProgressSync }) => startOfflineProgressSync(composed.platform.connection));
         });
+      // Back after an outage: downloads that lost the server resume.
+      let wasDown = false;
+      composed.platform.connection.subscribe((compat) => {
+        const down = compat.status === 'unreachable';
+        if (wasDown && compat.status === 'ready') {
+          void import('./download-queue').then(({ resumeDownloadsAfterReconnect }) => resumeDownloadsAfterReconnect());
+        }
+        wasDown = down || (wasDown && compat.status === 'checking');
+      });
     }
     root.render(<MobileShell composed={composed} browser={browser} />);
     // Live Activity / notification taps (torwatch://downloads) open the
