@@ -89,7 +89,13 @@ func ffTool(configured, name string) string {
 }
 
 func probeEmbeddedSubtitles(ctx context.Context, videoPath string) ([]embeddedSubtitle, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	return probeEmbeddedSubtitlesWithin(ctx, videoPath, 30*time.Second)
+}
+
+// probeEmbeddedSubtitlesWithin: a torrent read through /stream can take
+// minutes to answer the first time (a big file, few peers yet).
+func probeEmbeddedSubtitlesWithin(ctx context.Context, videoPath string, limit time.Duration) ([]embeddedSubtitle, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, ffTool(config.FFprobePath(), "ffprobe"),
 		"-v", "error", "-select_streams", "s",
@@ -171,7 +177,7 @@ type SubtitleTrack struct {
 // subtitles cannot be turned into text; styled ones (ASS/SSA) report
 // ErrStyledSubtitle. Reads the whole stream (subtitles are interleaved).
 func ExtractSubtitleTrack(ctx context.Context, video string, ordinal int) ([]byte, SubtitleTrack, error) {
-	tracks, err := probeEmbeddedSubtitles(ctx, video)
+	tracks, err := probeEmbeddedSubtitlesWithin(ctx, video, 3*time.Minute)
 	if err != nil {
 		return nil, SubtitleTrack{}, err
 	}
