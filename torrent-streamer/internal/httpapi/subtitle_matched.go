@@ -224,6 +224,8 @@ func (h SubtitleMatchHandlers) measure(entry *matchEntry, source matchSource, la
 	}
 	candidates, err := DownloadSubtitleSource{}.fetchCandidatesOnce(ctx, source.query, 6)
 	if err != nil {
+		log.Printf("[subtitles] no %s subtitles to match for %s#%d (%s S%dE%d): %v", lang, canonicalMagnetHash(source.magnet), source.fileIndex,
+			source.query.SeriesID, source.query.Season, source.query.Episode, err)
 		ttl := matchErrorTTL
 		if errors.Is(err, downloads.ErrSubtitleNotFound) {
 			ttl = matchNoneTTL
@@ -239,6 +241,7 @@ func (h SubtitleMatchHandlers) measure(entry *matchEntry, source matchSource, la
 		log.Printf("[subtitles] matched %s subtitle for %s#%d: %s", lang, canonicalMagnetHash(source.magnet), source.fileIndex, matched.Why)
 		finish("ready", matched, matchReadyTTL)
 	case errors.Is(err, downloads.ErrNoMatch):
+		log.Printf("[subtitles] %d %s subtitles, none follows the audio of %s#%d", len(candidates), lang, canonicalMagnetHash(source.magnet), source.fileIndex)
 		finish("none", downloads.Matched{}, matchNoneTTL)
 	default:
 		log.Printf("[subtitles] matching %s subtitle for %s#%d failed: %v", lang, canonicalMagnetHash(source.magnet), source.fileIndex, err)
