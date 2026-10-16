@@ -50,6 +50,7 @@ function singleName(raw: string, position: number): string {
   const { language, title } = parseTrack(raw);
   if (language && title) {
     if (CAPTIONS.test(title)) return `${language} (CC)`;
+    if (/\bdub(s|bed|titles?)?\b/i.test(title)) return `${language} (Dub)`;
     // A download's saved copy is the language's subtitle; "Dub" stays.
     if (/^downloaded$/i.test(title)) return language;
     return `${language} (${title})`;
@@ -81,9 +82,11 @@ export function languageNameForCode(code: string): string {
   return LANGUAGE_NAMES[code.toLowerCase()] ?? '';
 }
 
-/** A subtitle the server matched to a dual-audio release's dub ("Dub - [English]"). */
+/** A subtitle written for a dual-audio release's dub: the server's matched
+ *  one ("Dub - [English]") or the release's own ("English Dubtitles
+ *  [Hikari&Lucas]", "English (Dub)"). */
 export function isDubTrack(raw: string | undefined): boolean {
-  return raw ? /^dub\b/i.test(parseTrack(raw).title) : false;
+  return raw ? /\bdub(s|bed|titles?)?\b/i.test(parseTrack(raw).title || raw) : false;
 }
 
 const PARTIAL_TRACK = /\b(signs?|songs?|forced|karaoke|commentary)\b/i;

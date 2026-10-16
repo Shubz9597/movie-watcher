@@ -39,3 +39,12 @@ test("the original language's audio is marked, as on streaming services", async 
   assert.deepEqual(audioDisplayNames(["Track 1 - [Japanese]"], "ja"), ["Japanese"], "one track: nothing to tell apart");
   assert.deepEqual(audioDisplayNames(["English", "Japanese"]), ["English", "Japanese"]);
 });
+
+test("a release's own dub subtitles read as dub", async () => {
+  const { isDubTrack, trackDisplayNames: names } = await import("../../src/lib/track-labels.ts");
+  assert.equal(isDubTrack("English Dubtitles [Hikari&Lucas] - [English]"), true);
+  assert.equal(isDubTrack("Dub - [English]"), true);
+  assert.equal(isDubTrack("Stylized Subtitles [NeoGohan&Tokimeku Panic] - [English]"), false);
+  assert.equal(isDubTrack("Track 3 - [English]"), false);
+  assert.deepEqual(names(["English Dubtitles [Hikari&Lucas] - [English]", "Signs&Songs&Titles [Ploffy&iKaos] - [English]"]), ["English (Dub)", "English (Signs&Songs&Titles [Ploffy&iKaos])"]);
+});

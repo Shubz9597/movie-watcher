@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -180,7 +181,7 @@ func ExtractSubtitleTrack(ctx context.Context, video string, ordinal int) ([]byt
 	track := tracks[ordinal]
 	info := SubtitleTrack{Codec: track.Codec, Lang: track.Lang, Title: track.Title}
 	switch {
-	case track.Codec == "ass" || track.Codec == "ssa":
+	case (track.Codec == "ass" || track.Codec == "ssa") && !dialogueOnly(track.Title):
 		return nil, info, ErrStyledSubtitle
 	case !textSubtitleCodecs[track.Codec]:
 		return nil, info, errors.New("picture subtitle track")
@@ -196,3 +197,16 @@ func ExtractSubtitleTrack(ctx context.Context, video string, ordinal int) ([]byt
 	}
 	return out, info, nil
 }
+
+// dialogueOnly reports an ASS track that is plain dialogue ("English
+// Dubtitles", "Full Subtitles"): drawn as plain text it loses nothing. Signs,
+// songs and typeset ("stylized") tracks keep their positioning in the player.
+func dialogueOnly(title string) bool {
+	return !styledTitle.MatchString(title) && plainTitle.MatchString(title)
+}
+
+var (
+	// Whole words: "Subtitles" and "Dubtitles" are not "Titles".
+	styledTitle = regexp.MustCompile(`(?i)\b(signs?|songs?|stylized|styled|karaoke|titles|typeset|forced)\b`)
+	plainTitle  = regexp.MustCompile(`(?i)\b(dub|dubs|dubbed|dubtitles|dialogue|dialog|full|cc|sdh)\b`)
+)

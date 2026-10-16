@@ -39,3 +39,17 @@ func TestExtractSubtitleTrack(t *testing.T) {
 		t.Fatal("no third track")
 	}
 }
+
+func TestDialogueOnlyStyledTracks(t *testing.T) {
+	for title, want := range map[string]bool{
+		"English Dubtitles [Hikari&Lucas]":             true,
+		"Full Subtitles [NeoGohan/Tokimeku Panic]":     true,
+		"Stylized Subtitles [NeoGohan&Tokimeku Panic]": false,
+		"Signs&Songs&Titles [Ploffy&iKaos]":            false,
+		"":                                             false,
+	} {
+		if dialogueOnly(title) != want {
+			t.Errorf("dialogueOnly(%q) = %v", title, !want)
+		}
+	}
+}
