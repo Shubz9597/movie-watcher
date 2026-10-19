@@ -79,6 +79,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // Size the drawable with UIKit, without changing VLC's crop/aspect or
     // seeking. This also updates the displayed picture while paused.
     private var videoScaleMode: String = "fit"
+    // Black bars baked into the video (a 2.39:1 film in a 16:9 frame): the
+    // real picture is this middle part of the frame's height, found from a
+    // few snapshots and kept off the screen.
+    private var letterbox = LetterboxDetector()
     // Track selection last sent to the controls (Int32.min: none sent yet).
     private var reportedAudioTrack: Int32 = Int32.min
     private var reportedSubtitleTrack: Int32 = Int32.min
@@ -490,13 +494,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         call.resolve()
     }
 
-    /// Fit preserves the full picture; Fill crops; Stretch fills both axes.
+    /// "stretch" (the default): the real picture as large as it fits in its
+    /// true shape; "edge": reshaped to the whole screen. Never cropped.
     private static let videoScaleModeKey = "torwatch.videoScaleMode"
 
     /// Every video starts with the viewer's last sizing choice.
     private static func savedVideoScaleMode() -> String {
-        // The picture fills the screen (never cropped); a spread stretches it
-        // edge to edge. Older choices (fit, fill) start at the default.
+        // Older choices (fit, fill) start at the default.
         let saved = UserDefaults.standard.string(forKey: videoScaleModeKey) ?? "stretch"
         return saved == "edge" ? "edge" : "stretch"
     }
@@ -535,7 +539,30 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             aspect *= CGFloat(numerator.doubleValue / denominator.doubleValue)
             break
         }
-        surface.apply(aspect: aspect, mode: videoScaleMode)
+        surface.apply(aspect: aspect, mode: videoScaleMode, activeFraction: letterbox.activeFraction)
+    }
+
+    /// Now and then while the picture plays, a small snapshot is checked for
+    /// black bars above and below the picture; once two agree, the layout
+    /// leaves them off the screen.
+    private func checkLetterbox(_ player: VLCMediaPlayer) {
+        guard player.isPlaying, player.hasVideoOut, letterbox.wantsSample(at: Date()) else { return }
+        letterbox.sampling = true
+        let generation = letterbox.generation
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("torwatch-frame-\(UUID().uuidString).png")
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            // Blocks for up to half a second while VLC hands over the frame.
+            let taken = torwatch_save_snapshot(player, path, 160, 0)
+            let fraction = taken ? LetterboxDetector.activeFraction(ofImageAt: path) : nil
+            try? FileManager.default.removeItem(atPath: path)
+            DispatchQueue.main.async {
+                guard let self = self, self.letterbox.generation == generation else { return }
+                self.letterbox.sampling = false
+                if self.letterbox.record(fraction, at: Date()), let player = self.mediaPlayer {
+                    self.applyVideoScale(player)
+                }
+            }
+        }
     }
 
     /// Orientation handoff from the web layer: locks landscape the moment the
@@ -663,6 +690,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
               player === mediaPlayer else { return }
         applyPendingSeek(player)
         applyVideoScale(player) // video output may appear after the playing/ES callbacks
+        checkLetterbox(player)
         // VLC picks its default subtitle/audio track a moment after Playing,
         // with no callback of its own: report any change so the controls
         // never show "Off" while subtitles are on screen.
@@ -1012,6 +1040,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         localDownloadId = nil
         terminalSent = true
         playId = ""
+        letterbox.reset()
         pendingSeek = nil
         pausedPositionMs = nil
         playbackRequested = false
@@ -1082,14 +1111,12 @@ final class VideoSurfaceView: UIView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func apply(aspect: CGFloat, mode: String) {
-        // Symmetric gutters keep the picture centered and clear of the
-        // Dynamic Island/notch, whichever side it occupies in landscape.
-        // Edge to edge covers the whole screen, the notch side included.
-        let sideInset = mode == "edge" ? 0 : max(safeAreaInsets.left, safeAreaInsets.right)
-        let availableWidth = max(0, bounds.width - sideInset * 2)
-        let layout = torwatch_video_layout(Double(availableWidth), Double(bounds.height),
-            Double(aspect), mode == "fill" ? 1 : mode == "stretch" ? 2 : mode == "edge" ? 3 : 0)
+    func apply(aspect: CGFloat, mode: String, activeFraction: CGFloat) {
+        // The whole screen: a picture as tall as the screen stays clear of the
+        // Dynamic Island anyway (the gaps at its sides are wider), and a
+        // wider one would gain bars above and below to avoid it.
+        let layout = torwatch_video_layout_active(Double(bounds.width), Double(bounds.height),
+            Double(aspect), mode == "edge" ? 3 : 4, Double(activeFraction))
         guard layout.width > 0, layout.height > 0 else { return }
         let viewportFrame = CGRect(x: (bounds.width - CGFloat(layout.viewport_width)) / 2,
             y: 0, width: CGFloat(layout.viewport_width), height: bounds.height)
@@ -1127,4 +1154,85 @@ enum TorWatchPlaybackState {
 
 extension Notification.Name {
     static let torwatchStopLocalPlayback = Notification.Name("torwatch.stop-local-playback")
+}
+
+/// Finds black bars baked into a video from snapshots: the share of the
+/// frame's height that is real picture. A dark scene looks like bars, so the
+/// least-barred of several samples wins and two must be taken first.
+struct LetterboxDetector {
+    private(set) var activeFraction: CGFloat = 1
+    private(set) var generation = 0
+    var sampling = false
+    private var samples: [CGFloat] = []
+    private var attempts = 0
+    private var nextSample: Date?
+    // Seconds of playback between samples: an answer after ~15 s, then
+    // later scenes can only shrink the bars removed.
+    private static let gaps: [TimeInterval] = [4, 11, 30, 60, 120]
+
+    mutating func reset() {
+        self = LetterboxDetector(generation: generation + 1)
+    }
+
+    private init(generation: Int) { self.generation = generation }
+    init() {}
+
+    mutating func wantsSample(at now: Date) -> Bool {
+        guard !sampling, attempts < Self.gaps.count else { return false }
+        guard let next = nextSample else {
+            nextSample = now.addingTimeInterval(Self.gaps[0])
+            return false
+        }
+        return now >= next
+    }
+
+    /// Records one sample (nil: no picture or a black frame); true when the
+    /// layout should change.
+    mutating func record(_ fraction: CGFloat?, at now: Date) -> Bool {
+        attempts += 1
+        if attempts < Self.gaps.count { nextSample = now.addingTimeInterval(Self.gaps[attempts]) }
+        guard let fraction = fraction else { return false }
+        samples.append(fraction)
+        guard samples.count >= 2, let widest = samples.max() else { return false }
+        let next = widest > 0.97 ? 1 : widest
+        guard abs(next - activeFraction) > 0.005 else { return false }
+        activeFraction = next
+        return true
+    }
+
+    /// The middle share of the image's height between matching black bands
+    /// at its top and bottom; nil for a frame too dark to tell.
+    static func activeFraction(ofImageAt path: String) -> CGFloat? {
+        guard let image = UIImage(contentsOfFile: path)?.cgImage else { return nil }
+        let width = image.width, height = image.height
+        guard width >= 16, height >= 16 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return nil }
+        func isBlack(_ row: Int) -> Bool {
+            // Encoded black is a little grey and noisy; a picture row has
+            // something brighter in it.
+            var bright = 0
+            for x in 0..<width {
+                let i = (row * width + x) * 4
+                if max(pixels[i], pixels[i + 1], pixels[i + 2]) > 40 { bright += 1 }
+            }
+            return bright <= width / 50
+        }
+        var top = 0
+        while top < height / 2, isBlack(top) { top += 1 }
+        var bottom = 0
+        while bottom < height / 2, isBlack(height - 1 - bottom) { bottom += 1 }
+        let bar = min(top, bottom) // baked bars are even; a dark sky is not
+        let fraction = CGFloat(height - 2 * bar) / CGFloat(height)
+        if fraction < 0.5 { return nil } // a dark frame, not bars
+        // A row of blur at the bars' edge: keep it rather than trim picture.
+        return bar < 2 ? 1 : min(1, fraction + 2 / CGFloat(height))
+    }
 }
