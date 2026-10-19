@@ -10,7 +10,7 @@
 // VLCKit 3.7.3 at 319ed2c0 on VLC 79128878 with VLCKit's 47 patches, plus
 // ios/App/VLCDependency/patches/0048-*.patch. After installing, use Xcode's
 // Product > Clean Build Folder once.
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -105,7 +105,10 @@ for (const name of patches) cpSync(path.join(dependency, 'patches', name), path.
 
 // VideoLAN's build: VLC (on first run from its own git), its libraries, then
 // MobileVLCKit.xcframework for iPhone and the simulator.
-say('Building MobileVLCKit with the TorWatch patch. The first build takes 1-2 hours; leave the Mac awake.');
+say('Building MobileVLCKit with the TorWatch patch. The first build takes 1-2 hours.');
+// Keep the Mac from sleeping while it builds (the screen may still turn off
+// and lock; a closed MacBook lid still sleeps it).
+spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref();
 const started = Date.now();
 run('./buildMobileVLCKit.sh', ['-f'], { cwd: work, env: { ...process.env, LC_ALL: 'C' } });
 const built = path.join(work, 'build', 'MobileVLCKit.xcframework');
