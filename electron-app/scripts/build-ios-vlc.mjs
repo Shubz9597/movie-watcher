@@ -25,6 +25,17 @@ const stock = path.join(dependency, 'MobileVLCKit.stock.xcframework');
 const marker = 'TORWATCH-PATCHED';
 const work = path.join(homedir(), 'Library', 'Caches', 'TorWatch', 'vlckit-3.7.3');
 
+const VLC_REMOTES = ['https://code.videolan.org/videolan/vlc.git', 'https://github.com/videolan/vlc.git'];
+// Build tools whose own download sites fail: VideoLAN no longer has its
+// copy of yasm 1.3.0 and tortall.net answers intermittently. Checked
+// against VLC's own SHA512SUMS before use.
+const TOOL_MIRRORS = {
+  'yasm-1.3.0.tar.gz': [
+    'https://github.com/yasm/yasm/releases/download/v1.3.0/yasm-1.3.0.tar.gz',
+    'https://ftp.osuosl.org/pub/blfs/conglomeration/yasm/yasm-1.3.0.tar.gz',
+    'http://www.tortall.net/projects/yasm/releases/yasm-1.3.0.tar.gz',
+  ],
+};
 const say = (text) => console.log(`[ios-vlc] ${text}`);
 const fail = (text) => { console.error(`[ios-vlc] ${text}`); process.exit(1); };
 const run = (command, args, options = {}) => {
@@ -103,6 +114,25 @@ for (const name of readdirSync(path.join(work, 'libvlc', 'patches'))) {
 }
 for (const name of patches) cpSync(path.join(dependency, 'patches', name), path.join(work, 'libvlc', 'patches', name));
 
+// VLC's source, as VLCKit's script would fetch it (it then resets it to
+// the tested commit and applies the patches): fetched here so that build
+// tools whose download sites fail can be put in place first.
+const vlc = path.join(work, 'libvlc', 'vlc');
+if (!existsSync(path.join(vlc, '.git'))) {
+  mkdirSync(path.dirname(vlc), { recursive: true });
+  let cloned = false;
+  for (const remote of VLC_REMOTES) {
+    say(`Downloading VLC from ${remote}`);
+    rmSync(vlc, { recursive: true, force: true });
+    if (spawnSync('git', ['clone', remote, '--branch', '3.0.x', '--single-branch', vlc], { stdio: 'inherit' }).status === 0) {
+      cloned = true;
+      break;
+    }
+  }
+  if (!cloned) fail('VLC could not be downloaded. Check the internet connection and retry.');
+}
+await fetchToolMirrors(path.join(vlc, 'extras', 'tools'));
+
 // VideoLAN's build: VLC (on first run from its own git), its libraries, then
 // MobileVLCKit.xcframework for iPhone and the simulator.
 say('Building MobileVLCKit with the TorWatch patch. The first build takes 1-2 hours.');
@@ -134,3 +164,30 @@ writeFileSync(path.join(installed, marker), fingerprint);
 const minutes = Math.round((Date.now() - started) / 60000);
 say(`Installed the patched MobileVLCKit (${minutes} min). In Xcode: Product > Clean Build Folder, then Run.`);
 say('To go back: npm run build:ios-vlc -- --stock');
+
+async function fetchToolMirrors(toolsDir) {
+  let sums = '';
+  try { sums = readFileSync(path.join(toolsDir, 'SHA512SUMS'), 'utf8'); } catch { return; }
+  for (const [file, urls] of Object.entries(TOOL_MIRRORS)) {
+    const expected = sums.split('\n').map((line) => line.trim().split(/\s+/)).find(([, name]) => name === file)?.[0];
+    const target = path.join(toolsDir, file);
+    if (!expected) continue;
+    if (existsSync(target) && createHash('sha512').update(readFileSync(target)).digest('hex') === expected) continue;
+    let placed = false;
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(120000) });
+        if (!response.ok) continue;
+        const data = Buffer.from(await response.arrayBuffer());
+        if (createHash('sha512').update(data).digest('hex') !== expected) continue;
+        writeFileSync(target, data);
+        say(`${file}: from ${new URL(url).host}`);
+        placed = true;
+        break;
+      } catch {
+        // Try the next mirror.
+      }
+    }
+    if (!placed) say(`${file}: no mirror answered; VLC's build will try its own sources.`);
+  }
+}
