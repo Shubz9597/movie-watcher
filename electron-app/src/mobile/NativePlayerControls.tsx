@@ -36,8 +36,13 @@ export type NativePlayerControlsSurface = {
   selectSubtitleTrack(trackId: number | null): void;
   setVideoScale(mode: 'fit' | 'fill' | 'stretch' | 'edge'): void;
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null>;
-  /** Embedded-subtitle text scale (% of default) — engine recreate at position. */
+  /** Embedded-subtitle text scale (% of default) — engine recreate at position
+   *  (instant with TorWatch's patched MobileVLCKit). */
   setEmbeddedSubtitleScale(percent: number): void;
+  /** Patched MobileVLCKit: the player draws text subtitles in the box. */
+  subtitleCapabilities?(): Promise<{ boxedSubtitles?: boolean }>;
+  /** Patched MobileVLCKit: lift subtitles (thousandths of the picture). */
+  setSubtitleLift?(marginPermille: number): void;
   subscribeTime(listener: (update: { currentTime: number; duration: number }) => void): () => void;
   subscribeState(listener: (state: 'playing' | 'paused') => void): () => void;
   subscribeTracks(listener: (update: {
@@ -252,6 +257,17 @@ export default function NativePlayerControls(props: Props) {
   const controlsVisibleRef = useRef(controlsVisible);
   controlsVisibleRef.current = controlsVisible;
   const selectedEmbeddedSubRef = useRef<number | null>(null);
+  // TorWatch's patched MobileVLCKit (npm run build:ios-vlc) draws the
+  // video's own subtitles in the box itself, lifts them above the controls
+  // and resizes them while playing: no text from the server, no overlay.
+  const [vlcBoxed, setVlcBoxed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void player.subtitleCapabilities?.().then((capabilities) => {
+      if (!cancelled) setVlcBoxed(Boolean(capabilities?.boxedSubtitles));
+    });
+    return () => { cancelled = true; };
+  }, [player]);
   selectedEmbeddedSubRef.current = selectedEmbeddedSub;
 
   const progress = time.duration > 0 ? ((scrubTo ?? time.currentTime) / time.duration) * 100 : 0;
@@ -636,7 +652,7 @@ export default function NativePlayerControls(props: Props) {
   // drawing it.
   useEffect(() => {
     const trackId = selectedEmbeddedSub;
-    if (trackId === null || activeSubtitleUrl !== null || ownSubtitle?.trackId === trackId) return;
+    if (vlcBoxed || trackId === null || activeSubtitleUrl !== null || ownSubtitle?.trackId === trackId) return;
     const source = ownTrackSource(rawSubsRef.current, trackId);
     if (!source) return;
     let cancelled = false;
@@ -680,7 +696,16 @@ export default function NativePlayerControls(props: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedEmbeddedSub, activeSubtitleUrl, ownSubtitle, downloadId, magnet, fileIndex, cat, player]);
+  }, [vlcBoxed, selectedEmbeddedSub, activeSubtitleUrl, ownSubtitle, downloadId, magnet, fileIndex, cat, player]);
+
+  // The player's own subtitles follow the app's overlay: just above the seek
+  // bar while the controls (or a sheet) show, at the bottom otherwise.
+  const subtitlesLifted = controlsVisible || activeSheet !== 'none';
+  useEffect(() => {
+    if (!vlcBoxed) return;
+    const height = window.innerHeight || 1;
+    player.setSubtitleLift?.(subtitlesLifted ? Math.round((44 / height) * 1000) : -1);
+  }, [vlcBoxed, subtitlesLifted, player]);
 
   // Ask the server for the dub's script matched to this video; it measures
   // the audio in the background (poll while pending). A download's copy is

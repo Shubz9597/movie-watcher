@@ -49,6 +49,11 @@ int main(int argc, char **argv)
     };
     libvlc_instance_t *vlc = libvlc_new(sizeof args / sizeof *args, args);
     libvlc_media_t *media = libvlc_media_new_path(vlc, argv[1]);
+    if (argc > 4) { /* a subtitle file, as the phone attaches downloads' and online ones */
+        char option[512];
+        snprintf(option, sizeof option, ":input-slave=file://%s", argv[4]);
+        libvlc_media_slaves_add(media, libvlc_media_slave_type_subtitle, 4, strchr(option, '=') + 1);
+    }
     player = libvlc_media_player_new_from_media(media);
     libvlc_media_release(media);
     libvlc_video_set_callbacks(player, lock, unlock, display, NULL);

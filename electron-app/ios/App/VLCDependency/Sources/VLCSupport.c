@@ -1,5 +1,7 @@
 #include "VLCSupport.h"
 #include <math.h>
+#include <dlfcn.h>
+#include <stddef.h>
 
 void torwatch_vlc_link_support(void) {}
 
@@ -26,4 +28,28 @@ TorWatchVideoLayout torwatch_video_layout(double viewport_width,
         layout.scale_y = viewport_height / layout.height;
     }
     return layout;
+}
+
+typedef void (*torwatch_subtitle_layout_fn)(int, int);
+
+static torwatch_subtitle_layout_fn subtitle_layout(void)
+{
+    static int looked_up;
+    static torwatch_subtitle_layout_fn fn;
+    if (!looked_up) {
+        fn = (torwatch_subtitle_layout_fn)dlsym(RTLD_DEFAULT, "libvlc_video_set_subtitle_layout");
+        looked_up = 1;
+    }
+    return fn;
+}
+
+int torwatch_vlc_has_subtitle_layout(void)
+{
+    return subtitle_layout() != NULL;
+}
+
+void torwatch_vlc_set_subtitle_layout(int margin_permille, int text_scale)
+{
+    torwatch_subtitle_layout_fn fn = subtitle_layout();
+    if (fn) fn(margin_permille, text_scale);
 }

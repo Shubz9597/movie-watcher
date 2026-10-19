@@ -18,4 +18,13 @@ typedef struct {
 TorWatchVideoLayout torwatch_video_layout(double viewport_width,
     double viewport_height, double video_aspect, int mode);
 
+// TorWatch's patched MobileVLCKit (npm run build:ios-vlc) draws dialogue
+// subtitles in the box itself and moves/resizes them while playing. Looked
+// up at run time: the official framework lacks it, and then this reports 0
+// and the setter does nothing.
+int torwatch_vlc_has_subtitle_layout(void);
+// margin_permille: lift in thousandths of the picture height (negative:
+// none); text_scale: percent of the default size (0: the player option).
+void torwatch_vlc_set_subtitle_layout(int margin_permille, int text_scale);
+
 #endif

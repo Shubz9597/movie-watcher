@@ -1,9 +1,15 @@
 # TorWatch patches to VLC (inside MobileVLCKit 3.7.3)
 
-`0001-torwatch-subtitle-box-and-live-layout.patch` applies to VLC commit
+`0048-torwatch-subtitle-box-and-live-layout.patch` applies to VLC commit
 `79128878` (the source of MobileVLCKit 3.7.3) **after** VLCKit's own 47
-patches (`libvlc/patches` at VLCKit `319ed2c0`). Not yet wired into the app
-build: the app still uses the stock MobileVLCKit.
+patches (`libvlc/patches` at VLCKit `319ed2c0`), with `git am` as VLCKit's
+build applies them. Build and install on the Mac with:
+
+    npm run build:ios-vlc              # 1-2 h the first time
+    npm run build:ios-vlc -- --stock   # back to VideoLAN's framework
+
+Then Product > Clean Build Folder in Xcode. The app detects the patched
+framework at run time and otherwise behaves as before.
 
 What it does:
 
@@ -20,9 +26,16 @@ What it does:
   for plain text and ASS alike. `-1, 0` restores the configured
   `sub-margin` / `sub-text-scale`.
 
-Plain-text subtitles (SRT/VTT) need no patch for the box: VLC already fills
-one box behind the whole block when `--freetype-background-opacity` is set
-(153 = 60%) with `--freetype-outline-thickness=0`.
+- **Plain-text subtitles (SRT/VTT)** get one box behind the whole block from
+  VLC's own options (`--freetype-background-opacity=153`,
+  `--freetype-outline-thickness=0`); the patch keeps that box around the
+  text even when a subtitle's region is wider (WebVTT regions span the
+  picture: on the iPhone the background once came out as a full-width band).
+
+The app looks the function up at run time (`torwatch_vlc_has_subtitle_layout`
+in VLCSupport.c): with it, VLC draws the video's own subtitles in the box,
+lifts them above the controls and resizes them at once; without it (the
+official framework) the app draws the box as before.
 
 ## Linux check
 

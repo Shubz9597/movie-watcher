@@ -1,3 +1,32 @@
+From 93cec6906f0f4249e27c17bac02450c0545c4e9d Mon Sep 17 00:00:00 2001
+From: TorWatch <torwatch@localhost>
+Date: Tue, 20 Oct 2026 04:26:30 +0530
+Subject: [PATCH] TorWatch: subtitle box for dialogue ASS tracks and live
+ subtitle layout
+
+Dialogue-only ASS tracks (Dubtitles, Full Subtitles, SDH) are drawn like
+plain-text subtitles: the player font in one translucent box (libass
+BorderStyle 4 via selective style override). Signs and styled tracks keep
+their styling.
+
+libvlc_video_set_subtitle_layout() moves subtitles up by a share of the
+picture height and changes the dialogue text size while playing, for
+plain text and ASS alike.
+
+The text background is one box around the text block, whatever the size
+of the subtitle region (WebVTT regions span the picture's width).
+---
+ include/vlc/libvlc_media_player.h         | 12 ++++
+ include/vlc_spu.h                         | 13 ++++
+ lib/libvlc.sym                            |  1 +
+ lib/video.c                               |  6 ++
+ modules/codec/libass.c                    | 86 +++++++++++++++++++++++
+ modules/codec/substext.h                  | 25 ++++++-
+ modules/text_renderer/freetype/freetype.c | 26 +++++--
+ src/libvlccore.sym                        |  2 +
+ src/video_output/vout_subpictures.c       | 30 +++++++-
+ 9 files changed, 193 insertions(+), 8 deletions(-)
+
 diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player.h
 index d499b3d..9d1868a 100644
 --- a/include/vlc/libvlc_media_player.h
@@ -278,7 +307,7 @@ index 3835a09..97a08e3 100644
      sys->p_default_style = text_style_Create( STYLE_NO_DEFAULTS );
      if(unlikely(!sys->p_default_style))
 diff --git a/modules/text_renderer/freetype/freetype.c b/modules/text_renderer/freetype/freetype.c
-index 5cfe6d7..0c16e72 100644
+index 5cfe6d7..4975a50 100644
 --- a/modules/text_renderer/freetype/freetype.c
 +++ b/modules/text_renderer/freetype/freetype.c
 @@ -38,7 +38,8 @@
@@ -291,7 +320,32 @@ index 5cfe6d7..0c16e72 100644
  #include <vlc_subpicture.h>
  #include <vlc_text_style.h>                                   /* text_style_t*/
  #include <vlc_charset.h>
-@@ -1195,7 +1196,10 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
+@@ -894,9 +895,21 @@ static inline int RenderAXYZ( filter_t *p_filter,
+         /* Render the background just under the text */
+         FillPicture( p_picture, STYLE_ALPHA_TRANSPARENT, 0x00, 0x00, 0x00 );
+     } else {
+-        /* Render background under entire subpicture block */
+-        ExtractComponents( p_style->i_background_color, &i_x, &i_y, &i_z );
+-        FillPicture( p_picture, p_style->i_background_alpha, i_x, i_y, i_z );
++        /* TorWatch: one box around the text block, not under the entire
++         * subpicture block: WebVTT regions span the picture's width, which
++         * drew the background as a band across the screen. */
++        FillPicture( p_picture, STYLE_ALPHA_TRANSPARENT, 0x00, 0x00, 0x00 );
++        if( p_style->i_background_alpha != STYLE_ALPHA_TRANSPARENT )
++        {
++            ExtractComponents( p_style->i_background_color, &i_x, &i_y, &i_z );
++            const int x0 = __MAX(0, p_paddedtextbbox->xMin - p_regionbbox->xMin);
++            const int x1 = __MIN((int)fmt.i_visible_width, p_paddedtextbbox->xMax - p_regionbbox->xMin);
++            const int y0 = __MAX(0, p_regionbbox->yMax - p_paddedtextbbox->yMax);
++            const int y1 = __MIN((int)fmt.i_visible_height, p_regionbbox->yMax - p_paddedtextbbox->yMin);
++            for( int dy = y0; dy < y1; dy++ )
++                for( int dx = x0; dx < x1; dx++ )
++                    BlendPixel( p_picture, dx, dy, p_style->i_background_alpha, i_x, i_y, i_z, 0xff );
++        }
+     }
+ 
+     /* Render text's background (from decoder) if any */
+@@ -1195,7 +1208,10 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
  
      filter_sys_t *p_sys = p_filter->p_sys;
      bool b_grid = p_region_in->b_gridmode;
@@ -371,3 +425,6 @@ index 68dde84..7c8c36b 100644
  void spu_ChangeMargin(spu_t *spu, int margin)
  {
      spu_private_t *sys = spu->p;
+-- 
+2.55.0
+

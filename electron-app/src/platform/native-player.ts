@@ -43,6 +43,10 @@ export interface TorWatchNativePlugin {
   seekBy?(options: { deltaSeconds: number; playId: string }): Promise<void>;
   togglePlayback?(options: { playId: string }): Promise<void>;
   setSubtitleScale?(options: { percent: number; playId: string }): Promise<void>;
+  // TorWatch's patched MobileVLCKit (npm run build:ios-vlc): VLC draws every
+  // text subtitle in the box and moves/resizes it while playing.
+  subtitleCapabilities?(): Promise<{ boxedSubtitles?: boolean }>;
+  setSubtitleLayout?(options: { marginPermille: number; playId: string }): Promise<void>;
   selectAudioTrack?(options: { trackId: number; playId: string }): Promise<void>;
   selectSubtitleTrack?(options: { trackId: number | null; playId: string }): Promise<void>;
   setSubtitleDelay?(options: { seconds: number; playId: string }): Promise<void>;
@@ -203,6 +207,13 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
     async setSubtitleScale(percent: number, playId: string) {
       if (currentPlayId !== playId) return;
       await plugin.setSubtitleScale?.({ percent, playId });
+    },
+    async subtitleCapabilities() {
+      return (await plugin.subtitleCapabilities?.()) ?? {};
+    },
+    async setSubtitleLayout(marginPermille: number, playId: string) {
+      if (currentPlayId !== playId) return;
+      await plugin.setSubtitleLayout?.({ marginPermille, playId });
     },
     async seek(positionSec: number, playId: string) {
       if (currentPlayId !== playId) return;
@@ -370,6 +381,14 @@ export class NativePlayer implements PlayerPort {
 
   setEmbeddedSubtitleScale(percent: number): void {
     this.controller.setEmbeddedSubtitleScale(percent);
+  }
+
+  subtitleCapabilities(): Promise<{ boxedSubtitles?: boolean }> {
+    return this.controller.subtitleCapabilities();
+  }
+
+  setSubtitleLift(marginPermille: number): void {
+    this.controller.setSubtitleLift(marginPermille);
   }
 
   setPlaybackOrientation(landscape: boolean): void {

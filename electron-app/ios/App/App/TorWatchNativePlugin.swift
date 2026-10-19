@@ -52,6 +52,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         CAPPluginMethod(name: "setAudioDelay", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVideoScale", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSubtitleScale", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "subtitleCapabilities", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSubtitleLayout", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPlaybackOrientation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "loadSubtitle", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dismiss", returnType: CAPPluginReturnPromise),
@@ -88,6 +90,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // can be recreated in place when the user pinch-resizes embedded subs.
     private var currentMediaURL: URL?
     private var currentSubTextScale: Int = 55
+    // TorWatch's patched MobileVLCKit (npm run build:ios-vlc): VLC draws
+    // text subtitles in the box itself and moves/resizes them while playing
+    // (the official framework lacks it: the app draws the box instead).
+    private static let boxedSubtitles = torwatch_vlc_has_subtitle_layout() != 0
+    private var subtitleLiftPermille: Int32 = -1
     private var pendingSeek: Double?
     private var backgroundObserver: NSObjectProtocol?
     private var activeObserver: NSObjectProtocol?
@@ -301,15 +308,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--file-caching=1000",
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
-            // Text subtitles in the app's monospaced font. VLC draws a
-            // background as a band across the whole picture, not a box around
-            // the text, so its subtitles get a thin outline and soft shadow
-            // instead (the app-drawn ones keep the box).
             "--freetype-font=Menlo",
             "--freetype-color=16777215",
-            "--freetype-background-opacity=0",
-            "--freetype-outline-thickness=2",
-        ])
+        ] + TorWatchNativePlugin.subtitleLookOptions)
+        // A new player starts at its options: no lift, the configured size.
+        subtitleLiftPermille = -1
+        torwatch_vlc_set_subtitle_layout(-1, 0)
         player.delegate = self
         reportedAudioTrack = Int32.min // a new player reports its tracks afresh
         reportedSubtitleTrack = Int32.min
@@ -555,6 +559,31 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// recreating the engine at the current position — libvlc has no runtime
     /// text-scale API, so this carries a ~1s hiccup and only fires when
     /// embedded tracks are actually active (the web overlay resizes live).
+    /// Text subtitles in the app's monospaced font. The patched framework
+    /// draws one 60% black box around each subtitle (as the app does); the
+    /// official one would draw its background as a band across the whole
+    /// picture, so there its subtitles get a thin outline instead.
+    private static var subtitleLookOptions: [String] {
+        boxedSubtitles
+            ? ["--freetype-background-opacity=153", "--freetype-background-color=0",
+               "--freetype-outline-thickness=0", "--freetype-shadow-opacity=0"]
+            : ["--freetype-background-opacity=0", "--freetype-outline-thickness=2"]
+    }
+
+    @objc func subtitleCapabilities(_ call: CAPPluginCall) {
+        call.resolve(["boxedSubtitles": TorWatchNativePlugin.boxedSubtitles])
+    }
+
+    /// Lifts the player's subtitles by a share (thousandths) of the picture
+    /// height, above the controls while they show; negative puts them back.
+    @objc func setSubtitleLayout(_ call: CAPPluginCall) {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.setSubtitleLayout(call) }; return }
+        guard TorWatchNativePlugin.boxedSubtitles, call.getString("playId") == playId else { call.resolve(); return }
+        subtitleLiftPermille = Int32(max(-1, min(500, Int(call.getDouble("marginPermille") ?? -1))))
+        torwatch_vlc_set_subtitle_layout(subtitleLiftPermille, Int32(currentSubTextScale))
+        call.resolve()
+    }
+
     @objc func setSubtitleScale(_ call: CAPPluginCall) {
         if !Thread.isMainThread { DispatchQueue.main.async { self.setSubtitleScale(call) }; return }
         let percent = max(25, min(200, Int(call.getDouble("percent") ?? 75)))
@@ -568,6 +597,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             return
         }
         currentSubTextScale = percent
+        if TorWatchNativePlugin.boxedSubtitles {
+            // The patched framework resizes the subtitle on screen at once.
+            torwatch_vlc_set_subtitle_layout(subtitleLiftPermille, Int32(percent))
+            call.resolve()
+            return
+        }
         let positionMs = mediaPlayer?.time.intValue ?? 0
         let currentLocalDownload = localDownloadId
         let currentLocalLang = mediaPlayer.map { currentLocalSubtitleLang($0) } ?? ""

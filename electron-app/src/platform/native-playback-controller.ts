@@ -87,6 +87,9 @@ export type NativePlaybackBridge = {
   // with intentional center-crop; Stretch fills both axes independently.
   setVideoScale?(mode: 'fit' | 'fill' | 'stretch' | 'edge', playId: string): Promise<void>;
   setSubtitleScale?(percent: number, playId: string): Promise<void>;
+  // Patched MobileVLCKit only (see native-player.ts).
+  subtitleCapabilities?(): Promise<{ boxedSubtitles?: boolean }>;
+  setSubtitleLayout?(marginPermille: number, playId: string): Promise<void>;
   // Orientation handoff: locks landscape the moment the user enters playback
   // (before metadata/session prepare) and restores app orientation on close.
   // OS-denied requests resolve harmlessly; playback continues unrotated.
@@ -285,6 +288,23 @@ export class NativePlaybackController {
   setEmbeddedSubtitleScale(percent: number): void {
     if (this.currentPlayId === '') return;
     this.bridge.setSubtitleScale?.(percent, this.currentPlayId).catch(() => {});
+  }
+
+  /** Whether the player draws text subtitles in the box itself (TorWatch's
+   *  patched MobileVLCKit). */
+  async subtitleCapabilities(): Promise<{ boxedSubtitles?: boolean }> {
+    try {
+      return (await this.bridge.subtitleCapabilities?.()) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Lifts the player's subtitles by a share (thousandths) of the picture
+   *  height, as above on-screen controls; negative puts them back. */
+  setSubtitleLift(marginPermille: number): void {
+    if (this.currentPlayId === '') return;
+    this.bridge.setSubtitleLayout?.(marginPermille, this.currentPlayId).catch(() => {});
   }
 
   /** Landscape lock for the playback surface (page-level, not play-scoped). */
