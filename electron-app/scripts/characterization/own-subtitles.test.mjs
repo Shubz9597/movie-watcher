@@ -41,6 +41,23 @@ test("the server is asked again while it reads the video", async () => {
   assert.match(asked[0], /fileIndex=59/);
 });
 
+// A Kai download whose server copy was gone: the server's first read of the
+// torrent ran out of time, and the phone stopped asking, leaving VLC's style
+// until a seek asked again.
+test("a failed read or a dropped connection is asked again", async () => {
+  const answers = [{ status: "none", reason: "unavailable" }, "throw", { status: "pending" }, { status: "ready", url: "/subtitles/embedded/file?key=k" }];
+  const waits = [];
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/file?")) return { ok: true, text: async () => "WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n" };
+    const answer = answers.shift();
+    if (answer === "throw") throw new Error("offline");
+    return { ok: true, json: async () => answer };
+  };
+  const text = await fetchOwnTrack("http://server", { downloadId: "d", clientId: "c" }, 0, () => false, async (ms) => { waits.push(ms); });
+  assert.match(text, /Hi/);
+  assert.deepEqual(waits, [30000, 30000, 6000]);
+});
+
 test("styled tracks are left to the player", async () => {
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: "none", reason: "styled" }) });
   assert.equal(await fetchOwnTrack("http://server", { downloadId: "d", clientId: "c" }, 1, () => false, async () => {}), null);

@@ -66,7 +66,7 @@ export type OwnTrackQuery =
 
 /** The video's ordinal-th subtitle stream as WebVTT from the server, asked
  *  again while it is still reading the video; null when the server cannot
- *  give it (styled or picture subtitles, unreachable). */
+ *  give it (styled or picture subtitles). */
 export async function fetchOwnTrack(
   origin: string,
   query: OwnTrackQuery,
@@ -83,17 +83,37 @@ export async function fetchOwnTrack(
     params.set('fileIndex', String(query.fileIndex));
     params.set('cat', query.cat);
   }
-  // The server reads the whole video the first time: up to ~8 minutes.
-  for (let attempt = 0; attempt < 90 && !cancelled(); attempt++) {
-    const res = await fetch(`${origin}/subtitles/embedded?${params.toString()}`, { signal: AbortSignal.timeout(15000) });
-    const data = res.ok ? await res.json() as { status?: string; url?: string } : {};
+  // The server reads the whole video the first time; for a download whose
+  // server copy is gone that means the torrent again, which can outlast one
+  // read (it answers "unavailable") or a dropped connection. Keep asking
+  // for the whole episode rather than leave the player's style on screen
+  // until something else asks again.
+  for (let attempt = 0; attempt < 240 && !cancelled(); attempt++) {
+    let data: { status?: string; reason?: string; url?: string } = {};
+    try {
+      const res = await fetch(`${origin}/subtitles/embedded?${params.toString()}`, { signal: AbortSignal.timeout(15000) });
+      data = res.ok ? await res.json() as typeof data : {};
+    } catch {
+      data = {};
+    }
     if (data.status === 'pending') {
       await wait(6000);
       continue;
     }
-    if (data.status !== 'ready' || !data.url) return null;
-    const file = await fetch(`${origin}${data.url}`, { signal: AbortSignal.timeout(15000) });
-    return file.ok ? file.text() : null;
+    if (data.status === 'ready' && data.url) {
+      try {
+        const file = await fetch(`${origin}${data.url}`, { signal: AbortSignal.timeout(15000) });
+        if (file.ok) return file.text();
+      } catch {
+        // Ask again below.
+      }
+      await wait(6000);
+      continue;
+    }
+    // Styled or picture subtitles, or a video the server does not know:
+    // the player keeps drawing them.
+    if (data.status === 'none' && data.reason !== 'unavailable') return null;
+    await wait(30000); // unreachable, or the read failed: try again shortly
   }
   return null;
 }
