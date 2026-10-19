@@ -24,7 +24,7 @@ For a Tailscale-only server it offers to install Tailscale (winget) and
 waits while you sign in. It writes the same server file as the app's
 "Save and start TorWatch" (`%APPDATA%\TorWatch\desktop-server.json`), so
 TorWatch opens ready to use. Run from a source checkout, pass the built
-installer with `-Installer "..\..\electron-app\release\TorWatch Setup 2.0.1.exe"`.
+installer with `-Installer "..\..\electron-app\release\TorWatch Setup 2.0.2.exe"`.
 
 ## Start
 

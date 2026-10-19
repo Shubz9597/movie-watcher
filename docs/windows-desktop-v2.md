@@ -13,7 +13,7 @@ the complete Windows Docker Compose commands and connection troubleshooting.
 1. Build from the repository root: `cd electron-app`, then `npm ci` if needed,
    then `npm run build`. The Windows native binding and MPV DLL must be present
    (see `electron-app/README.md` for native build prerequisites).
-2. Run `electron-app/release/TorWatch Setup 2.0.1.exe`.
+2. Run `electron-app/release/TorWatch Setup 2.0.2.exe`.
 3. Choose **Server on this PC** for a separately started Docker stack, or
    **Homeserver** for another machine. Enter the base gateway URL, including
    its port if needed. A local server defaults to `http://127.0.0.1:8080`.
@@ -44,12 +44,34 @@ development continues to support `npm run dev` and Vite hot reload.
   startup behavior remains available. Settings offers the new connection flow
   and a link to its existing built-in setup. Switching to V2 stops only the
   former app-owned runtime during the relaunch.
-- Desktop packaging sets Windows release metadata to `2.0.1` independently of
+- Desktop packaging sets Windows release metadata to `2.0.2` independently of
   package.json's mobile version. The Capacitor builds, native phone code, mobile
   entries, shared connection logic and server implementation are unchanged.
 - iPhone native offline downloads are outside this desktop connection change.
 
 ## Verification
+
+### Version 2.0.2, 20 October 2026
+
+Built from repository revision `3a330b8`, including the newer desktop player,
+subtitle handling and one-step Windows setup. Output files are
+`electron-app/release/TorWatch Setup 2.0.2.exe` and
+`electron-app/release/TorWatch Windows 2.0.2.zip`.
+
+The desktop release defaults and local server image tag are now 2.0.2. Starting
+the local server with saved settings updates its image/version selection while
+preserving credentials, the data path, project and ports. A fixture checked that
+upgrade using real Compose configuration validation with startup/network calls
+mocked; no installed services were changed.
+
+Verification passed: 263 regression tests, 15 desktop tests, TypeScript,
+backend/renderer builds, packaged import/version checks, and packaged first-run
+setup, invalid-edit preservation, relaunch and both server modes against a test
+HTTP server. All 293 bundle checksums matched and both included PowerShell setup
+scripts parsed. The bundle includes 284 backend source files and no runtime
+configuration. Live homeserver playback and a fresh Docker deployment were not
+tested for this release. This build did not change phone sources or the mobile
+package version, and did not install over the existing desktop app.
 
 Run `npm run test:desktop-connection`, `npm test`, `npx tsc --noEmit`, and the
 desktop connection smoke harness after building the renderer. The desktop

@@ -11,7 +11,7 @@ param(
     [switch]$Rebuild
 )
 $ErrorActionPreference = 'Stop'
-$serverVersion = '2.0.1'
+$serverVersion = '2.0.2'
 $image = "torwatch-server:windows-$serverVersion"
 $configurationPath = [IO.Path]::GetFullPath($ConfigurationDirectory)
 $envFile = Join-Path $configurationPath '.env'
@@ -85,6 +85,14 @@ if ($Port -lt 1024 -or $Port -gt 65535) { throw 'The saved gateway port is inval
 $composeArguments = @('compose', '--project-name', $ProjectName, '--env-file', $envFile, '-f', $compose)
 if ($Action -eq 'Status') { Invoke-Docker ($composeArguments + @('ps')); exit 0 }
 if ($Action -eq 'Stop') { Invoke-Docker ($composeArguments + @('stop')); Write-Host 'Local TorWatch server stopped. Data is preserved.'; exit 0 }
+
+# Keep an existing installation on this release's image, preserving its keys,
+# data path, ports and project. Otherwise Compose keeps using the old tag.
+$releaseEnvironment = @([IO.File]::ReadAllLines($envFile) | Where-Object { $_ -notmatch '^TORWATCH_(IMAGE|VERSION)=' })
+$releaseEnvironment += @("TORWATCH_IMAGE=$image", "TORWATCH_VERSION=$serverVersion")
+[IO.File]::WriteAllLines($envFile, $releaseEnvironment, (New-Object Text.UTF8Encoding($false)))
+$saved.version = $serverVersion
+$saved | ConvertTo-Json | Set-Content -LiteralPath $settingsFile -Encoding UTF8
 
 Invoke-Docker ($composeArguments + @('config', '--quiet'))
 $localImageId = & docker image ls --quiet --filter "reference=$image"

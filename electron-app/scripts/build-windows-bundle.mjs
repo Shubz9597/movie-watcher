@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 const project = fileURLToPath(new URL('../', import.meta.url));
 const repository = path.resolve(project, '..');
 const output = path.join(project, 'release');
-const version = process.env.TORWATCH_DESKTOP_VERSION || '2.0.1';
+const version = process.env.TORWATCH_DESKTOP_VERSION || '2.0.2';
 const installerName = `TorWatch Setup ${version}.exe`;
 const installer = path.join(output, installerName);
 if (!fs.existsSync(installer)) throw new Error(`Build the Windows installer first: ${installerName}`);

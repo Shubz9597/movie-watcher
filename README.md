@@ -4,14 +4,14 @@ Tor Watch is a multi platform application for discovering and watching movies, s
 
 ## Windows Version 2 desktop
 
-Install `electron-app/release/TorWatch Setup 2.0.1.exe`. On first launch it asks
+Install `electron-app/release/TorWatch Setup 2.0.2.exe`. On first launch it asks
 which server to use: **Connect to an existing server** (a TorWatch server on
 another computer; enter the address your other devices use) or **Set up a new
 server on this computer** (Docker Desktop). Test the connection, then select
 **Save and start TorWatch**. Docker and provider keys stay on the server.
 Devices on one server share its library and watch progress.
 
-For a server hosted on Windows, extract `TorWatch Windows 2.0.1.zip`, follow
+For a server hosted on Windows, extract `TorWatch Windows 2.0.2.zip`, follow
 `LocalServer/README.md`, and run its `Start-TorWatchServer.ps1`. It builds and
 starts the complete Docker stack with its own database. Connect to its gateway
 (normally `http://127.0.0.1:8080`). Closing
@@ -42,7 +42,7 @@ End users do not need Node.js, Go, PostgreSQL, Prowlarr, or MPV installed separa
 
 ### 2. Install and open torWatch
 
-Run the current `TorWatch Setup 2.0.1.exe`, finish the Windows installation, and open the TorWatch desktop shortcut. Windows SmartScreen may warn because the development installer is unsigned.
+Run the current `TorWatch Setup 2.0.2.exe`, finish the Windows installation, and open the TorWatch desktop shortcut. Windows SmartScreen may warn because the development installer is unsigned.
 
 ### 3. Enter the setup details
 

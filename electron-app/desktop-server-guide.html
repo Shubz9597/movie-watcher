@@ -11,7 +11,7 @@
 <p>Every device that uses the same server shares its library and watch progress: an episode finished on one device shows as watched on the others, and Continue Watching resumes where any of them stopped.</p>
 <h2>Set up a new server on this computer</h2>
 <p>Use this to run your own server here, for example on a computer without access to another TorWatch server. It needs <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> with Linux containers.</p>
-<p>Extract <strong>TorWatch Windows 2.0.1.zip</strong>, open PowerShell in its <code>LocalServer</code> folder, and run:</p>
+<p>Extract <strong>TorWatch Windows 2.0.2.zip</strong>, open PowerShell in its <code>LocalServer</code> folder, and run:</p>
 <pre><code>powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-TorWatchServer.ps1</code></pre>
 <p>The starter asks for your own provider keys (a TMDb API key; OpenSubtitles is optional), creates a database password and builds the included server. It starts the database, the TorWatch backend, Prowlarr, FlareSolverr and the gateway. Wait for <code>Server ready: http://127.0.0.1:8080</code>, then choose <strong>Set up a new server on this computer</strong> in TorWatch, enter that address, test and save.</p>
 <p>This server keeps its own library and watch progress. The private settings the starter creates stay in your local application data folder; never share them. See <code>LocalServer/README.md</code> for status and stop commands and custom ports.</p>

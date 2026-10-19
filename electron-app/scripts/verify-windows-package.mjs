@@ -18,7 +18,7 @@ export function verifyWindowsPackage(unpackedDirectory) {
   }
   assert.ok(fs.existsSync(path.join(unpackedDirectory, 'resources', 'desktop-server-guide.html')));
   const metadata = JSON.parse(extractFile(archive, 'package.json').toString('utf8'));
-  assert.equal(metadata.version, process.env.TORWATCH_DESKTOP_VERSION || '2.0.1');
+  assert.equal(metadata.version, process.env.TORWATCH_DESKTOP_VERSION || '2.0.2');
   console.log('WINDOWS_PACKAGE_IMPORTS=PASS (main-process imports, guide and desktop version)');
 }
 

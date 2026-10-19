@@ -9,7 +9,7 @@ import { verifyWindowsPackage } from "./verify-windows-package.mjs";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.resolve(scriptDir, "..");
 // Desktop release metadata is independent of the Capacitor/mobile package.
-const version = process.env.TORWATCH_DESKTOP_VERSION || "2.0.1";
+const version = process.env.TORWATCH_DESKTOP_VERSION || "2.0.2";
 const builderCli = path.join(projectDir, "node_modules", "electron-builder", "out", "cli", "cli.js");
 const outputDir = process.env.TORWATCH_PACKAGE_DIR
   ? path.resolve(projectDir, process.env.TORWATCH_PACKAGE_DIR)

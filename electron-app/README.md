@@ -11,8 +11,8 @@ and save. Provider credentials stay on the selected server. See
 [the Windows setup guide](desktop-server-guide.html) and
 [implementation notes](../docs/windows-desktop-v2.md).
 
-Build with `npm run build`; install `release/TorWatch Setup 2.0.1.exe`.
-The resulting `release/TorWatch Windows 2.0.1.zip` also includes a standalone
+Build with `npm run build`; install `release/TorWatch Setup 2.0.2.exe`.
+The resulting `release/TorWatch Windows 2.0.2.zip` also includes a standalone
 local Docker starter and backend source, without personal settings or keys.
 Devices using one server share its library and watch progress.
 The Windows release version is independent of the Capacitor/mobile package.
@@ -112,7 +112,7 @@ future native wrapper and a real device/emulator.
 npm run build
 ```
 
-This creates `release/TorWatch Setup 2.0.1.exe` and the shareable Windows ZIP.
+This creates `release/TorWatch Setup 2.0.2.exe` and the shareable Windows ZIP.
 
 ## Requirements
 
