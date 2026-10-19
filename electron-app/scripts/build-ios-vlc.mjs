@@ -53,9 +53,23 @@ if (process.argv.includes('--stock')) {
   process.exit(0);
 }
 
-// Prerequisites.
-if (!output('xcodebuild', ['-version'])) fail('Install Xcode (and open it once to finish its setup).');
-if (!output('xcode-select', ['-p'])) fail('Run: xcode-select --install');
+// Prerequisites. xcodebuild fails with Xcode installed when the command
+// line tools point at Apple's separate Command Line Tools, or before the
+// license is accepted: say which, with the command that fixes it.
+const xcode = spawnSync('xcodebuild', ['-version'], { encoding: 'utf8' });
+if (xcode.status !== 0) {
+  const reason = `${xcode.stderr || ''}${xcode.stdout || ''}`.trim();
+  const developerDir = output('xcode-select', ['-p']);
+  if (/command line tools instance|requires Xcode/i.test(reason) || developerDir.includes('CommandLineTools')) {
+    fail(`The command line tools point at ${developerDir || 'Command Line Tools'}, not Xcode. Run:\n` +
+      '  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer\n' +
+      'then npm run build:ios-vlc again.');
+  }
+  if (/license/i.test(reason)) fail('Accept the Xcode license: sudo xcodebuild -license accept');
+  fail(`xcodebuild does not run${reason ? `:\n${reason}` : ''}\nInstall Xcode from the App Store, open it once, then run:\n` +
+    '  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer');
+}
+say(xcode.stdout.split('\n')[0]);
 if (!output('git', ['--version'])) fail('Install git (Xcode command line tools).');
 if (!output('python3', ['--version'])) fail('Install python3 (Xcode command line tools).');
 
