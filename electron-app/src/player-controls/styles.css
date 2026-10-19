@@ -341,7 +341,7 @@ html.is-fullscreen .window-drag-surface { display: none; }
   backdrop-filter: blur(18px);
 }
 
-.subtitle-menu { width: min(620px, calc(100vw - 40px)); }
+.subtitle-menu { width: min(680px, calc(100vw - 40px)); }
 .health-menu,
 .sync-menu { padding: 16px; }
 
@@ -393,7 +393,7 @@ html.is-fullscreen .window-drag-surface { display: none; }
 
 .subtitle-browser-body {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(0, 1fr);
   border-top: 1px solid rgba(255, 255, 255, .1);
 }
 
@@ -537,6 +537,64 @@ html.is-fullscreen .window-drag-surface { display: none; }
 
 .subtitle-option.active {
   border-color: rgba(255, 122, 23, .48);
+}
+
+.subtitle-language.active {
+  border-color: rgba(255, 122, 23, .48);
+}
+
+.subtitle-languages {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.subtitle-column-title {
+  margin-bottom: 2px;
+  color: rgba(255, 255, 255, .62);
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.subtitle-results > .subtitle-column-title { margin-bottom: 10px; }
+
+.subtitle-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, .7);
+  font-size: .86rem;
+}
+
+.subtitle-size button {
+  min-width: 44px;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .06);
+  color: var(--white);
+  cursor: pointer;
+}
+
+.subtitle-size button:hover { border-color: rgba(255, 255, 255, .34); }
+
+.subtitle-online-toggle {
+  margin-top: 12px;
+  border: 0;
+  padding: 6px 0;
+  background: transparent;
+  color: var(--accent-soft);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.subtitle-online {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+  padding-top: 12px;
 }
 
 .subtitle-option-copy,
@@ -886,7 +944,9 @@ html.is-fullscreen .window-drag-surface { display: none; }
 .segment-skip {
   position: absolute;
   right: max(var(--player-edge-inline), env(safe-area-inset-right, 0px));
-  bottom: calc(max(var(--player-edge-bottom), env(safe-area-inset-bottom, 0px)) + 104px);
+  /* Just above the seek bar while the controls show, at the bottom edge
+     otherwise (--skip-lift is set from the controls' measured height). */
+  bottom: calc(max(var(--player-edge-bottom), env(safe-area-inset-bottom, 0px)) + var(--skip-lift, 0px));
   z-index: 30;
   min-width: 132px;
   height: 44px;
@@ -897,7 +957,7 @@ html.is-fullscreen .window-drag-surface { display: none; }
   color: var(--canvas);
   opacity: 0;
   transform: translateY(8px);
-  transition: background-color 160ms ease, opacity 180ms ease, transform 180ms ease;
+  transition: background-color 160ms ease, opacity 180ms ease, transform 180ms ease, bottom 220ms ease;
   pointer-events: none;
   cursor: pointer;
   font-weight: 500;
@@ -928,10 +988,6 @@ html.is-fullscreen .window-drag-surface { display: none; }
 }
 
 @media (max-width: 760px) {
-  .segment-skip {
-    bottom: calc(max(var(--player-edge-bottom), env(safe-area-inset-bottom, 0px)) + 148px);
-  }
-
   .top-bar {
     gap: 12px;
   }

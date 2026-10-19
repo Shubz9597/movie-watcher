@@ -24,15 +24,18 @@ type Basic = {
   sourceKind?: 'movie' | 'tv' | 'anime';
   sourceLabel?: string;
   malId?: number | null;
+  mediaKind?: 'movie' | 'tv';
 };
-type SearchResults = Record<SearchKind, Basic[]>;
 type SuggestedTitle = { kind: SearchKind; item: Basic };
+// `ordered`: every result in the server's order (Stremio's first, each show
+// once), shown under All; the kind lists keep that order.
+type SearchResults = Record<SearchKind, Basic[]> & { ordered: SuggestedTitle[] };
 type RecentSearch = SuggestedTitle & { searchedAt: number };
 
-const EMPTY_RESULTS: SearchResults = { movie: [], tv: [], anime: [] };
+const EMPTY_RESULTS: SearchResults = { movie: [], tv: [], anime: [], ordered: [] };
 const MIN_CHARS = 2;
 const DEBOUNCE_MS = 300;
-const MAX_ITEMS_PER_GROUP = 6;
+const MAX_ITEMS_PER_GROUP = 12;
 const MAX_RECENT_SEARCHES = 4;
 const SUGGESTION_COUNT = 4;
 const RECENT_STORAGE_KEY = 'moviewatcher.global-search.recent';
@@ -182,35 +185,32 @@ export default function GlobalSearch({
     void (async () => {
       setLoading(true);
       setError(null);
-      const { searchMulti, searchAnime } = catalogGateway;
-      const [tmdbResult, animeResult] = await Promise.allSettled([
-        searchMulti(debouncedQuery, 1),
-        searchAnime(debouncedQuery, 1, MAX_ITEMS_PER_GROUP),
-      ]);
-
+      // One search, in the server's order: Stremio's results first, each
+      // show once (its AniList seasons fold into it), as on the phone.
+      let cards: Card[];
+      try {
+        cards = await catalogGateway.searchOrdered(debouncedQuery);
+      } catch {
+        if (latestRequest.current !== requestId) return;
+        setError('Search is unavailable.');
+        setResults(EMPTY_RESULTS);
+        setLoading(false);
+        return;
+      }
       if (latestRequest.current !== requestId) return;
 
-      const tmdbMovies: Basic[] = tmdbResult.status === 'fulfilled'
-        ? (tmdbResult.value.movie ?? []).map(basicFromCard)
-        : [];
-      const tmdbTv: Basic[] = tmdbResult.status === 'fulfilled'
-        ? (tmdbResult.value.tv ?? []).map(basicFromCard)
-        : [];
-      const aniListAnime: Basic[] = animeResult.status === 'fulfilled'
-        ? animeResult.value.items.map(basicFromCard)
-        : [];
-
-      const nextResults: SearchResults = {
-        movie: tmdbMovies.filter((item) => !isTmdbAnime(item)).slice(0, MAX_ITEMS_PER_GROUP),
-        tv: tmdbTv.filter((item) => !isTmdbAnime(item)).slice(0, MAX_ITEMS_PER_GROUP),
-        anime: selectAniListCatalog(aniListAnime, MAX_ITEMS_PER_GROUP),
-      };
-      const failedSources = [tmdbResult, animeResult].filter((result) => result.status === 'rejected').length;
-      if (failedSources === 2) {
-        setError('Search is unavailable.');
-      } else if (failedSources === 1) {
-        setError('Some results are missing.');
+      const seen = new Set<string>();
+      const ordered: SuggestedTitle[] = [];
+      for (const card of cards) {
+        const item = basicFromCard(card);
+        const kind: SearchKind = item.sourceKind ?? 'movie';
+        const key = recentKey(kind, item);
+        if (!card.id || seen.has(key)) continue;
+        seen.add(key);
+        ordered.push({ kind, item });
       }
+      const ofKind = (kind: SearchKind) => ordered.filter((entry) => entry.kind === kind).map((entry) => entry.item).slice(0, MAX_ITEMS_PER_GROUP);
+      const nextResults: SearchResults = { movie: ofKind('movie'), tv: ofKind('tv'), anime: ofKind('anime'), ordered: ordered.slice(0, MAX_ITEMS_PER_GROUP) };
 
       setResults(nextResults);
       cache.set(cacheKey, nextResults);
@@ -252,7 +252,7 @@ export default function GlobalSearch({
     if (kind === 'anime' && item.malId) params.malId = String(item.malId);
     if (kind === 'anime' && item.sourceProvider === 'tmdb') {
       params.provider = 'tmdb';
-      params.mediaKind = item.sourceKind === 'movie' ? 'movie' : 'tv';
+      params.mediaKind = item.mediaKind ?? (item.sourceKind === 'movie' ? 'movie' : 'tv');
     }
     navigate('title', params);
     onOpenChange(false);
@@ -270,9 +270,8 @@ export default function GlobalSearch({
     saveRecentSearches([]);
   };
 
-  const hasResults = results.movie.length + results.tv.length + results.anime.length > 0;
-  const visibleKinds: SearchKind[] = resultFilter === 'all' ? ['movie', 'tv', 'anime'] : [resultFilter];
-  const visibleCount = visibleKinds.reduce((count, kind) => count + results[kind].length, 0);
+  const hasResults = results.ordered.length > 0;
+  const visibleCount = resultFilter === 'all' ? results.ordered.length : results[resultFilter].length;
   const showDiscovery = query.trim().length < MIN_CHARS;
 
   return (
@@ -455,7 +454,7 @@ export default function GlobalSearch({
                 </button>
                 <div className="hidden gap-1 sm:flex">
                   {RESULT_FILTERS.map((filter) => {
-                    const count = filter.value === 'all' ? results.movie.length + results.tv.length + results.anime.length : results[filter.value].length;
+                    const count = filter.value === 'all' ? results.ordered.length : results[filter.value].length;
                     return (
                       <button
                         key={filter.value}
@@ -478,7 +477,7 @@ export default function GlobalSearch({
             <SelectionSurface open={filterSheetOpen} title="Filter results" onClose={() => setFilterSheetOpen(false)}>
               <div className="grid gap-2">
                 {RESULT_FILTERS.map((filter) => {
-                  const count = filter.value === 'all' ? results.movie.length + results.tv.length + results.anime.length : results[filter.value].length;
+                  const count = filter.value === 'all' ? results.ordered.length : results[filter.value].length;
                   return (
                     <button
                       key={filter.value}
@@ -535,9 +534,10 @@ export default function GlobalSearch({
               </div>
             ) : null}
 
-            {visibleKinds.includes('movie') ? <ResultGroup heading="Movies" icon={Clapperboard} kind="movie" items={results.movie} query={query} onSelect={closeAndNavigate} /> : null}
-            {visibleKinds.includes('tv') ? <ResultGroup heading="Series" icon={Tv} kind="tv" items={results.tv} query={query} onSelect={closeAndNavigate} /> : null}
-            {visibleKinds.includes('anime') ? <ResultGroup heading="Anime" icon={MonitorPlay} kind="anime" items={results.anime} query={query} onSelect={closeAndNavigate} /> : null}
+            {resultFilter === 'all' ? <ResultGroup heading="Results" entries={results.ordered} query={query} onSelect={closeAndNavigate} /> : null}
+            {resultFilter === 'movie' ? <ResultGroup heading="Movies" entries={results.movie.map((item) => ({ kind: 'movie', item }))} query={query} onSelect={closeAndNavigate} /> : null}
+            {resultFilter === 'tv' ? <ResultGroup heading="Series" entries={results.tv.map((item) => ({ kind: 'tv', item }))} query={query} onSelect={closeAndNavigate} /> : null}
+            {resultFilter === 'anime' ? <ResultGroup heading="Anime" entries={results.anime.map((item) => ({ kind: 'anime', item }))} query={query} onSelect={closeAndNavigate} /> : null}
           </CommandList>
 
           <div className="flex items-center gap-5 border-t border-white/[0.08] px-5 py-3 text-xs text-white/60">
@@ -568,19 +568,17 @@ function BrowseCollection({ icon: Icon, title, description, onSelect }: {
   );
 }
 
-function ResultGroup({ heading, icon: Icon, kind, items, query, onSelect }: {
+function ResultGroup({ heading, entries, query, onSelect }: {
   heading: string;
-  icon: React.ComponentType<{ className?: string }>;
-  kind: SearchKind;
-  items: Basic[];
+  entries: SuggestedTitle[];
   query: string;
   onSelect: (kind: SearchKind, item: Basic) => void;
 }) {
-  if (!items.length) return null;
+  if (!entries.length) return null;
 
   return (
     <CommandGroup heading={heading}>
-      {items.map((item) => (
+      {entries.map(({ kind, item }) => (
         <CommandItem
           key={`${kind}-${item.sourceProvider || 'unknown'}-${item.sourceKind || kind}-${item.id}`}
           value={`${kind}-${item.sourceProvider || 'unknown'}-${item.sourceKind || kind}-${item.id}-${item.title}`}
@@ -591,7 +589,7 @@ function ResultGroup({ heading, icon: Icon, kind, items, query, onSelect }: {
             {item.posterUrl ? (
               <img src={item.posterUrl} alt="" width="40" height="56" loading="lazy" decoding="async" className="h-full w-full object-cover" />
             ) : (
-              <div className="flex h-full items-center justify-center text-white/20"><Icon className="h-4 w-4" /></div>
+              <div className="flex h-full items-center justify-center text-white/20">{kindIcon(kind, 'h-4 w-4')}</div>
             )}
           </div>
           <div className="min-w-0 flex-1">
@@ -623,6 +621,7 @@ function basicFromCard(card: Card): Basic {
     sourceKind: card.sourceKind,
     sourceLabel: card.sourceLabel,
     malId: card.malId,
+    mediaKind: String((card as { catalogId?: string }).catalogId ?? '').startsWith('tmdb:movie:') ? 'movie' : 'tv',
   };
 }
 

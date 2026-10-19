@@ -12,6 +12,9 @@ const INVOKE_CHANNELS = new Set([
   "mpv:cycleAspect",
   "mpv:loadSub",
   "mpv:setSub",
+  "mpv:setAudio",
+  "mpv:subtitleLayout",
+  "subtitles:matched",
   "subtitles:configure-provider",
   "setup:open-opensubtitles-guide",
   "window:toggleFullscreen",
@@ -33,6 +36,7 @@ const RECEIVE_CHANNELS = new Set([
   "mpv:playbackLoaded",
   "mpv:torrentHealth",
   "mpv:subtitleTracks",
+  "mpv:mediaTracks",
 ]);
 
 function serializeThrown(value) {

@@ -4,6 +4,7 @@ import { createRequire } from "module";
 
 import { applyAspectModeTo } from "./aspect-modes.js";
 import { attachMpvWindow, readNativeWindowId } from "./native-window.js";
+import { applySubtitleLook } from "./subtitle-look.js";
 
 export const MPV_NATIVE_EXPORTS = Object.freeze([
   "createVideoHost",
@@ -145,6 +146,7 @@ export function createMpvSessionManager({
         }
         nextHandle.init({});
         applyAspectModeTo(nextHandle, getAspectMode());
+        applySubtitleLook(nextHandle);
         native.showVideoHost?.(nextWid, false);
 
         handle = nextHandle;

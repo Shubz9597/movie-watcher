@@ -18,13 +18,33 @@ import { LoadingOverlay } from './components/LoadingOverlay';
 import { SubtitleMenu } from './components/SubtitleMenu';
 import { SyncMenu } from './components/SyncMenu';
 import { TorrentHealthMenu } from './components/TorrentHealthMenu';
-import type { PlaybackIdentity, PlayerBridge, PlayerState, SkipSegment, SubtitleState, SubtitleTrack, TorrentHealth } from './types';
+import type { MediaTracksState, PlaybackIdentity, PlayerBridge, PlayerState, SkipSegment, SubtitleState, SubtitleTrack, TorrentHealth } from './types';
 import { clamp, episodeCodeFromIdentity, formatTime, skipSegmentsFromPayload } from './player-utils';
+import { planTracks, playerTracks, type PlayerTrack } from '../lib/player-tracks';
+import { readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor, type ShowPlaybackPrefs } from '../lib/subtitle-style';
+import { audioDisplayNames, languageNameForCode, trackDisplayNames, trackLanguageName } from '../lib/track-labels';
+import { skipActionAt } from '../lib/skip-action';
 
 const HUD_AUTO_HIDE_MS = 2600;
 const INITIAL_SKIP_PROMPT_MS = 5000;
 const POLL_INTERVAL_MS = 250;
 const EMPTY_SUBTITLE_STATE: SubtitleState = { status: 'loading', source: 'none', tracks: [], message: '', providerConfigured: true };
+const EMPTY_MEDIA_TRACKS: MediaTracksState = { status: 'loading', audio: [], subtitles: [] };
+// Subtitle text size in mpv units (720 = the window height); the phone's
+// look, a little larger for a screen across the room.
+const SUBTITLE_SIZE_KEY = 'torwatch_desktop_subtitle_size';
+const SUBTITLE_SIZES = [26, 30, 34, 38, 42, 48, 54];
+const DEFAULT_SUBTITLE_SIZE = 34;
+const SUBTITLE_LANG = 'en';
+
+function savedSubtitleSize(): number {
+  try {
+    const value = Number(window.localStorage.getItem(SUBTITLE_SIZE_KEY));
+    return SUBTITLE_SIZES.includes(value) ? value : DEFAULT_SUBTITLE_SIZE;
+  } catch {
+    return DEFAULT_SUBTITLE_SIZE;
+  }
+}
 
 type MenuName = 'health' | 'subtitle' | 'sync' | null;
 
@@ -70,6 +90,20 @@ export function PlayerControlsApp({ bridge }: Props) {
   const dragFrameRef = useRef<number>(0);
   const subtitleSelectionRef = useRef(0);
   const skipPromptTimerRef = useRef<number | null>(null);
+  // The video's own tracks (from the server, numbered as mpv numbers them)
+  // and the choices made among them.
+  const [mediaTracks, setMediaTracks] = useState<MediaTracksState>(EMPTY_MEDIA_TRACKS);
+  const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
+  const [selectedEmbeddedSub, setSelectedEmbeddedSub] = useState<number | null>(null);
+  const [matchedDubUrl, setMatchedDubUrl] = useState<string | null>(null);
+  const [subtitleSize, setSubtitleSize] = useState(savedSubtitleSize);
+  // Until the viewer picks subtitles here, they follow the audio (as on the
+  // phone); the show's remembered audio applies once per video.
+  const subtitleAutoRef = useRef(true);
+  const audioPlannedRef = useRef(false);
+  const matchedLookupRef = useRef(false);
+  const bottomPanelRef = useRef<HTMLDivElement>(null);
+  const playbackGenerationRef = useRef(0);
 
   const episodeCode = identity.episodeCode || episodeCodeFromIdentity(identity.season, identity.episode);
   const episodeLabel = identity.episodeLabel || (
@@ -162,22 +196,74 @@ export function PlayerControlsApp({ bridge }: Props) {
     }
   }, [invokeSafely]);
 
-  const chooseSubtitle = useCallback(async (track: SubtitleTrack) => {
+  const rememberForShow = useCallback((patch: ShowPlaybackPrefs) => {
+    saveShowPlaybackPrefs(identity.showKey ?? null, patch);
+  }, [identity.showKey]);
+
+  const loadSubtitleFile = useCallback(async (url: string, format: string) => {
     const selection = subtitleSelectionRef.current + 1;
     subtitleSelectionRef.current = selection;
-    setLoadingSubtitleUrl(track.url);
-    const result = await invokeSafely<{ ok: boolean; error?: string }>('mpv:loadSub', { url: track.url, format: track.format || 'srt' });
+    setLoadingSubtitleUrl(url);
+    const result = await invokeSafely<{ ok: boolean; error?: string }>('mpv:loadSub', { url, format });
     if (selection !== subtitleSelectionRef.current) return;
     setLoadingSubtitleUrl(null);
-    if (result?.ok) setActiveSubtitleUrl(track.url);
+    if (result?.ok) {
+      setActiveSubtitleUrl(url);
+      setSelectedEmbeddedSub(null);
+      void invokeSafely('mpv:subtitleLayout', { boxAss: false });
+    }
   }, [invokeSafely]);
 
-  const disableSubtitles = useCallback(async () => {
+  const showEmbeddedSubtitle = useCallback(async (track: PlayerTrack | null) => {
     subtitleSelectionRef.current += 1;
     setLoadingSubtitleUrl(null);
-    await invokeSafely('mpv:setSub', -1);
+    await invokeSafely('mpv:setSub', track ? track.id : -1);
+    if (track) void invokeSafely('mpv:subtitleLayout', { boxAss: !track.styled });
+    setSelectedEmbeddedSub(track ? track.id : null);
     setActiveSubtitleUrl(null);
   }, [invokeSafely]);
+
+  const chooseSubtitle = useCallback(async (track: SubtitleTrack) => {
+    subtitleAutoRef.current = false;
+    rememberForShow({ subtitle: 'regular' });
+    await loadSubtitleFile(track.url, track.format || 'srt');
+  }, [loadSubtitleFile, rememberForShow]);
+
+  const disableSubtitles = useCallback(async () => {
+    subtitleAutoRef.current = false;
+    rememberForShow({ subtitle: 'off' });
+    await showEmbeddedSubtitle(null);
+  }, [rememberForShow, showEmbeddedSubtitle]);
+
+  const chooseEmbeddedSubtitle = useCallback(async (track: PlayerTrack) => {
+    subtitleAutoRef.current = false;
+    rememberForShow({ subtitle: styleOfTrack(track.label) });
+    await showEmbeddedSubtitle(track);
+  }, [rememberForShow, showEmbeddedSubtitle]);
+
+  const chooseAudio = useCallback(async (track: PlayerTrack) => {
+    audioPlannedRef.current = true;
+    const language = trackLanguageName(track.label);
+    if (language) rememberForShow({ audioLanguage: language });
+    const result = await invokeSafely<{ ok: boolean }>('mpv:setAudio', track.id);
+    if (result?.ok) setSelectedAudio(track.id);
+  }, [invokeSafely, rememberForShow]);
+
+  const chooseMatchedDub = useCallback(async () => {
+    if (!matchedDubUrl) return;
+    subtitleAutoRef.current = false;
+    rememberForShow({ subtitle: 'dub' });
+    await loadSubtitleFile(matchedDubUrl, 'vtt');
+  }, [loadSubtitleFile, matchedDubUrl, rememberForShow]);
+
+  const changeSubtitleSize = useCallback((step: number) => {
+    setSubtitleSize((current) => {
+      const index = SUBTITLE_SIZES.indexOf(current);
+      const next = SUBTITLE_SIZES[clamp((index < 0 ? SUBTITLE_SIZES.indexOf(DEFAULT_SUBTITLE_SIZE) : index) + step, 0, SUBTITLE_SIZES.length - 1)];
+      try { window.localStorage.setItem(SUBTITLE_SIZE_KEY, String(next)); } catch { /* not remembered */ }
+      return next;
+    });
+  }, []);
 
   const configureOpenSubtitles = useCallback(async (apiKey: string) => {
     const result = await invokeSafely<{ ok: boolean; error?: string }>('subtitles:configure-provider', apiKey);
@@ -247,6 +333,14 @@ export function PlayerControlsApp({ bridge }: Props) {
         subtitleSelectionRef.current += 1;
         setActiveSubtitleUrl(null);
         setLoadingSubtitleUrl(null);
+        setMediaTracks(EMPTY_MEDIA_TRACKS);
+        setSelectedAudio(null);
+        setSelectedEmbeddedSub(null);
+        setMatchedDubUrl(null);
+        playbackGenerationRef.current += 1;
+        subtitleAutoRef.current = true;
+        audioPlannedRef.current = false;
+        matchedLookupRef.current = false;
         setHealth({});
         setAspectToast('');
         setBufferingReason('Buffering');
@@ -284,6 +378,7 @@ export function PlayerControlsApp({ bridge }: Props) {
         });
       }),
       bridge.on('mpv:subtitleTracks', (data) => setSubtitleState(data && typeof data === 'object' ? data as SubtitleState : EMPTY_SUBTITLE_STATE)),
+      bridge.on('mpv:mediaTracks', (data) => setMediaTracks(data && typeof data === 'object' ? data as MediaTracksState : EMPTY_MEDIA_TRACKS)),
     ];
     return () => {
       unsubscribe.forEach((remove) => remove());
@@ -366,6 +461,93 @@ export function PlayerControlsApp({ bridge }: Props) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [cycleAspect, seekRelative, setSyncDelay, state.audioDelay, state.subtitleDelay, toggleFullscreen, togglePlay]);
 
+  const audioTracks = useMemo(() => playerTracks(mediaTracks.audio), [mediaTracks.audio]);
+  const subtitleTracks = useMemo(() => playerTracks(mediaTracks.subtitles), [mediaTracks.subtitles]);
+  const audioNames = useMemo(() => audioDisplayNames(
+    audioTracks.map((track) => track.label),
+    // Anime is Japanese at heart; so is a release with a Japanese track.
+    identity.kind === 'anime' || audioTracks.some((track) => trackLanguageName(track.label) === 'Japanese') ? 'ja' : undefined,
+  ), [audioTracks, identity.kind]);
+  const subtitleNames = useMemo(() => trackDisplayNames(subtitleTracks.map((track) => track.label)), [subtitleTracks]);
+  const currentAudioLanguage = trackLanguageName(audioTracks.find((track) => track.id === selectedAudio)?.label);
+  const embeddedDub = subtitleTrackFor(subtitleTracks, SUBTITLE_LANG, 'dub');
+  const wantsMatchedDub = mediaTracks.status === 'ready' && !embeddedDub
+    && currentAudioLanguage === languageNameForCode(SUBTITLE_LANG)
+    && new Set(audioTracks.map((track) => trackLanguageName(track.label)).filter(Boolean)).size > 1;
+
+  // The tracks to use without a choice for this video, as on the phone: the
+  // show's remembered audio (once), then the subtitle that suits the audio
+  // (the dub's own script for dub audio, else the full translation) until
+  // the viewer picks one.
+  useEffect(() => {
+    if (!playbackStarted || mediaTracks.status !== 'ready') return;
+    const plan = planTracks({
+      audio: audioTracks,
+      subtitles: subtitleTracks,
+      show: readShowPlaybackPrefs(identity.showKey ?? null),
+      subtitleLang: SUBTITLE_LANG,
+      currentAudio: selectedAudio,
+    });
+    if (!audioPlannedRef.current) {
+      audioPlannedRef.current = true;
+      if (plan.audio !== null && plan.audio !== selectedAudio) {
+        const generation = playbackGenerationRef.current;
+        // On failure mpv keeps its own pick; carry on with the subtitles.
+        void invokeSafely<{ ok: boolean }>('mpv:setAudio', plan.audio).then(() => {
+          if (generation === playbackGenerationRef.current) setSelectedAudio(plan.audio);
+        });
+        return;
+      }
+    }
+    if (!subtitleAutoRef.current || loadingSubtitleUrl) return;
+    const subtitle = plan.subtitle;
+    const trackById = (id: number | null) => subtitleTracks.find((track) => track.id === id) ?? null;
+    if (subtitle.kind === 'off') {
+      if (selectedEmbeddedSub !== null || activeSubtitleUrl !== null) void showEmbeddedSubtitle(null);
+    } else if (subtitle.kind === 'track') {
+      if (selectedEmbeddedSub !== subtitle.id || activeSubtitleUrl !== null) void showEmbeddedSubtitle(trackById(subtitle.id));
+    } else if (subtitle.kind === 'matched') {
+      if (matchedDubUrl) {
+        if (activeSubtitleUrl !== matchedDubUrl) void loadSubtitleFile(matchedDubUrl, 'vtt');
+      } else if (subtitle.fallback !== null && selectedEmbeddedSub !== subtitle.fallback && activeSubtitleUrl === null) {
+        void showEmbeddedSubtitle(trackById(subtitle.fallback));
+      }
+    } else if (selectedEmbeddedSub === null && activeSubtitleUrl === null) {
+      // mpv's own pick: the video's default-flagged subtitle, if any.
+      const flagged = subtitleTracks.find((track) => track.default);
+      if (flagged) void showEmbeddedSubtitle(flagged);
+    }
+  }, [playbackStarted, mediaTracks.status, audioTracks, subtitleTracks, selectedAudio, selectedEmbeddedSub, activeSubtitleUrl, loadingSubtitleUrl, matchedDubUrl, identity.showKey, invokeSafely, showEmbeddedSubtitle, loadSubtitleFile]);
+
+  // The dub's own script, matched by the server to this video's audio, for
+  // a dub without one of its own (asked once per video).
+  useEffect(() => {
+    if (!wantsMatchedDub || matchedLookupRef.current || matchedDubUrl) return;
+    matchedLookupRef.current = true;
+    const generation = playbackGenerationRef.current;
+    void invokeSafely<{ ok: boolean; url?: string }>('subtitles:matched', SUBTITLE_LANG).then((result) => {
+      if (result?.ok && result.url && generation === playbackGenerationRef.current) setMatchedDubUrl(result.url);
+    });
+  }, [wantsMatchedDub, matchedDubUrl, invokeSafely]);
+
+  // Subtitles sit just above the seek bar while the controls show and near
+  // the bottom otherwise; the skip button moves the same way.
+  useEffect(() => {
+    const place = () => {
+      const panel = bottomPanelRef.current;
+      const height = window.innerHeight || 1;
+      const rect = panel?.getBoundingClientRect();
+      const lifted = hudVisible && rect && rect.height > 0;
+      document.documentElement.style.setProperty('--skip-lift', lifted ? `${Math.round(rect.height + 12)}px` : '0px');
+      if (!playbackStarted) return;
+      const marginY = lifted ? Math.round(((height - rect.top) + 12) / height * 720) : 22;
+      void invokeSafely('mpv:subtitleLayout', { size: subtitleSize, marginY });
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [hudVisible, subtitleSize, playbackStarted, isFullscreen, invokeSafely]);
+
   useEffect(() => {
     let active = true;
     let timer = 0;
@@ -430,6 +612,9 @@ export function PlayerControlsApp({ bridge }: Props) {
     }
   };
 
+  const skipAction = activeSkipSegment
+    ? skipActionAt([activeSkipSegment], Number(state.time) || 0, Number(state.duration) || 0, Boolean(identity.hasNextEpisode))
+    : null;
   const progressPercentage = state.duration > 0 ? clamp((state.time / state.duration) * 100, 0, 100) : 0;
   const effectiveVolume = state.mute ? 0 : clamp(state.volume, 0, 1);
   const loadingStatus = loadingState.failed
@@ -478,7 +663,7 @@ export function PlayerControlsApp({ bridge }: Props) {
           </div>
         </div>
 
-        <div className="bottom-panel">
+        <div className="bottom-panel" ref={bottomPanelRef}>
           <div
             className="timeline-wrap"
             id="progressBar"
@@ -526,8 +711,32 @@ export function PlayerControlsApp({ bridge }: Props) {
               {activeMenu === 'health' ? <TorrentHealthMenu health={health} /> : null}
             </div>
             <div className="track-menu-wrap">
-              <button className="icon-btn tooltip" id="subtitleBtn" data-tooltip="Subtitles - C" aria-label="Choose subtitles (C)" aria-expanded={activeMenu === 'subtitle'} aria-controls="subtitleMenu" onClick={(event) => { event.stopPropagation(); setActiveMenu(activeMenu === 'subtitle' ? null : 'subtitle'); }}><Captions aria-hidden="true" /></button>
-              {activeMenu === 'subtitle' ? <SubtitleMenu activeSubtitleUrl={activeSubtitleUrl} loadingSubtitleUrl={loadingSubtitleUrl} state={subtitleState} onChoose={chooseSubtitle} onDisable={disableSubtitles} onConfigure={configureOpenSubtitles} onOpenGuide={openOpenSubtitlesGuide} /> : null}
+              <button className="icon-btn tooltip" id="subtitleBtn" data-tooltip="Audio & subtitles - C" aria-label="Choose audio and subtitles (C)" aria-expanded={activeMenu === 'subtitle'} aria-controls="subtitleMenu" onClick={(event) => { event.stopPropagation(); setActiveMenu(activeMenu === 'subtitle' ? null : 'subtitle'); }}><Captions aria-hidden="true" /></button>
+              {activeMenu === 'subtitle' ? (
+                <SubtitleMenu
+                  audio={{ tracks: audioTracks, names: audioNames, selected: selectedAudio, onChoose: (track) => void chooseAudio(track) }}
+                  embedded={{
+                    tracks: subtitleTracks,
+                    names: subtitleNames,
+                    selected: selectedEmbeddedSub,
+                    loading: mediaTracks.status === 'loading',
+                    onChoose: (track) => void chooseEmbeddedSubtitle(track),
+                  }}
+                  matchedDub={matchedDubUrl && !embeddedDub ? {
+                    name: `${languageNameForCode(SUBTITLE_LANG) || 'English'} (Dub)`,
+                    url: matchedDubUrl,
+                    onChoose: () => void chooseMatchedDub(),
+                  } : null}
+                  activeSubtitleUrl={activeSubtitleUrl}
+                  loadingSubtitleUrl={loadingSubtitleUrl}
+                  state={subtitleState}
+                  onChoose={chooseSubtitle}
+                  onDisable={disableSubtitles}
+                  onConfigure={configureOpenSubtitles}
+                  onOpenGuide={openOpenSubtitlesGuide}
+                  onTextSize={changeSubtitleSize}
+                />
+              ) : null}
             </div>
             <div className="track-menu-wrap">
               <button className="icon-btn tooltip" id="syncBtn" data-tooltip="Playback sync - Z / X" aria-label="Adjust audio and subtitle timing" aria-expanded={activeMenu === 'sync'} aria-controls="syncMenu" onClick={(event) => { event.stopPropagation(); setActiveMenu(activeMenu === 'sync' ? null : 'sync'); }}><SlidersHorizontal aria-hidden="true" /></button>
@@ -538,22 +747,22 @@ export function PlayerControlsApp({ bridge }: Props) {
         </div>
       </div>
       <button
-        className={`segment-skip${activeSkipSegment ? ' visible' : ''}`}
+        className={`segment-skip${skipAction ? ' visible' : ''}`}
         id="segmentSkipBtn"
         type="button"
-        aria-label="Skip intro"
-        aria-hidden={activeSkipSegment ? 'false' : 'true'}
-        tabIndex={activeSkipSegment ? 0 : -1}
-        disabled={!activeSkipSegment || skipSeekInFlight}
+        aria-label={skipAction?.label || 'Skip intro'}
+        aria-hidden={skipAction ? 'false' : 'true'}
+        tabIndex={skipAction ? 0 : -1}
+        disabled={!skipAction || skipSeekInFlight}
         onClick={async () => {
-          if (!activeSkipSegment) return;
+          if (!skipAction) return;
           setSkipSeekInFlight(true);
-          await seekAbsolute(activeSkipSegment.end);
+          await seekAbsolute(skipAction.target);
           setSkipPromptDismissed(true);
           setSkipSeekInFlight(false);
         }}
       >
-        <span id="segmentSkipLabel">Skip {activeSkipSegment?.type || 'intro'}</span>
+        <span id="segmentSkipLabel">{skipAction?.label || 'Skip intro'}</span>
       </button>
     </>
   );

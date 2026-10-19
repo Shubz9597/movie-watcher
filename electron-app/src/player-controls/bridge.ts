@@ -35,6 +35,16 @@ function createPreviewBridge(): PlayerBridge {
       posterUrl: null,
     });
     emit('mpv:skipSegments', [{ type: 'intro', start: 0, end: 20 }]);
+    // A dual-audio anime release (Japanese + English dub).
+    emit('mpv:mediaTracks', {
+      status: 'ready',
+      audio: [{ language: 'jpn', codec: 'aac', default: true }, { language: 'eng', title: 'English Dub', codec: 'aac' }],
+      subtitles: [
+        { language: 'eng', title: 'Full Subtitles', codec: 'ass' },
+        { language: 'eng', title: 'Signs & Songs', codec: 'ass', forced: true },
+        { language: 'eng', codec: 'subrip', cc: true },
+      ],
+    });
     emit('mpv:loadingState', { status: 'buffering', percentage: 72 });
     emit('mpv:playbackLoaded');
     emit('mpv:subtitleTracks', new URLSearchParams(location.search).get('subtitles') === 'missing'
@@ -82,6 +92,7 @@ function createPreviewBridge(): PlayerBridge {
         return { ok: true, label: previewAspectLabels[aspectIndex] } as T;
       }
       if (channel === 'mpv:loadSub') return { ok: true } as T;
+      if (channel === 'subtitles:matched') return { ok: true, url: `${getVodBase()}/subtitles/matched/file?key=preview` } as T;
       return { ok: true } as T;
     },
     send(channel: string, ...args: unknown[]) {

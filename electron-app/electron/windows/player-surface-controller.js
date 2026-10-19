@@ -306,6 +306,8 @@ export function createPlayerSurfaceController({
       episode: playbackIdentity.episode,
       episodeCode: playbackIdentity.episodeCode,
       episodeLabel: playbackIdentity.episodeLabel,
+      showKey: playbackIdentity.showKey,
+      hasNextEpisode: playbackIdentity.hasNextEpisode,
     });
     nextControlsWindow.webContents.send("mpv:loadingState", {
       status: "connecting",

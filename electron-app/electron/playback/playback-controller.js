@@ -26,6 +26,9 @@ export function createPlaybackController({
   let currentSubtitleRequest = 0;
   let currentSubtitleSelection = 0;
   let currentSubtitleLoadAbortController = null;
+  // The video's own tracks and the dub's matched script: one playback at a
+  // time; a new item or a stop retires the lookups.
+  let currentTrackRequest = 0;
   let currentSkipSegmentContext = null;
   let currentSkipSegmentLookup = null;
   let currentSkipSegmentAbortController = null;
@@ -384,6 +387,61 @@ export function createPlaybackController({
     return true;
   }
 
+  function sourceQuery() {
+    const query = new URLSearchParams({ magnet: currentMagnet, cat: currentPlaybackCat });
+    const fileIndex = Number.isInteger(currentSubtitleFileIndex) ? currentSubtitleFileIndex : currentPlaybackFileIndex;
+    query.set("fileIndex", String(Number.isInteger(Number(fileIndex)) && fileIndex !== null ? fileIndex : 0));
+    return query;
+  }
+
+  // Asks the server again while it answers "pending" (it reads the video's
+  // header, or measures the dub's audio, the first time).
+  async function pollServer(path, query, request, { attempts, intervalMs }) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (request !== currentTrackRequest) return null;
+      try {
+        const response = await fetch(`${vodBase}${path}?${query.toString()}`, { signal: AbortSignal.timeout(15000), cache: "no-store" });
+        const data = response.ok ? await response.json() : null;
+        if (data?.status && data.status !== "pending") return request === currentTrackRequest ? data : null;
+      } catch {
+        // The server may be briefly unreachable: ask again.
+      }
+      await sleep(intervalMs);
+    }
+    return null;
+  }
+
+  /** Sends the video's own audio and subtitle tracks to the controls
+   *  ("mpv:mediaTracks"), numbered as mpv numbers them. */
+  function beginTrackDiscovery() {
+    const request = ++currentTrackRequest;
+    if (!currentMagnet) return;
+    sendControls("mpv:mediaTracks", { status: "loading", audio: [], subtitles: [] });
+    void pollServer("/media/tracks", sourceQuery(), request, { attempts: 60, intervalMs: 3000 }).then((data) => {
+      if (request !== currentTrackRequest) return;
+      sendControls("mpv:mediaTracks", data?.status === "ready"
+        ? { status: "ready", audio: data.audio || [], subtitles: data.subtitles || [] }
+        : { status: "none", audio: [], subtitles: [] });
+    });
+  }
+
+  /** The dub's own script, matched to this video's audio by the server:
+   *  a backend subtitle URL for loadSubtitle, or null. */
+  async function findMatchedSubtitle(lang) {
+    const request = currentTrackRequest;
+    if (!currentMagnet) return { ok: false };
+    const query = sourceQuery();
+    query.set("lang", /^[a-z]{2,3}$/.test(String(lang || "")) ? String(lang) : "en");
+    const payload = currentSubtitlePayload || {};
+    for (const key of ["imdbId", "tmdbId", "anilistId", "title", "year", "season", "episode"]) {
+      const value = payload[key];
+      if (value !== undefined && value !== null && String(value).trim() !== "" && Number(value) !== 0) query.set(key, String(value));
+    }
+    const data = await pollServer("/subtitles/matched", query, request, { attempts: 60, intervalMs: 5000 });
+    if (data?.status !== "ready" || !data.url) return { ok: false };
+    return { ok: true, url: new URL(String(data.url), vodBase).toString(), fit: data.fit };
+  }
+
   async function loadSubtitle(request) {
     const selection = ++currentSubtitleSelection;
     currentSubtitleLoadAbortController?.abort();
@@ -546,6 +604,7 @@ export function createPlaybackController({
 
   function retireAsyncWork() {
     clearSkipSegmentLookup();
+    currentTrackRequest += 1;
     currentSubtitleRequest += 1;
     cancelSubtitleLoad();
     stopBufferPolling();
@@ -559,16 +618,19 @@ export function createPlaybackController({
     currentSubtitleFileIndex = null;
     currentSubtitlePayload = null;
     currentSubtitleRequest += 1;
+    currentTrackRequest += 1;
     stopBufferPolling();
   }
 
   return {
     applyResumeAndTrack,
     beginSubtitleDiscovery,
+    beginTrackDiscovery,
     cancelSubtitleLoad,
     clearProgressHeartbeat,
     clearSkipSegmentLookup,
     clearSourceAfterFailedStart,
+    findMatchedSubtitle,
     getBufferInfo,
     get currentProgress() { return currentProgress; },
     get currentSource() {

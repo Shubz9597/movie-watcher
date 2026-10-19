@@ -20,6 +20,8 @@ export type PlaybackIdentity = {
   episode?: number;
   episodeCode?: string;
   episodeLabel?: string;
+  showKey?: string;
+  hasNextEpisode?: boolean;
 };
 
 export type SkipSegment = {
@@ -70,4 +72,10 @@ export type PlayerBridge = {
   invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T>;
   send(channel: string, ...args: unknown[]): void;
   on(channel: string, callback: (...args: unknown[]) => void): () => void;
+};
+
+export type MediaTracksState = {
+  status: 'loading' | 'ready' | 'none';
+  audio: import('../lib/player-tracks').MediaTrack[];
+  subtitles: import('../lib/player-tracks').MediaTrack[];
 };

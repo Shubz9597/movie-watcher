@@ -12,7 +12,9 @@ const STYLE: Record<Exclude<BannerPhase, 'hidden'>, { box: string; dot: string }
   update: { box: 'bg-[#ffc285]/12 text-[#ffc285]', dot: 'bg-[#ffc285]' },
 };
 
-export function ConnectionBanner({ offlineNote }: { offlineNote?: string }) {
+// `stickTo`: where it stays while the page scrolls (the desktop's sits
+// under its window bar and header).
+export function ConnectionBanner({ offlineNote, stickTo = 'top-0' }: { offlineNote?: string; stickTo?: string }) {
   const { connection } = usePlatform();
   const compat = useConnectionStatus();
   const [state, dispatch] = useReducer(bannerReduce, INITIAL_BANNER);
@@ -48,7 +50,7 @@ export function ConnectionBanner({ offlineNote }: { offlineNote?: string }) {
 
   return (
     <div
-      className={`sticky top-0 z-30 grid transition-[grid-template-rows,opacity] duration-300 ease-out ${visible ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0'}`}
+      className={`sticky ${stickTo} z-30 grid transition-[grid-template-rows,opacity] duration-300 ease-out ${visible ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0'}`}
       aria-hidden={!visible}
     >
       <div className="overflow-hidden">

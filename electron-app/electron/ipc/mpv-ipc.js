@@ -1,4 +1,5 @@
 import { buildPlaybackIdentity } from "../playback/playback-identity.js";
+import { applySubtitleLayout } from "../playback/subtitle-look.js";
 
 export async function waitForDecodedVideo(handle, {
   assertActive = () => {},
@@ -350,6 +351,7 @@ export function registerMpvIpc(ipcMain, {
 
         if (controlsAvailable) {
           playbackController.beginSubtitleDiscovery(payload);
+          playbackController.beginTrackDiscovery();
           console.log("[MPV] Playback controls shown");
         }
 
@@ -549,6 +551,20 @@ export function registerMpvIpc(ipcMain, {
 
   ipcMain.handle("mpv:loadSub", async (_event, request) => {
     return playbackController.loadSubtitle(request);
+  });
+
+  ipcMain.handle("subtitles:matched", async (_event, lang) => {
+    try {
+      return await playbackController.findMatchedSubtitle(lang);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("mpv:subtitleLayout", async (_event, layout) => {
+    const { handle } = mpvSession;
+    if (!handle) return { ok: false, error: "MPV not ready" };
+    return applySubtitleLayout(handle, layout && typeof layout === "object" ? layout : {});
   });
 
   ipcMain.handle("mpv:setAudio", async (_event, index) => {

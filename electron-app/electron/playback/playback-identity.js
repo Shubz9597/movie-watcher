@@ -15,5 +15,16 @@ export function buildPlaybackIdentity(title, payload) {
       ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`
       : undefined,
     episodeLabel: hasEpisode ? `Season ${season}, Episode ${episode}` : undefined,
+    // The show its audio/subtitle choices are remembered for (as on the
+    // phone), and whether credits at the end lead to a next episode.
+    showKey: showKeyOf(payload),
+    hasNextEpisode: Number.isInteger(Number(payload?.nextEpisode)) && Number(payload?.nextEpisode) > 0,
   };
+}
+
+function showKeyOf(payload) {
+  if (payload?.seriesId) return String(payload.seriesId);
+  if (payload?.anilistId) return `anilist:${payload.anilistId}`;
+  if (payload?.tmdbId) return `tmdb:${String(payload?.cat) === "movie" ? "movie" : "tv"}:${payload.tmdbId}`;
+  return undefined;
 }
