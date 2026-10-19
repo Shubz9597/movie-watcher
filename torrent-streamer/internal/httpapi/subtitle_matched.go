@@ -66,6 +66,7 @@ func (h SubtitleMatchHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/subtitles/matched/file", handleMatchedFile)
 	mux.HandleFunc("/subtitles/embedded", h.handleEmbedded)
 	mux.HandleFunc("/subtitles/embedded/file", handleEmbeddedFile)
+	mux.HandleFunc("/media/tracks", h.handleTracks)
 }
 
 // matchSource is the video and the subtitle search for one request.
