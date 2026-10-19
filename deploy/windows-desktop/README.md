@@ -6,6 +6,26 @@ TorWatch with someone else. It has its own database, library and watch
 progress. If a TorWatch server already runs elsewhere, choose **Connect to an
 existing server** in the Windows app instead; nothing needs installing here.
 
+## One step: Setup-TorWatch.ps1
+
+`Setup-TorWatch.ps1` (also at the ZIP's top level, with a double-click
+`Setup TorWatch.cmd`) does everything on a new computer: it installs or
+updates the desktop app silently, connects it to a server and starts it.
+
+```powershell
+# Your existing server (asks for the address your phone uses):
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-TorWatch.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-TorWatch.ps1 -Server http://homeserver.your-tailnet.ts.net:8080
+# A new server on this computer (installs/starts Docker Desktop, runs the starter below):
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-TorWatch.ps1 -Local
+```
+
+For a Tailscale-only server it offers to install Tailscale (winget) and
+waits while you sign in. It writes the same server file as the app's
+"Save and start TorWatch" (`%APPDATA%\TorWatch\desktop-server.json`), so
+TorWatch opens ready to use. Run from a source checkout, pass the built
+installer with `-Installer "..\..\electron-app\release\TorWatch Setup 2.0.1.exe"`.
+
 ## Start
 
 1. Install Docker Desktop and start its Linux engine.
