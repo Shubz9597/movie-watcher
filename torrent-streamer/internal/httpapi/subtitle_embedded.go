@@ -27,7 +27,7 @@ import (
 // positioned signs would be lost as plain text).
 
 const (
-	embeddedTimeout   = 8 * time.Minute
+	embeddedTimeout   = 20 * time.Minute // a download whose server copy is gone is read from the torrent again
 	embeddedReadyTTL  = 24 * time.Hour
 	embeddedNoneTTL   = 6 * time.Hour
 	embeddedErrorTTL  = 2 * time.Minute
@@ -107,6 +107,13 @@ func (h SubtitleMatchHandlers) embeddedEntryFor(key string, source matchSource, 
 	}
 	entry := &embeddedEntry{done: make(chan struct{})}
 	embeddedCache.entries[key] = entry
+	infoHash := canonicalMagnetHash(source.magnet)
+	if data, ok := downloads.SavedOwnTrack(infoHash, source.fileIndex, track); ok {
+		// Read when its download was prepared (or by an earlier play).
+		entry.status, entry.data, entry.ttl, entry.at = "ready", data, embeddedReadyTTL, time.Now()
+		close(entry.done)
+		return entry
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), embeddedTimeout)
 		defer cancel()
@@ -115,6 +122,9 @@ func (h SubtitleMatchHandlers) embeddedEntryFor(key string, source matchSource, 
 		switch {
 		case err == nil:
 			entry.status, entry.data, entry.ttl = "ready", data, embeddedReadyTTL
+			if saveErr := downloads.SaveOwnTrack(infoHash, source.fileIndex, track, data); saveErr != nil {
+				log.Printf("[subtitles] could not keep own track %d of %s#%d: %v", track, infoHash, source.fileIndex, saveErr)
+			}
 		case errors.Is(err, downloads.ErrStyledSubtitle):
 			entry.status, entry.reason, entry.ttl = "none", "styled", embeddedNoneTTL
 		default:

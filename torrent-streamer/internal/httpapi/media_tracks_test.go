@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/downloads"
 )
 
@@ -58,6 +59,22 @@ func TestMediaTracksWithoutAVideo(t *testing.T) {
 	rec := httptest.NewRecorder()
 	SubtitleMatchHandlers{}.handleTracks(rec, httptest.NewRequest("GET", "/media/tracks", nil))
 	if !strings.Contains(rec.Body.String(), `"none"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+// A download's own subtitle, read while it was prepared, answers at once
+// (the server's copy of the video is gone by the time it plays).
+func TestEmbeddedAnswersFromSavedTrack(t *testing.T) {
+	t.Setenv("TORRENT_DATA_ROOT", t.TempDir())
+	config.Load()
+	if err := downloads.SaveOwnTrack("d8ac608538fb8ab3d82a31097c5d67e10e27423c", 1, 2, []byte("WEBVTT\n\n00:01.000 --> 00:02.000\nKamehameha!\n")); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	SubtitleMatchHandlers{}.handleEmbedded(rec, httptest.NewRequest("GET",
+		"/subtitles/embedded?track=2&cat=anime&fileIndex=1&magnet=magnet:?xt=urn:btih:D8AC608538FB8AB3D82A31097C5D67E10E27423C", nil))
+	if !strings.Contains(rec.Body.String(), `"ready"`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

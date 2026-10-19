@@ -428,6 +428,11 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 		fail(ReasonPreparationFailed, fmt.Errorf("incomplete copy: %d of %d bytes", videoSize, file.Length()))
 		return
 	}
+	// The video's own subtitle text, kept for the phone's subtitle box: it is
+	// read from this copy now, in seconds, instead of from the torrent later.
+	if saved := SaveOwnTracks(jobCtx, filepath.Join(staged, "video"+ext), t.InfoHash().HexString(), fileIdx); saved > 0 {
+		log.Printf("[downloads] job %s: kept %d own subtitle track(s)", job.ID, saved)
+	}
 	if p.Intro != nil {
 		// Opening/ending detection reads the staged copy (seconds of CPU);
 		// it never fails the download.

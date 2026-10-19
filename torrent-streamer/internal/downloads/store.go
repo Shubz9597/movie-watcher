@@ -448,7 +448,7 @@ func (s *Store) CompleteCleanup(ctx context.Context, jobID string) error {
 func (s *Store) VideoFile(ctx context.Context, jobID string) string {
 	var diskPath string
 	if err := s.DB.QueryRowContext(ctx,
-		`SELECT disk_path FROM download_assets WHERE job_id=$1 AND kind=$2 LIMIT 1`, jobID, AssetKindVideo).Scan(&diskPath); err != nil {
+		`SELECT asset_path FROM download_assets WHERE job_id=$1 AND kind=$2 LIMIT 1`, jobID, AssetKindVideo).Scan(&diskPath); err != nil {
 		return ""
 	}
 	path := filepath.Join(config.DownloadsRoot(), filepath.FromSlash(diskPath))
