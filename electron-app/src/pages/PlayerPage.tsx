@@ -216,11 +216,14 @@ export default function PlayerPage({ navigate, params }: Props) {
         // resolves metadata too — the native player's buffering screen needs
         // the poster + display title, resolved through the catalog contract
         // (T042.4).
-        if (tmdbId && cat !== 'anime') {
+        // Anime shows open by their TMDb id too (one show per title, as on
+        // Stremio): they asked AniList only, so their poster was missing.
+        const tmdbIsMovie = cat === 'movie' || (cat === 'anime' && !seriesId && !Number(episode));
+        if (tmdbId && !(anilistId && cat === 'anime')) {
           try {
             // M3.1.1: request detail by the media-qualified canonical id
             // derived from the route's explicit `cat` namespace.
-            const row = await bffTitleDetail(`tmdb:${cat === 'movie' ? 'movie' : 'tv'}:${tmdbId}`);
+            const row = await bffTitleDetail(`tmdb:${tmdbIsMovie ? 'movie' : 'tv'}:${tmdbId}`);
             playbackPosterUrl = row.artwork?.poster ?? null;
             playbackLogoUrl = row.artwork?.logo ?? null;
             playbackImdbId = row.imdbId || playbackImdbId;

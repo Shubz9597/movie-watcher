@@ -589,10 +589,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
               ) : null}
             </div>
 
-            {/* Compact title actions sit under the title and metadata (Play
-                first, then bare save/download/source tools); desktop keeps its
-                two-column layout. */}
-            <div aria-label="Title actions" className={`flex flex-wrap items-center gap-1 ${platform.desktop ? 'lg:hidden' : ''}`}>
+            {/* Title actions sit under the title and metadata on every screen
+                (Play first, then bare save/download/source tools). */}
+            <div aria-label="Title actions" className="flex flex-wrap items-center gap-1">
               {/* design-system.md: Play/Resume is the primary action. Without a
                   resumable source, Play opens source selection below. */}
               <button

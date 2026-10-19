@@ -35,6 +35,10 @@ export function createPlaybackController({
   let currentSkipSegmentGeneration = 0;
   let currentSkipSegmentRetry = null;
   let bufferPollInterval = null;
+  // When the torrent last delivered new data (the start-up wait keeps the
+  // loader up while it does).
+  let lastDataAt = 0;
+  let lastDownloadedBytes = -1;
   let bufferPollAbortController = null;
   let progressHeartbeatInterval = null;
   let progressSavePromise = null;
@@ -489,6 +493,8 @@ export function createPlaybackController({
 
   function startBufferPolling({ cat }) {
     stopBufferPolling();
+    lastDataAt = 0;
+    lastDownloadedBytes = -1;
     bufferPollInterval = setInterval(async () => {
       if (!controlsWindow() || !currentMagnet) {
         stopBufferPolling();
@@ -513,6 +519,11 @@ export function createPlaybackController({
 
         if (bufferResult.ok) {
           const bufferData = await bufferResult.json();
+          const downloadedBytes = Number(bufferData.downloadedBytes) || 0;
+          if (downloadedBytes > lastDownloadedBytes) {
+            if (lastDownloadedBytes >= 0) lastDataAt = Date.now();
+            lastDownloadedBytes = downloadedBytes;
+          }
           const contiguousAhead = bufferData.contiguousAhead || 0;
           const targetBytes = bufferData.targetBytes || 0;
           const fileLength = bufferData.fileLength || 0;
@@ -527,6 +538,11 @@ export function createPlaybackController({
             status = percentage >= 100 ? "ready" : percentage >= 10 ? "buffering" : "connecting";
           }
 
+          // Peers are sending, just slowly (a season pack's large pieces):
+          // say so rather than "Finding peers".
+          if (status === "connecting" && (Number(bufferData.activePeers) || 0) > 0 && downloadedBytes > 0) {
+            status = "downloading";
+          }
           sendControls("mpv:loadingState", { status, percentage });
           sendControls("mpv:torrentHealth", {
             ...bufferData,
@@ -633,6 +649,7 @@ export function createPlaybackController({
     findMatchedSubtitle,
     getBufferInfo,
     get currentProgress() { return currentProgress; },
+    get lastDataAt() { return lastDataAt; },
     get currentSource() {
       return {
         magnet: currentMagnet,

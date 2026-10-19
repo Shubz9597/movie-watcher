@@ -81,6 +81,34 @@ test("decoded-video readiness keeps the loader until timeout when no video arriv
   );
 });
 
+// Dragon Ball Z Kai from a complete-series pack: large pieces, few
+// seeders; data trickled in for minutes before the first frame.
+test("decoded-video readiness waits while the torrent keeps sending data", async () => {
+  let clock = 0;
+  const state = await waitForDecodedVideo({ getState: () => ({ videoFormat: clock >= 180_000 ? "yuv420p" : "" }) }, {
+    sleep: async (ms) => { clock += ms; },
+    now: () => clock,
+    lastProgressAt: () => clock - 5_000, // data arrived 5 s ago, every time
+    pollIntervalMs: 1_000,
+  });
+  assert.equal(state.videoFormat, "yuv420p");
+  assert.ok(clock >= 180_000);
+});
+
+test("decoded-video readiness gives up once the torrent stops sending data", async () => {
+  let clock = 0;
+  await assert.rejects(
+    waitForDecodedVideo({ getState: () => ({ videoFormat: "" }) }, {
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+      lastProgressAt: () => Math.min(clock, 100_000), // data stopped at 100 s
+      pollIntervalMs: 1_000,
+    }),
+    /video did not become ready/i,
+  );
+  assert.ok(clock >= 160_000 && clock <= 161_000, `gave up at ${clock}`);
+});
+
 test("episode completion follows MPV eof state with a final-frame compatibility fallback", () => {
   assert.equal(isPlaybackEndedState({ eofReached: true, time: 10, duration: 100, paused: false }), true);
   assert.equal(isPlaybackEndedState({ time: 99.5, duration: 100, paused: true }), true);

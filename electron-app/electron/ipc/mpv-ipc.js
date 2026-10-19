@@ -1,18 +1,28 @@
 import { buildPlaybackIdentity } from "../playback/playback-identity.js";
 import { applySubtitleLayout } from "../playback/subtitle-look.js";
 
+// A slow torrent (a season pack's large pieces, few seeders) can need
+// minutes for the first picture: mpv reads both the start and the end of an
+// MKV before it decodes. While the torrent keeps sending data the loader
+// stays up (lastProgressAt: when data last arrived); it gives up when data
+// stops for stallMs, or after maxMs in all.
 export async function waitForDecodedVideo(handle, {
   assertActive = () => {},
   sleep,
   timeoutMs = 75_000,
+  stallMs = 60_000,
+  maxMs = 10 * 60_000,
+  lastProgressAt = () => 0,
   pollIntervalMs = 250,
   now = Date.now,
 } = {}) {
   if (typeof sleep !== "function") throw new TypeError("waitForDecodedVideo requires a sleep function");
 
-  const deadline = now() + timeoutMs;
+  const started = now();
+  const deadline = () => Math.min(started + maxMs,
+    Math.max(started + timeoutMs, (Number(lastProgressAt()) || 0) + stallMs));
   let consecutiveVideoSamples = 0;
-  while (now() < deadline) {
+  while (now() < deadline()) {
     assertActive();
     const state = handle.getState();
     const hasVideo = typeof state?.videoFormat === "string" && state.videoFormat.trim().length > 0;
@@ -337,6 +347,7 @@ export function registerMpvIpc(ipcMain, {
         playbackHandle.pause(false);
         await waitForDecodedVideo(playbackHandle, {
           assertActive: () => assertPlaybackRequestActive(playGeneration, playAbortController.signal),
+          lastProgressAt: () => playbackController.lastDataAt,
           sleep,
         });
         assertPlaybackRequestActive(playGeneration, playAbortController.signal);

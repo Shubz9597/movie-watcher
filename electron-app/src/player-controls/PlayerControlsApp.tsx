@@ -619,7 +619,7 @@ export function PlayerControlsApp({ bridge }: Props) {
   const effectiveVolume = state.mute ? 0 : clamp(state.volume, 0, 1);
   const loadingStatus = loadingState.failed
     ? loadingState.status
-    : ({ connecting: 'Finding peers', buffering: 'Buffering video', ready: 'Starting video' }[loadingState.status] || loadingState.status);
+    : ({ connecting: 'Finding peers', downloading: 'Downloading from peers', buffering: 'Buffering video', ready: 'Starting video' }[loadingState.status] || loadingState.status);
 
   return (
     <>
