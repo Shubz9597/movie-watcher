@@ -1,0 +1,15 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,DejaVu Sans,72,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,2,2,40,40,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:09.00,Default,,0,0,0,,Kakarot, you are the strongest!\NBut even you cannot stop this.
+Dialogue: 0,0:00:10.00,0:00:19.00,Default,,0,0,0,,One line, dub script.
+Dialogue: 0,0:00:20.00,0:00:39.00,Default,,0,0,0,,Now the controls are showing.\NSubtitles move up above them.
+Dialogue: 0,0:00:01.00,0:00:39.00,Default,,0,0,0,,{\pos(400,150)\fs60\c&H00FF00&}SIGN: CAPSULE CORP

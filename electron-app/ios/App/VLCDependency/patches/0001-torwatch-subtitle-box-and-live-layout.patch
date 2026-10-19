@@ -1,0 +1,373 @@
+diff --git a/include/vlc/libvlc_media_player.h b/include/vlc/libvlc_media_player.h
+index d499b3d..9d1868a 100644
+--- a/include/vlc/libvlc_media_player.h
++++ b/include/vlc/libvlc_media_player.h
+@@ -1293,6 +1293,18 @@ LIBVLC_API int64_t libvlc_video_get_spu_delay( libvlc_media_player_t *p_mi );
+  */
+ LIBVLC_API int libvlc_video_set_spu_delay( libvlc_media_player_t *p_mi, int64_t i_delay );
+ 
++/**
++ * TorWatch: change where subtitles sit and how large dialogue text is,
++ * while playing (applies to every player of the process).
++ *
++ * \param margin_permille bottom margin in thousandths of the picture
++ *        height (for example 120 to clear on-screen controls); negative
++ *        restores the "sub-margin" option
++ * \param text_scale dialogue text size in percent; 0 restores the
++ *        "sub-text-scale" option
++ */
++LIBVLC_API void libvlc_video_set_subtitle_layout( int margin_permille, int text_scale );
++
+ /**
+  * Get the full description of available titles
+  *
+diff --git a/include/vlc_spu.h b/include/vlc_spu.h
+index cbba59a..b5f776c 100644
+--- a/include/vlc_spu.h
++++ b/include/vlc_spu.h
+@@ -85,6 +85,19 @@ VLC_API int spu_RegisterChannel( spu_t * );
+  */
+ VLC_API void spu_ClearChannel( spu_t *, int );
+ 
++/**
++ * TorWatch: the subtitle layout an application changes while playing,
++ * read by the subtitle renderers on every frame (a process-wide setting:
++ * one player at a time).
++ *
++ * \param margin_permille bottom margin of subtitles in thousandths of the
++ *        picture height; negative keeps "sub-margin"
++ * \param text_scale size of dialogue text in percent; 0 or negative keeps
++ *        "sub-text-scale"
++ */
++VLC_API void spu_SetLayout( int margin_permille, int text_scale );
++VLC_API void spu_GetLayout( int *margin_permille, int *text_scale );
++
+ /**
+  * It changes the sub sources list
+  */
+diff --git a/lib/libvlc.sym b/lib/libvlc.sym
+index a4f36a4..0266be9 100644
+--- a/lib/libvlc.sym
++++ b/lib/libvlc.sym
+@@ -289,6 +289,7 @@ libvlc_video_set_mouse_input
+ libvlc_video_set_scale
+ libvlc_video_set_spu
+ libvlc_video_set_spu_delay
++libvlc_video_set_subtitle_layout
+ libvlc_video_set_subtitle_file
+ libvlc_video_set_teletext
+ libvlc_video_set_textrenderer_bool
+diff --git a/lib/video.c b/lib/video.c
+index 5b8db36..cdadcaa 100644
+--- a/lib/video.c
++++ b/lib/video.c
+@@ -35,6 +35,7 @@
+ #include <vlc/libvlc_media_player.h>
+ 
+ #include <vlc_common.h>
++#include <vlc_spu.h>
+ #include <vlc_modules.h>
+ #include <vlc_input.h>
+ #include <vlc_vout.h>
+@@ -454,6 +455,11 @@ int libvlc_video_set_spu_delay( libvlc_media_player_t *p_mi,
+     return ret;
+ }
+ 
++void libvlc_video_set_subtitle_layout( int margin_permille, int text_scale )
++{
++    spu_SetLayout( margin_permille, text_scale );
++}
++
+ libvlc_track_description_t *
+         libvlc_video_get_title_description( libvlc_media_player_t *p_mi )
+ {
+diff --git a/modules/codec/libass.c b/modules/codec/libass.c
+index fccbc29..ded95f1 100644
+--- a/modules/codec/libass.c
++++ b/modules/codec/libass.c
+@@ -30,6 +30,8 @@
+ #endif
+ 
+ #include <string.h>
++#include <strings.h>
++#include <ctype.h>
+ #include <limits.h>
+ #include <assert.h>
+ #include <math.h>
+@@ -40,6 +42,7 @@
+ #include <vlc_input.h>
+ #include <vlc_dialog.h>
+ #include <vlc_stream.h>
++#include <vlc_spu.h>
+ 
+ #include <ass/ass.h>
+ 
+@@ -91,6 +94,11 @@ struct decoder_sys_t
+ 
+     /* */
+     ASS_Track      *p_track;
++
++    /* TorWatch: text size in percent of the configured size (the app
++     * changes it while playing) */
++    int            i_default_scale;
++    int            i_applied_scale;
+ };
+ static void DecSysRelease( decoder_sys_t *p_sys );
+ static void DecSysHold( decoder_sys_t *p_sys );
+@@ -130,6 +138,65 @@ static void OldEngineClunkyRollInfoPatch( decoder_t *p_dec, ASS_Track * );
+ 
+ //#define DEBUG_REGION
+ 
++/* TorWatch: a track of plain dialogue ("English Dubtitles", "Full
++ * Subtitles", "SDH") is drawn like plain-text subtitles: one translucent
++ * box behind each subtitle, in the player's font. Signs, songs and typeset
++ * tracks keep the styling their authors gave them. Whole words only, so
++ * "Subtitles" and "Dubtitles" are not "titles". */
++static bool TitleHasWord( const char *psz_title, const char *const *ppsz_words )
++{
++    const char *p = psz_title;
++    while( *p )
++    {
++        while( *p && !isalnum( (unsigned char)*p ) )
++            p++;
++        const char *psz_start = p;
++        while( *p && isalnum( (unsigned char)*p ) )
++            p++;
++        size_t i_len = p - psz_start;
++        for( size_t i = 0; i_len > 0 && ppsz_words[i]; i++ )
++            if( strlen( ppsz_words[i] ) == i_len && !strncasecmp( psz_start, ppsz_words[i], i_len ) )
++                return true;
++    }
++    return false;
++}
++
++static bool IsDialogueTrack( const char *psz_title )
++{
++    static const char *const styled[] = { "sign", "signs", "song", "songs", "stylized", "styled",
++                                          "karaoke", "titles", "typeset", "forced", NULL };
++    static const char *const plain[] = { "dub", "dubs", "dubbed", "dubtitles", "dialogue", "dialog",
++                                         "full", "cc", "sdh", NULL };
++    return psz_title && !TitleHasWord( psz_title, styled ) && TitleHasWord( psz_title, plain );
++}
++
++static void SetDialogueBox( decoder_t *p_dec, ASS_Renderer *p_renderer )
++{
++    ASS_Style style;
++    memset( &style, 0, sizeof(style) );
++    char *psz_font = var_InheritString( p_dec, "freetype-font" );
++#if defined( __APPLE__ )
++    style.FontName = psz_font && *psz_font ? psz_font : (char *)"Menlo";
++#else
++    style.FontName = psz_font && *psz_font ? psz_font : (char *)"monospace";
++#endif
++    /* Sizes are for a 288-line script; libass rescales them */
++    style.FontSize        = 18;
++    style.PrimaryColour   = 0xFFFFFF00; /* RRGGBBAA, AA = transparency */
++    style.SecondaryColour = 0xFFFFFF00;
++    style.OutlineColour   = 0x00000066;
++    style.BackColour      = 0x00000066; /* black, 60% opaque */
++    style.BorderStyle     = 4;          /* one box behind the whole subtitle */
++    style.Outline         = 0;
++    style.Shadow          = 3;          /* the box's padding */
++    style.ScaleX = style.ScaleY = 1.0;
++    ass_set_selective_style_override( p_renderer, &style ); /* copies strings */
++    ass_set_selective_style_override_enabled( p_renderer,
++        ASS_OVERRIDE_BIT_STYLE | ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE );
++    free( psz_font );
++    msg_Dbg( p_dec, "dialogue track: drawn in the subtitle box" );
++}
++
+ /*****************************************************************************
+  * Create: Open libass decoder.
+  *****************************************************************************/
+@@ -156,6 +223,10 @@ static int Create( vlc_object_t *p_this )
+     p_sys->p_library  = NULL;
+     p_sys->p_renderer = NULL;
+     p_sys->p_track    = NULL;
++    p_sys->i_default_scale = var_InheritInteger( p_dec, "sub-text-scale" );
++    if( p_sys->i_default_scale <= 0 )
++        p_sys->i_default_scale = 100;
++    p_sys->i_applied_scale = 0;
+ 
+     /* Create libass library */
+     ASS_Library *p_library = p_sys->p_library = ass_library_init();
+@@ -285,6 +356,9 @@ static int Create( vlc_object_t *p_this )
+     ass_process_codec_private( p_track, p_dec->fmt_in.p_extra, p_dec->fmt_in.i_extra );
+     OldEngineClunkyRollInfoPatch( p_dec, p_track );
+ 
++    if( IsDialogueTrack( p_dec->fmt_in.psz_description ) )
++        SetDialogueBox( p_dec, p_renderer );
++
+     p_dec->fmt_out.i_codec = VLC_CODEC_RGBA;
+ 
+     return VLC_SUCCESS;
+@@ -452,6 +526,18 @@ static int SubpictureValidate( subpicture_t *p_subpic,
+         p_sys->fmt = fmt;
+     }
+ 
++    /* TorWatch: dialogue text follows the size set while playing,
++     * relative to the configured size (signs keep theirs) */
++    int i_scale;
++    spu_GetLayout( NULL, &i_scale );
++    if( i_scale <= 0 )
++        i_scale = p_sys->i_default_scale;
++    if( i_scale != p_sys->i_applied_scale )
++    {
++        p_sys->i_applied_scale = i_scale;
++        ass_set_font_scale( p_sys->p_renderer, (double)i_scale / p_sys->i_default_scale );
++    }
++
+     /* */
+     const vlc_tick_t i_stream_date = p_subpic->updater.p_sys->i_pts + (i_ts - p_subpic->i_start);
+     int i_changed;
+diff --git a/modules/codec/substext.h b/modules/codec/substext.h
+index 3835a09..97a08e3 100644
+--- a/modules/codec/substext.h
++++ b/modules/codec/substext.h
+@@ -24,6 +24,7 @@
+ #include <vlc_strings.h>
+ #include <vlc_text_style.h>
+ #include <vlc_subpicture.h>
++#include <vlc_spu.h>
+ 
+ typedef struct subpicture_updater_sys_region_t subpicture_updater_sys_region_t;
+ 
+@@ -64,6 +65,10 @@ struct subpicture_updater_sys_t {
+     float margin_ratio;
+     vlc_tick_t i_next_update;
+     bool b_blink_even;
++    /* TorWatch: the text size set while playing, as last drawn, and
++     * whether the decoder placed the text itself (-1: not known yet) */
++    int i_layout_scale;
++    int i_decoder_absolute;
+ };
+ 
+ static inline void SubpictureUpdaterSysRegionClean(subpicture_updater_sys_region_t *p_updtregion)
+@@ -103,7 +108,24 @@ static int SubpictureTextValidate(subpicture_t *subpic,
+     subpicture_updater_sys_t *sys = subpic->updater.p_sys;
+     VLC_UNUSED(fmt_src); VLC_UNUSED(fmt_dst);
+ 
+-    if (!has_src_changed && !has_dst_changed &&
++    /* TorWatch: a size change while playing redraws the line on screen,
++     * laid out afresh: once shown, the subtitle is pinned where it was
++     * drawn, and a larger text pinned there would wrap and run off the
++     * bottom. Text the decoder placed itself stays where it is. */
++    if (sys->i_decoder_absolute < 0)
++        sys->i_decoder_absolute = subpic->b_absolute;
++    int i_layout_scale;
++    spu_GetLayout(NULL, &i_layout_scale);
++    const bool b_scale_changed = i_layout_scale != sys->i_layout_scale;
++    sys->i_layout_scale = i_layout_scale;
++    if (b_scale_changed && !sys->i_decoder_absolute)
++    {
++        subpic->b_absolute = false;
++        for (subpicture_updater_sys_region_t *r = &sys->region; r; r = r->p_next)
++            r->flags &= ~UPDT_REGION_FIXED_DONE;
++    }
++
++    if (!has_src_changed && !has_dst_changed && !b_scale_changed &&
+         (sys->i_next_update == VLC_TICK_INVALID || sys->i_next_update > ts))
+         return VLC_SUCCESS;
+ 
+@@ -292,6 +314,7 @@ static inline subpicture_t *decoder_NewSubpictureText(decoder_t *decoder)
+         .p_sys       = sys,
+     };
+     SubpictureUpdaterSysRegionInit( &sys->region );
++    sys->i_decoder_absolute = -1;
+     sys->margin_ratio = 0.04;
+     sys->p_default_style = text_style_Create( STYLE_NO_DEFAULTS );
+     if(unlikely(!sys->p_default_style))
+diff --git a/modules/text_renderer/freetype/freetype.c b/modules/text_renderer/freetype/freetype.c
+index 5cfe6d7..0c16e72 100644
+--- a/modules/text_renderer/freetype/freetype.c
++++ b/modules/text_renderer/freetype/freetype.c
+@@ -38,7 +38,8 @@
+ #include <vlc_common.h>
+ #include <vlc_plugin.h>
+ #include <vlc_input.h>                             /* vlc_input_attachment_* */
+-#include <vlc_filter.h>                                      /* filter_sys_t */
++#include <vlc_filter.h>
++#include <vlc_spu.h>                                      /* filter_sys_t */
+ #include <vlc_subpicture.h>
+ #include <vlc_text_style.h>                                   /* text_style_t*/
+ #include <vlc_charset.h>
+@@ -1195,7 +1196,10 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
+ 
+     filter_sys_t *p_sys = p_filter->p_sys;
+     bool b_grid = p_region_in->b_gridmode;
+-    p_sys->i_scale = ( b_grid ) ? 100 : var_InheritInteger( p_filter, "sub-text-scale");
++    int i_layout_scale;
++    spu_GetLayout( NULL, &i_layout_scale ); /* TorWatch: set while playing */
++    p_sys->i_scale = ( b_grid ) ? 100 : i_layout_scale > 0 ? i_layout_scale
++                                      : var_InheritInteger( p_filter, "sub-text-scale");
+ 
+     UpdateDefaultLiveStyles( p_filter );
+ 
+diff --git a/src/libvlccore.sym b/src/libvlccore.sym
+index d2960be..f3de16b 100644
+--- a/src/libvlccore.sym
++++ b/src/libvlccore.sym
+@@ -389,6 +389,8 @@ sout_StreamChainDelete
+ sout_StreamChainNew
+ spu_Create
+ spu_Destroy
++spu_GetLayout
++spu_SetLayout
+ spu_PutSubpicture
+ spu_ChangeSources
+ spu_ChangeFilters
+diff --git a/src/video_output/vout_subpictures.c b/src/video_output/vout_subpictures.c
+index 68dde84..7c8c36b 100644
+--- a/src/video_output/vout_subpictures.c
++++ b/src/video_output/vout_subpictures.c
+@@ -39,6 +39,7 @@
+ #include <vlc_vout.h>
+ #include <vlc_filter.h>
+ #include <vlc_spu.h>
++#include <vlc_atomic.h>
+ 
+ #include "../libvlc.h"
+ #include "vout_internal.h"
+@@ -712,8 +713,16 @@ static void SpuRenderRegion(spu_t *spu,
+      * The margin is applied only to subtitle and when no forced crop is
+      * requested (dvd menu) */
+     int y_margin = 0;
+-    if (!crop_requested && subpic->b_subtitle)
+-        y_margin = spu_invscale_h(sys->margin, scale_size);
++    if (!crop_requested && subpic->b_subtitle) {
++        int margin_permille;
++        spu_GetLayout(&margin_permille, NULL);
++        if (margin_permille >= 0)
++            /* TorWatch: a share of the picture, set while playing */
++            y_margin = spu_invscale_h((int)fmt->i_visible_height * margin_permille / 1000,
++                                      scale_size);
++        else
++            y_margin = spu_invscale_h(sys->margin, scale_size);
++    }
+ 
+     /* Place the picture
+      * We compute the position in the rendered size */
+@@ -1709,6 +1718,23 @@ void spu_ChangeFilters(spu_t *spu, const char *filters)
+     vlc_mutex_unlock(&sys->lock);
+ }
+ 
++static atomic_int layout_margin_permille = ATOMIC_VAR_INIT(-1);
++static atomic_int layout_text_scale = ATOMIC_VAR_INIT(0);
++
++void spu_SetLayout(int margin_permille, int text_scale)
++{
++    atomic_store(&layout_margin_permille, margin_permille > 1000 ? 1000 : margin_permille);
++    atomic_store(&layout_text_scale, text_scale > 500 ? 500 : text_scale);
++}
++
++void spu_GetLayout(int *margin_permille, int *text_scale)
++{
++    if (margin_permille)
++        *margin_permille = atomic_load(&layout_margin_permille);
++    if (text_scale)
++        *text_scale = atomic_load(&layout_text_scale);
++}
++
+ void spu_ChangeMargin(spu_t *spu, int margin)
+ {
+     spu_private_t *sys = spu->p;
