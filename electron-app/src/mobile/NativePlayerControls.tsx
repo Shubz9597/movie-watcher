@@ -138,11 +138,10 @@ function formatDelay(seconds: number): string {
 }
 
 
-// By default the picture is as large as it fits in its true shape (top to
-// bottom on a phone; black bars baked into the video are left off). Spread
-// two fingers to reshape it to the whole screen, pinch in to return. Never
-// cropped.
-const SCALE_TOASTS = { stretch: 'Original shape', edge: 'Edge to edge' } as const;
+// The picture fills the screen by default; spread two fingers to stretch it
+// edge to edge, pinch in to return. Never cropped: the whole picture stays
+// visible, only widened.
+const SCALE_TOASTS = { stretch: 'Fill screen', edge: 'Edge to edge' } as const;
 
 export default function NativePlayerControls(props: Props) {
   const { player, title, year, logoUrl, magnet, cat, fileIndex, tmdbId, imdbId, malId, anilistId, season, episode, absoluteEpisode, downloadId, seriesId, hasNextEpisode = false, onClose } = props;

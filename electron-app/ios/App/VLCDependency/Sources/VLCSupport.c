@@ -27,25 +27,3 @@ TorWatchVideoLayout torwatch_video_layout(double viewport_width,
     }
     return layout;
 }
-
-TorWatchVideoLayout torwatch_video_layout_active(double viewport_width,
-    double viewport_height, double video_aspect, int mode, double active_fraction)
-{
-    if (!isfinite(active_fraction) || active_fraction <= 0 || active_fraction > 1) active_fraction = 1;
-    if (mode != 4 && mode != 3) {
-        return torwatch_video_layout(viewport_width, viewport_height, video_aspect, mode);
-    }
-    TorWatchVideoLayout layout = torwatch_video_layout(viewport_width, viewport_height, video_aspect, 0);
-    if (layout.width <= 0 || layout.height <= 0) return layout;
-    double active_height = layout.height * active_fraction; /* real image, unscaled */
-    if (mode == 3) {
-        /* the real image reshaped to the whole screen: no bars, nothing cut */
-        layout.scale_x = viewport_width / layout.width;
-        layout.scale_y = viewport_height / active_height;
-    } else {
-        /* the real image as large as it fits in its true shape */
-        layout.scale_x = layout.scale_y = fmin(viewport_width / layout.width, viewport_height / active_height);
-    }
-    layout.viewport_width = viewport_width;
-    return layout;
-}

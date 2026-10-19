@@ -16,9 +16,8 @@ test('native sizing preserves Fit, crops Fill, and stretches inside a protected 
 #include <stdio.h>
 #include <stdlib.h>
 int main(int argc, char **argv) {
-    if (argc != 5 && argc != 6) return 1;
+    if (argc != 5) return 1;
     TorWatchVideoLayout layout = torwatch_video_layout(atof(argv[1]), atof(argv[2]), atof(argv[3]), atoi(argv[4]));
-    if (argc == 6) layout = torwatch_video_layout_active(atof(argv[1]), atof(argv[2]), atof(argv[3]), atoi(argv[4]), atof(argv[5]));
     printf("[%0.12f,%0.12f,%0.12f,%0.12f,%0.12f]", layout.width, layout.height, layout.scale_x, layout.scale_y, layout.viewport_width);
 }
 `);
@@ -65,27 +64,6 @@ int main(int argc, char **argv) {
     }
     for (const dimensions of [[0, 390, 4 / 3], [844, 0, 4 / 3], [844, 390, 0], [844, 390, -1], ['nan', 390, 4 / 3], [844, 390, 'inf']]) {
       assert.deepEqual(layout(...dimensions, 2), [0, 0, 1, 1, 0]);
-    }
-    // The real picture as large as fits in its true shape; baked-in bars
-    // are cut; spread reshapes it to the whole screen, nothing trimmed.
-    const active = (width, height, aspect, mode, fraction) => JSON.parse(execFileSync(binary, [width, height, aspect, mode, fraction].map(String), {encoding:'utf8'}));
-    const phone = [844, 390];
-    const duneFraction = (16 / 9) / 2.39; // 2.39:1 inside a 16:9 frame (HBO Max)
-    const dune = active(...phone, 16 / 9, 4, duneFraction);
-    close(dune[2], dune[3]);
-    close(dune[0] * dune[2], phone[0]); // a wider picture: full width
-    close((dune[0] * dune[2]) / (dune[1] * duneFraction * dune[3]), 2.39); // true shape
-    // Dragon Ball Z Kai (4:3): top to bottom, side gaps, no stretching.
-    const kai = active(...phone, 4 / 3, 4, 1);
-    close(kai[2], kai[3]);
-    close(kai[1] * kai[3], phone[1]);
-    assert.ok(kai[0] * kai[2] < phone[0], 'side gaps remain');
-    // Edge to edge: the real picture exactly covers the screen.
-    for (const [aspect, fraction] of [[16 / 9, duneFraction], [4 / 3, 1], [16 / 9, 1], [2.76, 1]]) {
-      const edge = active(...phone, aspect, 3, fraction);
-      close(edge[0] * edge[2], phone[0]);
-      close(edge[1] * fraction * edge[3], phone[1]);
-      close(edge[4], phone[0]);
     }
     const reference = layout(1280, 588, 4 / 3, 2);
     close((1280 - reference[4]) / 2, 117.333333333333);
