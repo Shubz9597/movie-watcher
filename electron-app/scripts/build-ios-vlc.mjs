@@ -149,7 +149,14 @@ say('Building MobileVLCKit with the TorWatch patch. The first build takes 1-2 ho
 // and lock; a closed MacBook lid still sleeps it).
 spawn('caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref();
 const started = Date.now();
-run('./buildMobileVLCKit.sh', ['-f'], { cwd: work, env: { ...process.env, LC_ALL: 'C' } });
+adaptXcodeStep(path.join(work, 'buildMobileVLCKit.sh'));
+// VLC compiled with our patch already (an earlier run that stopped at the
+// Xcode step): only redo the framework, in minutes.
+const compiled = ['install-iPhoneOS/arm64', 'install-iPhoneSimulator/arm64', 'install-iPhoneSimulator/x86_64']
+  .map((slice) => path.join(vlc, slice, 'lib', 'libvlc.a'))
+  .every((lib) => existsSync(lib) && output('nm', ['-g', lib]).includes('libvlc_video_set_subtitle_layout'));
+if (compiled) say('VLC is already compiled with the TorWatch patch: building the framework only.');
+run('./buildMobileVLCKit.sh', compiled ? ['-f', '-l'] : ['-f'], { cwd: work, env: { ...process.env, LC_ALL: 'C' } });
 const built = path.join(work, 'build', 'MobileVLCKit.xcframework');
 if (!existsSync(path.join(built, 'Info.plist'))) fail('The build finished without MobileVLCKit.xcframework; see the output above.');
 
@@ -244,4 +251,23 @@ done
 "${process.execPath}" "${helper}" "$url" "$out" || exit $status
 `);
   chmodSync(shim, 0o755);
+}
+
+// VLCKit 3.7.3's framework step targets iOS 9 and signs with "iPhone
+// Developer": current Xcode cannot link ARC code for iOS < 11 (libarclite is
+// gone) and needs a team to sign. Target the app's iOS 15 without signing
+// (Xcode signs the framework when it embeds it in the app), and show
+// Xcode's own error instead of discarding its output.
+function adaptXcodeStep(script) {
+  let text = readFileSync(script, 'utf8');
+  text = text.replace(/IPHONEOS_DEPLOYMENT_TARGET=\$\{SDK_MIN\} \\\n/,
+    'IPHONEOS_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \\\n');
+  text = text.replace(/SKIP_INSTALL=no \\\n\s*> \$\{out\}\n/,
+    'SKIP_INSTALL=no \\\n' +
+    '               > "${ROOT_DIR}/xcodebuild-$PLATFORM.log" 2>&1 || { grep -E "error:|ARCHIVE FAILED" "${ROOT_DIR}/xcodebuild-$PLATFORM.log" | tail -40; ' +
+    'echo "Xcode log: ${ROOT_DIR}/xcodebuild-$PLATFORM.log"; exit 1; }\n');
+  if (!text.includes('IPHONEOS_DEPLOYMENT_TARGET=15.0') || !text.includes('xcodebuild-$PLATFORM.log')) {
+    fail('VLCKit\'s build script changed; its Xcode step could not be adapted.');
+  }
+  writeFileSync(script, text);
 }
