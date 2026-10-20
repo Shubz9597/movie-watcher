@@ -207,6 +207,8 @@ func main() {
 	httpapi.SubtitleMatchHandlers{Jobs: downloads.NewStore(db), Picks: pickRepo, ListenAddr: config.ListenAddr()}.Register(mux)
 	httpapi.RegisterTasteRoutes(mux, taste.New(db))
 	mux.HandleFunc("/skip-segments", skipsegments.Handler)
+	// The phone player's events, readable on the server (diagnostics/phone.log).
+	mux.HandleFunc("/v1/diagnostics/events", httpapi.HandleDiagnosticEvents)
 	// Openings and endings found in the show's own files replace the skip
 	// providers' (which miss episodes and use other releases' timings).
 	introService := introdetect.NewService(db, config.ListenAddr())

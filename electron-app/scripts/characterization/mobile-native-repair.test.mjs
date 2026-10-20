@@ -709,7 +709,7 @@ test("native bridge: listener registration gates play and dispose removes handle
   await starting;
   assert.equal(played, true);
   await nativeBridge.dispose();
-  assert.deepEqual(removed.sort(), ["buffering", "playbackState", "timeUpdate", "tracksUpdate"]);
+  assert.deepEqual(removed.sort(), ["buffering", "diagnostic", "playbackState", "timeUpdate", "tracksUpdate"]);
   await assert.rejects(
     nativeBridge.play({ url: ORIGIN + "/media", title: "Movie", subtitles: [], playId: "p2" }),
     /disposed/,

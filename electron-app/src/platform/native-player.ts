@@ -62,6 +62,7 @@ export interface TorWatchNativePlugin {
   addListener(eventName: 'playbackState', callback: (event: { state: string; message?: string; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'tracksUpdate', callback: (event: { audio: Array<{ id: number; label?: string; language?: string }>; subtitles: Array<{ id: number; label?: string; language?: string }>; selectedAudioTrackId?: number | null; selectedSubtitleTrackId?: number | null; playId: string }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'buffering', callback: (event: { active: boolean; progress?: number; playId: string }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'diagnostic', callback: (event: { kind: string; detail?: Record<string, unknown>; at?: number; playId?: string }) => void): Promise<PluginListenerHandle>;
 }
 
 export type PluginListenerHandle = { remove: () => Promise<void> | void };
@@ -146,6 +147,9 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
         playId: event.playId,
       };
       trackListeners.forEach((cb) => cb(update));
+    }).then((handle) => { nativeListenerHandles.push(handle); }),
+    plugin.addListener('diagnostic', (event) => {
+      queueDiagnostic(event);
     }).then((handle) => { nativeListenerHandles.push(handle); }),
     plugin.addListener('buffering', (event) => {
       if (!accept(event.playId)) return;
@@ -414,4 +418,30 @@ export class NativePlayer implements PlayerPort {
     this.detachOrigin();
     void this.controller.dispose().catch(() => {});
   }
+}
+
+// The player's events (audio interruptions, Play presses, player states),
+// kept on the server in diagnostics/phone.log to diagnose what happened on
+// the device. Sent in small batches; dropped when the server is away.
+const diagnosticQueue: Array<{ at: number; kind: string; detail: Record<string, unknown> }> = [];
+let diagnosticTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueDiagnostic(event: { kind: string; detail?: Record<string, unknown>; at?: number; playId?: string }): void {
+  if (!event?.kind) return;
+  diagnosticQueue.push({ at: event.at ?? Date.now(), kind: event.kind, detail: { ...(event.detail ?? {}), playId: event.playId } });
+  if (diagnosticQueue.length > 200) diagnosticQueue.splice(0, diagnosticQueue.length - 200);
+  if (!diagnosticTimer) diagnosticTimer = setTimeout(flushDiagnostics, 1000);
+}
+
+function flushDiagnostics(): void {
+  diagnosticTimer = null;
+  const origin = getBackendOrigin();
+  if (!origin || diagnosticQueue.length === 0) return;
+  const events = diagnosticQueue.splice(0);
+  void fetch(`${origin}/v1/diagnostics/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device: 'iPhone', events }),
+    keepalive: true,
+  }).catch(() => {});
 }

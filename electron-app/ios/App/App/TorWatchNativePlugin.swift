@@ -111,6 +111,27 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // Play that does not get going (VLC stuck on an audio output an alarm,
     // call or Siri left behind): the engine is rebuilt at the position.
     private var resumeWatchdog: DispatchWorkItem?
+    // The audio track detached when an interruption began (VLC's own audio
+    // output stays dead after an alarm or call: iOS seldom says "should
+    // resume"), attached again, on a fresh output, at the next Play.
+    private var audioTrackBeforeInterruption: Int32?
+
+    /// Player events for diagnosis (the app sends them to the server's
+    /// diagnostics/phone.log).
+    private func diag(_ kind: String, _ detail: [String: Any] = [:]) {
+        var data = detail
+        if let player = mediaPlayer {
+            // 0 stopped, 1 opening, 2 buffering, 3 ended, 4 error, 5 playing, 6 paused, 7 es-added
+            data["vlcState"] = player.state.rawValue
+            data["timeMs"] = Int(player.time.intValue)
+            data["isPlaying"] = player.isPlaying
+        }
+        data["requested"] = playbackRequested
+        data["app"] = UIApplication.shared.applicationState == .active ? "active"
+            : UIApplication.shared.applicationState == .inactive ? "inactive" : "background"
+        notifyListeners("diagnostic", data: ["kind": kind, "detail": data, "playId": playId,
+                                             "at": Int64(Date().timeIntervalSince1970 * 1000)])
+    }
     // System media controls: AirPods, Control Center, Lock Screen, car and
     // headphone buttons (MPRemoteCommandCenter + Now Playing).
     private struct NowPlayingItem {
@@ -404,6 +425,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // By what the player is doing, not only what was asked: an alarm or
         // call can pause VLC behind the app's back, and Play then paused
         // again instead of playing (the video seemed frozen).
+        diag("toggle")
         if playbackRequested && player.isPlaying {
             pausePlayback(player)
         } else {
@@ -427,6 +449,18 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         playbackRequested = true
         player.play()
         watchResume(fromMs: fromMs, playId: playId, attempt: 1)
+        if audioNeedsRestart { retryAudio(playId: playId, remaining: 10) }
+    }
+
+    /// iOS refused the audio at Play (an alarm still letting go): the picture
+    /// plays on and the sound joins as soon as iOS gives it back.
+    private func retryAudio(playId expected: String, remaining: Int) {
+        guard remaining > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self = self, self.playId == expected, !self.terminalSent, self.audioNeedsRestart else { return }
+            self.restartAudioOutputIfNeeded()
+            self.retryAudio(playId: expected, remaining: remaining - 1)
+        }
     }
 
     /// After Play the clock must move. Still stopped after 3 s while not
@@ -440,10 +474,21 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                   self.playbackRequested, self.playId == expected else { return }
             if player.time.intValue > fromMs + 300 { return } // playing
             let loading = player.state == .buffering || player.state == .opening
+            self.diag("play-stuck", ["attempt": attempt, "fromMs": Int(fromMs)])
             if loading && attempt < 3 {
                 self.watchResume(fromMs: fromMs, playId: expected, attempt: attempt + 1)
                 return
             }
+            if attempt == 1 {
+                // First a fresh audio output, then (still stuck) a new engine.
+                self.audioNeedsRestart = true
+                self.restartAudioOutputIfNeeded()
+                if player.isSeekable { player.time = VLCTime(int: fromMs) }
+                player.play()
+                self.watchResume(fromMs: fromMs, playId: expected, attempt: 3)
+                return
+            }
+            self.diag("rebuild", ["fromMs": Int(fromMs)])
             self.rebuildEngine(atMs: fromMs)
         }
         resumeWatchdog = work
@@ -772,6 +817,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     func mediaPlayerStateChanged(_ aNotificationName: Notification) {
         guard !terminalSent, let player = aNotificationName.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
+        diag("state")
         switch player.state {
         case .buffering:
             notifyListeners("buffering", data: ["active": true, "playId": playId])
@@ -910,8 +956,19 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
               let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         audioNeedsRestart = true
+        let options = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        diag("interruption", ["type": type == .began ? "began" : "ended",
+                              "shouldResume": options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0])
         if type == .began {
             if playbackRequested { pausePlayback(player) }
+            // Let go of VLC's audio output now, while it is still sound:
+            // after the interruption it would stay dead and Play would wait
+            // on it forever. A new one is made at the next Play.
+            let track = player.currentAudioTrackIndex
+            if track >= 0, audioTrackBeforeInterruption == nil {
+                audioTrackBeforeInterruption = track
+                player.currentAudioTrackIndex = -1
+            }
         } else if UIApplication.shared.applicationState == .active {
             restartAudioOutputIfNeeded()
         }
@@ -921,7 +978,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// audio unit) on a re-activated session.
     private func restartAudioOutputIfNeeded() {
         guard audioNeedsRestart, let player = mediaPlayer, !terminalSent else { return }
-        let track = player.currentAudioTrackIndex
+        let track = audioTrackBeforeInterruption ?? player.currentAudioTrackIndex
         guard track >= 0 else { return }
         // An alarm or call may still hold the audio: then try again at the
         // next Play or return to the app (the Play watchdog covers the rest).
@@ -929,11 +986,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
+            diag("audio-activate-failed", ["error": error.localizedDescription])
             return
         }
         audioNeedsRestart = false
+        audioTrackBeforeInterruption = nil
         player.currentAudioTrackIndex = -1
         player.currentAudioTrackIndex = track
+        diag("audio-restarted", ["track": Int(track)])
     }
 
     /// iOS discards a backgrounded app's hardware video decoder. VLC then
@@ -1099,6 +1159,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         subtitleDownloads.forEach { $0.cancel() }
         resumeWatchdog?.cancel()
         resumeWatchdog = nil
+        audioTrackBeforeInterruption = nil
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
         backgroundObserver = nil
