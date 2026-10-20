@@ -1,4 +1,4 @@
-// The subtitle look the phone uses (one look everywhere): white monospace
+// The subtitle look the phone uses (one look everywhere): white sans-serif
 // text in a single, slightly see-through black box, a little above the seek
 // bar while the controls show. mpv draws it; plain-dialogue ASS tracks are
 // forced into it, styled ones (signs, karaoke) keep their author's styling.
@@ -23,7 +23,7 @@ function setter(handle) {
 export function applySubtitleLook(handle) {
   if (typeof handle?.setOptionString !== "function") return;
   const set = setter(handle);
-  set("sub-font", "Consolas");
+  set("sub-font", "Segoe UI"); // a plain sans-serif, as the streaming apps use
   set("sub-bold", "no");
   set("sub-color", "#FFFFFFFF");
   set("sub-shadow-offset", "0");

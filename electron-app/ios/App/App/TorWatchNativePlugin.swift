@@ -308,7 +308,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             "--file-caching=1000",
             "--no-input-fast-seek", // resume at the timestamp, not the preceding keyframe
             "--sub-text-scale=\(currentSubTextScale)",
-            "--freetype-font=Menlo",
+            // A plain sans-serif like the streaming apps' (Netflix Sans);
+            // the patched framework's dialogue ASS tracks use it too.
+            "--freetype-font=Helvetica Neue",
             "--freetype-color=16777215",
         ] + TorWatchNativePlugin.subtitleLookOptions)
         // A new player starts at its options: no lift, the configured size.
@@ -559,7 +561,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// recreating the engine at the current position — libvlc has no runtime
     /// text-scale API, so this carries a ~1s hiccup and only fires when
     /// embedded tracks are actually active (the web overlay resizes live).
-    /// Text subtitles in the app's monospaced font. The patched framework
+    /// Text subtitles in the app's sans-serif font. The patched framework
     /// draws one 60% black box around each subtitle (as the app does); the
     /// official one would draw its background as a band across the whole
     /// picture, so there its subtitles get a thin outline instead.
