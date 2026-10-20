@@ -12,7 +12,7 @@
 // Product > Clean Build Folder once.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,6 +132,15 @@ if (!existsSync(path.join(vlc, '.git'))) {
   if (!cloned) fail('VLC could not be downloaded. Check the internet connection and retry.');
 }
 await fetchToolMirrors(path.join(vlc, 'extras', 'tools'));
+installDownloadFallback(path.join(vlc, 'extras', 'tools', 'build', 'bin'));
+// An interrupted download can leave an empty file the build would take as done.
+for (const dir of [path.join(vlc, 'extras', 'tools'), path.join(vlc, 'contrib', 'tarballs')]) {
+  if (!existsSync(dir)) continue;
+  for (const name of readdirSync(dir)) {
+    const file = path.join(dir, name);
+    if (/\.(tar\.(gz|bz2|xz)|tgz|zip)$/.test(name) && statSync(file).size === 0) rmSync(file);
+  }
+}
 
 // VideoLAN's build: VLC (on first run from its own git), its libraries, then
 // MobileVLCKit.xcframework for iPhone and the simulator.
@@ -190,4 +199,49 @@ async function fetchToolMirrors(toolsDir) {
     }
     if (!placed) say(`${file}: no mirror answered; VLC's build will try its own sources.`);
   }
+}
+
+// VLC's build downloads its tools and libraries with curl. The Mac's curl
+// (LibreSSL) fails to connect to some hosts on some networks (GitHub release
+// files: "tlsv1 alert protocol version"), so a curl placed first on the
+// build's PATH (VLC's own tools folder) runs the real one and, when that
+// fails, fetches the same URL with Node. VLC still checks every file
+// against its SHA512SUMS.
+function installDownloadFallback(binDir) {
+  mkdirSync(binDir, { recursive: true });
+  const helper = path.join(binDir, 'torwatch-download.mjs');
+  writeFileSync(helper, `// Fetches URL into FILE (following redirects), for the curl fallback.
+import { writeFileSync } from 'node:fs';
+const [url, file] = process.argv.slice(2);
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(600000) });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    writeFileSync(file, Buffer.from(await response.arrayBuffer()));
+    console.error('[ios-vlc] fetched with Node: ' + url);
+    process.exit(0);
+  } catch (error) {
+    if (attempt === 3) { console.error('[ios-vlc] Node could not fetch ' + url + ': ' + error.message); process.exit(1); }
+  }
+}
+`);
+  const shim = path.join(binDir, 'curl');
+  writeFileSync(shim, `#!/bin/sh
+# TorWatch: the system curl first; if it fails, the same download with Node.
+/usr/bin/curl "$@" && exit 0
+status=$?
+out=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|--output) out="$2"; shift 2 ;;
+    --retry|--max-time|-m|--connect-timeout|-H|--header|-A|--user-agent) shift 2 ;;
+    --) url="$2"; shift $# ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+[ -n "$out" ] && [ -n "$url" ] || exit $status
+"${process.execPath}" "${helper}" "$url" "$out" || exit $status
+`);
+  chmodSync(shim, 0o755);
 }
