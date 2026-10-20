@@ -42,9 +42,21 @@ const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
   if (result.status !== 0) fail(`${command} ${args.join(' ')} failed (exit ${result.status}).`);
 };
+// Symbol listings of the framework run to megabytes: a large buffer.
 const output = (command, args) => {
-  try { return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+  try {
+    return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1024 * 1024 * 1024 }).trim();
+  } catch {
+    return '';
+  }
 };
+const hasLayoutSymbol = (binary) => existsSync(binary) && output('nm', ['-gU', binary]).includes('libvlc_video_set_subtitle_layout');
+// The framework's slices, each with its binary.
+const frameworkBinaries = (xcframework) => existsSync(xcframework)
+  ? readdirSync(xcframework).filter((name) => !name.endsWith('.plist'))
+    .map((slice) => ({ slice, binary: path.join(xcframework, slice, 'MobileVLCKit.framework', 'MobileVLCKit') }))
+    .filter(({ binary }) => existsSync(binary))
+  : [];
 
 if (process.platform !== 'darwin') fail('Run this on the Mac (it needs Xcode).');
 
@@ -154,19 +166,25 @@ adaptXcodeStep(path.join(work, 'buildMobileVLCKit.sh'));
 // Xcode step): only redo the framework, in minutes.
 const compiled = ['install-iPhoneOS/arm64', 'install-iPhoneSimulator/arm64', 'install-iPhoneSimulator/x86_64']
   .map((slice) => path.join(vlc, slice, 'lib', 'libvlc.a'))
-  .every((lib) => existsSync(lib) && output('nm', ['-g', lib]).includes('libvlc_video_set_subtitle_layout'));
-if (compiled) say('VLC is already compiled with the TorWatch patch: building the framework only.');
-run('./buildMobileVLCKit.sh', compiled ? ['-f', '-l'] : ['-f'], { cwd: work, env: { ...process.env, LC_ALL: 'C' } });
+  .every(hasLayoutSymbol);
 const built = path.join(work, 'build', 'MobileVLCKit.xcframework');
+const builtSlices = frameworkBinaries(built);
+if (compiled && builtSlices.length >= 2 && builtSlices.every(({ binary }) => hasLayoutSymbol(binary))) {
+  say('The patched framework is already built: installing it.');
+} else {
+  if (compiled) say('VLC is already compiled with the TorWatch patch: building the framework only.');
+  run('./buildMobileVLCKit.sh', compiled ? ['-f', '-l'] : ['-f'], { cwd: work, env: { ...process.env, LC_ALL: 'C' } });
+}
 if (!existsSync(path.join(built, 'Info.plist'))) fail('The build finished without MobileVLCKit.xcframework; see the output above.');
 
 // The new subtitle function must be in every slice.
-for (const slice of readdirSync(built).filter((name) => !name.endsWith('.plist'))) {
-  const binary = path.join(built, slice, 'MobileVLCKit.framework', 'MobileVLCKit');
-  if (!existsSync(binary)) continue;
-  if (!output('nm', ['-g', binary]).includes('libvlc_video_set_subtitle_layout')) {
+const slices = frameworkBinaries(built);
+if (!slices.length) fail('The framework has no binaries; see the output above.');
+for (const { slice, binary } of slices) {
+  if (!hasLayoutSymbol(binary)) {
     fail(`The ${slice} build lacks libvlc_video_set_subtitle_layout: the TorWatch patch was not applied.`);
   }
+  say(`${slice}: has the TorWatch subtitle functions`);
 }
 
 // Install, keeping the official framework for --stock.
