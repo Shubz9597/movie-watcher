@@ -108,6 +108,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     // VLC's audio output must be rebuilt before playing again.
     private var interruptionObserver: NSObjectProtocol?
     private var audioNeedsRestart = false
+    // Play that does not get going (VLC stuck on an audio output an alarm,
+    // call or Siri left behind): the engine is rebuilt at the position.
+    private var resumeWatchdog: DispatchWorkItem?
     // System media controls: AirPods, Control Center, Lock Screen, car and
     // headphone buttons (MPRemoteCommandCenter + Now Playing).
     private struct NowPlayingItem {
@@ -398,7 +401,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        if playbackRequested {
+        // By what the player is doing, not only what was asked: an alarm or
+        // call can pause VLC behind the app's back, and Play then paused
+        // again instead of playing (the video seemed frozen).
+        if playbackRequested && player.isPlaying {
             pausePlayback(player)
         } else {
             resumeFromPause(player)
@@ -416,9 +422,49 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if pendingSeek == nil, let position = pausedPositionMs, player.isSeekable {
             player.time = VLCTime(int: position)
         }
+        let fromMs = pausedPositionMs ?? max(0, player.time.intValue)
         pausedPositionMs = nil
         playbackRequested = true
         player.play()
+        watchResume(fromMs: fromMs, playId: playId, attempt: 1)
+    }
+
+    /// After Play the clock must move. Still stopped after 3 s while not
+    /// buffering (or after 9 s in any case): the player is stuck, as after an
+    /// alarm took the audio; it is rebuilt in place at the position, as a
+    /// subtitle resize does, and plays on.
+    private func watchResume(fromMs: Int32, playId expected: String, attempt: Int) {
+        resumeWatchdog?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, let player = self.mediaPlayer, !self.terminalSent,
+                  self.playbackRequested, self.playId == expected else { return }
+            if player.time.intValue > fromMs + 300 { return } // playing
+            let loading = player.state == .buffering || player.state == .opening
+            if loading && attempt < 3 {
+                self.watchResume(fromMs: fromMs, playId: expected, attempt: attempt + 1)
+                return
+            }
+            self.rebuildEngine(atMs: fromMs)
+        }
+        resumeWatchdog = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    /// A fresh engine for the same video at a position: same session, no
+    /// terminal event, playback resumes (a download's subtitle files are
+    /// attached again).
+    private func rebuildEngine(atMs positionMs: Int32) {
+        guard let url = currentMediaURL, let bridge = self.bridge, let rootVC = bridge.viewController else { return }
+        let requestPlayId = playId
+        let currentLocalDownload = localDownloadId
+        let currentLocalLang = mediaPlayer.map { currentLocalSubtitleLang($0) } ?? ""
+        let currentNowPlaying = nowPlayingItem
+        teardown(restoreOrientation: false)
+        playId = requestPlayId
+        terminalSent = false
+        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId,
+            localDownloadId: currentLocalDownload, localSubtitleLang: currentLocalDownload != nil ? currentLocalLang : nil,
+            nowPlaying: currentNowPlaying)
     }
 
     private func pausePlayback(_ player: VLCMediaPlayer) {
@@ -605,24 +651,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        let positionMs = mediaPlayer?.time.intValue ?? 0
-        let currentLocalDownload = localDownloadId
-        let currentLocalLang = mediaPlayer.map { currentLocalSubtitleLang($0) } ?? ""
-        let currentNowPlaying = nowPlayingItem
-        // Same session continues server-side: no terminal event, just an
-        // in-place engine rebuild at the current position (playback resumes).
-        teardown(restoreOrientation: false)
-        playId = requestPlayId
-        terminalSent = false
-        guard let bridge = self.bridge, let rootVC = bridge.viewController else {
-            call.resolve()
-            return
-        }
-        // Downloaded subtitles are playback slaves: a rebuilt engine has none
-        // until they are attached again (resizing used to make them vanish).
-        startPlaybackSurface(rootVC: rootVC, url: url, seekTo: Double(positionMs) / 1000.0, playId: requestPlayId,
-            localDownloadId: currentLocalDownload, localSubtitleLang: currentLocalDownload != nil ? currentLocalLang : nil,
-            nowPlaying: currentNowPlaying)
+        _ = url
+        // Same session continues server-side: an in-place engine rebuild at
+        // the current position (playback resumes).
+        rebuildEngine(atMs: mediaPlayer?.time.intValue ?? 0)
         call.resolve()
     }
 
@@ -891,9 +923,15 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         guard audioNeedsRestart, let player = mediaPlayer, !terminalSent else { return }
         let track = player.currentAudioTrackIndex
         guard track >= 0 else { return }
+        // An alarm or call may still hold the audio: then try again at the
+        // next Play or return to the app (the Play watchdog covers the rest).
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            return
+        }
         audioNeedsRestart = false
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
         player.currentAudioTrackIndex = -1
         player.currentAudioTrackIndex = track
     }
@@ -943,7 +981,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         add(center.pauseCommand) { [weak self] _ in self?.remoteSetPlaying(false) ?? .commandFailed }
         add(center.togglePlayPauseCommand) { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            return self.remoteSetPlaying(!self.playbackRequested)
+            return self.remoteSetPlaying(!(self.playbackRequested && self.mediaPlayer?.isPlaying == true))
         }
         center.skipForwardCommand.preferredIntervals = [10]
         center.skipBackwardCommand.preferredIntervals = [10]
@@ -981,7 +1019,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         guard let player = mediaPlayer, !terminalSent else { return .noActionableNowPlayingItem }
         if play {
             guard UIApplication.shared.applicationState != .background else { return .commandFailed }
-            if !playbackRequested { resumeFromPause(player) }
+            if !(playbackRequested && player.isPlaying) { resumeFromPause(player) }
         } else if playbackRequested {
             pausePlayback(player)
         }
@@ -1059,6 +1097,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         interruptionObserver = nil
         stopSystemControls()
         subtitleDownloads.forEach { $0.cancel() }
+        resumeWatchdog?.cancel()
+        resumeWatchdog = nil
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
         backgroundObserver = nil
