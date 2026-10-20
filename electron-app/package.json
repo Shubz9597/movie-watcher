@@ -43,6 +43,7 @@
     "smoke:launch": "node scripts/launch-screen-smoke.mjs",
     "test": "npm run test:skip-segments && npm run test:diagnostics && npm run test:player-contracts && npm run test:video-preferences && npm run test:network-routing && npm run test:characterization && npm run test:mobile-navigation && npm run test:search",
     "smoke:ui": "electron scripts/titlebar-smoke.cjs",
+    "smoke:native-reveal": "node scripts/native-reveal-smoke.mjs",
     "smoke:titlebar": "electron scripts/titlebar-smoke.cjs",
     "smoke:embedded": "electron scripts/embedded-playback-smoke.cjs",
     "rebuild-native": "cd ../native/mpv-embed && npm run build",

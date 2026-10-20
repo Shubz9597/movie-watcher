@@ -775,7 +775,7 @@ body,
   display: grid;
   place-items: center;
   padding: max(2rem, env(safe-area-inset-top)) max(2rem, env(safe-area-inset-right)) max(2rem, env(safe-area-inset-bottom)) max(2rem, env(safe-area-inset-left));
-  background: #08090b;
+  background: #000; /* the window behind is black: no grey half while the phone turns */
   color: #f4f4f5;
   pointer-events: none;
   opacity: 0;
