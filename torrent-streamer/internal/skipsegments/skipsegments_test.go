@@ -1,6 +1,9 @@
 package skipsegments
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestNormalizeSegmentClampsAndBounds(t *testing.T) {
 	// End missing → whole remaining file, clamped to duration.
@@ -85,5 +88,19 @@ func TestDedupeAndSortStableOrder(t *testing.T) {
 	}
 	if out[0].Type != "recap" {
 		t.Fatalf("sort order wrong: %+v", out)
+	}
+}
+
+// TheIntroDB v4 (v3 is deprecated): recorded for Game of Thrones S01E01;
+// shows are named by their TVDB id, segments are as before.
+func TestTheIntroDBV4Response(t *testing.T) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(`{"tvdb_id":121361,"type":"tv","season":1,"episode":1,"intro":[{"start_ms":483000,"end_ms":581000}],"credits":[{"start_ms":3674000,"end_ms":null}]}`), &payload); err != nil {
+		t.Fatal(err)
+	}
+	segments := normalizeTheIntroDB(payload, 3700)
+	if len(segments) != 2 || segments[0].Type != "intro" || segments[0].Start != 483 || segments[0].End != 581 ||
+		segments[1].Type != "credits" || segments[1].Start != 3674 || segments[1].End != 3700 {
+		t.Fatalf("segments = %+v", segments)
 	}
 }

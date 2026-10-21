@@ -32,7 +32,7 @@ import (
 
 const (
 	aniskipBaseURL   = "https://api.aniskip.com/v2/skip-times"
-	theintrodbBase   = "https://api.theintrodb.org/v3/media"
+	theintrodbBase   = "https://api.theintrodb.org/v4/media" // v3 is deprecated; same query and segments
 	requestTimeout   = 3500 * time.Millisecond
 	cacheTTL         = 24 * time.Hour
 	cacheMaxEntries  = 250
