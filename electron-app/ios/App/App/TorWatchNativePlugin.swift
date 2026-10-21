@@ -53,6 +53,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         CAPPluginMethod(name: "setVideoScale", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSubtitleScale", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "subtitleCapabilities", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setDiagnosticsEndpoint", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSubtitleLayout", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setPlaybackOrientation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "loadSubtitle", returnType: CAPPluginReturnPromise),
@@ -129,8 +130,81 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         data["requested"] = playbackRequested
         data["app"] = UIApplication.shared.applicationState == .active ? "active"
             : UIApplication.shared.applicationState == .inactive ? "inactive" : "background"
-        notifyListeners("diagnostic", data: ["kind": kind, "detail": data, "playId": playId,
-                                             "at": Int64(Date().timeIntervalSince1970 * 1000)])
+        let at = Int64(Date().timeIntervalSince1970 * 1000)
+        freezeLock.lock()
+        recentDiagnostics.append(["at": at, "kind": kind, "detail": data])
+        if recentDiagnostics.count > 40 { recentDiagnostics.removeFirst(recentDiagnostics.count - 40) }
+        freezeLock.unlock()
+        notifyListeners("diagnostic", data: ["kind": kind, "detail": data, "playId": playId, "at": at])
+    }
+
+    // MARK: - Freeze watcher
+    // A player stuck in VLC can block the main thread: then the whole app
+    // freezes and no event reaches the app's own reporting. A background
+    // timer notices (no main-thread heartbeat for 3 s while a video is open)
+    // and sends the last events straight to the server.
+    private let freezeLock = NSLock()
+    private var recentDiagnostics: [[String: Any]] = []
+    private var diagnosticsEndpoint: URL?
+    private var lastMainBeat = Date()
+    private var freezeReported = false
+    private var watchingFreezes = false
+    private var freezeTimer: DispatchSourceTimer?
+
+    @objc func setDiagnosticsEndpoint(_ call: CAPPluginCall) {
+        let url = call.getString("url").flatMap { URL(string: $0) }
+        freezeLock.lock()
+        diagnosticsEndpoint = url
+        freezeLock.unlock()
+        call.resolve()
+    }
+
+    private func setWatchingFreezes(_ watching: Bool) {
+        freezeLock.lock()
+        watchingFreezes = watching
+        lastMainBeat = Date()
+        freezeLock.unlock()
+        guard watching, freezeTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in self?.checkMainThread() }
+        freezeTimer = timer
+        timer.resume()
+    }
+
+    /// Runs off the main thread every second.
+    private func checkMainThread() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.freezeLock.lock()
+            self.lastMainBeat = Date()
+            self.freezeLock.unlock()
+        }
+        freezeLock.lock()
+        let silent = Date().timeIntervalSince(lastMainBeat)
+        let watching = watchingFreezes
+        let reported = freezeReported
+        let events = recentDiagnostics
+        let endpoint = diagnosticsEndpoint
+        if watching && silent > 3 && !reported { freezeReported = true }
+        if reported && silent < 1.5 { freezeReported = false }
+        freezeLock.unlock()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        if watching && silent > 3 && !reported {
+            postDiagnostics(events + [["at": now, "kind": "main-frozen", "detail": ["seconds": Int(silent)]]], to: endpoint)
+        } else if reported && silent < 1.5 {
+            postDiagnostics([["at": now, "kind": "main-recovered", "detail": [:] as [String: Any]]], to: endpoint)
+        }
+    }
+
+    private func postDiagnostics(_ events: [[String: Any]], to endpoint: URL?) {
+        guard let endpoint = endpoint,
+              let body = try? JSONSerialization.data(withJSONObject: ["device": "iPhone (native)", "events": events]) else { return }
+        var request = URLRequest(url: endpoint, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        URLSession.shared.dataTask(with: request).resume()
     }
     // System media controls: AirPods, Control Center, Lock Screen, car and
     // headphone buttons (MPRemoteCommandCenter + Now Playing).
@@ -320,6 +394,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         localDownloadId = newLocalDownloadId
         playId = newPlayId
         terminalSent = false
+        setWatchingFreezes(true)
 
         // sub-text-scale = % of default subtitle size (user-tunable via the
         // pinch gesture; 75 = a touch smaller than default for phones).
@@ -447,7 +522,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let fromMs = pausedPositionMs ?? max(0, player.time.intValue)
         pausedPositionMs = nil
         playbackRequested = true
+        diag("vlc-play-begin")
         player.play()
+        diag("vlc-play-end")
         watchResume(fromMs: fromMs, playId: playId, attempt: 1)
         if audioNeedsRestart { retryAudio(playId: playId, remaining: 10) }
     }
@@ -515,7 +592,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private func pausePlayback(_ player: VLCMediaPlayer) {
         playbackRequested = false
         pausedPositionMs = max(0, player.time.intValue)
+        diag("vlc-pause-begin")
         player.pause()
+        diag("vlc-pause-end")
     }
 
     @objc func seekBy(_ call: CAPPluginCall) {
@@ -967,7 +1046,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             let track = player.currentAudioTrackIndex
             if track >= 0, audioTrackBeforeInterruption == nil {
                 audioTrackBeforeInterruption = track
+                diag("vlc-audio-detach-begin")
                 player.currentAudioTrackIndex = -1
+                diag("vlc-audio-detach-end")
             }
         } else if UIApplication.shared.applicationState == .active {
             restartAudioOutputIfNeeded()
@@ -991,6 +1072,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
         audioNeedsRestart = false
         audioTrackBeforeInterruption = nil
+        diag("vlc-audio-track-begin", ["track": Int(track)])
         player.currentAudioTrackIndex = -1
         player.currentAudioTrackIndex = track
         diag("audio-restarted", ["track": Int(track)])
@@ -1160,6 +1242,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         resumeWatchdog?.cancel()
         resumeWatchdog = nil
         audioTrackBeforeInterruption = nil
+        setWatchingFreezes(false)
         subtitleDownloads.removeAll()
         if let observer = backgroundObserver { NotificationCenter.default.removeObserver(observer) }
         backgroundObserver = nil

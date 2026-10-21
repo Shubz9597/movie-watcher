@@ -47,6 +47,8 @@ export interface TorWatchNativePlugin {
   // text subtitle in the box and moves/resizes it while playing.
   subtitleCapabilities?(): Promise<{ boxedSubtitles?: boolean }>;
   setSubtitleLayout?(options: { marginPermille: number; playId: string }): Promise<void>;
+  // Where the player sends its last events itself when the app freezes.
+  setDiagnosticsEndpoint?(options: { url: string }): Promise<void>;
   selectAudioTrack?(options: { trackId: number; playId: string }): Promise<void>;
   selectSubtitleTrack?(options: { trackId: number | null; playId: string }): Promise<void>;
   setSubtitleDelay?(options: { seconds: number; playId: string }): Promise<void>;
@@ -185,6 +187,7 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
     async play(input) {
       await ensureReady();
       currentPlayId = input.playId;
+      tellDiagnosticsEndpoint(plugin);
       await plugin.play({
         url: input.url,
         title: input.title,
@@ -200,6 +203,7 @@ export function createNativePlaybackBridge(plugin: TorWatchNativePlugin, support
       await ensureReady();
       if (!plugin.playLocal) throw new Error('Offline playback is unavailable on this device.');
       currentPlayId = input.playId;
+      tellDiagnosticsEndpoint(plugin);
       await plugin.playLocal({
         downloadId: input.downloadId,
         playId: input.playId,
@@ -444,4 +448,10 @@ function flushDiagnostics(): void {
     body: JSON.stringify({ device: 'iPhone', events }),
     keepalive: true,
   }).catch(() => {});
+}
+
+function tellDiagnosticsEndpoint(plugin: { setDiagnosticsEndpoint?(options: { url: string }): Promise<void> }): void {
+  const origin = getBackendOrigin();
+  if (!origin) return;
+  void plugin.setDiagnosticsEndpoint?.({ url: `${origin}/v1/diagnostics/events` }).catch(() => {});
 }
