@@ -8,7 +8,7 @@
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { useEffect, useState } from 'react';
 import type { HTMLAttributes } from 'react';
-import { Check, ChevronRight, Film, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
+import { Check, ChevronRight, Film, ListChecks, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from '../platform/contracts';
 import { SelectionSurface } from '../components/primitives';
@@ -791,40 +791,62 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
       {selection ? (
-        // Selecting: what is ticked, and the one destructive action.
-        <div className="flex min-h-12 flex-wrap items-center gap-2" role="toolbar" aria-label="Selected downloads">
+        // Selecting: what is ticked up here; the actions sit in the bar at
+        // the bottom (in place of the tabs), in reach wherever the list is
+        // scrolled.
+        <div className="flex min-h-12 items-center gap-2">
           <button type="button" onClick={stopSelecting} aria-label="Cancel selection" className={CANCEL_CLASS}>
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
           <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-white" aria-live="polite">
             {selectedItems.length ? `${selectedItems.length} selected` : 'Select downloads'}
           </h1>
-          <button
-            type="button"
-            onClick={() => setSelection(allSelected ? new Set() : new Set(selectableItems.map((item) => item.downloadId)))}
-            className={ROW_ACTION_CLASS}
-          >
-            {allSelected ? 'Clear' : 'Select all'}
-          </button>
-          <button
-            type="button"
-            disabled={!selectedItems.length}
-            onClick={() => { setBulkError(null); setConfirmingBulk(true); }}
-            className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-500 disabled:opacity-40 ${FOCUS_RING_CLASS}`}
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete
-          </button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
           <h1 className="type-section-title min-w-0 truncate text-white">{seriesId ? seriesTitle : 'Downloads'}</h1>
           {downloads?.remove && selectableItems.length > 1 ? (
-            <button type="button" onClick={() => startSelecting([])} className={`${ROW_ACTION_CLASS} shrink-0`}>
-              Select
+            // Holding a download also starts selecting.
+            <button
+              type="button"
+              onClick={() => startSelecting([])}
+              className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-4 text-sm font-medium text-white transition hover:bg-white/[0.12] ${FOCUS_RING_CLASS}`}
+            >
+              <ListChecks className="h-4 w-4" aria-hidden="true" /> Select
             </button>
           ) : null}
         </div>
       )}
+      {selection ? (
+        <div
+          role="toolbar"
+          aria-label="Selected downloads"
+          className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0a0a0a] pt-3 pb-[calc(var(--app-safe-bottom)+0.75rem)] pl-[max(1rem,var(--app-safe-left))] pr-[max(1rem,var(--app-safe-right))]"
+        >
+          <div className="mx-auto flex max-w-4xl items-center gap-2">
+            <p className="type-secondary text-numeric min-w-0 flex-1 truncate text-white/75" aria-live="polite">
+              {selectedItems.length
+                ? [`${selectedItems.length} selected`, formatSize(selectedBytes)].filter(Boolean).join(' · ')
+                : 'Tap downloads to select'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelection(allSelected ? new Set() : new Set(selectableItems.map((item) => item.downloadId)))}
+              className={`${ROW_ACTION_CLASS} shrink-0`}
+            >
+              {allSelected ? 'Clear' : 'Select all'}
+            </button>
+            <button
+              type="button"
+              disabled={!selectedItems.length}
+              onClick={() => { setBulkError(null); setConfirmingBulk(true); }}
+              className={`inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-500 disabled:opacity-40 ${FOCUS_RING_CLASS}`}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete
+            </button>
+          </div>
+        </div>
+      ) : null}
       {!seriesId && storage && inventory?.items.length ? (
         <p className="type-secondary text-numeric mt-1 text-white/60">
           {formatSize(storage.usedBytes) ?? '0 MB'} used · {formatSize(storage.freeBytes) ?? '0 MB'} free
