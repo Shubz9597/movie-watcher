@@ -449,7 +449,7 @@ export default function EpisodePanel({
       ? initialEpisodes.find((episode) => episode.id === current.id) || current
       : current);
 
-    const shouldHydrate = kind === 'tv' && Boolean(imdbId);
+    const shouldHydrate = Boolean(tmdbId) && Boolean(imdbId);
     setSeasonArtworkHydrating(shouldHydrate);
 
     if (shouldHydrate) {
@@ -517,7 +517,10 @@ export default function EpisodePanel({
       setEpisodes(cached);
       return;
     }
-    if (!tmdbId || kind !== 'tv') {
+    // Any show with a TMDb id, anime included (Dragon Ball Z Kai opens by
+    // its TMDb id as one show with Stremio's seasons): its other seasons
+    // came back empty, leaving only the source search.
+    if (!tmdbId) {
       setEpisodes([]);
       return;
     }
