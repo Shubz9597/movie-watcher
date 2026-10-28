@@ -88,9 +88,7 @@ type CatalogSubtitleTrack = {
 
 // An online subtitle for a download (server /subtitles/candidates), measured
 // against the download's audio and moved onto its dialogue.
-// transcript: written from the dub's English audio; words: the share of the
-// audio's words the subtitle has (a translation of the original has few).
-type DownloadSubtitleCandidate = { id: string; label: string; fit: number; follows: boolean; url: string; transcript?: boolean; words?: number };
+type DownloadSubtitleCandidate = { id: string; label: string; fit: number; follows: boolean; url: string };
 type DownloadCandidates = {
   status: 'idle' | 'loading' | 'ready' | 'error';
   tracks: DownloadSubtitleCandidate[];
@@ -1058,18 +1056,10 @@ export default function NativePlayerControls(props: Props) {
     setDownloadCandidates({ status: 'loading', tracks: [], measured: false, message: '' });
     try {
       const params = new URLSearchParams({ downloadId, clientId: getDeviceId(), lang: subtitleLang });
-      let data: { status?: string; tracks?: DownloadSubtitleCandidate[]; measured?: boolean; message?: string } | null = null;
-      // Writing a dub's subtitles from its audio takes about two minutes:
-      // the server says "pending" meanwhile and is asked again.
-      for (let attempt = 0; attempt < 40; attempt++) {
-        const res = await fetch(`${getVodBase()}/subtitles/candidates?${params.toString()}`, { signal: AbortSignal.timeout(60000) });
-        data = await res.json().catch(() => null);
-        if (!data || !Array.isArray(data.tracks)) throw new Error(`status ${res.status}`);
-        if (data.status !== 'pending') break;
-        setDownloadCandidates({ status: 'loading', tracks: [], measured: false, message: data.message || '' });
-        await new Promise((resolve) => window.setTimeout(resolve, 8000));
-      }
-      if (!data || !Array.isArray(data.tracks) || data.status === 'pending') throw new Error('still pending');
+      // Fetching each subtitle and measuring the audio takes a while.
+      const res = await fetch(`${getVodBase()}/subtitles/candidates?${params.toString()}`, { signal: AbortSignal.timeout(150000) });
+      const data = await res.json().catch(() => null) as { tracks?: DownloadSubtitleCandidate[]; measured?: boolean; message?: string } | null;
+      if (!data || !Array.isArray(data.tracks)) throw new Error(`status ${res.status}`);
       setDownloadCandidates({
         status: 'ready',
         tracks: data.tracks,
@@ -1475,8 +1465,9 @@ export default function NativePlayerControls(props: Props) {
                   </button>
                 ) : null}
                 {downloadCandidates.status === 'loading' ? (
-                  <p className="type-secondary mt-3 text-white/60" role="status">{downloadCandidates.message || 'Finding subtitles and checking each against the audio…'}</p>
-                ) : downloadCandidates.message ? <p className="type-secondary mt-3 text-white/60">{downloadCandidates.message}</p> : null}
+                  <p className="type-secondary mt-3 text-white/60" role="status">Finding subtitles and checking each against the audio…</p>
+                ) : null}
+                {downloadCandidates.message ? <p className="type-secondary mt-3 text-white/60">{downloadCandidates.message}</p> : null}
                 {downloadCandidates.status === 'ready' && downloadCandidates.tracks.length ? (
                   <ul className="mt-3 space-y-1 border-t border-white/[0.12] pt-3" aria-label="Online subtitles">
                     {downloadCandidates.tracks.map((track, index) => (
@@ -1486,17 +1477,11 @@ export default function NativePlayerControls(props: Props) {
                         label={loadingSubtitleUrl === track.url ? 'Loading…' : track.label || `Subtitle ${index + 1}`}
                         detail={savedCandidateUrl === track.url
                           ? 'Saved to this download'
-                          : track.transcript
-                            ? 'The exact words spoken'
-                            : typeof track.words === 'number'
-                              ? track.words >= 0.4
-                                ? `Same words as the audio (${Math.round(track.words * 100)}%)`
-                                : `Different words from the audio (${Math.round(track.words * 100)}% match)`
-                              : !downloadCandidates.measured
-                                ? 'Not checked against the audio'
-                                : track.follows
-                                  ? `Follows the audio (fit ${Math.round(track.fit * 100)}%)`
-                                  : `Doesn’t follow the audio (fit ${Math.round(track.fit * 100)}%)`}
+                          : !downloadCandidates.measured
+                            ? 'Not checked against the audio'
+                            : track.follows
+                              ? `Follows the audio (fit ${Math.round(track.fit * 100)}%)`
+                              : `Doesn’t follow the audio (fit ${Math.round(track.fit * 100)}%)`}
                         disabled={!!loadingSubtitleUrl || importing}
                         onClick={() => void chooseDownloadCandidate(track)}
                       />

@@ -110,17 +110,7 @@ func MatchToAudio(ctx context.Context, input, lang string, seconds int, ownTrack
 // better than its own track (MatchToAudio), else the video's own track,
 // else the provider subtitle that best fits the main audio, moved onto it.
 // It returns ok=false when neither the video nor a provider has one.
-func chooseSubtitle(ctx context.Context, jobID, videoPath, lang, title string, embedded []byte, candidates []ProviderSubtitle) (subtitleChoice, bool) {
-	// English for a dub: the dub's own words (dub_transcript.go).
-	if lang == "en" {
-		texts := make([]string, 0, len(candidates))
-		for _, candidate := range candidates {
-			texts = append(texts, string(candidate.Data))
-		}
-		if words, ok := DubTranscript(ctx, jobID, videoPath, title, texts); ok {
-			return dubChoice(ctx, jobID, videoPath, words, embedded, candidates), true
-		}
-	}
+func chooseSubtitle(ctx context.Context, jobID, videoPath, lang string, embedded []byte, candidates []ProviderSubtitle) (subtitleChoice, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	if len(candidates) > 0 {

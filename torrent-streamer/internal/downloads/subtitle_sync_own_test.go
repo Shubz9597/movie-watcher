@@ -9,7 +9,7 @@ import (
 // downloads listed their English subtitle twice ("English" and "English ·
 // Downloaded").
 func TestOwnTrackNeedsNoCopy(t *testing.T) {
-	choice, ok := chooseSubtitle(context.Background(), "job", "/nonexistent.mkv", "en", "", []byte("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n"), nil)
+	choice, ok := chooseSubtitle(context.Background(), "job", "/nonexistent.mkv", "en", []byte("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n"), nil)
 	if !ok || !choice.own {
 		t.Fatalf("choice = %+v ok=%v, want the video's own track (no copy)", choice, ok)
 	}
