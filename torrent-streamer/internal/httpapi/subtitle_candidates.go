@@ -30,6 +30,9 @@ const (
 	candidateTTL       = time.Hour
 	candidateErrorTTL  = 2 * time.Minute
 	candidateMaxCached = 40
+	// candidateSeconds of audio are measured: ten minutes hold enough lines
+	// to rank a handful of subtitles (30 took ~10 s of the wait).
+	candidateSeconds = 10 * 60
 )
 
 type candidateEntry struct {
@@ -133,7 +136,7 @@ func scoreCandidates(entry *candidateEntry, key string, source matchSource, lang
 	var scored []downloads.Scored
 	measured := false
 	if source.file != "" {
-		if scored, err = downloads.ScoreToAudio(ctx, source.file, lang, 30*60, candidates); err == nil {
+		if scored, err = downloads.ScoreToAudio(ctx, source.file, lang, candidateSeconds, candidates); err == nil {
 			measured = true
 		} else {
 			log.Printf("[subtitles] candidates for %s S%dE%d not measured: %v", source.query.SeriesID, source.query.Season, source.query.Episode, err)
