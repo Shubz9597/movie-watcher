@@ -403,6 +403,10 @@ export class NativePlayer implements PlayerPort {
     this.controller.setPlaybackOrientation(landscape);
   }
 
+  finishEpisode(): void {
+    this.controller.finishEpisode();
+  }
+
   loadSubtitle(input: { url: string; label?: string; language?: string }): Promise<number | null> {
     return this.controller.loadSubtitle(input);
   }

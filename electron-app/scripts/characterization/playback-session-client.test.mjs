@@ -257,3 +257,42 @@ test("infoHashFromSource reads literal and escaped magnets", () => {
   assert.equal(infoHashFromSource({ magnet: `magnet:?dn=Show&xt=urn%3Abtih%3A${hash}` }), hash);
   assert.throws(() => infoHashFromSource({ magnet: "magnet:?dn=Show" }));
 });
+
+test("controller: Next episode ends the episode at once, recorded as played to the end", async () => {
+  const server = stubServer();
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  const terminals = [];
+  controller.onStopped((event) => terminals.push(event));
+  await controller.start({ url: "magnet:?xt=urn:btih:" + HEX, title: "Kai", cat: "tv", subjectId: "s", seriesId: "tmdb:tv:61709", season: 1, episode: 98 });
+  fb.emitTime({ currentTime: 1282.6, duration: 1356.1 });
+  controller.finishEpisode();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(terminals.map((event) => event.reason), ["ended"]);
+  assert.equal(server.heartbeats.at(-1).position_s, 1356, "the final write is the end, not the credits");
+  assert.equal(fb.calls.dismissed, 1);
+});
+
+test("controller: a clock stuck in the last seconds ends the episode; paused or mid-episode never does", async () => {
+  const server = stubServer();
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge, endStallMs: 30 });
+  const terminals = [];
+  controller.onStopped((event) => terminals.push(event));
+  await controller.start({ url: "magnet:?xt=urn:btih:" + HEX, title: "Kai", cat: "tv", subjectId: "s", seriesId: "tmdb:tv:61709", season: 1, episode: 98 });
+  fb.emitState({ state: "playing" });
+  fb.emitTime({ currentTime: 600, duration: 1356.1 });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(terminals.length, 0, "a quiet clock mid-episode is not the end");
+  fb.emitTime({ currentTime: 1354, duration: 1356.1 });
+  fb.emitState({ state: "paused" });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(terminals.length, 0, "paused near the end stays paused");
+  fb.emitState({ state: "playing" });
+  fb.emitTime({ currentTime: 1355.6, duration: 1356.1 }); // then VLC buffers forever
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(terminals.map((event) => event.reason), ["ended"]);
+  fb.emitState({ state: "ended" }); // a late real end changes nothing
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(terminals.length, 1);
+});

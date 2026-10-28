@@ -16,8 +16,10 @@ test("intro, recap and credits each get a skip button", () => {
 });
 
 test("credits that run to the end move on to the next episode", () => {
-  assert.deepEqual(skipActionAt(kai, 1300, 1387, true), { label: "Next episode", target: 1386.5 });
-  assert.deepEqual(skipActionAt(kai, 1300, 1387, false), { label: "Skip credits", target: 1386.5 });
+  // finish: the episode ends at once, never by seeking into its last
+  // half-second (VLC sat buffering there on Kai S1E98 and the app froze).
+  assert.deepEqual(skipActionAt(kai, 1300, 1387, true), { label: "Next episode", target: 1386.5, finish: true });
+  assert.deepEqual(skipActionAt(kai, 1300, 1387, false), { label: "Skip credits", target: 1386.5, finish: true });
 });
 
 test("credits followed by more of the episode only skip the credits", () => {

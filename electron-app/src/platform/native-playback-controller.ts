@@ -111,6 +111,8 @@ export type NativeControllerDeps = {
   bridge: NativePlaybackBridge;
   /** Bounded heartbeat cadence. */
   heartbeatMs?: number;
+  /** How long a clock stopped in the file's last seconds waits to end it. */
+  endStallMs?: number;
   now?: () => number;
 };
 
@@ -122,6 +124,7 @@ export class NativePlaybackController {
   private readonly client: PlaybackSessionClient;
   private readonly bridge: NativePlaybackBridge;
   private readonly heartbeatMs: number;
+  private readonly endStallMs: number;
 
   // Generation guards: any async continuation from a superseded playback
   // (late time events, stale heartbeats, old state callbacks) is dropped.
@@ -158,11 +161,14 @@ export class NativePlaybackController {
   private currentTime: NativeTimeUpdate | null = null;
   private bufferingClock: number | null = null;
   private advancingTicks = 0;
+  // Set while the clock is in the last seconds of the file (see armEndGuard).
+  private endGuard: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: NativeControllerDeps) {
     this.client = deps.client;
     this.bridge = deps.bridge;
     this.heartbeatMs = deps.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+    this.endStallMs = deps.endStallMs ?? 6000;
   }
 
   /** Register a terminal-event listener (PlayerPort.onStopped shape). */
@@ -576,6 +582,30 @@ export class NativePlaybackController {
     }
   }
 
+  /** "Next episode": the episode counts as played to the end, now. */
+  finishEpisode(): void {
+    if (!this.request) return;
+    if (this.lastDurationSec > 0) this.lastPositionSec = this.lastDurationSec;
+    void this.finishNaturally(this.generation);
+  }
+
+  /** In the last 3 s of the file, a clock that stops (6 s; not paused)
+   * means the end: VLC could sit buffering there without ever reporting it,
+   * and the next episode never came. Every time update re-arms it. */
+  private armEndGuard(generation: number, update: NativeTimeUpdate): void {
+    if (this.endGuard !== null) {
+      clearTimeout(this.endGuard);
+      this.endGuard = null;
+    }
+    if (!(update.duration > 0) || update.currentTime < update.duration - 3) return;
+    this.endGuard = setTimeout(() => {
+      this.endGuard = null;
+      if (generation !== this.generation || this.currentState === 'paused') return;
+      this.lastPositionSec = Math.max(this.lastPositionSec, this.lastDurationSec);
+      void this.finishNaturally(generation);
+    }, this.endStallMs);
+  }
+
   private async finishNaturally(generation: number): Promise<void> {
     if (generation !== this.generation) return;
     this.generation++; // invalidate pending continuations
@@ -626,6 +656,7 @@ export class NativePlaybackController {
       this.lastPositionSec = update.currentTime;
       this.lastDurationSec = update.duration;
       this.currentTime = update;
+      this.armEndGuard(generation, update);
       // MobileVLCKit may report buffering without a subsequent playing
       // transition. Recover from actual clock movement, never from a timer
       // or a single resume/seek jump. Android's repeated stationary ticks
@@ -691,6 +722,10 @@ export class NativePlaybackController {
 
   private stopTimersAndListeners(): void {
     this.stopHeartbeat();
+    if (this.endGuard !== null) {
+      clearTimeout(this.endGuard);
+      this.endGuard = null;
+    }
     this.detachTime?.();
     this.detachState?.();
     this.detachTracks?.();

@@ -5,6 +5,7 @@ import * as React from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { ConnectionConfig } from '../platform/contracts.ts';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
+import { WifiOnlySetting } from './WifiOnlySetting';
 import {
   applyServerOrigin,
   normalizeOrigin,
@@ -97,7 +98,7 @@ export function ServerSettings(props: {
         >
           <ChevronLeft className="h-6 w-6" strokeWidth={1.7} aria-hidden="true" />
         </button>
-        <h1 className="text-lg font-semibold tracking-tight text-white">Server settings</h1>
+        <h1 className="text-lg font-semibold tracking-tight text-white">Settings</h1>
       </header>
 
       <section className="mx-auto w-full max-w-md px-5 pb-[max(32px,env(safe-area-inset-bottom))] pt-6">
@@ -151,6 +152,11 @@ export function ServerSettings(props: {
           >
             {state.kind === 'probing' ? 'Testing…' : 'Test'}
           </button>
+        </div>
+
+        <h2 className="type-secondary mt-10 text-left font-medium text-white/70">Downloads</h2>
+        <div className="mt-2">
+          <WifiOnlySetting />
         </div>
       </section>
     </main>

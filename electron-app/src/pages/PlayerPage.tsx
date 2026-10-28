@@ -6,6 +6,8 @@ import { ChevronLeft } from 'lucide-react';
 import { resolveTorrentFile } from '../lib/services/resolve-service';
 import NativePlayerControls from '../mobile/NativePlayerControls';
 import { advancePackParams } from '../lib/pack-advance';
+import { nextEpisodeTitleRoute } from '../lib/next-episode-route';
+import { getTvSeason } from '../lib/services/catalog-gateway';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
 
 type Props = {
@@ -96,11 +98,16 @@ export default function PlayerPage({ navigate, params }: Props) {
     }
     returningRef.current = true;
 
-    // Offline: continue with the next downloaded episode of the same show.
+    // Offline: continue with the next downloaded episode of the same show;
+    // when it isn't downloaded (Kai S1E98 -> S2E1), open its sources on the
+    // show page, as at the end of a streamed episode.
     if (event?.reason === 'ended' && downloadId && localSeriesId) {
-      void nextDownloadedEpisode().then((next) => {
+      void nextDownloadedEpisode().then(async (next) => {
+        const streamRoute = next ? null : await nextEpisodeTitleRoute(localSeriesId, Number(season) || 0, Number(episode) || 0, getTvSeason);
         if (next) {
           window.location.replace(`#player?${new URLSearchParams(next).toString()}`);
+        } else if (streamRoute) {
+          window.location.replace(streamRoute);
         } else if (window.history.length > 1) {
           window.history.back();
         } else {
@@ -130,7 +137,7 @@ export default function PlayerPage({ navigate, params }: Props) {
     } else {
       navigate('home');
     }
-  }, [navigate, nextEpisodeRoute, downloadId, localSeriesId]);
+  }, [navigate, nextEpisodeRoute, downloadId, localSeriesId, season, episode]);
 
   useEffect(() => {
     const unsubscribe = platform.player?.onStopped((event) => {

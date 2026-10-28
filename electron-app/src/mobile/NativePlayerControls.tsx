@@ -43,6 +43,8 @@ export type NativePlayerControlsSurface = {
   subtitleCapabilities?(): Promise<{ boxedSubtitles?: boolean }>;
   /** Patched MobileVLCKit: lift subtitles (thousandths of the picture). */
   setSubtitleLift?(marginPermille: number): void;
+  /** Ends the episode now, as if it played to the end. */
+  finishEpisode?(): void;
   subscribeTime(listener: (update: { currentTime: number; duration: number }) => void): () => void;
   subscribeState(listener: (state: 'playing' | 'paused') => void): () => void;
   subscribeTracks(listener: (update: {
@@ -1269,7 +1271,8 @@ export default function NativePlayerControls(props: Props) {
               const now = Date.now();
               if (now - lastSkipAt.current < 600) return;
               lastSkipAt.current = now;
-              player.seekTo(skipAction.target);
+              if (skipAction.finish && player.finishEpisode) player.finishEpisode();
+              else player.seekTo(skipAction.target);
             }}
             className="min-h-12 rounded-lg bg-white px-5 text-sm font-medium text-black shadow-lg transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
