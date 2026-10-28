@@ -77,7 +77,14 @@ func (DownloadSubtitleSource) fetchCandidatesOnce(ctx context.Context, q downloa
 			vtt, lastErr = subtitles.DownloadOpenSubSubtitle(ctx, candidate.ID, apiKey)
 		}
 		if lastErr == nil && strings.TrimSpace(vtt) != "" {
-			found = append(found, downloads.ProviderSubtitle{Name: candidate.Source + ":" + candidate.ID, Data: []byte(vtt), Ext: "vtt"})
+			label := candidate.Release
+			if label == "" {
+				label = candidate.FileName
+			}
+			if label == "" {
+				label = candidate.Label
+			}
+			found = append(found, downloads.ProviderSubtitle{Name: candidate.Source + ":" + candidate.ID, Data: []byte(vtt), Ext: "vtt", Label: label})
 		}
 	}
 	if len(found) == 0 {

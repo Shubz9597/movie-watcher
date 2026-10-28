@@ -23,6 +23,8 @@ type ProviderSubtitle struct {
 	Name string
 	Data []byte
 	Ext  string
+	// Label: the release or file name it was made for (shown to the viewer).
+	Label string
 }
 
 // subtitleCandidateLimit bounds the subtitles fetched per language: each is
@@ -166,3 +168,56 @@ func describeFit(what string, best subsync.Judged, baseline float64) string {
 }
 
 func formatFloat(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }
+
+// Scored is one provider subtitle measured against a video's audio.
+type Scored struct {
+	Name    string
+	Label   string
+	Data    []byte // WebVTT, moved onto the dialogue when it follows it
+	Fit     float64
+	Offset  float64
+	Follows bool // follows this audio's dialogue (a dub's script fits 0.46-0.54)
+}
+
+// ScoreToAudio measures every candidate against input's lang audio (its
+// first audio when none is tagged lang), best fit first, each moved onto
+// the dialogue. The viewer picks among them when the packaged subtitle
+// turned out wrong (Dragon Ball Z Kai S2E2: fit 0.03).
+func ScoreToAudio(ctx context.Context, input, lang string, seconds int, candidates []ProviderSubtitle) ([]Scored, error) {
+	ffmpeg, ffprobe := ffTool(config.FFmpegPath(), "ffmpeg"), ffTool(config.FFprobePath(), "ffprobe")
+	tracks, err := subsync.ProbeAudio(ctx, ffprobe, input, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(tracks) == 0 {
+		return nil, errors.New("the video has no audio")
+	}
+	audio, ok, dualAudio := subsync.TrackFor(tracks, lang)
+	if !ok {
+		audio, dualAudio = tracks[0], false
+	}
+	env, err := subsync.MeasureDialogue(ctx, ffmpeg, input, nil, audio, seconds)
+	if err != nil {
+		return nil, err
+	}
+	texts := make([]subsync.Candidate, 0, len(candidates))
+	labels := map[string]string{}
+	for _, candidate := range candidates {
+		texts = append(texts, subsync.Candidate{Name: candidate.Name, Text: string(candidate.Data)})
+		labels[candidate.Name] = candidate.Label
+	}
+	judged := subsync.Judge(env, texts)
+	scored := make([]Scored, 0, len(judged))
+	for _, item := range judged {
+		follows := item.R >= subsync.DubMinR
+		note := ""
+		if follows && dualAudio {
+			note = subsync.DubNote
+		}
+		scored = append(scored, Scored{
+			Name: item.Name, Label: labels[item.Name], Data: []byte(subsync.Shift(item.Text, item.Offset(), note)),
+			Fit: item.R, Offset: item.Offset(), Follows: follows,
+		})
+	}
+	return scored, nil
+}
