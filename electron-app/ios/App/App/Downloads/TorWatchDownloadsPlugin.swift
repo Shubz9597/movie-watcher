@@ -56,6 +56,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "loadProgress", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "localPlayablePath", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "relocate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "replaceSubtitle", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getNetworkRule", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setNetworkRule", returnType: CAPPluginReturnPromise),
     ]
@@ -154,6 +155,25 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             // A failed inventory read is a storage error — surfaced, never
             // reported as "zero downloads" (spec C2).
             call.reject("The local downloads inventory could not be read.")
+        }
+    }
+
+    /// A subtitle the viewer picked online replaces the download's own in
+    /// that language (WebVTT text, already moved onto its dialogue).
+    @objc func replaceSubtitle(_ call: CAPPluginCall) {
+        guard let downloadId = call.getString("downloadId"), !downloadId.isEmpty,
+              let lang = call.getString("lang")?.lowercased(), lang.count == 2,
+              lang.allSatisfy({ $0.isASCII && $0.isLetter }),
+              let text = call.getString("text"), text.contains("-->"),
+              let data = text.data(using: .utf8), data.count <= 4 * 1024 * 1024 else {
+            call.reject("The subtitle is incomplete.")
+            return
+        }
+        do {
+            try coordinator.store.replaceSubtitle(downloadId, lang: lang, data: data)
+            call.resolve()
+        } catch {
+            call.reject("The subtitle could not be saved with the download.")
         }
     }
 

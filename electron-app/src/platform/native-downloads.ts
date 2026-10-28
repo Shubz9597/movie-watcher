@@ -73,6 +73,8 @@ export interface TorWatchDownloadsPluginInterface extends Plugin {
   localPlayablePath(options: { downloadId: string }): Promise<{ videoPath: string; subtitles: Array<{ lang: string; path: string }> }>;
   /** Moves a download to another show id/season/episode (older builds lack it). */
   relocate?(options: { downloadId: string; seriesId: string; season: number; episode: number; subtitleLabel?: string }): Promise<void>;
+  /** Replaces a ready download's subtitle in one language (older builds lack it). */
+  replaceSubtitle?(options: { downloadId: string; lang: string; text: string }): Promise<void>;
   /** Videos download only over Wi-Fi (older builds lack it). */
   getNetworkRule?(): Promise<NativeNetworkRule>;
   setNetworkRule?(options: { wifiOnly: boolean }): Promise<NativeNetworkRule>;

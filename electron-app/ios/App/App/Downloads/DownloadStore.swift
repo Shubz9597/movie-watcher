@@ -479,6 +479,32 @@ final class DownloadStore {
         return (dir.appendingPathComponent(video.diskName), subs)
     }
 
+    /// Replaces (or adds) a ready download's subtitle in one language: the
+    /// viewer picked another online subtitle because the packaged one was
+    /// wrong. The next playback, offline too, uses it.
+    func replaceSubtitle(_ downloadId: String, lang: String, data: Data) throws {
+        guard let record = try get(downloadId), record.state == .ready else {
+            throw NSError(domain: "TorWatchDownloads", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "That download is not ready."])
+        }
+        let existing = record.assets.first { $0.lang == lang }
+        let urlPath = existing?.urlPath ?? "/local/subtitles/\(lang)"
+        let diskName = existing?.diskName ?? DownloadCoordinator.assetDiskName(urlPath: urlPath, lang: lang)
+        let file = try DownloadStore.readyDirectory(downloadId: downloadId).appendingPathComponent(diskName)
+        try data.write(to: file, options: .atomic)
+        let sha = DownloadCoordinator.sha256Hex(ofFileAt: file) ?? ""
+        try onQueue {
+            try transaction {
+                try exec("DELETE FROM download_assets WHERE download_id='\(_esc(downloadId))' AND lang='\(_esc(lang))'")
+                try exec("""
+                INSERT INTO download_assets (download_id, url_path, disk_name, size_bytes, sha256, lang, received_bytes, done)
+                VALUES ('\(_esc(downloadId))', '\(_esc(urlPath))', '\(_esc(diskName))',
+                        \(data.count), '\(_esc(sha))', '\(_esc(lang))', \(data.count), 1)
+                """)
+            }
+        }
+    }
+
     // MARK: - Local playback progress (D04)
 
     func saveProgress(_ downloadId: String, positionS: Double, durationS: Double, subtitleLang: String) throws {

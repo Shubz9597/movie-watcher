@@ -12,7 +12,7 @@ import { parseSubtitles, type SubtitleCue, type SubtitleFormat } from '../lib/su
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { EMBEDDED_SCALE_DEFAULT } from '../platform/native-player';
 import { audioDisplayNames, languageNameForCode, trackDisplayNames, trackLanguageName, withoutDownloadedCopies } from '../lib/track-labels';
-import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
+import { audioLanguages, cacheMatchedSubtitle, cachedMatchedSubtitle, forgetMatchedSubtitle, defaultSubtitleStyle, readShowPlaybackPrefs, saveShowPlaybackPrefs, styleOfTrack, subtitleTrackFor } from '../lib/subtitle-style';
 import type { ShowPlaybackPrefs } from '../lib/subtitle-style';
 import { Capacitor } from '@capacitor/core';
 import { getDeviceId } from '../lib/device-id';
@@ -84,6 +84,16 @@ type CatalogSubtitleTrack = {
   trusted?: boolean;
   hearingImpaired?: boolean;
   movieHashMatched?: boolean;
+};
+
+// An online subtitle for a download (server /subtitles/candidates), measured
+// against the download's audio and moved onto its dialogue.
+type DownloadSubtitleCandidate = { id: string; label: string; fit: number; follows: boolean; url: string };
+type DownloadCandidates = {
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  tracks: DownloadSubtitleCandidate[];
+  measured: boolean;
+  message: string;
 };
 
 type Props = {
@@ -1036,6 +1046,61 @@ export default function NativePlayerControls(props: Props) {
     }
   };
 
+  // A download's wrong subtitle: the online ones, checked against this
+  // video's audio on the server (best fit first). The one picked shows at
+  // once and replaces the download's subtitle file, so it plays offline too.
+  const [downloadCandidates, setDownloadCandidates] = useState<DownloadCandidates>({ status: 'idle', tracks: [], measured: false, message: '' });
+  const [savedCandidateUrl, setSavedCandidateUrl] = useState<string | null>(null);
+  const findDownloadCandidates = async () => {
+    if (!downloadId) return;
+    setDownloadCandidates({ status: 'loading', tracks: [], measured: false, message: '' });
+    try {
+      const params = new URLSearchParams({ downloadId, clientId: getDeviceId(), lang: subtitleLang });
+      // Fetching each subtitle and measuring the audio takes a while.
+      const res = await fetch(`${getVodBase()}/subtitles/candidates?${params.toString()}`, { signal: AbortSignal.timeout(150000) });
+      const data = await res.json().catch(() => null) as { tracks?: DownloadSubtitleCandidate[]; measured?: boolean; message?: string } | null;
+      if (!data || !Array.isArray(data.tracks)) throw new Error(`status ${res.status}`);
+      setDownloadCandidates({
+        status: 'ready',
+        tracks: data.tracks,
+        measured: data.measured === true,
+        message: data.message || (data.tracks.length ? '' : 'No online subtitles for this episode.'),
+      });
+    } catch {
+      setDownloadCandidates({ status: 'error', tracks: [], measured: false, message: 'Couldn’t reach your server. Online subtitles need a connection.' });
+    }
+  };
+  const chooseDownloadCandidate = async (track: DownloadSubtitleCandidate) => {
+    if (!downloadId || loadingSubtitleUrl || importing) return;
+    pendingSubtitleRestore.current = null;
+    subtitleAuto.current = false;
+    const operation = ++subtitleOperation.current;
+    setLoadingSubtitleUrl(track.url);
+    setSubtitleError('');
+    try {
+      const res = await fetch(`${getVodBase()}${track.url}`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const text = await res.text();
+      if (!showOverlayText(text, 'vtt', track.url, operation)) return;
+      // Already moved onto the dialogue: a delay set for the old one would
+      // shift it twice.
+      if (subtitleDelay !== 0) adjustDelay('subtitle', 0);
+      rememberForShow({ subtitle: track.follows ? 'dub' : 'regular' });
+      forgetMatchedSubtitle(downloadId);
+      const native = getNativeDownloads();
+      if (native?.replaceSubtitle) {
+        await native.replaceSubtitle({ downloadId, lang: subtitleLang, text });
+        setSavedCandidateUrl(track.url);
+      } else {
+        setSubtitleError('Showing it now; update the app to keep it with the download.');
+      }
+    } catch {
+      if (operation === subtitleOperation.current) setSubtitleError('Couldn’t load this subtitle.');
+    } finally {
+      if (operation === subtitleOperation.current) setLoadingSubtitleUrl(null);
+    }
+  };
+
   const chooseEmbeddedSubtitle = (track: NativeTrackInfo) => {
     pendingSubtitleRestore.current = null;
     subtitleAuto.current = false;
@@ -1388,7 +1453,42 @@ export default function NativePlayerControls(props: Props) {
               <button type="button" aria-label="Larger subtitles" onClick={() => changeSubtitleSize(2)} className="min-h-12 min-w-14 rounded-lg border border-white/15 text-lg text-white/85 hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">A+</button>
             </div>
             {local ? (
-              embeddedSubs.length === 0 ? <p className="type-secondary mt-2 text-white/60">No subtitles in this download.</p> : null
+              <div className="mt-2">
+                {embeddedSubs.length === 0 && downloadCandidates.status !== 'ready' ? <p className="type-secondary text-white/60">No subtitles in this download.</p> : null}
+                {downloadId && (downloadCandidates.status === 'idle' || downloadCandidates.status === 'error') ? (
+                  <button
+                    type="button"
+                    onClick={() => void findDownloadCandidates()}
+                    className="mt-2 min-h-12 px-2 text-base text-white/70 underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    {downloadCandidates.status === 'error' ? 'Try again' : 'Find subtitles online'}
+                  </button>
+                ) : null}
+                {downloadCandidates.status === 'loading' ? (
+                  <p className="type-secondary mt-3 text-white/60" role="status">Finding subtitles and checking each against the audio…</p>
+                ) : null}
+                {downloadCandidates.message ? <p className="type-secondary mt-3 text-white/60">{downloadCandidates.message}</p> : null}
+                {downloadCandidates.status === 'ready' && downloadCandidates.tracks.length ? (
+                  <ul className="mt-3 space-y-1 border-t border-white/[0.12] pt-3" aria-label="Online subtitles">
+                    {downloadCandidates.tracks.map((track, index) => (
+                      <TrackRow
+                        key={track.url}
+                        selected={activeSubtitleUrl === track.url}
+                        label={loadingSubtitleUrl === track.url ? 'Loading…' : track.label || `Subtitle ${index + 1}`}
+                        detail={savedCandidateUrl === track.url
+                          ? 'Saved to this download'
+                          : !downloadCandidates.measured
+                            ? 'Not checked against the audio'
+                            : track.follows
+                              ? `Follows the audio (fit ${Math.round(track.fit * 100)}%)`
+                              : `Doesn’t follow the audio (fit ${Math.round(track.fit * 100)}%)`}
+                        disabled={!!loadingSubtitleUrl || importing}
+                        onClick={() => void chooseDownloadCandidate(track)}
+                      />
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             ) : !showOnlineList ? (
               // The video has its own subtitles: online search stays one tap away.
               <button
