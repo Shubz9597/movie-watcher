@@ -325,10 +325,19 @@ export function pickFileIndexForEpisode(
       if (targets.has(evidence.numbers[0])) strength = 2;
       else if (evidence.numbers.some((value) => targets.has(value)) || [...targets].some((value) => evidence.ranged.has(value))) strength = 1;
     }
+    const dirSeason = evidence.kind !== 'pair' ? folderSeason(directory) : undefined;
     if (strength > 0 && !anime && season != null && evidence.kind !== 'pair') {
-      const dirSeason = folderSeason(directory);
       if (dirSeason != null && dirSeason !== season) strength = 0;
     }
+    // A name without its season ("Episode 100", "Episode 2"): in a pack
+    // numbered across seasons the absolute number is the episode, and the
+    // in-season number is another season's (Dragon Ball Z Kai S2E2 is
+    // "Episode 100"; "Episode 2" is S1E2, which won on file size and was
+    // downloaded for all of Season 2). A season folder that agrees still
+    // vouches for the in-season number.
+    if (strength > 0 && evidence.kind !== 'pair' && season != null && dirSeason === season) strength += 0.75;
+    else if (strength > 0 && evidence.kind !== 'pair' && absolute != null && episode != null && absolute !== episode
+      && (evidence.kind === 'marker' ? evidence.numbers.includes(absolute) : evidence.numbers[0] === absolute)) strength += 0.5;
     const named = titles.some((title) => titleNamesPath(title, directory, baseName));
 
     let score = strength * 60;

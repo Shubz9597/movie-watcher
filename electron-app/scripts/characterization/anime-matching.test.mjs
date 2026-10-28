@@ -172,3 +172,25 @@ test("pickFileIndexForEpisode keeps to the requested show inside a franchise col
   const picked = pickFileIndexForEpisode(files, { season: 1, episode: 3, absolute: 3, anime: true, titles: ["Dragon Ball Kai"] });
   assert.equal(picked.index, 2);
 });
+
+test("a pack numbered across seasons: the absolute number wins over another season's episode", () => {
+  // Dragon Ball Z Kai The Complete Series: Season 2 Episode 2 is "Episode 100";
+  // "Episode 2" is Season 1's and is the bigger file (it won before).
+  const dir = "Dragon Ball Z Kai The Complete Series (2009–2015)/";
+  const files = [
+    { index: 55, name: `${dir}Episode 99 Seven Years Later! Starting Today, Gohan Is a High School Student.mkv`, length: 1003150720 },
+    { index: 112, name: `${dir}Episode 100 A New Hero, Great Saiyaman, Is Born!.mkv`, length: 1000544087 },
+    { index: 140, name: `${dir}Episode 2 The Enemy is Goku's Brother! The Secret of the Mighty Saiyan Warriors.mkv`, length: 1076220552 },
+    { index: 21, name: `${dir}Episode 3 A Life or Death Battle! Goku and Piccolo's Desperate Attack!.mkv`, length: 1076758120 },
+  ];
+  const titles = ["Dragon Ball Z Kai"];
+  assert.equal(pickFileIndexForEpisode(files, { season: 2, episode: 2, absolute: 100, anime: true, titles }).index, 112);
+  assert.equal(pickFileIndexForEpisode(files, { season: 2, episode: 1, absolute: 99, anime: true, titles }).index, 55);
+  assert.equal(pickFileIndexForEpisode(files, { season: 1, episode: 2, absolute: 2, anime: true, titles }).index, 140);
+  // A per-season folder vouches for the in-season number.
+  const seasonFolders = [
+    { index: 0, name: "Show/Season 1/Episode 2.mkv", length: 900 },
+    { index: 1, name: "Show/Season 2/Episode 2.mkv", length: 800 },
+  ];
+  assert.equal(pickFileIndexForEpisode(seasonFolders, { season: 2, episode: 2, absolute: 14 }).index, 1);
+});
