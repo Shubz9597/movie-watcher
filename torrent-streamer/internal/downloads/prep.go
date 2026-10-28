@@ -454,7 +454,7 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 			embedded = nil
 		}
 		provided := providerSubs[lang]
-		choice, ok := chooseSubtitle(jobCtx, job.ID, videoPath, lang, embedded, provided.candidates)
+		choice, ok := chooseSubtitle(jobCtx, job.ID, videoPath, lang, job.SubtitleHints.Title, embedded, provided.candidates)
 		if !ok {
 			fail(ReasonSubtitlesUnavailable, fmt.Errorf("subtitle %q: none embedded (%v), provider: %v", lang, embeddedErr, provided.err))
 			return

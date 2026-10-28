@@ -134,7 +134,7 @@ func TestChooseSubtitleTakesTheDubAndMovesIt(t *testing.T) {
 		{Name: "translation", Data: []byte(srt(japanese, 0.5)), Ext: "srt"},
 		{Name: "dub captions", Data: []byte(srt(english, 4)), Ext: "srt"},
 	}
-	choice, ok := chooseSubtitle(context.Background(), "test", video, "en", embedded, candidates)
+	choice, ok := chooseSubtitle(context.Background(), "test", video, "en", "", embedded, candidates)
 	if !ok || !strings.Contains(choice.why, "dub captions") {
 		t.Fatalf("choice %q ok=%v", choice.why, ok)
 	}
@@ -156,7 +156,7 @@ func TestChooseSubtitleSyncsAProviderSubtitleWithoutAnOwnTrack(t *testing.T) {
 		lang string
 		cues []subsync.Cue
 	}{{"eng", dialogue}}, "")
-	choice, ok := chooseSubtitle(context.Background(), "test", video, "en", nil,
+	choice, ok := chooseSubtitle(context.Background(), "test", video, "en", "", nil,
 		[]ProviderSubtitle{{Name: "other release", Data: []byte(srt(dialogue, 3.5)), Ext: "srt"}})
 	if !ok || strings.Contains(string(choice.data), subsync.DubNote) {
 		t.Fatalf("choice %q ok=%v (single audio is not a dub)", choice.why, ok)
@@ -178,7 +178,7 @@ func TestChooseSubtitleKeepsTheOwnTrackWithoutADub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	choice, ok := chooseSubtitle(context.Background(), "test", video, "en", embedded,
+	choice, ok := chooseSubtitle(context.Background(), "test", video, "en", "", embedded,
 		[]ProviderSubtitle{{Name: "another translation", Data: []byte(srt(japanese, 1)), Ext: "srt"}})
 	if !ok || choice.why != "the video's own track" {
 		t.Fatalf("choice %q ok=%v", choice.why, ok)

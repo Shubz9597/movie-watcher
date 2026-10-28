@@ -79,6 +79,8 @@ type matchSource struct {
 	// file: a prepared download's video on this server's disk, read
 	// instead of the torrent (a thinly seeded torrent stalls the reading).
 	file string
+	// jobID: the download (its transcript is kept by it).
+	jobID string
 }
 
 func (h SubtitleMatchHandlers) handleMatched(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +133,8 @@ func (h SubtitleMatchHandlers) resolve(ctx context.Context, q url.Values, lang s
 		}
 		return matchSource{
 			cat: torrentx.Category(pick.SourceKind), magnet: pick.Magnet, fileIndex: *pick.FileIndex,
-			file: h.Jobs.VideoFile(ctx, job.ID),
+			file:  h.Jobs.VideoFile(ctx, job.ID),
+			jobID: job.ID,
 			query: downloads.SubtitleQuery{
 				SeriesID: job.SeriesID, Season: job.Season, Episode: job.Episode, Lang: lang,
 				Hints: job.SubtitleHints,

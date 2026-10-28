@@ -14,6 +14,8 @@ import (
 
 	"torrent-streamer/internal/downloads"
 	"torrent-streamer/internal/middleware"
+	"torrent-streamer/internal/subsync"
+	"torrent-streamer/internal/transcribe"
 )
 
 // GET /subtitles/candidates?downloadId&clientId&lang lists the online
@@ -22,11 +24,19 @@ import (
 // onto its dialogue, best fit first. The phone shows them when the packaged
 // subtitle is wrong and keeps the one picked with the download.
 //
-// {measured, message, tracks: [{id, label, fit, offset, follows, url}]}
+// For a dub (English audio beside another language) the first track is
+// written from the English audio itself (internal/transcribe) and every
+// track says how many of its words the audio shares ("words"): online
+// English subtitles usually translate the original language instead.
+// Transcribing takes about two minutes: until then the answer is
+// {status: "pending"} and the phone asks again.
+//
+// {status, measured, message, tracks: [{id, label, fit, offset, follows, words, url}]}
 
 const (
 	candidateLimit     = 12
-	candidateTimeout   = 2 * time.Minute
+	candidateTimeout   = 25 * time.Minute // a transcript may wait for others
+	candidateWait      = 20 * time.Second
 	candidateTTL       = time.Hour
 	candidateErrorTTL  = 2 * time.Minute
 	candidateMaxCached = 40
@@ -77,6 +87,9 @@ func (h SubtitleMatchHandlers) handleCandidates(w http.ResponseWriter, r *http.R
 	select {
 	case <-entry.done:
 		writeJSON(w, http.StatusOK, entry.body)
+	case <-time.After(candidateWait):
+		writeJSON(w, http.StatusOK, map[string]any{"status": "pending", "tracks": []any{},
+			"message": "Writing subtitles from the English audio… this takes about two minutes."})
 	case <-r.Context().Done():
 	}
 }
@@ -124,14 +137,22 @@ func scoreCandidates(entry *candidateEntry, key string, source matchSource, lang
 		close(entry.done)
 	}
 	candidates, err := DownloadSubtitleSource{}.fetchCandidatesOnce(ctx, source.query, candidateLimit)
+	message, ttl := "", candidateTTL
 	if err != nil {
-		message, ttl := "Subtitles could not be listed right now.", candidateErrorTTL
+		message, ttl = "Online subtitles could not be listed right now.", candidateErrorTTL
 		if errors.Is(err, downloads.ErrSubtitleNotFound) {
 			message, ttl = "No online subtitles for this episode.", candidateTTL
 		}
 		log.Printf("[subtitles] candidates for %s S%dE%d (%s): %v", source.query.SeriesID, source.query.Season, source.query.Episode, lang, err)
-		finish(map[string]any{"tracks": []any{}, "measured": false, "message": message}, nil, ttl)
-		return
+		candidates = nil // a dub's own words may still be written below
+	}
+	var transcript []transcribe.Word
+	if source.file != "" && lang == "en" {
+		texts := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			texts = append(texts, string(candidate.Data))
+		}
+		transcript, _ = downloads.DubTranscript(ctx, source.jobID, source.file, source.query.Hints.Title, texts)
 	}
 	var scored []downloads.Scored
 	measured := false
@@ -142,24 +163,35 @@ func scoreCandidates(entry *candidateEntry, key string, source matchSource, lang
 			log.Printf("[subtitles] candidates for %s S%dE%d not measured: %v", source.query.SeriesID, source.query.Season, source.query.Episode, err)
 		}
 	}
-	if !measured {
+	if !measured && len(candidates) > 0 {
 		// The video is gone from the server (or unreadable): as published.
 		scored = scored[:0]
 		for _, candidate := range candidates {
 			scored = append(scored, downloads.Scored{Name: candidate.Name, Label: candidate.Label, Data: candidate.Data})
 		}
 	}
-	tracks := make([]map[string]any, 0, len(scored))
-	files := make([][]byte, 0, len(scored))
-	for i, item := range scored {
-		tracks = append(tracks, map[string]any{
-			"id": item.Name, "label": item.Label, "fit": item.Fit, "offset": item.Offset, "follows": item.Follows,
-			"url": "/subtitles/candidates/file?key=" + key + "&i=" + strconv.Itoa(i),
-		})
-		files = append(files, item.Data)
+	tracks := make([]map[string]any, 0, len(scored)+1)
+	files := make([][]byte, 0, len(scored)+1)
+	add := func(track map[string]any, data []byte) {
+		track["url"] = "/subtitles/candidates/file?key=" + key + "&i=" + strconv.Itoa(len(files))
+		tracks = append(tracks, track)
+		files = append(files, data)
+	}
+	if len(transcript) > 0 {
+		add(map[string]any{
+			"id": "transcript", "label": "From the English audio", "transcript": true,
+			"fit": 1.0, "offset": 0.0, "follows": true, "words": 1.0,
+		}, []byte(transcribe.WebVTT(transcribe.Cues(transcript), subsync.DubNote)))
+	}
+	for _, item := range scored {
+		track := map[string]any{"id": item.Name, "label": item.Label, "fit": item.Fit, "offset": item.Offset, "follows": item.Follows}
+		if len(transcript) > 0 {
+			track["words"] = transcribe.WordMatch(transcript, string(item.Data))
+		}
+		add(track, item.Data)
 	}
 	log.Printf("[subtitles] %d %s candidates for %s S%dE%d (measured %v)", len(tracks), lang, source.query.SeriesID, source.query.Season, source.query.Episode, measured)
-	finish(map[string]any{"tracks": tracks, "measured": measured}, files, candidateTTL)
+	finish(map[string]any{"status": "ready", "tracks": tracks, "measured": measured, "message": message}, files, ttl)
 }
 
 func handleCandidateFile(w http.ResponseWriter, r *http.Request) {
