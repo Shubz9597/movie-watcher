@@ -18,7 +18,7 @@ import { getDeviceId } from '../lib/device-id';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
 import { forgetMatchedSubtitle } from '../lib/subtitle-style';
-import { downloadMeta, forgetDownloadMeta } from '../lib/offline-download-meta';
+import { downloadMeta, forgetDownloadMeta, pruneDownloadMeta } from '../lib/offline-download-meta';
 import { describePreparing, preparingFraction } from '../lib/preparing-status';
 import { useLongPress } from '../lib/long-press';
 import {
@@ -302,6 +302,11 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       try {
         const snapshot = downloads ? await downloads.inventory() : EMPTY_INVENTORY;
         if (active) setInventory(snapshot);
+        // Artwork of downloads that are gone (removed, cancelled) fills the
+        // small WebView storage and later downloads lose their stills.
+        if (snapshot.available && !snapshot.unreadable) {
+          pruneDownloadMeta([...snapshot.items.map((item) => item.downloadId), ...pendingDownloads().map((item) => item.jobId)]);
+        }
         // Local usage is supplementary: a failed read hides the line only.
         const usage = await downloads?.storage?.().catch(() => null);
         if (active) setStorage(usage ?? null);

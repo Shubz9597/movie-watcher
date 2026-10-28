@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { nextUpEpisode } from '../lib/next-up';
 import { CheckCircle2, Circle, Download, ExternalLink, Play, SlidersHorizontal, Youtube } from 'lucide-react';
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
@@ -216,6 +217,11 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       }
 
       if (kind === 'tv' || (isTmdbBackedAnime && tmdbAnimeMediaKind === 'tv')) {
+        // No season asked for: open on the one you're up to (Kai after
+        // Season 1's last episode opens on Season 2), read alongside detail.
+        const watchedRequest = Number.isInteger(requestedSeason)
+          ? Promise.resolve(null)
+          : fetchWatched(`tmdb:tv:${id}`).catch(() => null);
         const row = await bffTitleDetail(`tmdb:tv:${id}`);
         publishDetail(detailFromBackendTitle(row));
         setIsAnimeMovie(false); // a show, anime or not
@@ -231,9 +237,18 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           // Specials go last, so a show opens on season 1, not its extras.
           .sort((left, right) => (left.seasonNumber === 0 ? 1 : 0) - (right.seasonNumber === 0 ? 1 : 0) || left.seasonNumber - right.seasonNumber);
         setSeasons(seasonsData);
+        const marks = await watchedRequest;
+        const upTo = marks ? nextUpEpisode(
+          marks.values(),
+          seasonsData.map((season: any) => season.seasonNumber),
+          (number) => seasonsData.find((season: any) => season.seasonNumber === number)?.episodeCount ?? 0,
+          isTmdbBackedAnime,
+        ) : null;
         const firstSeason = Number.isInteger(requestedSeason) && seasonsData.some((s: any) => s.seasonNumber === requestedSeason)
           ? requestedSeason
-          : seasonsData[0]?.seasonNumber ?? 1;
+          : upTo && seasonsData.some((s: any) => s.seasonNumber === upTo.season)
+            ? upTo.season
+            : seasonsData[0]?.seasonNumber ?? 1;
         setInitialSeason(firstSeason);
         // Episodes resolve SERVER-SIDE (BFF → TMDb): a direct client
         // api.themoviedb.org call from the phone WebView is the flaky link

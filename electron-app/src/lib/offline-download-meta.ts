@@ -9,7 +9,9 @@ export type DownloadMeta = {
 };
 
 const STORAGE_KEY = 'torwatch_download_meta_v1';
-const MAX_IMAGE_BYTES = 160_000;
+// WebView storage is about 5 MB in all: a whole season of 160 KB stills
+// filled it, and every later download lost its still (Kai Season 2).
+const MAX_IMAGE_BYTES = 40_000;
 
 function readAll(): Record<string, DownloadMeta> {
   try {
@@ -20,12 +22,35 @@ function readAll(): Record<string, DownloadMeta> {
   }
 }
 
-function writeAll(value: Record<string, DownloadMeta>): void {
+function writeAll(value: Record<string, DownloadMeta>): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+    return true;
   } catch {
-    // Storage full: Downloads falls back to remote artwork / plain labels.
+    return false; // storage full
   }
+}
+
+/** Frees WebView storage: stored images become their links (or go), the
+ *  episode names stay. Called when another write found storage full. */
+export function shrinkDownloadMeta(): void {
+  const all = readAll();
+  for (const meta of Object.values(all)) {
+    if (meta.still?.startsWith('data:')) delete meta.still;
+    if (meta.poster?.startsWith('data:')) delete meta.poster;
+  }
+  writeAll(all);
+}
+
+/** Forgets artwork of downloads that no longer exist (removed, cancelled,
+ *  replaced): only ids in keep stay. */
+export function pruneDownloadMeta(keep: Iterable<string>): void {
+  const wanted = new Set(keep);
+  const all = readAll();
+  const ids = Object.keys(all);
+  const kept = ids.filter((id) => wanted.has(id));
+  if (kept.length === ids.length) return;
+  writeAll(Object.fromEntries(kept.map((id) => [id, all[id]])));
 }
 
 export function downloadMeta(downloadId: string): DownloadMeta {
@@ -73,5 +98,10 @@ export async function cacheDownloadMeta(
   ]);
   if (still) meta.still = still;
   if (poster) meta.poster = poster;
-  writeAll({ ...readAll(), [downloadId]: meta });
+  if (writeAll({ ...readAll(), [downloadId]: meta })) return;
+  // Storage full: the image links (they show while online), not nothing.
+  const linked: DownloadMeta = { ...meta };
+  if (input.stillUrl) linked.still = lighter(input.stillUrl, 'w300');
+  if (input.posterUrl) linked.poster = lighter(input.posterUrl, 'w185');
+  writeAll({ ...readAll(), [downloadId]: linked });
 }

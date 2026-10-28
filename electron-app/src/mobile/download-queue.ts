@@ -4,7 +4,7 @@ import type { NativeManifestAsset } from '../platform/native-downloads.ts';
 import { getDeviceId } from '../lib/device-id.ts';
 import { DOWNLOADS_UI_ENABLED, getNativeDownloads } from './downloads-adapter.ts';
 import { cacheOfflineSkipSegments } from '../lib/offline-skip-segments.ts';
-import { cacheDownloadMeta } from '../lib/offline-download-meta.ts';
+import { cacheDownloadMeta, forgetDownloadMeta, shrinkDownloadMeta } from '../lib/offline-download-meta.ts';
 
 const STORAGE_KEY = 'torwatch_pending_downloads_v1';
 const CHANGE_EVENT = 'torwatch:downloads-changed';
@@ -170,7 +170,15 @@ function readPending(): PendingDownload[] {
 }
 
 function writePending(items: PendingDownload[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // Storage full (stored stills filled it): episodes 57-61 of a 61-episode
+    // batch were created on the server but never listed or downloaded.
+    // Stored images give way; the queue is what matters.
+    shrinkDownloadMeta();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  }
   notify();
 }
 
@@ -196,8 +204,21 @@ export function removePendingDownload(jobId: string): void {
 }
 
 export async function cancelPendingDownload(pending: PendingDownload): Promise<void> {
+  // Every cancel is reported (Kai S2E1-56 were cancelled one after another,
+  // three times, and nothing said why).
+  void fetch(`${pending.origin}/v1/diagnostics/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device: 'iPhone', events: [{ at: Date.now(), kind: 'download-cancel', detail: {
+      jobId: pending.jobId, season: pending.season, episode: pending.episode,
+      route: typeof window !== 'undefined' ? window.location.hash : '',
+      stack: (new Error().stack ?? '').slice(0, 800),
+    } }] }),
+    keepalive: true,
+  }).catch(() => {});
   cancelledJobs.add(pending.jobId);
   removePendingDownload(pending.jobId);
+  forgetDownloadMeta(pending.jobId);
   void getNativeDownloads()?.remove({ downloadId: pending.jobId }).catch(() => {});
   try {
     await fetch(
