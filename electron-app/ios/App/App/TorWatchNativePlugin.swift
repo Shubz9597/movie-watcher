@@ -622,9 +622,27 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             call.resolve()
             return
         }
-        player.currentAudioTrackIndex = Int32(trackId)
-        emitTracks()
         call.resolve()
+        switchTrack("audio", trackId, player) { $0.currentAudioTrackIndex = Int32(trackId) }
+    }
+
+    /// VLC's track switches can wait on a paused player (the subtitles panel
+    /// pauses it): on Kai S2E2 picking a subtitle froze the whole app for 47 s
+    /// and the subtitle never came. They run here, off the main thread and in
+    /// order; the change lands as soon as VLC takes it.
+    private let trackQueue = DispatchQueue(label: "torwatch.vlc.tracks")
+
+    private func switchTrack(_ kind: String, _ trackId: Int, _ player: VLCMediaPlayer, _ apply: @escaping (VLCMediaPlayer) -> Void) {
+        diag("vlc-\(kind)-track-begin", ["trackId": trackId])
+        trackQueue.async { [weak self, weak player] in
+            guard let player = player else { return }
+            apply(player)
+            DispatchQueue.main.async {
+                guard let self = self, player === self.mediaPlayer else { return }
+                self.diag("vlc-\(kind)-track-end", ["trackId": trackId])
+                self.emitTracks()
+            }
+        }
     }
 
     @objc func selectSubtitleTrack(_ call: CAPPluginCall) {
@@ -636,9 +654,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
         // null / -1 disables subtitles.
         let trackId = call.getInt("trackId") ?? -1
-        player.currentVideoSubTitleIndex = Int32(trackId)
-        emitTracks()
         call.resolve()
+        switchTrack("subtitle", trackId, player) { $0.currentVideoSubTitleIndex = Int32(trackId) }
     }
 
     @objc func setSubtitleDelay(_ call: CAPPluginCall) {
@@ -949,6 +966,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
     }
 
+    private var lastTracksSignature = ""
+
     private func emitTracks() {
         guard let player = mediaPlayer else { return }
         var audio: [[String: Any]] = []
@@ -975,6 +994,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         }
         reportedAudioTrack = player.currentAudioTrackIndex
         reportedSubtitleTrack = player.currentVideoSubTitleIndex
+        // Which subtitles the video offers and which is on, whenever that
+        // changes ("no subtitles" reports could not be told apart before).
+        let signature = "\(subs.map { "\($0["id"] ?? "")=\($0["label"] ?? "")" })|\(reportedSubtitleTrack)|\(reportedAudioTrack)"
+        if signature != lastTracksSignature {
+            lastTracksSignature = signature
+            diag("tracks", ["subtitles": subs.map { "\($0["id"] ?? ""): \($0["label"] ?? "")" },
+                            "subtitle": reportedSubtitleTrack, "audio": reportedAudioTrack])
+        }
         notifyListeners("tracksUpdate", data: ["audio": audio, "subtitles": subs, "playId": playId,
             "selectedAudioTrackId": reportedAudioTrack,
             "selectedSubtitleTrackId": reportedSubtitleTrack])
