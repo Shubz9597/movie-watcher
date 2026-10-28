@@ -85,6 +85,7 @@ export class NativeDownloadsAdapter implements DownloadsPort {
           repairReason: item.state === 'failed' ? repairMessage(item.reason) : undefined,
           waitingForServer: item.state === 'queued' || item.state === 'downloading' || item.state === 'paused',
           awaitingServer: item.awaitingServer === true,
+          waitingForWifi: item.waitingForWifi === true,
         })),
       };
     } catch (error) {

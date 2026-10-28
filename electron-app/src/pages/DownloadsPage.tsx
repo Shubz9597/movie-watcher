@@ -14,6 +14,7 @@ import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from 
 import { SelectionSurface } from '../components/primitives';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { getNativeDownloads } from '../mobile/downloads-adapter';
+import type { NativeNetworkRule } from '../platform/native-downloads';
 import { getDeviceId } from '../lib/device-id';
 import { SUBTITLE_LANGUAGES } from '../lib/subtitle-languages';
 import { forgetOfflineSkipSegments } from '../lib/offline-skip-segments';
@@ -168,7 +169,7 @@ function subtitleSummary(langs?: string[]): string | null {
 function transferStatus(item: DownloadItemSnapshot): string {
   switch (item.transferState) {
     case 'queued': return 'Queued';
-    case 'downloading': return 'Downloading';
+    case 'downloading': return item.waitingForWifi ? 'Waiting for Wi-Fi' : 'Downloading';
     case 'paused': return 'Paused';
     case 'verifying': return 'Checking file';
     case 'ready': return 'Ready';
@@ -281,6 +282,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   const [repairErrors, setRepairErrors] = useState<Record<string, string>>({});
   const [now, setNow] = useState(() => Date.now());
   const [storage, setStorage] = useState<DownloadsStorage | null>(null);
+  // Videos download over Wi-Fi only unless turned off (null: this phone's
+  // app build has no such setting, or not native).
+  const [networkRule, setNetworkRule] = useState<NativeNetworkRule | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<DownloadItemSnapshot | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
@@ -305,6 +309,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         // Local usage is supplementary: a failed read hides the line only.
         const usage = await downloads?.storage?.().catch(() => null);
         if (active) setStorage(usage ?? null);
+        const rule = await getNativeDownloads()?.getNetworkRule?.().catch(() => null);
+        if (active) setNetworkRule(rule ?? null);
       } catch (error) {
         console.error('[Downloads] Inventory read failed:', error);
         // A failed read must never read as zero downloads (spec C2).
@@ -846,6 +852,36 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             </button>
           </div>
         </div>
+      ) : null}
+      {!seriesId && !selection && networkRule ? (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={networkRule.wifiOnly}
+          onClick={() => {
+            const wifiOnly = !networkRule.wifiOnly;
+            setNetworkRule({ ...networkRule, wifiOnly });
+            void getNativeDownloads()?.setNetworkRule?.({ wifiOnly })
+              .then((rule) => setNetworkRule(rule))
+              .catch(() => setNetworkRule(networkRule));
+          }}
+          className={`mt-3 flex min-h-12 w-full max-w-4xl items-center gap-3 rounded-lg bg-white/[0.04] px-4 text-left ${FOCUS_RING_CLASS}`}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-white">Download on Wi-Fi only</span>
+            <span className="type-secondary block text-white/60">
+              {networkRule.wifiOnly
+                ? networkRule.waitingForWifi ? 'Not on Wi-Fi: downloads wait' : 'Mobile data is never used'
+                : 'Mobile data is used when there’s no Wi-Fi'}
+            </span>
+          </span>
+          <span
+            aria-hidden="true"
+            className={`relative h-7 w-12 shrink-0 rounded-full transition ${networkRule.wifiOnly ? 'bg-green-500' : 'bg-white/20'}`}
+          >
+            <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all ${networkRule.wifiOnly ? 'left-[1.375rem]' : 'left-0.5'}`} />
+          </span>
+        </button>
       ) : null}
       {!seriesId && storage && inventory?.items.length ? (
         <p className="type-secondary text-numeric mt-1 text-white/60">

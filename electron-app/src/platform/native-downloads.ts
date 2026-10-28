@@ -30,7 +30,11 @@ export type NativeDownloadItem = {
   subtitleLang?: string;
   /** Handed over before the server finished preparing it. */
   awaitingServer?: boolean;
+  /** Wi-Fi only is on and the phone is not on Wi-Fi: the transfer waits. */
+  waitingForWifi?: boolean;
 };
+
+export type NativeNetworkRule = { wifiOnly: boolean; waitingForWifi: boolean };
 
 export type NativeManifestAsset = {
   path: string;
@@ -69,4 +73,7 @@ export interface TorWatchDownloadsPluginInterface extends Plugin {
   localPlayablePath(options: { downloadId: string }): Promise<{ videoPath: string; subtitles: Array<{ lang: string; path: string }> }>;
   /** Moves a download to another show id/season/episode (older builds lack it). */
   relocate?(options: { downloadId: string; seriesId: string; season: number; episode: number; subtitleLabel?: string }): Promise<void>;
+  /** Videos download only over Wi-Fi (older builds lack it). */
+  getNetworkRule?(): Promise<NativeNetworkRule>;
+  setNetworkRule?(options: { wifiOnly: boolean }): Promise<NativeNetworkRule>;
 }

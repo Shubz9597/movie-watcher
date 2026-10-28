@@ -130,6 +130,8 @@ export type DownloadItemSnapshot = {
   waitingForServer?: boolean;
   /** Handed to the downloader while the server still prepares it. */
   awaitingServer?: boolean;
+  /** Wi-Fi only is on and the phone is not on Wi-Fi: the transfer waits. */
+  waitingForWifi?: boolean;
   /** Series identity: episodes group under one show in Downloads. */
   seriesId?: string;
   season?: number;

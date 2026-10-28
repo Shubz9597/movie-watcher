@@ -56,6 +56,8 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "loadProgress", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "localPlayablePath", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "relocate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getNetworkRule", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setNetworkRule", returnType: CAPPluginReturnPromise),
     ]
 
     private var coordinator: DownloadCoordinator { DownloadCoordinator.shared }
@@ -115,6 +117,7 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
         coordinator.startNextIfIdle()
         do {
             let records = try coordinator.store.list()
+            let waitingForWifi = coordinator.waitingForWifi
             let progress = records.map { record -> [String: Any] in
                 let metrics = coordinator.transferMetrics(for: record)
                 var body: [String: Any] = [
@@ -134,6 +137,8 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
                     "bytesPerSecond": metrics.bytesPerSecond,
                     // Handed over before the server finished preparing it.
                     "awaitingServer": record.assets.isEmpty,
+                    // Wi-Fi only and not on Wi-Fi: its transfer is held.
+                    "waitingForWifi": waitingForWifi && record.state == .downloading,
                 ]
                 if let eta = metrics.etaSeconds { body["etaSeconds"] = eta }
                 if let progress = coordinator.store.loadProgress(record.downloadId) {
@@ -150,6 +155,20 @@ class TorWatchDownloadsPlugin: CAPPlugin, CAPBridgedPlugin {
             // reported as "zero downloads" (spec C2).
             call.reject("The local downloads inventory could not be read.")
         }
+    }
+
+    /// Whether videos download only over Wi-Fi (on unless turned off).
+    @objc func getNetworkRule(_ call: CAPPluginCall) {
+        call.resolve(["wifiOnly": coordinator.wifiOnly, "waitingForWifi": coordinator.waitingForWifi])
+    }
+
+    @objc func setNetworkRule(_ call: CAPPluginCall) {
+        guard let wifiOnly = call.getBool("wifiOnly") else {
+            call.reject("wifiOnly is required.")
+            return
+        }
+        coordinator.setWifiOnly(wifiOnly)
+        call.resolve(["wifiOnly": coordinator.wifiOnly, "waitingForWifi": coordinator.waitingForWifi])
     }
 
     @objc func enqueue(_ call: CAPPluginCall) {

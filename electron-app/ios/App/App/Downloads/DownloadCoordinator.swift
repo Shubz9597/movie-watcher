@@ -66,6 +66,27 @@ final class DownloadCoordinator: NSObject {
     private var quickStallChecksUntil = Date.distantPast
     private var pathMonitor: NWPathMonitor?
     private var lastPathSignature = ""
+    /// The phone is on Wi-Fi (or a cable), per the path monitor.
+    private var onWifi = true
+
+    /// Videos download only over Wi-Fi unless the viewer turns this off.
+    /// iOS enforces it on every transfer (allowsCellularAccess), so it holds
+    /// while the app is closed too; meanwhile the transfer just waits.
+    static let wifiOnlyKey = "torwatch.downloads.wifiOnly"
+    /// The rule the live transfers were started with (older builds: mobile
+    /// data allowed).
+    private static let appliedWifiOnlyKey = "torwatch.downloads.appliedWifiOnly"
+
+    var wifiOnly: Bool {
+        UserDefaults.standard.object(forKey: Self.wifiOnlyKey) as? Bool ?? true
+    }
+
+    /// Wi-Fi only is on and the phone is not on Wi-Fi: transfers wait.
+    var waitingForWifi: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return wifiOnly && !onWifi
+    }
     private let stateLock = NSLock()
     /// Serialises queue decisions; recursive because finishing one download
     /// starts the next from inside the same call chain.
@@ -106,15 +127,135 @@ final class DownloadCoordinator: NSObject {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self = self else { return }
             let signature = "\(path.status)|\(path.availableInterfaces.map { $0.name }.joined(separator: ","))|\(path.isExpensive)"
+            let wifi = path.status == .satisfied
+                && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
             self.stateLock.lock()
             let changed = signature != self.lastPathSignature
             self.lastPathSignature = signature
+            let wifiChanged = wifi != self.onWifi
+            self.onWifi = wifi
             self.stateLock.unlock()
+            if wifiChanged { self.wifiStateChanged() }
             guard changed, path.status == .satisfied else { return }
             self.networkChanged()
         }
         monitor.start(queue: DispatchQueue(label: "torwatch.downloads.network"))
         pathMonitor = monitor
+    }
+
+    /// Leaving or reaching Wi-Fi changes what a waiting download shows.
+    private func wifiStateChanged() {
+        if #available(iOS 16.1, *) {
+            let status = waitingForWifi ? "Waiting for Wi-Fi" : "Downloading"
+            for record in (try? store.list()) ?? [] where record.state == .downloading {
+                DownloadLiveActivity.refresh(record, status: status)
+            }
+        }
+        emitChange()
+    }
+
+    func setWifiOnly(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.wifiOnlyKey)
+        applyNetworkRule()
+        wifiStateChanged()
+    }
+
+    /// A transfer keeps the mobile-data rule it started with. After the
+    /// viewer changes it (or on the first launch of this build), running and
+    /// paused transfers restart under the current rule, keeping the bytes
+    /// already received.
+    private func applyNetworkRule() {
+        let wifiOnly = self.wifiOnly
+        guard (UserDefaults.standard.object(forKey: Self.appliedWifiOnlyKey) as? Bool ?? false) != wifiOnly else { return }
+        UserDefaults.standard.set(wifiOnly, forKey: Self.appliedWifiOnlyKey)
+        session.getAllTasks { [weak self] tasks in
+            guard let self = self else { return }
+            for task in tasks {
+                let taskId = Int(task.taskIdentifier)
+                guard let download = task as? URLSessionDownloadTask,
+                      task.state == .running || task.state == .suspended,
+                      let mapping = self.store.taskOwner(taskId),
+                      mapping.urlPath != Self.manifestMarker else { continue }
+                let paused = task.state == .suspended
+                self.stateLock.lock()
+                self.stallCancelled.insert(taskId) // its cancel is not a failure
+                self.stateLock.unlock()
+                download.cancel { [weak self] resumeData in
+                    guard let self = self else { return }
+                    // The replacement is recorded before the old task is
+                    // dropped, so the queue never sees the download without one.
+                    var replacement: URLSessionDownloadTask?
+                    if let resumeData = resumeData {
+                        replacement = self.assetTask(resumeData: resumeData)
+                    } else if let record = try? self.store.get(mapping.downloadId),
+                              let url = self.taskURL(record, urlPath: mapping.urlPath) {
+                        replacement = self.assetTask(url)
+                    }
+                    if let replacement = replacement {
+                        try? self.store.recordTask(Int(replacement.taskIdentifier), downloadId: mapping.downloadId, urlPath: mapping.urlPath)
+                        self.noteActivity(mapping.downloadId, at: Date())
+                        if !paused { replacement.resume() }
+                    }
+                    self.clearTaskMetrics(taskId)
+                    try? self.store.removeTask(taskId)
+                    self.stateLock.lock()
+                    self.stallCancelled.remove(taskId)
+                    self.stateLock.unlock()
+                    self.startNextIfIdle()
+                }
+            }
+        }
+    }
+
+    /// A video or subtitle transfer under the current mobile-data rule.
+    /// (Manifest requests are a few KB and may use mobile data.)
+    private func assetTask(_ url: URL) -> URLSessionDownloadTask {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = session.configuration.timeoutIntervalForRequest
+        request.allowsCellularAccess = !wifiOnly
+        return session.downloadTask(with: request)
+    }
+
+    private func assetTask(resumeData: Data) -> URLSessionDownloadTask {
+        session.downloadTask(withResumeData: Self.resumeData(resumeData, allowingCellular: !wifiOnly) ?? resumeData)
+    }
+
+    /// Resume data carries the stopped transfer's request, its mobile-data
+    /// rule included; this rewrites the rule. nil when the data is not in the
+    /// form expected (the caller then keeps it as it was).
+    static func resumeData(_ data: Data, allowingCellular: Bool) -> Data? {
+        var format = PropertyListSerialization.PropertyListFormat.binary
+        guard var resume = (try? PropertyListSerialization.propertyList(from: data, options: [], format: &format)) as? [String: Any],
+              resume["$archiver"] == nil else { return nil }
+        var rewritten = false
+        for key in ["NSURLSessionResumeCurrentRequest", "NSURLSessionResumeOriginalRequest"] {
+            guard let archived = resume[key] as? Data else { continue }
+            guard let request = archivedRequest(archived, allowingCellular: allowingCellular) else { return nil }
+            resume[key] = request
+            rewritten = true
+        }
+        guard rewritten else { return nil }
+        return try? PropertyListSerialization.data(fromPropertyList: resume, format: format, options: 0)
+    }
+
+    /// Re-archives one request with the rule, under the root key it had.
+    private static func archivedRequest(_ data: Data, allowingCellular: Bool) -> Data? {
+        guard let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data) else { return nil }
+        unarchiver.requiresSecureCoding = false
+        var rootKey = NSKeyedArchiveRootObjectKey
+        var request = unarchiver.decodeObject(forKey: rootKey) as? NSURLRequest
+        if request == nil {
+            rootKey = "NSKeyedArchiveRootObjectKey"
+            request = unarchiver.decodeObject(forKey: rootKey) as? NSURLRequest
+        }
+        unarchiver.finishDecoding()
+        guard let mutable = request?.mutableCopy() as? NSMutableURLRequest else { return nil }
+        mutable.allowsCellularAccess = allowingCellular
+        guard let updated = mutable.copy() as? NSURLRequest else { return nil }
+        let archiver = NSKeyedArchiver(requiringSecureCoding: false)
+        archiver.encode(updated, forKey: rootKey)
+        archiver.finishEncoding()
+        return archiver.encodedData
     }
 
     private func networkChanged() {
@@ -339,7 +480,7 @@ final class DownloadCoordinator: NSObject {
                 // generic failure here (the asset path was validated upstream).
                 throw URLError(.badURL)
             }
-            let task = session.downloadTask(with: url)
+            let task = assetTask(url)
             try store.recordTask(Int(task.taskIdentifier), downloadId: record.downloadId, urlPath: asset.urlPath)
             noteActivity(record.downloadId, at: Date())
             task.resume()
@@ -500,6 +641,9 @@ final class DownloadCoordinator: NSObject {
             for record in self.store.incompleteDownloads() where record.state == .verifying {
                 self.tryMaybeFinalize(record)
             }
+            // Transfers from before this build (or a rule change) take the
+            // current Wi-Fi rule.
+            self.applyNetworkRule()
             self.emitChange()
         }
     }
@@ -812,6 +956,14 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
     private func restartStalledTransfers(_ tasks: [URLSessionTask], owner: [Int: String]) -> Bool {
         let now = Date()
         var restarted = false
+        if waitingForWifi {
+            // Silent on purpose: iOS holds them until Wi-Fi. The clock starts
+            // over so they are not counted stalled the moment it returns.
+            stateLock.lock()
+            for downloadId in owner.values { lastByteAt[downloadId] = now }
+            stateLock.unlock()
+            return false
+        }
         stateLock.lock()
         let limit = now < quickStallChecksUntil ? Self.networkChangeStallLimit : Self.stallLimit
         stateLock.unlock()
@@ -865,9 +1017,9 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
               record.state == .downloading || record.state == .queued else { return false }
         let task: URLSessionDownloadTask
         if let resumeData = resumeData {
-            task = session.downloadTask(withResumeData: resumeData)
+            task = assetTask(resumeData: resumeData)
         } else if let url = taskURL(record, urlPath: urlPath) {
-            task = session.downloadTask(with: url)
+            task = urlPath == Self.manifestMarker ? session.downloadTask(with: url) : assetTask(url)
         } else {
             return false
         }
