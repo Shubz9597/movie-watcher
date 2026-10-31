@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { ProfileButton } from './shared/ProfileGate';
 import { LibraryBig, Search, Settings2 } from 'lucide-react';
 import { loadSeeAllPage } from '../lib/route-loaders';
 import torWatchLogo from '../assets/torwatch-app-icon.png';
@@ -135,6 +136,7 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
               />
             </Suspense>
           ) : null}
+          <ProfileButton className="shrink-0" />
           <button
             type="button"
             aria-label="Open TorWatch setup"

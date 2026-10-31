@@ -5,6 +5,7 @@
 // Back (design-system.md: detail uses Back): tab destinations show the logo;
 // every pushed detail screen shows one back chevron in the same place, the
 // iOS navigation-bar convention. Gesture/hardware back still works.
+import { ProfileButton } from './ProfileGate';
 import { ChevronLeft, Download, Home, Library, Search, Settings2 } from 'lucide-react';
 import AppHeader from '../AppHeader';
 import torWatchLogo from '../../assets/torwatch-app-icon.png';
@@ -78,6 +79,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
               <Search className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
             </button>
           ) : null}
+          <ProfileButton />
           <button
             type="button"
             aria-label="Open settings"

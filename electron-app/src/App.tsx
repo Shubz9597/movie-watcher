@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { RouterProvider } from './lib/router-adapter';
 import AppHeader from './components/AppHeader';
 import { ConnectionBanner } from './components/shared/ConnectionBanner';
+import { ProfileGate } from './components/shared/ProfileGate';
 import RuntimeStatusBar from './components/RuntimeStatusBar';
 import TmdbConnectionGate from './components/TmdbConnectionGate';
 import WindowChrome from './components/WindowChrome';
@@ -136,6 +137,7 @@ export default function App() {
             {/* As on the phone: Reconnecting… / Server offline / Connected. */}
             <ConnectionBanner stickTo="top-[6.5rem]" />
             <RuntimeStatusBar />
+            <ProfileGate />
           </>
         ) : null}
         <main className={isPlayerPage ? '' : 'pb-16'}>

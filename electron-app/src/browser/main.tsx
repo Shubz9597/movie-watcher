@@ -4,6 +4,7 @@
 // slice, not a separate app. It never touches window.electronAPI. Fixture
 // mode is EXPLICIT (`fixtures=1` in the URL) and exists only in this
 // development entry; the Library fixtures are preview-only and labelled.
+import { ProfileGate } from '../components/shared/ProfileGate';
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectionBanner } from '../components/shared/ConnectionBanner';
 import { usePullToRefresh } from '../lib/pull-to-refresh';
@@ -665,6 +666,7 @@ export function sharedAppElement(composed: {
           recsFetch={composed.recsFetch}
           launch={composed.launch}
         />
+        <ProfileGate />
       </AppErrorBoundary>
     </PlatformProvider>
   );
