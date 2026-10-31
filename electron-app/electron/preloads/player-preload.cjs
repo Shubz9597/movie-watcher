@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const INVOKE_CHANNELS = new Set([
   "mpv:stop",
+  "mpv:finishEpisode",
   "mpv:pause",
   "mpv:seek",
   "mpv:state",

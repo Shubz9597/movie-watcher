@@ -439,6 +439,13 @@ export function registerMpvIpc(ipcMain, {
   });
 
   ipcMain.handle("mpv:stop", async () => stopPlayback("stopped"));
+  // "Next episode": the episode ends now, as at the end of its file (never
+  // by seeking into its last half-second, which froze the phone's player).
+  ipcMain.handle("mpv:finishEpisode", async () => {
+    if (playbackEndedDispatched) return { ok: true };
+    playbackEndedDispatched = true;
+    return stopPlayback("ended");
+  });
 
   ipcMain.handle("window:toggleFullscreen", async () => {
     try {

@@ -757,7 +757,8 @@ export function PlayerControlsApp({ bridge }: Props) {
         onClick={async () => {
           if (!skipAction) return;
           setSkipSeekInFlight(true);
-          await seekAbsolute(skipAction.target);
+          if (skipAction.finish) await invokeSafely('mpv:finishEpisode');
+          else await seekAbsolute(skipAction.target);
           setSkipPromptDismissed(true);
           setSkipSeekInFlight(false);
         }}
