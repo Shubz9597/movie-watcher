@@ -678,7 +678,7 @@ export default function EpisodePanel({
     setPlayBusyId(key);
     try {
       const magnet = await resolveTorrentSource(t);
-      let fileIndex: number | undefined = t.fileIndex;
+      let fileIndex: number | undefined = (await titledPackFile(t, magnet, activeEpisode))?.fileIndex ?? t.fileIndex;
       if (platform.desktop && fileIndex == null && activeEpisode && t.seasonPack) {
         // Resolve file index for season packs
         const resolved = await resolveTorrentFile({
@@ -790,7 +790,7 @@ export default function EpisodePanel({
     setTorrentError(null);
     try {
       const magnet = await resolveTorrentSource(t);
-      let fileIndex: number | undefined = t.fileIndex;
+      let fileIndex: number | undefined = (await titledPackFile(t, magnet, activeEpisode))?.fileIndex ?? t.fileIndex;
       if (fileIndex == null && activeEpisode && t.seasonPack) {
         const resolved = await resolveTorrentFile({
           magnetUri: magnet,
@@ -920,10 +920,33 @@ export default function EpisodePanel({
     ...packFileHints,
   });
 
+  // The pack file the episode's title names, when the pack names its files:
+  // the search's file number (Torrentio's) can follow another release's
+  // numbering (Kai's Final Chapters). null when the pack's names don't say
+  // (or it takes longer than 8 s: the search's number is used then).
+  const titledPackFile = async (torrent: TorrentRow, magnet: string, episode: EpisodeSummary | null | undefined): Promise<ResolvedEpisodeFile | null> => {
+    if (!torrent.seasonPack || !episode?.name) return null;
+    const resolved = await Promise.race([
+      resolveTorrentFile({
+        magnetUri: magnet,
+        torrentUrl: torrent.torrentUrl,
+        downloadUrl: torrent.downloadUrl,
+        infoHash: torrent.infoHash,
+        cat: kind,
+        ...episodeTarget(episode),
+      }).catch(() => null),
+      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 8000)),
+    ]);
+    return resolved && (resolved.score ?? 0) >= 750 ? resolved : null;
+  };
+
   const downloadSelectionForEpisode = async (torrent: TorrentRow, activeEpisode: EpisodeSummary): Promise<DownloadSelection> => {
-    // Torrentio names the searched episode's file inside a pack.
-    if (!torrent.seasonPack || torrent.fileIndex != null) return selectionForEpisode(torrent, activeEpisode, null);
+    if (!torrent.seasonPack) return selectionForEpisode(torrent, activeEpisode, null);
     const magnet = await resolveTorrentSource(torrent);
+    const titled = await titledPackFile(torrent, magnet, activeEpisode);
+    if (titled) return selectionForEpisode(torrent, activeEpisode, titled);
+    // Torrentio names the searched episode's file inside a pack.
+    if (torrent.fileIndex != null) return selectionForEpisode(torrent, activeEpisode, null);
     const resolved = await resolveTorrentFile({
       magnetUri: magnet,
       torrentUrl: torrent.torrentUrl,
