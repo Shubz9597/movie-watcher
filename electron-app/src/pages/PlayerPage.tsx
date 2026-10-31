@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { userMessage } from '../lib/user-error';
 import { bffTitleDetail } from '../lib/services/catalog-bff';
 import { getDeviceId } from '../lib/device-id';
 import { usePlatform } from '../platform/PlatformProvider';
@@ -374,7 +375,7 @@ export default function PlayerPage({ navigate, params }: Props) {
 
   const errorPanel = playbackError ? (
     <div className="type-body measure-compact mx-auto mt-6 text-white/85" role="alert">
-      <p>{playbackError}</p>
+      <p>{userMessage(playbackError, 'Couldn’t start playback.')}</p>
       <div className="mt-6 flex flex-wrap justify-center gap-3">
         {magnet || downloadId ? (
           <button type="button" onClick={() => setRetryToken((token) => token + 1)} className={ACTION_PRIMARY_CLASS}>

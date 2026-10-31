@@ -5,6 +5,7 @@
 // live announcement), error (truthful copy + retry by activation).
 // The flags are independent: one toggle never overwrites the other, and the
 // canonical id is used opaquely end to end.
+import { userMessage } from '../../lib/user-error';
 import { useEffect, useRef, useState } from 'react';
 import { Bookmark, Heart } from 'lucide-react';
 import { FOCUS_RING_CLASS, TOUCH_TARGET_CLASS } from '../../lib/design-tokens';
@@ -118,7 +119,7 @@ export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canoni
       <span className="sr-only" role="status" aria-live="polite">
         {pending
           ? (shownTarget ? meta.savingLabel : meta.removingLabel)
-          : announcement ?? (error ? `${meta.errorLabel}. ${error} Activate the control to retry.` : '')}
+          : announcement ?? (error ? `${meta.errorLabel}. ${userMessage(error, '')} Activate the control to retry.` : '')}
       </span>
     </>
   );

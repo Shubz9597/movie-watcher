@@ -1,5 +1,6 @@
 // Electron-compatible EpisodePanel that uses services directly
 // This wraps the original but handles API calls through services
+import { userMessage } from '../lib/user-error';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
 import { ArrowLeft, CheckCircle2, ChevronRight, Circle, Clock3, Loader2, Play } from 'lucide-react';
@@ -1221,7 +1222,7 @@ export default function EpisodePanel({
 
           {torrentError ? (
             <div className="border-b border-white/[0.08] px-5 py-4 text-sm text-red-100" role="alert">
-              <p>{torrentError}</p>
+              <p>{userMessage(torrentError, 'Couldn’t load sources for this episode.')}</p>
               {platform.desktop ? (
                 <button
                   type="button"

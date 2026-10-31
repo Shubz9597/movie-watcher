@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { userMessage } from '../lib/user-error';
 import { uniqueRecentSearches } from '../lib/search-order';
 import { ChevronLeft, Clapperboard, Film, History, LoaderCircle, MonitorPlay, RefreshCw, Tv } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
@@ -521,7 +522,7 @@ export default function GlobalSearch({
 
             {error ? (
               <div className="flex items-center justify-between gap-4 px-5 py-3 text-white/80">
-                <p className="type-secondary">{error}</p>
+                <p className="type-secondary">{userMessage(error, 'Search is unavailable.')}</p>
                 {!hasResults ? (
                   <button
                     type="button"

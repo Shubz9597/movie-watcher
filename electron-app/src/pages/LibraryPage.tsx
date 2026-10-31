@@ -11,6 +11,7 @@
 //   2. `provider` ” the explicit preview-only fixture provider (development
 //      browser entry), always labelled on screen.
 // With neither, the page shows the truthful unavailable state.
+import { userMessage } from '../lib/user-error';
 import { useEffect, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Film, Ghost, ListFilter, Tv } from 'lucide-react';
 import { SelectionSurface, UnderlineTabs } from '../components/primitives';
@@ -369,7 +370,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
   }, [provider, collection]);
 
   if (error) {
-    return <ErrorState message={error} onRetry={() => setError(null)} label="library preview" />;
+    return <ErrorState message={userMessage(error, 'Couldn’t load your library.')} onRetry={() => setError(null)} label="library preview" />;
   }
   if (!overview) {
     return <ShelfSkeleton />;
@@ -587,7 +588,7 @@ function PreviewLibraryGrid({ provider, collection, kind }: {
   }, [provider, collection, kind]);
 
   if (error) {
-    return <ErrorState message={error} onRetry={() => setError(null)} label="library preview" />;
+    return <ErrorState message={userMessage(error, 'Couldn’t load your library.')} onRetry={() => setError(null)} label="library preview" />;
   }
   if (!state) {
     return <ShelfSkeleton />;

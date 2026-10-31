@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { userMessage } from '../lib/user-error';
 import { nextUpEpisode } from '../lib/next-up';
-import { CheckCircle2, Circle, Download, ExternalLink, Play, SlidersHorizontal, Youtube } from 'lucide-react';
+import { CheckCircle2, Circle, Download, ExternalLink, Play, RotateCcw, SlidersHorizontal, Youtube } from 'lucide-react';
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
 import EpisodePanel, { type NextUp } from '../components/EpisodePanelWrapper';
 import TorrentPanel from '../components/TorrentPanel';
-import { usePlatform } from '../platform/PlatformProvider';
+import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import { getAnimeEpisodeMetadata } from '../lib/services/catalog-gateway';
 import { bffEpisodes, bffTitleDetail } from '../lib/services/catalog-bff';
 import { getVodBase } from '../lib/api-client';
@@ -61,8 +62,19 @@ export default function TitlePage({
   const [initialEpisodes, setInitialEpisodes] = useState<any[]>([]);
 const [loading, setLoading] = useState(true);
 const [loadError, setLoadError] = useState<string | null>(null);
+const loadErrorRef = useRef<string | null>(null);
+loadErrorRef.current = loadError;
 // Application-wide pull-to-refresh: bumped to refetch the whole detail.
 const [refreshKey, setRefreshKey] = useState(0);
+// The server came back (a dropped connection, a restart): load again by
+// itself instead of leaving the error up.
+const connection = useConnectionStatus();
+const wasReady = useRef(true);
+useEffect(() => {
+  const ready = connection.status === 'ready';
+  if (ready && !wasReady.current && loadErrorRef.current) setRefreshKey((key) => key + 1);
+  wasReady.current = ready;
+}, [connection.status]);
 const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) => key + 1));
   const [isAnimeMovie, setIsAnimeMovie] = useState(false);
   const [episodeArtworkHydrating, setEpisodeArtworkHydrating] = useState(false);
@@ -440,9 +452,18 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
 
   if (!detail) {
     return (
-      <div className="flex min-h-[70vh] flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="measure-compact type-body text-white/75">{loadError || 'Couldn’t load this title.'}</p>
-        <PageBackButton />
+      <div className="flex min-h-[70vh] flex-col items-center justify-center gap-4 px-6 text-center">
+        <p className="measure-compact type-body text-white/75">{userMessage(loadError, 'Couldn’t load this title.')}</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setRefreshKey((key) => key + 1)}
+            className="inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85"
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden="true" /> Try again
+          </button>
+          <PageBackButton />
+        </div>
       </div>
     );
   }

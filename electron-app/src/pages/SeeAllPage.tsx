@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { userMessage } from '../lib/user-error';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import PosterCard from '../components/PosterCard';
 import type { MovieCard } from '../lib/types';
@@ -184,7 +185,7 @@ export default function SeeAllPage({
       {loading && <div className="type-body py-8 text-center text-white/65" role="status">Loading…</div>}
       {!loading && error ? (
         <div className="type-body py-6 text-center text-white/85" role="alert">
-          <p>{error}</p>
+          <p>{userMessage(error, 'Couldn’t load this collection.')}</p>
           <div className="mt-4 flex flex-wrap justify-center gap-3">
             <button
               type="button"

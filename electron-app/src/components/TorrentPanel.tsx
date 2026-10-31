@@ -1,4 +1,5 @@
 // Electron-compatible wrapper for TorrentPanel that fixes API calls
+import { userMessage } from '../lib/user-error';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
 import { Button } from './ui/button';
@@ -388,7 +389,7 @@ export default function TorrentPanel({
 
       {error && (
         <div className="m-4 rounded-lg border border-red-400/20 bg-red-950/20 p-4 text-sm text-red-100 [overflow-wrap:anywhere]" role="alert">
-          <p>{error}</p>
+          <p>{userMessage(error, 'Couldn’t open this source.')}</p>
           {platform.desktop ? (
             <button
               type="button"

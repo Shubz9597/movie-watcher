@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { userMessage } from '../lib/user-error';
 import { Pause, Play, Square } from 'lucide-react';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 
@@ -165,7 +166,7 @@ export default function WatchPage({
 
           {error ? (
             <div className="type-body measure-compact mx-auto mt-6 text-white/85" role="alert">
-              <p>{error}</p>
+              <p>{userMessage(error, 'Playback could not be started.')}</p>
               {!starting ? (
                 <button
                   type="button"

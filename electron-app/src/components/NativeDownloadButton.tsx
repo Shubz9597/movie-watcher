@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { userMessage } from '../lib/user-error';
 import { Download, Loader2 } from 'lucide-react';
 import { usePlatform } from '../platform/PlatformProvider.tsx';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens.ts';
@@ -265,7 +266,7 @@ export function NativeDownloadButton({
 
           {progress ? <p className="type-secondary mt-3 text-white/70" role="status">{progress}</p> : null}
           {notice ? <p className="type-secondary mt-3 text-white/85" role="status">{notice}</p> : null}
-          {error ? <p className="type-secondary mt-3 text-red-300" role="alert">{error}</p> : null}
+          {error ? <p className="type-secondary mt-3 text-red-300" role="alert">{userMessage(error, 'Couldn’t start the download.')}</p> : null}
           <button
             type="button"
             onClick={() => void start()}

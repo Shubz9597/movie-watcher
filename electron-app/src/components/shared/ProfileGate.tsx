@@ -4,6 +4,7 @@
 // reloads the app so every list (Continue Watching, library, picks) is that
 // profile's. Managing: anyone adds a profile; the server's owner (by
 // Tailscale login) renames or removes any, others their own.
+import { userMessage } from '../../lib/user-error';
 import { useCallback, useEffect, useState } from 'react';
 import { Pencil, Plus, X } from 'lucide-react';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
@@ -190,7 +191,7 @@ export function ProfileGate() {
               />
             ))}
           </div>
-          {error ? <p role="alert" className="type-secondary mt-4 text-red-300">{error}</p> : null}
+          {error ? <p role="alert" className="type-secondary mt-4 text-red-300">{userMessage(error, 'Couldn’t save the profile.')}</p> : null}
           <div className="mt-6 flex flex-col gap-3">
             <button type="button" disabled={busy} onClick={() => void save()} className="min-h-12 rounded-lg bg-white px-5 text-sm font-medium text-black disabled:opacity-40">Save</button>
             {editing.id && editing.canDelete ? (
@@ -242,7 +243,7 @@ export function ProfileGate() {
               </li>
             ) : null}
           </ul>
-          {error ? <p role="alert" className="type-secondary mt-6 text-red-300">{error}</p> : null}
+          {error ? <p role="alert" className="type-secondary mt-6 text-red-300">{userMessage(error, 'Couldn’t change profiles.')}</p> : null}
           <button
             type="button"
             onClick={() => { setManaging(!managing); setError(''); }}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { userMessage } from '../lib/user-error';
 import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import PosterCard from './PosterCard';
 import { LibraryToggle } from './shared/LibraryToggle';
@@ -195,7 +196,7 @@ function CarouselRow({
         </div>
       ) : error ? (
         <div className="flex min-h-56 flex-col items-start justify-center" role="alert">
-          <p className="measure-compact type-body text-white/85">{error}</p>
+          <p className="measure-compact type-body text-white/85">{userMessage(error, 'Couldn’t load this row.')}</p>
           <div className="mt-4 flex flex-wrap gap-3">
             {onRetry ? (
               <button
