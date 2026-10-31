@@ -1,6 +1,11 @@
 package com.torwatch.mobile
 
+import android.content.Context
 import android.content.res.Configuration
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -20,6 +25,7 @@ import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
+import com.torwatch.mobile.downloads.DownloadEngine
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -70,6 +76,43 @@ class TorWatchNativePlugin : Plugin() {
         // peer-driven throughput dips.
         private const val NETWORK_CACHING_MS = 4000
         private const val VIDEO_SCALE_MODE_KEY = "videoScaleMode"
+        private const val EVENT_LOCAL_PROGRESS = "localProgress"
+        private const val LOCAL_CHECKPOINT_MS = 10_000L
+
+        @Volatile private var active: TorWatchNativePlugin? = null
+
+        /** Removal while playing: the player closes BEFORE the files go. */
+        fun stopLocalPlaybackIfActive(downloadId: String, then: () -> Unit) {
+            val plugin = active
+            if (plugin == null) { then(); return }
+            plugin.mainHandler.post {
+                if (plugin.localDownloadId == downloadId) {
+                    plugin.persistLocalProgress("stopped")
+                    if (!plugin.terminalSent) {
+                        plugin.terminalSent = true
+                        plugin.emit(EVENT_PLAYBACK_STATE) {
+                            putString("state", "stopped")
+                            putString(KEY_PLAY_ID, plugin.playId)
+                        }
+                    }
+                    plugin.teardown()
+                }
+                then()
+            }
+        }
+    }
+
+    // A download playing offline (playLocal): its id, its subtitle files'
+    // labels (the last subtitle tracks, in attachment order) and the last
+    // position checkpoint.
+    private var localDownloadId: String? = null
+    private var localSidecars: List<Pair<String, String>> = emptyList() // lang to label
+    private var lastLocalSave = 0L
+    private var focusRequest: AudioFocusRequest? = null
+
+    override fun load() {
+        super.load()
+        active = this
     }
 
     private var libVLC: LibVLC? = null
@@ -96,6 +139,10 @@ class TorWatchNativePlugin : Plugin() {
             val player = mediaPlayer
             if (player != null && !terminalSent) {
                 applyPendingSeek()
+                if (localDownloadId != null && System.currentTimeMillis() - lastLocalSave >= LOCAL_CHECKPOINT_MS) {
+                    lastLocalSave = System.currentTimeMillis()
+                    persistLocalProgress("checkpoint")
+                }
                 emit(EVENT_TIME_UPDATE) {
                     putDouble("currentTime", player.time / 1000.0)
                     putDouble("duration", if (player.length > 0) player.length / 1000.0 else 0.0)
@@ -152,6 +199,8 @@ class TorWatchNativePlugin : Plugin() {
 
         playId = newPlayId
         terminalSent = false
+        localDownloadId = null
+        localSidecars = emptyList()
 
         startPlaybackEngine(activity, url, title, seekTo)
 
@@ -195,13 +244,17 @@ class TorWatchNativePlugin : Plugin() {
                         emitBuffering(false, 100.0)
                         scheduleTracksRefresh()
                     }
-                    MediaPlayer.Event.Paused -> emit(EVENT_PLAYBACK_STATE) {
-                        putString("state", "paused")
-                        putString(KEY_PLAY_ID, playId)
+                    MediaPlayer.Event.Paused -> {
+                        persistLocalProgress("paused")
+                        emit(EVENT_PLAYBACK_STATE) {
+                            putString("state", "paused")
+                            putString(KEY_PLAY_ID, playId)
+                        }
                     }
                     MediaPlayer.Event.Buffering -> emitBuffering(event.buffering < 100f, event.buffering.toDouble())
                     MediaPlayer.Event.SeekableChanged -> applyPendingSeek()
                     MediaPlayer.Event.EndReached -> {
+                        persistLocalProgress("ended")
                         if (!terminalSent) {
                             terminalSent = true
                             emit(EVENT_PLAYBACK_STATE) {
@@ -211,6 +264,7 @@ class TorWatchNativePlugin : Plugin() {
                         }
                     }
                     MediaPlayer.Event.EncounteredError -> {
+                        persistLocalProgress("error")
                         if (!terminalSent) {
                             terminalSent = true
                             // Generic message ONLY: VLC internals never cross the bridge.
@@ -248,10 +302,10 @@ class TorWatchNativePlugin : Plugin() {
         // The web layer still asks for embedded spu tracks via setSpuTrack.
         player.media = media
         media.release()
+        attachLocalSidecars(player)
         player.attachViews(layout, null, true, true)
-        val savedScaleMode = activity.getSharedPreferences("torwatch.player", 0)
-            .getString(VIDEO_SCALE_MODE_KEY, "fit") ?: "fit"
-        player.setVideoScale(videoScaleType(savedScaleMode))
+        applyVideoScale(player, savedScaleMode(activity))
+        requestAudioFocus(activity)
 
         if (seekTo != null && seekTo > 0) {
             pendingSeek = (seekTo * 1000.0).toLong()
@@ -286,6 +340,7 @@ class TorWatchNativePlugin : Plugin() {
         if (player.isPlaying) {
             player.pause()
         } else {
+            bridge?.activity?.let { requestAudioFocus(it) }
             player.play()
         }
         call.resolve()
@@ -312,7 +367,12 @@ class TorWatchNativePlugin : Plugin() {
         val positionMs = mediaPlayer?.time ?: 0L
         // Same session continues server-side: no terminal event, just an
         // in-place engine rebuild at the current position (playback resumes).
+        // An offline download keeps its id and subtitle files.
+        val local = localDownloadId
+        val sidecars = localSidecars
         teardown()
+        localDownloadId = local
+        localSidecars = sidecars
         playId = call.getString("playId") ?: playId
         terminalSent = false
         pendingSeek = positionMs
@@ -379,22 +439,161 @@ class TorWatchNativePlugin : Plugin() {
     fun setVideoScale(call: PluginCall) {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { setVideoScale(call) }; return }
         val mode = call.getString("mode") ?: "fit"
-        if (mode != "fit" && mode != "fill" && mode != "stretch") {
+        if (mode != "fit" && mode != "fill" && mode != "stretch" && mode != "edge") {
             call.reject("Unknown video scale mode.")
             return
         }
         if (call.getString("playId") != playId) { call.resolve(); return }
         bridge.activity.getSharedPreferences("torwatch.player", 0).edit()
             .putString(VIDEO_SCALE_MODE_KEY, mode).apply()
-        mediaPlayer?.setVideoScale(videoScaleType(mode))
+        mediaPlayer?.let { applyVideoScale(it, mode) }
         call.resolve()
     }
 
-    private fun videoScaleType(mode: String): MediaPlayer.ScaleType = when (mode) {
-        // LibVLC's FILL stretches; FIT_SCREEN preserves the aspect and crops.
-        "fill" -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
-        "stretch" -> MediaPlayer.ScaleType.SURFACE_FILL
-        else -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
+    // The iPhone's sizes: the picture fills the screen (stretched to at most
+    // 16:9, never cropped) by default; a spread stretches it edge to edge.
+    private fun savedScaleMode(activity: android.app.Activity): String {
+        val saved = activity.getSharedPreferences("torwatch.player", 0).getString(VIDEO_SCALE_MODE_KEY, "stretch")
+        return if (saved == "edge") "edge" else "stretch"
+    }
+
+    private fun applyVideoScale(player: MediaPlayer, mode: String) {
+        when (mode) {
+            "edge" -> { player.aspectRatio = null; player.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL) }
+            "stretch" -> { player.aspectRatio = "16:9"; player.setVideoScale(MediaPlayer.ScaleType.SURFACE_BEST_FIT) }
+            "fill" -> { player.aspectRatio = null; player.setVideoScale(MediaPlayer.ScaleType.SURFACE_FIT_SCREEN) }
+            else -> { player.aspectRatio = null; player.setVideoScale(MediaPlayer.ScaleType.SURFACE_BEST_FIT) }
+        }
+    }
+
+    /** Offline playback of a ready download, with its subtitle files. */
+    @PluginMethod
+    fun playLocal(call: PluginCall) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { playLocal(call) }; return }
+        val downloadId = call.getString("downloadId")
+        if (downloadId.isNullOrEmpty()) { call.reject("The download identifier is missing."); return }
+        val newPlayId = call.getString("playId")
+        if (newPlayId.isNullOrEmpty()) { call.reject("The playback identifier is missing."); return }
+        DownloadEngine.init(context)
+        val store = DownloadEngine.store()
+        val files = store.readyFiles(downloadId) ?: run {
+            call.reject("That download is not ready for offline playback.")
+            return
+        }
+        // Resume 15 s before where this phone left off; a finished episode
+        // (90%+) starts over.
+        val saved = store.loadProgress(downloadId)
+        val seekTo = call.getDouble("seekTo") ?: saved?.let {
+            if (it.durationS > 0 && it.positionS >= it.durationS * 0.9) null
+            else if (it.positionS > 15) it.positionS - 15 else null
+        }
+        // An explicit choice wins, then the viewer's last ("" = off), then
+        // the language asked for when it was downloaded.
+        val subtitleLang = call.getString("subtitleLang") ?: saved?.subtitleLang ?: files.second.firstOrNull()?.first ?: ""
+        val record = store.get(downloadId)
+        teardown()
+        val activity = bridge?.activity ?: run { call.reject("The player surface is unavailable."); return }
+        playId = newPlayId
+        terminalSent = false
+        localDownloadId = downloadId
+        localSidecars = files.second.map { (lang, file) -> lang to sidecarLabel(file, lang) }
+        localSubtitleLang = subtitleLang
+        currentUrl = Uri.fromFile(files.first).toString()
+        currentTitle = record?.title ?: call.getString("title") ?: "TorWatch"
+        startPlaybackEngine(activity, currentUrl!!, currentTitle, seekTo)
+        mainHandler.postDelayed(timeTicker, TIME_TICK_MS)
+        scheduleTracksRefresh()
+        call.resolve(JSObject().put("resumedPositionS", seekTo ?: 0.0))
+    }
+
+    private var localSubtitleLang = ""
+
+    /** Every downloaded subtitle is attached; only the chosen one is selected. */
+    private fun attachLocalSidecars(player: MediaPlayer) {
+        val id = localDownloadId ?: return
+        val files = DownloadEngine.store().readyFiles(id) ?: return
+        for ((lang, file) in files.second) {
+            player.addSlave(IMedia.Slave.Type.Subtitle, Uri.fromFile(file), localSubtitleLang.isNotEmpty() && lang == localSubtitleLang)
+        }
+    }
+
+    /** "Dub - [English]" for a subtitle matched to a dual-audio release's
+     *  dub (its WebVTT NOTE says so), else "Downloaded - [English]". */
+    private fun sidecarLabel(file: File, lang: String): String {
+        val language = java.util.Locale(lang).getDisplayLanguage(java.util.Locale.ENGLISH).ifEmpty { lang }
+        val head = try {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(512)
+                val n = input.read(buffer)
+                if (n > 0) String(buffer, 0, n) else ""
+            }
+        } catch (_: Exception) { "" }
+        return (if (head.contains("torwatch-variant: dub")) "Dub" else "Downloaded") + " - [" + language + "]"
+    }
+
+    /** The playing download's position, kept on the phone (offline too). */
+    private fun persistLocalProgress(state: String) {
+        val id = localDownloadId ?: return
+        val player = mediaPlayer ?: return
+        val position = player.time / 1000.0
+        val duration = if (player.length > 0) player.length / 1000.0 else 0.0
+        if (duration <= 0) return
+        DownloadEngine.store().saveProgress(id, position, duration, currentLocalSubtitleLang(player))
+        if (!terminalSent) {
+            emit(EVENT_LOCAL_PROGRESS) {
+                putString("downloadId", id)
+                putDouble("positionS", position)
+                putDouble("durationS", duration)
+                putString("state", state)
+                putString(KEY_PLAY_ID, playId)
+            }
+        }
+    }
+
+    /** The selected subtitle's language when it is a downloaded file. */
+    private fun currentLocalSubtitleLang(player: MediaPlayer): String {
+        if (localSidecars.isEmpty()) return ""
+        val tracks = player.spuTracks.orEmpty().filter { it.id >= 0 }
+        val index = tracks.indexOfFirst { it.id == player.spuTrack }
+        if (index < 0) return ""
+        val position = index - (tracks.size - localSidecars.size)
+        return if (position in localSidecars.indices) localSidecars[position].first else ""
+    }
+
+    // A call or alarm takes the audio: playback pauses and stays paused
+    // until Play (the iPhone's behaviour the viewer chose).
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+            mainHandler.post { mediaPlayer?.let { if (it.isPlaying) it.pause() } }
+        }
+    }
+
+    private fun requestAudioFocus(activity: android.app.Activity) {
+        val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
+                .setOnAudioFocusChangeListener(focusListener, mainHandler)
+                .build()
+            focusRequest = request
+            audio.requestAudioFocus(request)
+        } else {
+            @Suppress("DEPRECATION")
+            audio.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        val audio = bridge?.activity?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { audio.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audio.abandonAudioFocus(focusListener)
+        }
+        focusRequest = null
     }
 
     @PluginMethod
@@ -487,6 +686,7 @@ class TorWatchNativePlugin : Plugin() {
             call.resolve()
             return
         }
+        persistLocalProgress("stopped")
         if (!terminalSent) {
             terminalSent = true
             emit(EVENT_PLAYBACK_STATE) {
@@ -529,7 +729,12 @@ class TorWatchNativePlugin : Plugin() {
             .map { mapOf("id" to it.id, "label" to (it.name ?: "")) }
         val subs = player.spuTracks.orEmpty()
             .filter { it.id >= 0 }
-            .map { mapOf("id" to it.id, "label" to (it.name ?: "")) }
+            .map { mutableMapOf<String, Any>("id" to it.id, "label" to (it.name ?: "")) }
+        // A download's subtitle files are the last tracks, in attachment order.
+        if (localSidecars.isNotEmpty() && subs.size >= localSidecars.size) {
+            val first = subs.size - localSidecars.size
+            localSidecars.forEachIndexed { offset, (_, label) -> subs[first + offset]["label"] = label }
+        }
         emit(EVENT_TRACKS_UPDATE) {
             putString(KEY_PLAY_ID, playId)
             putString("audio", JSONArray(audio).toString())
@@ -576,6 +781,8 @@ class TorWatchNativePlugin : Plugin() {
 
     /** Full teardown: bounded, idempotent, orientation + background restored. */
     private fun teardown() {
+        abandonAudioFocus()
+        localDownloadId = null
         terminalSent = true
         playId = ""
         pendingSeek = null
