@@ -23,7 +23,7 @@ func (s *Store) FavouriteSeeds(ctx context.Context, limit int) ([]Seed, error) {
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT canonical_id, snapshot_title, favourite_added_at
 FROM library_memberships
-WHERE household_id=1 AND favourite AND favourite_added_at IS NOT NULL
+WHERE household_id=`+householdSQL(ctx)+` AND favourite AND favourite_added_at IS NOT NULL
 ORDER BY favourite_added_at DESC, canonical_id ASC
 LIMIT $1`, limit)
 	if err != nil {
@@ -46,7 +46,7 @@ LIMIT $1`, limit)
 func (s *Store) ActiveMembershipIDs(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT canonical_id FROM library_memberships
-WHERE household_id=1 AND (watch_later OR favourite)`)
+WHERE household_id=`+householdSQL(ctx)+` AND (watch_later OR favourite)`)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ WHERE household_id=1 AND (watch_later OR favourite)`)
 // component: effective mutations invalidate, no-ops do not).
 func (s *Store) Revision(ctx context.Context) (int64, error) {
 	var revision int64
-	err := s.DB.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=1`).Scan(&revision)
+	err := s.DB.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=`+householdSQL(ctx)+``).Scan(&revision)
 	return revision, err
 }
 
@@ -101,7 +101,7 @@ func (s *Store) MembershipsFor(ctx context.Context, ids []string) ([]MembershipE
 	}
 	rows, err := s.DB.QueryContext(ctx, `
 SELECT canonical_id, watch_later, favourite FROM library_memberships
-WHERE household_id=1 AND canonical_id = ANY($1)`, known)
+WHERE household_id=`+householdSQL(ctx)+` AND canonical_id = ANY($1)`, known)
 	if err != nil {
 		return nil, 0, err
 	}

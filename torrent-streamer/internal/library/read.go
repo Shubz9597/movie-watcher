@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"torrent-streamer/internal/profiles"
 )
 
 // cursor is the opaque, scope-bound pagination token (contract: cursors embed
@@ -120,11 +121,11 @@ func (s *Store) Page(ctx context.Context, collection, kind, sort, cursorToken st
 	defer tx.Rollback()
 
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=1`).Scan(&revision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=`+householdSQL(ctx)+``).Scan(&revision); err != nil {
 		return Page{}, fmt.Errorf("read household revision: %w", err)
 	}
 
-	where, args := collectionWhere(collection, kind)
+	where, args := collectionWhere(ctx, collection, kind)
 	var total int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT count(*) FROM library_memberships WHERE `+where, args...).Scan(&total); err != nil {
@@ -187,14 +188,14 @@ func (s *Store) Overview(ctx context.Context, collection, sort string) (Overview
 	defer tx.Rollback()
 
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=1`).Scan(&revision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM library_household WHERE id=`+householdSQL(ctx)+``).Scan(&revision); err != nil {
 		return Overview{}, fmt.Errorf("read household revision: %w", err)
 	}
 
 	overview := Overview{Collection: collection, Sort: sort, Revision: revision, SourceRev: revision}
 	for _, kind := range []string{KindMovie, KindSeries, KindAnime} {
 		shelf := Shelf{Kind: kind, Previews: []Item{}}
-		where, args := collectionWhere(collection, kind)
+		where, args := collectionWhere(ctx, collection, kind)
 		if err := tx.QueryRowContext(ctx,
 			`SELECT count(*) FROM library_memberships WHERE `+where, args...).Scan(&shelf.Count); err != nil {
 			return Overview{}, fmt.Errorf("count shelf %s: %w", kind, err)
@@ -229,13 +230,13 @@ ORDER BY `+order+` LIMIT `+strconv.Itoa(previewLimit), args...)
 
 // collectionWhere builds the active-membership filter for one collection and
 // kind. args starts with $1 = household id.
-func collectionWhere(collection, kind string) (string, []any) {
+func collectionWhere(ctx context.Context, collection, kind string) (string, []any) {
 	flagColumn := "watch_later"
 	if collection == CollectionFavourites {
 		flagColumn = "favourite"
 	}
 	where := "household_id=$1 AND " + flagColumn
-	args := []any{1}
+	args := []any{profiles.From(ctx).HouseholdID}
 	if kind != KindAll {
 		args = append(args, kind)
 		where += fmt.Sprintf(" AND media_kind=$%d", len(args))

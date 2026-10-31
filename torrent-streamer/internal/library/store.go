@@ -199,7 +199,7 @@ func (s *Store) Write(ctx context.Context, write Write) (WriteResult, error) {
 	// Serialize every effective change through the single household row.
 	var revision int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT revision FROM library_household WHERE id=1 FOR UPDATE`).Scan(&revision); err != nil {
+		`SELECT revision FROM library_household WHERE id=`+householdSQL(ctx)+` FOR UPDATE`).Scan(&revision); err != nil {
 		return WriteResult{}, fmt.Errorf("lock household revision: %w", err)
 	}
 
@@ -210,7 +210,7 @@ func (s *Store) Write(ctx context.Context, write Write) (WriteResult, error) {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO library_memberships
   (household_id, canonical_id, media_kind, metadata_available, snapshot_title, snapshot_year, snapshot_poster, sort_key)
-VALUES (1, $1, $2, TRUE, $3, $4, $5, $6)
+VALUES (`+householdSQL(ctx)+`, $1, $2, TRUE, $3, $4, $5, $6)
 ON CONFLICT (household_id, canonical_id) DO NOTHING`,
 			write.CanonicalID, meta.Kind, meta.Title, year, poster, meta.SortKey); err != nil {
 			return WriteResult{}, fmt.Errorf("create membership: %w", err)
@@ -220,20 +220,20 @@ ON CONFLICT (household_id, canonical_id) DO NOTHING`,
 		if _, err := tx.ExecContext(ctx, `
 UPDATE library_memberships SET
   media_kind=$2, metadata_available=TRUE, snapshot_title=$3, snapshot_year=$4, snapshot_poster=$5, sort_key=$6
-WHERE household_id=1 AND canonical_id=$1`,
+WHERE household_id=`+householdSQL(ctx)+` AND canonical_id=$1`,
 			write.CanonicalID, meta.Kind, meta.Title, year, poster, meta.SortKey); err != nil {
 			return WriteResult{}, fmt.Errorf("refresh membership snapshot: %w", err)
 		}
 	} else if missing {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE library_memberships SET metadata_available=FALSE
-WHERE household_id=1 AND canonical_id=$1`, write.CanonicalID); err != nil {
+WHERE household_id=`+householdSQL(ctx)+` AND canonical_id=$1`, write.CanonicalID); err != nil {
 			return WriteResult{}, fmt.Errorf("mark metadata unavailable: %w", err)
 		}
 	}
 
 	current, err := scanMembership(tx.QueryRowContext(ctx,
-		`SELECT `+membershipColumns+` FROM library_memberships WHERE household_id=1 AND canonical_id=$1 FOR UPDATE`,
+		`SELECT `+membershipColumns+` FROM library_memberships WHERE household_id=`+householdSQL(ctx)+` AND canonical_id=$1 FOR UPDATE`,
 		write.CanonicalID))
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("lock membership: %w", err)
@@ -274,11 +274,11 @@ UPDATE library_memberships SET
   `+column+`=$2,
   `+addedColumn+`=CASE WHEN $2 THEN now() ELSE NULL END,
   mutation_revision=$3
-WHERE household_id=1 AND canonical_id=$1`, write.CanonicalID, write.Enabled, newRevision); err != nil {
+WHERE household_id=`+householdSQL(ctx)+` AND canonical_id=$1`, write.CanonicalID, write.Enabled, newRevision); err != nil {
 		return WriteResult{}, fmt.Errorf("update membership flag: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE library_household SET revision=$1, updated_at=now() WHERE id=1`, newRevision); err != nil {
+UPDATE library_household SET revision=$1, updated_at=now() WHERE id=`+householdSQL(ctx)+``, newRevision); err != nil {
 		return WriteResult{}, fmt.Errorf("advance household revision: %w", err)
 	}
 
@@ -307,7 +307,7 @@ UPDATE library_household SET revision=$1, updated_at=now() WHERE id=1`, newRevis
 
 func (s *Store) readMembership(ctx context.Context, canonicalID string) (*membershipRow, error) {
 	row, err := scanMembership(s.DB.QueryRowContext(ctx,
-		`SELECT `+membershipColumns+` FROM library_memberships WHERE household_id=1 AND canonical_id=$1`,
+		`SELECT `+membershipColumns+` FROM library_memberships WHERE household_id=`+householdSQL(ctx)+` AND canonical_id=$1`,
 		canonicalID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

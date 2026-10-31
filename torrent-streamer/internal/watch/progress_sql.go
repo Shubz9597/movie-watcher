@@ -17,6 +17,9 @@ type Store struct {
 	// Devices still send their own IDs; they are kept only as writer
 	// metadata (writer_client_id).
 	Shared string
+	// Resolve, when set, maps a device to its profile's subject
+	// (internal/profiles); it replaces Shared.
+	Resolve func(clientID string) string
 	// Placer writes and reads AniList entry ids as their show (nil: ids
 	// are kept as sent).
 	Placer Placer
@@ -31,7 +34,13 @@ func NewStore(db *sql.DB) *Store { return &Store{DB: db} }
 // subject maps a device's subject to the shared one; empty stays empty so
 // the required-field checks still apply.
 func (s *Store) subject(id string) string {
-	if s.Shared != "" && strings.TrimSpace(id) != "" {
+	if strings.TrimSpace(id) == "" {
+		return id
+	}
+	if s.Resolve != nil {
+		return s.Resolve(id)
+	}
+	if s.Shared != "" {
 		return s.Shared
 	}
 	return id

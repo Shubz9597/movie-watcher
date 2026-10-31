@@ -35,6 +35,7 @@ import (
 	"torrent-streamer/internal/library"
 	"torrent-streamer/internal/middleware"
 	"torrent-streamer/internal/playback"
+	"torrent-streamer/internal/profiles"
 	"torrent-streamer/internal/recommendations"
 	"torrent-streamer/internal/rekey"
 	"torrent-streamer/internal/search"
@@ -141,8 +142,11 @@ func main() {
 	imdbStore := imdb.NewStore(db)
 	pickRepo = &torrentx.Repo{DB: db}
 	progressDB = watch.NewStore(db)
-	progressDB.Shared = watch.HouseholdSubject // one viewer: every device shares progress
-	httpapi.SetProgressStore(progressDB)       // Enable server-side progress tracking for VLC
+	progressDB.Shared = watch.HouseholdSubject // a device without a profile: the household's
+	// Profiles: each device's progress is its chosen profile's.
+	profileStore := profiles.NewStore(db)
+	progressDB.Resolve = profileStore.SubjectFor
+	httpapi.SetProgressStore(progressDB) // Enable server-side progress tracking for VLC
 	prowlarrURL := serverConfig.ProwlarrURL
 	prowlarrAPIKey := serverConfig.ProwlarrAPIKey
 	prowlarrHTTP := &http.Client{Timeout: 25 * time.Second}
@@ -200,12 +204,14 @@ func main() {
 	// http mux & routes (endpoints are IDENTICAL to your original service)
 	mux := http.NewServeMux()
 	tasteStore := taste.New(db)
+	tasteStore.Resolve = profileStore.SubjectFor
+	httpapi.ProfileHandlers{Store: profileStore}.Register(mux)
 	httpapi.RegisterRoutes(mux)         // /add, /files, /prefetch, /stream, /stats, /buffer/*
 	httpapi.RegisterSubtitleRoutes(mux) // /subtitles/list, /subtitles/torrent, /subtitles/external, /subtitles/import
 	// /subtitles/matched: the online subtitle that follows a video's audio
 	// (a dual-audio release's dub script), moved onto its dialogue.
 	httpapi.SubtitleMatchHandlers{Jobs: downloads.NewStore(db), Picks: pickRepo, ListenAddr: config.ListenAddr()}.Register(mux)
-	httpapi.RegisterTasteRoutes(mux, taste.New(db))
+	httpapi.RegisterTasteRoutes(mux, tasteStore)
 	mux.HandleFunc("/skip-segments", skipsegments.Handler)
 	// The phone player's events, readable on the server (diagnostics/phone.log).
 	mux.HandleFunc("/v1/diagnostics/events", httpapi.HandleDiagnosticEvents)
@@ -269,6 +275,9 @@ func main() {
 		log.Printf("[boot] library capability unavailable: %v", libraryErr)
 	}
 	capabilities := []string{"catalog.bff.v2", "leases.shared", "progress.serverOrdered"}
+	if profileStore.Enabled(context.Background()) {
+		capabilities = append(capabilities, "profiles.v1")
+	}
 	if libraryStore != nil {
 		capabilities = append(capabilities, library.Capability)
 	}
@@ -492,8 +501,9 @@ func main() {
 	srv := &http.Server{
 		Addr:        addr,
 		BaseContext: func(net.Listener) context.Context { return rootCtx },
-		Handler:     middleware.Recover(mux),
-		ErrorLog:    slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
+		// Each request carries its device's profile (internal/profiles).
+		Handler:  middleware.Recover(profileStore.Middleware(mux)),
+		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
 	}
 
 	// serve

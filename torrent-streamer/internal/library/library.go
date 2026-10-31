@@ -7,9 +7,13 @@
 package library
 
 import (
+	"context"
 	"errors"
+	"strconv"
+
 	"fmt"
 	"regexp"
+	"torrent-streamer/internal/profiles"
 )
 
 // Capability advertised through /v1/version ONLY when the storage schema is
@@ -92,4 +96,11 @@ func ValidateQuery(collection, kind, sort string) (normalizedCollection, normali
 		return "", "", "", fmt.Errorf("%w: sort must be recent or title", ErrInvalidRequest)
 	}
 	return normalizedCollection, normalizedKind, normalizedSort, nil
+}
+
+// householdSQL is the request's profile's library household as SQL text
+// (an integer from the database; internal/profiles). One household per
+// profile; servers before profiles had household 1 only.
+func householdSQL(ctx context.Context) string {
+	return strconv.Itoa(profiles.From(ctx).HouseholdID)
 }

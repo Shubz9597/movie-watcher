@@ -136,6 +136,11 @@ services:
       # falls back to direct dials if it is down. Hosts are overridable.
       TORWATCH_API_PROXY: ${TORWATCH_API_PROXY:-}
       TORWATCH_API_PROXY_HOSTS: ${TORWATCH_API_PROXY_HOSTS:-}
+      # Profiles: the gateway's proof for requests through Tailscale Serve,
+      # and the Tailscale login of the server's owner (may manage every
+      # profile). Without a secret everyone may manage profiles.
+      TORWATCH_IDENTITY_SECRET: ${TORWATCH_IDENTITY_SECRET:-}
+      TORWATCH_OWNER_LOGIN: ${TORWATCH_OWNER_LOGIN:-}
       LOG_FILE: /data/logs/backend.log
       ERROR_LOG_FILE: /data/logs/errors.log
       # Direct VLC playback on small hosts; video conversion is opt-in.
@@ -174,6 +179,11 @@ services:
     ports:
       # The ONLY LAN-published service (FR-008).
       - "${GATEWAY_PORT:-8080}:8080"
+      # Tailscale Serve's entry (this machine only): requests carry the
+      # tailnet user, trusted for profile management.
+      - "127.0.0.1:${SERVE_GATEWAY_PORT:-8081}:8081"
+    environment:
+      TORWATCH_IDENTITY_SECRET: ${TORWATCH_IDENTITY_SECRET:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro${SELINUX_MOUNT_OPTS:-}
     networks:

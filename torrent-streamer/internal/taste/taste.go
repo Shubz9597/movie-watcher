@@ -18,6 +18,8 @@
 package taste
 
 import (
+	"torrent-streamer/internal/profiles"
+
 	"context"
 	"database/sql"
 	"errors"
@@ -38,6 +40,9 @@ type Signal struct {
 // Store is the SQL-backed taste signal store (migrations/008).
 type Store struct {
 	DB *sql.DB
+	// Resolve maps a device to its profile (internal/profiles): visits are
+	// kept per profile. nil keeps the subject as sent.
+	Resolve func(clientID string) string
 }
 
 // New wires the store; the database must already have migration 008 applied
@@ -45,8 +50,6 @@ type Store struct {
 func New(db *sql.DB) *Store { return &Store{DB: db} }
 
 var errNotConfigured = errors.New("taste: store is not configured")
-
-const householdID = 1 // single private household (migrations/007)
 
 // RecordVisit stores one fire-and-forget "opened title" ping, deduplicated
 // per (subject, title) within a 6-hour cooldown window. Best-effort by
@@ -58,6 +61,9 @@ func (s *Store) RecordVisit(ctx context.Context, subjectID, canonicalID, kind st
 	subjectID, canonicalID = strings.TrimSpace(subjectID), strings.TrimSpace(canonicalID)
 	if subjectID == "" || canonicalID == "" {
 		return errNotConfigured
+	}
+	if s.Resolve != nil {
+		subjectID = s.Resolve(subjectID)
 	}
 	_, err := s.DB.ExecContext(ctx, `
 INSERT INTO taste_events (subject_id, canonical_id, kind)
@@ -78,6 +84,9 @@ func (s *Store) HouseholdSignals(ctx context.Context) ([]Signal, error) {
 		return nil, errNotConfigured
 	}
 	signals := make([]Signal, 0, 32)
+	// The request's profile: its library, progress, downloads and visits.
+	profile := profiles.From(ctx)
+	householdID, subjectID := profile.HouseholdID, profile.ID
 
 	// Library signals: favourites (5) and Watch Later (3).
 	libRows, err := s.DB.QueryContext(ctx, `
@@ -121,8 +130,8 @@ SELECT series_id,
        count(*) FILTER (WHERE percent >= 90) AS finished,
        max(updated_at) AS last_at
 FROM watch_progress
-WHERE percent > 0
-GROUP BY series_id`)
+WHERE percent > 0 AND subject_id = $1
+GROUP BY series_id`, subjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +164,8 @@ GROUP BY series_id`)
 	dlRows, err := s.DB.QueryContext(ctx, `
 SELECT series_id, max(created_at) FROM download_jobs
 WHERE state IN ('preparing', 'ready', 'expired')
-GROUP BY series_id`)
+  AND COALESCE((SELECT profile_id FROM device_profiles dp WHERE dp.client_id = download_jobs.client_id), 'household') = $1
+GROUP BY series_id`, subjectID)
 	if err == nil {
 		defer dlRows.Close()
 		for dlRows.Next() {
@@ -180,8 +190,8 @@ SELECT te.canonical_id, te.kind, COALESCE(NULLIF(lm.snapshot_title, ''), te.cano
 FROM taste_events te
 LEFT JOIN library_memberships lm
        ON lm.household_id = $1 AND lm.canonical_id = te.canonical_id
-WHERE te.created_at > now() - interval '60 days'
-GROUP BY te.canonical_id, te.kind, lm.snapshot_title`, householdID)
+WHERE te.created_at > now() - interval '60 days' AND te.subject_id = $2
+GROUP BY te.canonical_id, te.kind, lm.snapshot_title`, householdID, subjectID)
 	if err != nil {
 		return nil, err
 	}

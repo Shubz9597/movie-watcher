@@ -10,6 +10,8 @@
 package recommendations
 
 import (
+	"torrent-streamer/internal/profiles"
+
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -265,10 +267,12 @@ type Service struct {
 	candidateVn  int
 	now          func() time.Time
 
-	mu         sync.Mutex
-	cache      *cacheEntry
-	stale      *cacheEntry // last computed result, served degraded when providers fail
-	refreshing bool        // a background recompute is running
+	mu sync.Mutex
+	// Per profile (internal/profiles): each viewer's recommendations come
+	// from their own library, progress and visits.
+	cache      map[string]*cacheEntry
+	stale      map[string]*cacheEntry // last computed result, served degraded when providers fail
+	refreshing map[string]bool        // a background recompute is running
 	refreshWG  sync.WaitGroup
 
 	// Last successful "more like this" list per seed: a transient provider
@@ -345,8 +349,9 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read household revision: %w", err)
 	}
+	profile := profiles.From(ctx)
 	s.mu.Lock()
-	cached := s.cache
+	cached := s.cache[profile.ID]
 	s.mu.Unlock()
 	if cached != nil && cached.candidateVn == s.candidateVn && cached.result.Revision == revision && s.now().Sub(cached.computedAt) < cacheTTL {
 		return cached.result, nil
@@ -355,10 +360,10 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 	// once and the recompute (dozens of provider calls) runs in the
 	// background. Only the very first computation is waited on.
 	s.mu.Lock()
-	stale := s.stale
+	stale := s.stale[profile.ID]
 	s.mu.Unlock()
 	if stale != nil && stale.candidateVn == s.candidateVn {
-		s.refreshInBackground(revision)
+		s.refreshInBackground(profile, revision)
 		return stale.result, nil
 	}
 
@@ -367,7 +372,7 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 		// Provider/library failure must never block Home: serve the last
 		// computed result truthfully degraded.
 		s.mu.Lock()
-		stale := s.stale
+		stale := s.stale[profile.ID]
 		s.mu.Unlock()
 		if stale != nil {
 			degraded := stale.result
@@ -378,42 +383,48 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 	}
 
 	entry := &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn}
-	s.mu.Lock()
-	s.cache = entry
-	s.stale = entry
-	s.mu.Unlock()
+	s.install(profile.ID, entry)
 	return result, nil
 }
 
-// refreshInBackground recomputes once at a time and installs the result.
-func (s *Service) refreshInBackground(revision int64) {
+func (s *Service) install(profileID string, entry *cacheEntry) {
 	s.mu.Lock()
-	if s.refreshing {
+	defer s.mu.Unlock()
+	if s.cache == nil {
+		s.cache, s.stale = map[string]*cacheEntry{}, map[string]*cacheEntry{}
+	}
+	s.cache[profileID] = entry
+	s.stale[profileID] = entry
+}
+
+// refreshInBackground recomputes once at a time and installs the result.
+func (s *Service) refreshInBackground(profile profiles.Profile, revision int64) {
+	s.mu.Lock()
+	if s.refreshing[profile.ID] {
 		s.mu.Unlock()
 		return
 	}
-	s.refreshing = true
+	if s.refreshing == nil {
+		s.refreshing = map[string]bool{}
+	}
+	s.refreshing[profile.ID] = true
 	s.refreshWG.Add(1)
 	s.mu.Unlock()
 	go func() {
 		defer s.refreshWG.Done()
 		defer func() {
 			s.mu.Lock()
-			s.refreshing = false
+			delete(s.refreshing, profile.ID)
 			s.mu.Unlock()
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(profiles.WithProfile(context.Background(), profile), 2*time.Minute)
 		defer cancel()
 		result, err := s.compute(ctx, revision)
 		if err != nil {
 			log.Printf("[recommendations] background refresh failed: %v", err)
 			return
 		}
-		entry := &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn}
-		s.mu.Lock()
-		s.cache = entry
-		s.stale = entry
-		s.mu.Unlock()
+		s.install(profile.ID, &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn})
 	}()
 }
 
