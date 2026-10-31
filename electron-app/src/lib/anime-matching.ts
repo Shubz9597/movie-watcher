@@ -319,7 +319,7 @@ export function titleSimilarity(left: string, right: string): number {
 }
 
 // The title part of a file name: what follows its episode number.
-function fileTitle(baseName: string): string {
+export function episodeFileTitle(baseName: string): string {
   return baseName
     .replace(/\.[a-z0-9]{2,4}$/i, '')
     .replace(/^.*?(?:S\d{1,2}[\s._-]*E\d{1,4}|(?:Episode|Ep\.?|E)[\s._-]*\d{1,4}|^\d{1,4})(?!\d)[\s._-]*/i, '');
@@ -357,7 +357,7 @@ export function pickFileIndexForEpisode(
   if (titleKey(wanted).length >= 8) {
     const ranked = pool
       .filter((file) => !PACK_EXTRAS_DIR_RX.test(file.name.slice(0, Math.max(0, file.name.lastIndexOf('/')))))
-      .map((file) => ({ file, score: titleSimilarity(wanted, fileTitle(file.name.slice(file.name.lastIndexOf('/') + 1))) }))
+      .map((file) => ({ file, score: titleSimilarity(wanted, episodeFileTitle(file.name.slice(file.name.lastIndexOf('/') + 1))) }))
       .sort((left, right) => right.score - left.score);
     const [best, runnerUp] = ranked;
     if (best && best.score >= TITLE_MATCH && (!runnerUp || best.score - runnerUp.score >= TITLE_MARGIN)) {

@@ -107,7 +107,9 @@ function DownloadPoster({ src }: { src?: string | null }) {
 /** "4 · Good News About Hell", or "Episode 4" without a stored name. */
 function episodeLabel(episode: number | undefined, name: string | undefined): string {
   if (episode == null) return name ?? 'Episode';
-  return name ? `${episode} · ${name}` : `Episode ${episode}`;
+  // Extras are filed as 1000 + the pack's own number (refile-downloads.ts).
+  const shown = episode > 1000 ? episode - 1000 : episode;
+  return name ? `${shown} · ${name}` : `Episode ${shown}`;
 }
 
 // Episode rows lead with the episode still (16:9), stored on the device so
@@ -775,12 +777,15 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         </div>
       );
     }
-    const seasons = Array.from(new Set([...showPending, ...showItems].map((item) => item.season ?? 0))).sort((a, b) => a - b);
+    // Specials and extras (season 0: episodes the catalog's seasons don't
+    // list, e.g. a pack's international-only episodes) come last.
+    const seasons = Array.from(new Set([...showPending, ...showItems].map((item) => item.season ?? 0)))
+      .sort((a, b) => (a === 0 ? 1 : 0) - (b === 0 ? 1 : 0) || a - b);
     return (
       <div>
         {seasons.map((season, index) => (
-          <section key={season} className={index ? 'mt-6' : ''} aria-label={`Season ${season}`}>
-            <h3 className="type-secondary mb-3 font-medium text-white/70">Season {season}</h3>
+          <section key={season} className={index ? 'mt-6' : ''} aria-label={season === 0 ? 'Specials and extras' : `Season ${season}`}>
+            <h3 className="type-secondary mb-3 font-medium text-white/70">{season === 0 ? 'Specials & extras' : `Season ${season}`}</h3>
             <ul className="space-y-3">
               {showPending.filter((item) => item.season === season).sort(byEpisode).map((item) => renderPending(item, true))}
               {showItems.filter((item) => (item.season ?? 0) === season).sort(byEpisode).map((item) => renderItem(item, true))}

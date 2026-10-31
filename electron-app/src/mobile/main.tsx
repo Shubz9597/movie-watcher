@@ -84,6 +84,7 @@ function MobileShell(props: {
 // Static import: the settings surface ships in the mobile bundle.
 import { ServerSettings } from './ServerSettings';
 import { SettingsOverlayController } from './settings-overlay-controller';
+import { refileFromServer } from './refile-downloads';
 
 function StartupFailure(): React.ReactElement {
   const resetServer = () => {
@@ -146,6 +147,10 @@ async function start(): Promise<void> {
       void import('./show-migration')
         .then(({ moveEntriesToShows }) => moveEntriesToShows())
         .catch((error: unknown) => console.warn('[Downloads] Moving downloads to their shows failed; retried next start.', error))
+        // Downloads filed by a pack's numbering move to the episode their
+        // file is (refile-downloads.ts).
+        .then(() => refileFromServer(composed.platform.connection))
+        .catch((error: unknown) => console.warn('[Downloads] Refiling downloads failed; retried next start.', error))
         .finally(() => {
           void import('./download-queue').then(({ resumePendingDownloads, keepPendingDownloadsMoving }) => {
             resumePendingDownloads();

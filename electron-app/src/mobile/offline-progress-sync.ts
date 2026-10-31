@@ -28,6 +28,15 @@ function writeSynced(value: Record<string, number>): void {
   }
 }
 
+/** Sends these downloads' progress again (they were refiled under another
+ *  episode, refile-downloads.ts). */
+export function resendOfflineProgress(downloadIds: string[]): void {
+  if (!downloadIds.length) return;
+  const synced = readSynced();
+  for (const id of downloadIds) delete synced[id];
+  writeSynced(synced);
+}
+
 export function syncOfflineProgressNow(connection: Pick<ConnectionConfig, 'loadOrigin'>): Promise<void> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
