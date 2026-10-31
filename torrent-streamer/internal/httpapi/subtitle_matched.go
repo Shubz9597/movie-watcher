@@ -67,6 +67,7 @@ func (h SubtitleMatchHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/subtitles/embedded", h.handleEmbedded)
 	mux.HandleFunc("/subtitles/embedded/file", handleEmbeddedFile)
 	mux.HandleFunc("/media/tracks", h.handleTracks)
+	mux.HandleFunc("/downloads/source", h.handleDownloadSource)
 	mux.HandleFunc("/subtitles/candidates", h.handleCandidates)
 	mux.HandleFunc("/subtitles/candidates/file", handleCandidateFile)
 }
