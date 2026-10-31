@@ -18,7 +18,8 @@ export function advancePackParams(params: Record<string, string>): Record<string
     absoluteEpisode: absolute || episode,
     resolveEpisodeFile: '1',
   };
-  for (const key of ['fileIndex', 'packQueue', 'nextSeason', 'nextEpisode', 'nextEpisodeRoute', 'packFallbackRoute']) {
+  // episodeTitle named the episode that ended; the next one resolves by number.
+  for (const key of ['fileIndex', 'packQueue', 'nextSeason', 'nextEpisode', 'nextEpisodeRoute', 'packFallbackRoute', 'episodeTitle']) {
     delete advanced[key];
   }
   const titleRoute = nextEpisodeRoute?.startsWith('#title?') ? nextEpisodeRoute : null;

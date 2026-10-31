@@ -285,6 +285,49 @@ function titleNamesPath(title: string, directory: string, baseName: string): boo
   });
 }
 
+// Episode titles in file names ("Episode 125 Turn Into Candy! A Hungry
+// Majin's Bizarre Power!.mkv"): compared as letter pairs, so punctuation,
+// case and small wording changes ("Is"/"is", "Babidi's"/"Babidi’s") don't
+// matter.
+function titleKey(value: string): string {
+  return value.normalize('NFKD').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function letterPairs(value: string): Map<string, number> {
+  const pairs = new Map<string, number>();
+  for (const word of value.split(' ')) {
+    for (let i = 0; i + 1 < word.length; i += 1) {
+      const pair = word.slice(i, i + 2);
+      pairs.set(pair, (pairs.get(pair) ?? 0) + 1);
+    }
+  }
+  return pairs;
+}
+
+/** Dice similarity of two titles' letter pairs (0..1). */
+export function titleSimilarity(left: string, right: string): number {
+  const a = letterPairs(titleKey(left));
+  const b = letterPairs(titleKey(right));
+  let total = 0;
+  let shared = 0;
+  for (const count of a.values()) total += count;
+  for (const [pair, count] of b) {
+    total += count;
+    shared += Math.min(count, a.get(pair) ?? 0);
+  }
+  return total === 0 ? 0 : (2 * shared) / total;
+}
+
+// The title part of a file name: what follows its episode number.
+function fileTitle(baseName: string): string {
+  return baseName
+    .replace(/\.[a-z0-9]{2,4}$/i, '')
+    .replace(/^.*?(?:S\d{1,2}[\s._-]*E\d{1,4}|(?:Episode|Ep\.?|E)[\s._-]*\d{1,4}|^\d{1,4})(?!\d)[\s._-]*/i, '');
+}
+
+const TITLE_MATCH = 0.75; // the same episode's title, worded slightly differently
+const TITLE_MARGIN = 0.1; // ...and clearly closer than any other file's
+
 /**
  * Picks the file for one episode from a torrent's file list. Strength of the
  * evidence, strongest first: S01E05 / 1x05 in the file name, an episode
@@ -297,13 +340,30 @@ function titleNamesPath(title: string, directory: string, baseName: string): boo
  */
 export function pickFileIndexForEpisode(
   files: TorrentFileEntry[],
-  opts: { season?: number; episode?: number; absolute?: number; titles?: string[]; anime?: boolean },
+  opts: { season?: number; episode?: number; absolute?: number; titles?: string[]; anime?: boolean; episodeTitle?: string },
 ) {
   if (!Array.isArray(files) || files.length === 0) return null;
 
   const videoFiles = files.filter((f) => VIDEO_EXT_RX.test(f.name));
   const pool = videoFiles.length > 0 ? videoFiles : files;
-  const { season, episode, absolute, titles = [], anime = false } = opts;
+  const { season, episode, absolute, titles = [], anime = false, episodeTitle } = opts;
+
+  // A pack that names its episodes is matched by name first: its numbering
+  // can be another cut of the show. Dragon Ball Z Kai's complete pack
+  // numbers The Final Chapters as the 69-episode international release;
+  // the catalog lists the 61 broadcast episodes, so from S2E3 on the same
+  // number was a different episode (S2E27 played Episode 125, S2E20's).
+  const wanted = episodeTitle && !/^episode\s*\d+$/i.test(episodeTitle.trim()) ? episodeTitle : '';
+  if (titleKey(wanted).length >= 8) {
+    const ranked = pool
+      .filter((file) => !PACK_EXTRAS_DIR_RX.test(file.name.slice(0, Math.max(0, file.name.lastIndexOf('/')))))
+      .map((file) => ({ file, score: titleSimilarity(wanted, fileTitle(file.name.slice(file.name.lastIndexOf('/') + 1))) }))
+      .sort((left, right) => right.score - left.score);
+    const [best, runnerUp] = ranked;
+    if (best && best.score >= TITLE_MATCH && (!runnerUp || best.score - runnerUp.score >= TITLE_MARGIN)) {
+      return { index: best.file.index, name: best.file.name, length: best.file.length, matched: true, score: 1000 * best.score };
+    }
+  }
   const targets = new Set<number>([episode, absolute].filter((value): value is number => typeof value === 'number' && value > 0));
 
   type Candidate = TorrentFileEntry & { score: number; matched: boolean; strength: number; named: boolean };

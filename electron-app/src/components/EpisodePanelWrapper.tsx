@@ -687,10 +687,7 @@ export default function EpisodePanel({
           downloadUrl: t.downloadUrl,
           infoHash: t.infoHash,
           cat: kind,
-          season: activeEpisode.seasonNumber ?? selectedSeason,
-          episode: activeEpisode.episodeNumber,
-          absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
-          ...packFileHints,
+          ...episodeTarget(activeEpisode),
         });
         fileIndex = resolved.fileIndex;
         console.log('[EpisodePanel] Resolved file index:', fileIndex, 'for', resolved.fileName);
@@ -705,6 +702,7 @@ export default function EpisodePanel({
       };
       if (!platform.desktop && fileIndex == null && activeEpisode && t.seasonPack) {
         params.resolveEpisodeFile = '1';
+        if (activeEpisode.name) params.episodeTitle = activeEpisode.name;
       }
       if (activeEpisode) {
         params.season = String(activeEpisode.seasonNumber || selectedSeason);
@@ -800,10 +798,7 @@ export default function EpisodePanel({
           downloadUrl: t.downloadUrl,
           infoHash: t.infoHash,
           cat: kind,
-          season: activeEpisode.seasonNumber ?? selectedSeason,
-          episode: activeEpisode.episodeNumber,
-          absolute: activeEpisode.absoluteNumber ?? activeEpisode.episodeNumber,
-          ...packFileHints,
+          ...episodeTarget(activeEpisode),
         });
         fileIndex = resolved.fileIndex;
       }
@@ -902,12 +897,15 @@ export default function EpisodePanel({
     const selections: DownloadSelection[] = [];
     const missing: number[] = [];
     for (const episode of targets) {
-      // Torrentio named the searched episode's file; the matcher finds the rest.
-      if (torrent.fileIndex != null && episode.id === activeEpisode?.id) {
+      const file = pickEpisodeFile(files, episodeTarget(episode));
+      // Torrentio named the searched episode's file; the matcher finds the
+      // rest. A file named by the episode's title wins over Torrentio's
+      // number, which can follow another release's numbering.
+      const byTitle = (file?.score ?? 0) >= 750;
+      if (torrent.fileIndex != null && episode.id === activeEpisode?.id && !byTitle) {
         selections.push(selectionForEpisode(torrent, episode, null));
         continue;
       }
-      const file = pickEpisodeFile(files, episodeTarget(episode));
       if (file) selections.push(selectionForEpisode(torrent, episode, file));
       else missing.push(episode.episodeNumber);
     }
@@ -918,6 +916,7 @@ export default function EpisodePanel({
     season: episode.seasonNumber ?? selectedSeason,
     episode: episode.episodeNumber,
     absolute: episode.absoluteNumber ?? episode.episodeNumber,
+    episodeTitle: episode.name,
     ...packFileHints,
   });
 

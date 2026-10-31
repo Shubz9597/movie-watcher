@@ -270,10 +270,20 @@ export default function PlayerPage({ navigate, params }: Props) {
         let resolvedFileIndex = fileIndex != null ? Number(fileIndex) : undefined;
         if (resolveEpisodeFile === '1' && resolvedFileIndex == null) {
           try {
+            // The episode's name picks its file in a pack numbered for another
+            // release (Kai's Final Chapters); after a pack advance, ask the
+            // catalog for it.
+            let episodeTitle: string | undefined = params.episodeTitle;
+            if (!episodeTitle && tmdbId && Number(season) > 0) {
+              episodeTitle = await getTvSeason(Number(tmdbId), Number(season))
+                .then((data) => data.episodes.find((item) => item.episode_number === Number(episode))?.name || undefined)
+                .catch(() => undefined);
+            }
             const resolved = await resolveTorrentFile({
               magnetUri: magnet, cat, season: Number(season), episode: Number(episode),
               absolute: absoluteEpisode ? Number(absoluteEpisode) : Number(episode),
               titles: playbackTitle ? [playbackTitle] : [], anime: cat === 'anime',
+              ...(episodeTitle ? { episodeTitle } : {}),
             });
             resolvedFileIndex = resolved.fileIndex;
           } catch (error) {

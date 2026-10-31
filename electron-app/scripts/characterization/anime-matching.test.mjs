@@ -194,3 +194,30 @@ test("a pack numbered across seasons: the absolute number wins over another seas
   ];
   assert.equal(pickFileIndexForEpisode(seasonFolders, { season: 2, episode: 2, absolute: 14 }).index, 1);
 });
+
+test("a pack that names its episodes is matched by title: its numbering can be another release's", () => {
+  // Dragon Ball Z Kai's complete pack numbers The Final Chapters as the
+  // 69-episode international release; the catalog lists the 61 broadcast
+  // episodes. S2E27 is "Episode 132"; "Episode 125" is S2E20.
+  const dir = "Dragon Ball Z Kai The Complete Series (2009–2015)/";
+  const files = [
+    { index: 55, name: `${dir}Episode 99 Seven Years Later! Starting Today, Gohan Is a High School Student.mkv`, length: 923340998 },
+    { index: 112, name: `${dir}Episode 100 A New Hero, Great Saiyaman, Is Born!.mkv`, length: 922388128 },
+    { index: 113, name: `${dir}Episode 101 Videl's Crisis Gohan's Urgent Call-out!.mkv`, length: 920796165 },
+    { index: 105, name: `${dir}Episode 104 Gohan the Teacher! Videl's Flying Technique Tutorial.mkv`, length: 920884878 },
+    { index: 86, name: `${dir}Episode 125 Turn Into Candy! A Hungry Majin's Bizarre Power!.mkv`, length: 1010070052 },
+    { index: 98, name: `${dir}Episode 132 A Time of Trials! Lay Hold of Legendary Powers!.mkv`, length: 904045228 },
+    { index: 95, name: `${dir}Episode 133 Hold Majin Buu in Check! Limit - Super Saiyan 3!.mkv`, length: 906352477 },
+  ];
+  const titles = ["Dragon Ball Z Kai"];
+  const pick = (episode, absolute, episodeTitle) => pickFileIndexForEpisode(files, { season: 2, episode, absolute, anime: true, titles, episodeTitle }).index;
+  assert.equal(pick(27, 125, "A Time of Trials! Lay Hold of Legendary Powers!"), 98);
+  assert.equal(pick(20, 118, "Turn Into Candy! A Hungry Majin's Bizarre Power!"), 86);
+  assert.equal(pick(3, 101, "Gohan the Teacher! Videl's Flying Technique Tutorial"), 105);
+  assert.equal(pick(2, 100, "A New Hero, Great Saiyaman, is Born!"), 112);
+  // No title (or a placeholder one): numbers, as before.
+  assert.equal(pick(2, 100, undefined), 112);
+  assert.equal(pick(2, 100, "Episode 2"), 112);
+  // A title no file carries: numbers decide.
+  assert.equal(pick(3, 101, "Something Else Entirely Happens Here"), 113);
+});
