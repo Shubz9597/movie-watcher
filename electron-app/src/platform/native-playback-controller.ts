@@ -553,6 +553,13 @@ export class NativePlaybackController {
       return;
     }
     if (update.state === 'ended') {
+      // Ending within the first seconds is a file that cannot be played,
+      // not a finished episode (Kai S2E59/60's damaged downloads ended at
+      // 0:00 and the next episode started on its own).
+      if (this.lastPositionSec < 3) {
+        this.fireErrorAndCleanup(generation, 'This episode couldn’t be played. If it’s a download, it may be damaged: remove it and download it again.');
+        return;
+      }
       void this.finishNaturally(generation);
       return;
     }

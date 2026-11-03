@@ -1,6 +1,7 @@
 package downloads
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -420,6 +421,16 @@ func (p *Prepper) prepare(ctx context.Context, job Job) {
 	videoDisk := "ready/" + filepath.Base(job.ID) + "/video" + ext
 	videoURL := "/v1/downloads/jobs/" + job.ID + "/assets/video"
 	videoSize, videoSHA, err := p.copyTo(jobCtx, file, filepath.Join(staged, "video"+ext))
+	if errors.Is(err, errBlankData) {
+		// The engine handed over zeros for pieces it records complete (their
+		// data was removed from the cache): Kai S2E59/60 were packaged that
+		// way and ended at 0:00 on the phone. Check every piece, let the
+		// failed ones download again, and copy once more.
+		log.Printf("[downloads] job %s: the video read blank data; re-verifying and copying again", job.ID)
+		torrentx.ReverifyFile(jobCtx, t, file)
+		file.Download()
+		videoSize, videoSHA, err = p.copyTo(jobCtx, file, filepath.Join(staged, "video"+ext))
+	}
 	if err != nil {
 		fail(ReasonPreparationFailed, err)
 		return
@@ -573,8 +584,19 @@ func (p *Prepper) copyTo(ctx context.Context, file *torrent.File, dest string) (
 	return copyExact(ctx, out, reader, file.Length(), filepath.Base(dest))
 }
 
+// errBlankData: a copy read a long run of zero bytes, which a video never
+// has; its source data is missing.
+var errBlankData = errors.New("the source file read blank data")
+
+// blankRunLimit: zeros this long mean missing data (MKV/MP4 padding is a
+// few KB at most).
+const blankRunLimit = 4 << 20
+
+var zeroBlock = make([]byte, 4096)
+
 func copyExact(ctx context.Context, out io.Writer, reader io.Reader, expected int64, name string) (int64, string, error) {
 	hasher := sha256.New()
+	var blankRun int64
 	var lastLog int64
 	buf := make([]byte, 512<<10)
 	var written int64
@@ -595,6 +617,18 @@ func copyExact(ctx context.Context, out io.Writer, reader io.Reader, expected in
 			}
 			if nw != n {
 				return written, "", io.ErrShortWrite
+			}
+			// Blank data: whole 4 KB blocks of zeros, run after run.
+			for off := 0; off < n; off += len(zeroBlock) {
+				end := min(off+len(zeroBlock), n)
+				if bytes.Equal(buf[off:end], zeroBlock[:end-off]) {
+					blankRun += int64(end - off)
+					if blankRun >= blankRunLimit {
+						return written, "", errBlankData
+					}
+				} else {
+					blankRun = 0
+				}
 			}
 			if written/(256<<20) > lastLog {
 				lastLog = written / (256 << 20)

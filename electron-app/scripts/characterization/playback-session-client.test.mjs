@@ -296,3 +296,18 @@ test("controller: a clock stuck in the last seconds ends the episode; paused or 
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(terminals.length, 1);
 });
+
+test("controller: a file that ends at 0:00 is an error, not a finished episode", async () => {
+  const server = stubServer();
+  const fb = fakeBridge();
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  const terminals = [];
+  controller.onStopped((event) => terminals.push(event));
+  await controller.start({ url: "magnet:?xt=urn:btih:" + HEX, title: "Kai", cat: "tv", subjectId: "s", seriesId: "tmdb:tv:61709", season: 2, episode: 59 });
+  fb.emitTime({ currentTime: 0, duration: 0 });
+  fb.emitState({ state: "ended" });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(terminals.length, 1);
+  assert.equal(terminals[0].reason, "error", "the next episode must not start on its own");
+  assert.match(terminals[0].message, /damaged/);
+});

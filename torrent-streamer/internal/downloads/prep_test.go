@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,5 +108,26 @@ func TestJobDirsCannotEscapeTheRoot(t *testing.T) {
 	}
 	if got := p.stagingDir(evil); strings.Contains(got, "..") {
 		t.Fatalf("stagingDir must be contained: %s", got)
+	}
+}
+
+// Kai S2E59/60 were packaged from cache files whose data had been removed:
+// the engine read zeros and the phone got videos that ended at 0:00.
+func TestCopyExactRefusesBlankData(t *testing.T) {
+	video := make([]byte, 12<<20)
+	for i := range video {
+		video[i] = byte(i*31 + 7)
+	}
+	// Small zero runs (padding) are fine.
+	copy(video[1<<20:], make([]byte, 200<<10))
+	var dest bytes.Buffer
+	if _, _, err := copyExact(context.Background(), &dest, bytes.NewReader(video), int64(len(video)), "video.mkv"); err != nil {
+		t.Fatalf("a normal video was refused: %v", err)
+	}
+	// A 5 MB hole is missing data.
+	copy(video[4<<20:], make([]byte, 5<<20))
+	dest.Reset()
+	if _, _, err := copyExact(context.Background(), &dest, bytes.NewReader(video), int64(len(video)), "video.mkv"); !errors.Is(err, errBlankData) {
+		t.Fatalf("blank data was copied: %v", err)
 	}
 }

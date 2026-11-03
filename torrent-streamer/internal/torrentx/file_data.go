@@ -56,3 +56,22 @@ func EnsureFileData(ctx context.Context, cat string, t *torrent.Torrent, f *torr
 	}
 	log.Printf("[torrent] %s: re-verified; %d bytes now complete", f.DisplayPath(), f.BytesCompleted())
 }
+
+// ReverifyFile checks every piece of a file the engine records complete
+// against its hash; pieces whose data is gone (zeros) fail and are
+// downloaded again. Used when a copy of the file read blank data.
+func ReverifyFile(ctx context.Context, t *torrent.Torrent, f *torrent.File) {
+	if t == nil || f == nil {
+		return
+	}
+	log.Printf("[torrent] %s: blank data read; re-verifying every piece", f.DisplayPath())
+	for i := f.BeginPieceIndex(); i < f.EndPieceIndex(); i++ {
+		if ctx.Err() != nil {
+			return
+		}
+		if piece := t.Piece(i); piece.State().Complete {
+			_ = piece.VerifyDataContext(ctx)
+		}
+	}
+	log.Printf("[torrent] %s: re-verified; %d of %d bytes complete", f.DisplayPath(), f.BytesCompleted(), f.Length())
+}
