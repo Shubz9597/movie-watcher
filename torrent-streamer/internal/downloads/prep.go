@@ -47,12 +47,15 @@ type Prepper struct {
 	InfoTimeout   time.Duration // metadata wait per job (default 10m)
 	PrepTimeout   time.Duration // whole-pipeline budget per job (default 6h)
 
-	workerID    string
-	mu          sync.Mutex
-	running     int
-	reserved    int64
-	admissionMu sync.Mutex
-	workers     sync.WaitGroup
+	workerID string
+	mu       sync.Mutex
+	running  int
+	reserved int64
+	// protect: torrents waiting or running jobs need (scheduling.go).
+	protect      protection
+	readingAhead map[string]bool // waiting jobs already reading ahead
+	admissionMu  sync.Mutex
+	workers      sync.WaitGroup
 }
 
 // SubtitleQuery describes one provider lookup for a prepared video.
@@ -87,6 +90,7 @@ func NewPrepper(store *Store, repo *torrentx.Repo, downloadRoot string, maxConcu
 		InfoTimeout:   10 * time.Minute,
 		PrepTimeout:   6 * time.Hour,
 		workerID:      randomWorkerID(),
+		readingAhead:  map[string]bool{},
 	}
 }
 
@@ -134,6 +138,7 @@ func (p *Prepper) ReconcileStartup(ctx context.Context) (int64, error) {
 // sweep expired retention. It returns when ctx is done.
 func (p *Prepper) Run(ctx context.Context) {
 	defer p.workers.Wait()
+	torrentx.SetDropProtector(p.protect.has)
 	pump := time.NewTicker(5 * time.Second)
 	defer pump.Stop()
 	sweep := time.NewTicker(5 * time.Minute)
@@ -161,11 +166,7 @@ func (p *Prepper) Pump(ctx context.Context) {
 		if capacity <= 0 {
 			return
 		}
-		ids, err := p.Store.NextUnclaimedPreparing(ctx, capacity)
-		if err != nil {
-			log.Printf("[downloads] admission queue: %v", err)
-			return
-		}
+		ids := p.schedule(ctx, capacity)
 		if len(ids) == 0 {
 			return
 		}
@@ -228,6 +229,9 @@ func (p *Prepper) stagingDir(jobID string) string {
 
 // prepare runs the full pipeline for one claimed job.
 func (p *Prepper) prepare(ctx context.Context, job Job) {
+	p.mu.Lock()
+	delete(p.readingAhead, job.ID)
+	p.mu.Unlock()
 	defer func() {
 		p.mu.Lock()
 		p.running--

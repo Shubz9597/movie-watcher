@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anacrolix/torrent"
@@ -111,8 +112,22 @@ func DecActive(cat string, ih metainfo.Hash) {
 	activeMu.Unlock()
 }
 
+// dropProtector reports torrents that must keep their data (the download
+// preparer's waiting and running jobs); nil protects nothing more.
+var dropProtector atomic.Value // func(cat string, ih metainfo.Hash) bool
+
+// SetDropProtector registers who decides that a torrent's data is still
+// needed by work that has not started yet.
+func SetDropProtector(protect func(cat string, ih metainfo.Hash) bool) {
+	dropProtector.Store(protect)
+}
+
 func mayDrop(cat string, ih metainfo.Hash) bool {
 	k := key(cat, ih)
+	if protect, ok := dropProtector.Load().(func(string, metainfo.Hash) bool); ok && protect(validCat(cat), ih) {
+		log.Printf("[guard] skip drop (queued downloads need it) [%s] %s", cat, ih.HexString())
+		return false
+	}
 
 	activeMu.Lock()
 	n := activeStreams[k]

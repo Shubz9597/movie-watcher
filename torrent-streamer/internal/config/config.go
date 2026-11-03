@@ -37,11 +37,13 @@ var (
 	// Playback compatibility service (M1.3.x). Paths are configurable so the
 	// service never assumes tools on the host PATH; availability is verified
 	// before the capability is advertised.
-	ffmpegPath            = ""
-	ffprobePath           = ""
-	playbackDataRoot      = "" // default: <dataRoot>/playback-sessions
-	downloadsRoot         = "" // default: <dataRoot>/downloads (offline-download assets)
-	downloadMaxConcurrent = 1
+	ffmpegPath       = ""
+	ffprobePath      = ""
+	playbackDataRoot = "" // default: <dataRoot>/playback-sessions
+	downloadsRoot    = "" // default: <dataRoot>/downloads (offline-download assets)
+	// Two preparations at once (only from different torrents: the same
+	// torrent's next episodes are read ahead instead; internal/downloads).
+	downloadMaxConcurrent = 2
 	playbackMaxTranscodes = 1
 	playbackSessionTTL    = 2 * time.Hour
 	playbackProbeTimeout  = 20 * time.Second
