@@ -44,7 +44,12 @@ function formatSize(bytes?: number): string | null {
   return `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
+// Below 1 MB/s in KB/s ("230 KB/s"): a slow transfer read "0 MB/s" while it
+// was still moving.
 function formatRate(bytesPerSecond?: number): string | null {
+  if (!bytesPerSecond || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return null;
+  if (bytesPerSecond < 1024 ** 2) return `${Math.max(1, Math.round(bytesPerSecond / 1024))} KB/s`;
+  if (bytesPerSecond < 10 * 1024 ** 2) return `${(bytesPerSecond / 1024 ** 2).toFixed(1)} MB/s`;
   const size = formatSize(bytesPerSecond);
   return size ? `${size}/s` : null;
 }
