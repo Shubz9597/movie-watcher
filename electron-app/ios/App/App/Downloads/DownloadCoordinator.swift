@@ -42,6 +42,10 @@ final class DownloadCoordinator: NSObject {
     private var lastProgressWrite: [Int: Date] = [:]
     private var lastProgressSample: [Int: (date: Date, bytes: Int64)] = [:]
     private var transferSpeeds: [String: Double] = [:]
+    /// Speed is measured per download (all its parts together).
+    private var downloadSamples: [String: (date: Date, bytes: Int64)] = [:]
+    /// Bytes each part of a parted video has (downloadId|urlPath -> part -> bytes).
+    private var partBytes: [String: [Int: Int64]] = [:]
     private var lastActivityRefresh: [String: Date] = [:]
     /// Automatic retries per asset ("downloadId|urlPath") in this process.
     private var retryAttempts: [String: Int] = [:]
@@ -110,6 +114,8 @@ final class DownloadCoordinator: NSObject {
             // The manifest request waits on the server for up to 240 s while
             // it prepares an episode (no bytes meanwhile).
             configuration.timeoutIntervalForRequest = 300
+            // A video's parts download side by side (DownloadCoordinator.partCount).
+            configuration.httpMaximumConnectionsPerHost = 6
             self.session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
             watchNetwork()
         }
@@ -185,7 +191,11 @@ final class DownloadCoordinator: NSObject {
                     // The replacement is recorded before the old task is
                     // dropped, so the queue never sees the download without one.
                     var replacement: URLSessionDownloadTask?
-                    if let resumeData = resumeData {
+                    if let part = Self.splitPart(mapping.urlPath) {
+                        if let record = try? self.store.get(mapping.downloadId), let asset = record.asset(forPath: part.urlPath) {
+                            replacement = self.partTask(record, asset, part.index)
+                        }
+                    } else if let resumeData = resumeData {
                         replacement = self.assetTask(resumeData: resumeData)
                     } else if let record = try? self.store.get(mapping.downloadId),
                               let url = self.taskURL(record, urlPath: mapping.urlPath) {
@@ -218,6 +228,99 @@ final class DownloadCoordinator: NSObject {
 
     private func assetTask(resumeData: Data) -> URLSessionDownloadTask {
         session.downloadTask(withResumeData: Self.resumeData(resumeData, allowingCellular: !wifiOnly) ?? resumeData)
+    }
+
+    // MARK: - Parallel parts
+
+    /// A video downloads in this many parts at once (HTTP Range), joined on
+    /// the phone before the SHA-256 check. One connection over a lossy path
+    /// (Tailscale's UDP through an ISP that drops it) ran at ~5 Mbps where the
+    /// line carried ~70: each loss halved it; parallel parts keep it moving.
+    static let partCount = 4
+    static let minPartedBytes: Int64 = 64 << 20
+    private static let partMarker = "#part="
+
+    static func partKey(_ urlPath: String, _ index: Int) -> String { urlPath + partMarker + String(index) }
+
+    static func splitPart(_ key: String) -> (urlPath: String, index: Int)? {
+        guard let marker = key.range(of: partMarker), let index = Int(key[marker.upperBound...]) else { return nil }
+        return (String(key[..<marker.lowerBound]), index)
+    }
+
+    static func isParted(_ asset: DownloadStore.Asset) -> Bool {
+        asset.lang.isEmpty && asset.sizeBytes >= minPartedBytes
+    }
+
+    static func partRanges(size: Int64) -> [ClosedRange<Int64>] {
+        let count = Int64(partCount)
+        let step = (size + count - 1) / count
+        return (0..<count).compactMap { k in
+            let lower = k * step
+            let upper = min(size, lower + step) - 1
+            return lower <= upper ? lower...upper : nil
+        }
+    }
+
+    static func partDiskName(_ diskName: String, _ index: Int) -> String { "\(diskName).part\(index)" }
+
+    private func partFile(_ downloadId: String, _ asset: DownloadStore.Asset, _ index: Int) -> URL? {
+        try? DownloadStore.stagingDirectory(downloadId: downloadId).appendingPathComponent(Self.partDiskName(asset.diskName, index))
+    }
+
+    private func partDone(_ downloadId: String, _ asset: DownloadStore.Asset, _ index: Int, _ range: ClosedRange<Int64>) -> Bool {
+        guard let url = partFile(downloadId, asset, index),
+              let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return false }
+        return Int64(size) == range.upperBound - range.lowerBound + 1
+    }
+
+    /// One part's transfer (never from resume data: resuming a ranged
+    /// request would ask for the rest of the file, not of the part).
+    private func partTask(_ record: DownloadStore.Record, _ asset: DownloadStore.Asset, _ index: Int) -> URLSessionDownloadTask? {
+        let ranges = Self.partRanges(size: asset.sizeBytes)
+        guard index >= 0, index < ranges.count,
+              let url = Self.assetURL(origin: record.origin, urlPath: asset.urlPath, clientId: record.clientId) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = session.configuration.timeoutIntervalForRequest
+        request.allowsCellularAccess = !wifiOnly
+        request.setValue("bytes=\(ranges[index].lowerBound)-\(ranges[index].upperBound)", forHTTPHeaderField: "Range")
+        return session.downloadTask(with: request)
+    }
+
+    /// Every part on disk: joined into the asset's file (then the usual
+    /// size and SHA-256 checks run on it).
+    private func joinParts(_ record: DownloadStore.Record, _ asset: DownloadStore.Asset) throws {
+        let staging = try DownloadStore.stagingDirectory(downloadId: record.downloadId)
+        let destination = staging.appendingPathComponent(asset.diskName)
+        let joining = staging.appendingPathComponent(asset.diskName + ".joining")
+        try? FileManager.default.removeItem(at: joining)
+        FileManager.default.createFile(atPath: joining.path, contents: nil)
+        let out = try FileHandle(forWritingTo: joining)
+        defer { try? out.close() }
+        for index in Self.partRanges(size: asset.sizeBytes).indices {
+            guard let part = partFile(record.downloadId, asset, index) else { throw FinalizeError.sizeMismatch }
+            let input = try FileHandle(forReadingFrom: part)
+            while true {
+                let chunk = try input.read(upToCount: 4 * 1024 * 1024) ?? Data()
+                if chunk.isEmpty { break }
+                try out.write(contentsOf: chunk)
+            }
+            try? input.close()
+        }
+        try out.synchronize()
+        let size = Int64((try? joining.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        guard size == asset.sizeBytes else {
+            try? FileManager.default.removeItem(at: joining)
+            throw FinalizeError.sizeMismatch
+        }
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: joining, to: destination)
+        for index in Self.partRanges(size: asset.sizeBytes).indices {
+            if let part = partFile(record.downloadId, asset, index) { try? FileManager.default.removeItem(at: part) }
+        }
+        stateLock.lock()
+        partBytes.removeValue(forKey: record.downloadId + "|" + asset.urlPath)
+        stateLock.unlock()
+        try store.markAssetDone(record.downloadId, urlPath: asset.urlPath)
     }
 
     /// Resume data carries the stopped transfer's request, its mobile-data
@@ -337,7 +440,8 @@ final class DownloadCoordinator: NSObject {
     }
 
     private func taskURL(_ record: DownloadStore.Record, urlPath: String) -> URL? {
-        urlPath == Self.manifestMarker
+        let urlPath = Self.splitPart(urlPath)?.urlPath ?? urlPath
+        return urlPath == Self.manifestMarker
             ? Self.manifestURL(origin: record.origin, downloadId: record.downloadId, clientId: record.clientId)
             : Self.assetURL(origin: record.origin, urlPath: urlPath, clientId: record.clientId)
     }
@@ -475,6 +579,27 @@ final class DownloadCoordinator: NSObject {
         for asset in record.assets {
             let done = try isAssetDone(record.downloadId, asset)
             if done { continue }
+            if Self.isParted(asset) {
+                var missing = false
+                var have: [Int: Int64] = [:]
+                for (index, range) in Self.partRanges(size: asset.sizeBytes).enumerated() {
+                    if partDone(record.downloadId, asset, index, range) {
+                        have[index] = range.upperBound - range.lowerBound + 1
+                        continue
+                    }
+                    missing = true
+                    guard let task = partTask(record, asset, index) else { throw URLError(.badURL) }
+                    try store.recordTask(Int(task.taskIdentifier), downloadId: record.downloadId, urlPath: Self.partKey(asset.urlPath, index))
+                    noteActivity(record.downloadId, at: Date())
+                    task.resume()
+                    startedTask = true
+                }
+                stateLock.lock()
+                partBytes[record.downloadId + "|" + asset.urlPath] = have
+                stateLock.unlock()
+                if !missing { try joinParts(record, asset) }
+                continue
+            }
             guard let url = Self.assetURL(origin: record.origin, urlPath: asset.urlPath, clientId: record.clientId) else {
                 // StoreError is store-internal; a malformed asset path is a
                 // generic failure here (the asset path was validated upstream).
@@ -708,6 +833,7 @@ final class DownloadCoordinator: NSObject {
     private func resetTransferMetrics(_ downloadId: String) {
         stateLock.lock()
         transferSpeeds.removeValue(forKey: downloadId)
+        downloadSamples.removeValue(forKey: downloadId)
         lastActivityRefresh.removeValue(forKey: downloadId)
         stateLock.unlock()
     }
@@ -746,14 +872,30 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
             return
         }
         lastProgressWrite[taskId] = now
-        if let sample = lastProgressSample[taskId] {
+        // A parted video's bytes are its parts' together.
+        var assetPath = mapping.urlPath
+        var assetBytes = totalBytesWritten
+        if let part = Self.splitPart(mapping.urlPath) {
+            assetPath = part.urlPath
+            let key = mapping.downloadId + "|" + part.urlPath
+            var parts = partBytes[key] ?? [:]
+            parts[part.index] = totalBytesWritten
+            partBytes[key] = parts
+            assetBytes = parts.values.reduce(0, +)
+        }
+        // Speed: the whole download's bytes over time (parts together).
+        let downloadBytes = assetBytes
+        if let sample = downloadSamples[mapping.downloadId] {
             let elapsed = now.timeIntervalSince(sample.date)
-            let delta = totalBytesWritten - sample.bytes
-            if elapsed > 0, delta >= 0 {
+            let delta = downloadBytes - sample.bytes
+            if elapsed >= 0.5, delta >= 0 {
                 let instant = Double(delta) / elapsed
                 let previous = transferSpeeds[mapping.downloadId] ?? instant
                 transferSpeeds[mapping.downloadId] = previous * 0.7 + instant * 0.3
+                downloadSamples[mapping.downloadId] = (date: now, bytes: downloadBytes)
             }
+        } else {
+            downloadSamples[mapping.downloadId] = (date: now, bytes: downloadBytes)
         }
         lastProgressSample[taskId] = (date: now, bytes: totalBytesWritten)
         let previousActivityRefresh = lastActivityRefresh[mapping.downloadId] ?? .distantPast
@@ -762,8 +904,8 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         stateLock.unlock()
         try? store.setAssetReceivedBytes(
             mapping.downloadId,
-            urlPath: mapping.urlPath,
-            bytes: totalBytesWritten)
+            urlPath: assetPath,
+            bytes: assetBytes)
         // The durable store changed, so the Downloads screen must re-read it;
         // without this event the row remained visually stuck at 0%.
         emitChange()
@@ -787,6 +929,10 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
                     didFinishDownloadingTo location: URL) {
         if let mapping = store.taskOwner(Int(downloadTask.taskIdentifier)), mapping.urlPath == Self.manifestMarker {
             finishManifest(downloadTask, mapping: mapping, location: location)
+            return
+        }
+        if let mapping = store.taskOwner(Int(downloadTask.taskIdentifier)), let part = Self.splitPart(mapping.urlPath) {
+            finishPart(downloadTask, mapping: mapping, part: part, location: location)
             return
         }
         guard let mapping = store.taskOwner(Int(downloadTask.taskIdentifier)),
@@ -832,6 +978,82 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         }
     }
 
+    /// One part of a parted video arrived: kept beside its siblings, and once
+    /// all are there they are joined and checked like any download. A server
+    /// that ignored the range sent the whole file: that is the video.
+    private func finishPart(_ task: URLSessionDownloadTask, mapping: DownloadStore.TaskMapping,
+                            part: (urlPath: String, index: Int), location: URL) {
+        let taskId = Int(task.taskIdentifier)
+        guard let record = try? store.get(mapping.downloadId), let asset = record.asset(forPath: part.urlPath) else {
+            try? FileManager.default.removeItem(at: location)
+            try? store.removeTask(taskId)
+            return
+        }
+        let ranges = Self.partRanges(size: asset.sizeBytes)
+        let status = (task.response as? HTTPURLResponse)?.statusCode ?? 0
+        if !(200...299).contains(status) {
+            try? FileManager.default.removeItem(at: location)
+            try? store.removeTask(taskId)
+            clearTaskMetrics(taskId)
+            // 5xx (server restarting) is worth retrying; 4xx is final.
+            if status < 500 || !scheduleRetry(downloadId: mapping.downloadId, urlPath: mapping.urlPath, resumeData: nil) {
+                failDownload(mapping.downloadId, reason: "server_error")
+            }
+            return
+        }
+        do {
+            let size = Int64((try FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber)?.intValue ?? 0)
+            let staging = try DownloadStore.stagingDirectory(downloadId: record.downloadId)
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+            try store.removeTask(taskId)
+            clearTaskMetrics(taskId)
+            if status == 200 && size == asset.sizeBytes {
+                let destination = staging.appendingPathComponent(asset.diskName)
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: location, to: destination)
+                let siblings = Set(store.allTaskMappings()
+                    .filter { $0.downloadId == record.downloadId && Self.splitPart($0.urlPath)?.urlPath == part.urlPath }
+                    .map { $0.taskId })
+                for id in siblings { try? store.removeTask(id) }
+                session.getAllTasks { tasks in
+                    for sibling in tasks where siblings.contains(Int(sibling.taskIdentifier)) { sibling.cancel() }
+                }
+                for index in ranges.indices {
+                    if let file = partFile(record.downloadId, asset, index) { try? FileManager.default.removeItem(at: file) }
+                }
+                try store.markAssetDone(record.downloadId, urlPath: asset.urlPath)
+                tryMaybeFinalize(record)
+                return
+            }
+            guard part.index >= 0, part.index < ranges.count,
+                  size == ranges[part.index].upperBound - ranges[part.index].lowerBound + 1,
+                  let destination = partFile(record.downloadId, asset, part.index) else {
+                throw FinalizeError.sizeMismatch
+            }
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: location, to: destination)
+            stateLock.lock()
+            let key = record.downloadId + "|" + part.urlPath
+            var parts = partBytes[key] ?? [:]
+            parts[part.index] = size
+            partBytes[key] = parts
+            retryAttempts.removeValue(forKey: record.downloadId + "|" + mapping.urlPath)
+            stateLock.unlock()
+            let allDone = ranges.enumerated().allSatisfy { partDone(record.downloadId, asset, $0.offset, $0.element) }
+            if allDone {
+                try joinParts(record, asset)
+                tryMaybeFinalize(record)
+            } else {
+                emitChange()
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: location)
+            if !scheduleRetry(downloadId: mapping.downloadId, urlPath: mapping.urlPath, resumeData: nil) {
+                failDownload(mapping.downloadId, reason: "verification_failed")
+            }
+        }
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let taskId = Int(task.taskIdentifier)
         guard let mapping = store.taskOwner(taskId) else { return }
@@ -851,7 +1073,8 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
         // Connection drops and server restarts are routine on a home server:
         // continue from the bytes already received instead of failing.
         // A manifest request starts over (its answer may have changed).
-        let resumeData = mapping.urlPath == Self.manifestMarker ? nil : error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+        let resumeData = mapping.urlPath == Self.manifestMarker || Self.splitPart(mapping.urlPath) != nil
+            ? nil : error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
         if !scheduleRetry(downloadId: mapping.downloadId, urlPath: mapping.urlPath, resumeData: resumeData) {
             failDownload(mapping.downloadId, reason: "network_failed")
         }
@@ -1016,7 +1239,11 @@ extension DownloadCoordinator: URLSessionDownloadDelegate {
               let record = try? store.get(downloadId),
               record.state == .downloading || record.state == .queued else { return false }
         let task: URLSessionDownloadTask
-        if let resumeData = resumeData {
+        if let part = Self.splitPart(urlPath) {
+            // A part starts over (it is a quarter of the video at most).
+            guard let asset = record.asset(forPath: part.urlPath), let partTask = partTask(record, asset, part.index) else { return false }
+            task = partTask
+        } else if let resumeData = resumeData {
             task = assetTask(resumeData: resumeData)
         } else if let url = taskURL(record, urlPath: urlPath) {
             task = urlPath == Self.manifestMarker ? session.downloadTask(with: url) : assetTask(url)

@@ -267,6 +267,7 @@ object DownloadEngine {
     private class Stopped : Exception()
 
     private fun run(id: String) {
+        synchronized(progressLock) { progressSampleAt = 0L; progressSavedAt = 0L }
         store.setState(id, DownloadStore.State.DOWNLOADING)
         emitChange()
         try {
@@ -365,64 +366,142 @@ object DownloadEngine {
         return assets
     }
 
+    // A video downloads in parts at once (HTTP Range), joined before the
+    // SHA-256 check: one connection over a lossy path (Tailscale's UDP
+    // through an ISP that drops it) ran at ~5 Mbps where the line carried
+    // ~70. Each part resumes from what it has.
+    private const val PART_COUNT = 4
+    private const val MIN_PARTED_BYTES = 64L shl 20
+
     private fun transfer(record: DownloadStore.Record, asset: DownloadStore.Asset) {
         val id = record.downloadId
         val dir = store.stagingDir(id).apply { mkdirs() }
         val file = File(dir, asset.diskName)
-        var have = if (file.exists()) file.length() else 0L
-        if (have > asset.sizeBytes) { file.delete(); have = 0 }
-        if (have < asset.sizeBytes) {
-            val url = URL(record.origin.trimEnd('/') + asset.urlPath + "?" + clientQuery(record))
-            val connection = open(url)
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 90_000 // silent this long: reconnect
-            if (have > 0) connection.setRequestProperty("Range", "bytes=$have-")
-            try {
-                val code = connection.responseCode
-                if (code == 200 && have > 0) { have = 0 } // no range support: from the start
-                else if (code != 206 && code != 200) {
-                    throw ServerError(if (code in 500..599) "server_error" else "server_error", code in 500..599)
-                }
-                FileOutputStream(file, have > 0).use { out ->
-                    connection.inputStream.use { input ->
-                        val buffer = ByteArray(64 * 1024)
-                        var received = have
-                        var lastEmit = 0L
-                        var lastPersist = System.currentTimeMillis()
-                        var sampleAt = System.currentTimeMillis()
-                        var sampleBytes = received
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            out.write(buffer, 0, count)
-                            received += count
-                            val now = System.currentTimeMillis()
-                            if (now - lastEmit >= 500) {
-                                lastEmit = now
-                                checkStop(id)
-                                val elapsed = (now - sampleAt) / 1000.0
-                                if (elapsed > 0) {
-                                    val instant = (received - sampleBytes) / elapsed
-                                    speeds[id] = (speeds[id] ?: instant) * 0.7 + instant * 0.3
-                                }
-                                sampleAt = now
-                                sampleBytes = received
-                                val persist = now - lastPersist >= 5_000
-                                if (persist) lastPersist = now
-                                store.setReceived(id, asset.urlPath, received, persist)
-                                emitChange()
-                            }
-                            if (received > asset.sizeBytes) throw ServerError("verification_failed", false)
-                        }
-                        store.setReceived(id, asset.urlPath, received, true)
-                    }
-                }
-            } finally {
-                connection.disconnect()
-            }
+        val url = URL(record.origin.trimEnd('/') + asset.urlPath + "?" + clientQuery(record))
+        val whole = file.exists() && file.length() == asset.sizeBytes
+        if (!whole && asset.lang.isEmpty() && asset.sizeBytes >= MIN_PARTED_BYTES) {
+            transferParts(id, asset, url, dir, file)
+        } else if (!whole) {
+            fetchRange(id, url, file, 0, asset.sizeBytes - 1) { received -> progress(id, asset.urlPath, received) }
         }
         if (file.length() != asset.sizeBytes) throw IOException("incomplete")
         store.update(id) { r -> r.asset(asset.urlPath)?.let { it.receivedBytes = asset.sizeBytes; it.done = true } }
+        emitChange()
+    }
+
+    private fun partRanges(size: Long): List<LongRange> {
+        val step = (size + PART_COUNT - 1) / PART_COUNT
+        return (0 until PART_COUNT).mapNotNull { k ->
+            val first = k * step
+            val last = minOf(size, first + step) - 1
+            if (first <= last) first..last else null
+        }
+    }
+
+    private fun transferParts(id: String, asset: DownloadStore.Asset, url: URL, dir: File, file: File) {
+        val ranges = partRanges(asset.sizeBytes)
+        val parts = ranges.indices.map { File(dir, "${asset.diskName}.part$it") }
+        val received = LongArray(ranges.size) { k -> parts[k].takeIf { it.exists() }?.length() ?: 0L }
+        val failures = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+        val workers = ranges.mapIndexed { k, range ->
+            Thread({
+                try {
+                    fetchRange(id, url, parts[k], range.first, range.last) { bytes ->
+                        val total = synchronized(received) { received[k] = bytes; received.sum() }
+                        progress(id, asset.urlPath, total)
+                    }
+                } catch (error: Throwable) {
+                    failures.add(error)
+                }
+            }, "torwatch-part-$k").apply { start() }
+        }
+        workers.forEach { it.join() }
+        failures.peek()?.let { throw it }
+        // Every part complete: joined into the video.
+        val joining = File(dir, "${asset.diskName}.joining")
+        FileOutputStream(joining).use { out ->
+            for (part in parts) part.inputStream().use { it.copyTo(out, 4 * 1024 * 1024) }
+        }
+        if (joining.length() != asset.sizeBytes) {
+            joining.delete()
+            throw IOException("joined parts are the wrong size")
+        }
+        file.delete()
+        if (!joining.renameTo(file)) throw IOException("could not place the joined video")
+        parts.forEach { it.delete() }
+    }
+
+    /** Bytes [first, last] of url into file, continuing from what it has. */
+    private fun fetchRange(id: String, url: URL, file: File, first: Long, last: Long, onBytes: (Long) -> Unit) {
+        val length = last - first + 1
+        var have = if (file.exists()) file.length() else 0L
+        if (have > length) { file.delete(); have = 0 }
+        if (have == length) { onBytes(have); return }
+        val connection = open(url)
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 90_000 // silent this long: reconnect
+        connection.setRequestProperty("Range", "bytes=${first + have}-$last")
+        try {
+            val code = connection.responseCode
+            if (code == 200) {
+                // The server ignored the range: only a whole-file request can use it.
+                if (first != 0L) throw ServerError("server_error", true)
+                have = 0
+            } else if (code != 206) {
+                throw ServerError("server_error", code in 500..599)
+            }
+            FileOutputStream(file, have > 0).use { out ->
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var written = have
+                    var lastCheck = 0L
+                    while (written < length) {
+                        val count = input.read(buffer, 0, minOf(buffer.size.toLong(), length - written).toInt())
+                        if (count < 0) break
+                        out.write(buffer, 0, count)
+                        written += count
+                        val now = System.currentTimeMillis()
+                        if (now - lastCheck >= 500) {
+                            lastCheck = now
+                            checkStop(id)
+                            onBytes(written)
+                        }
+                    }
+                    onBytes(written)
+                    if (written != length) throw IOException("connection ended early")
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    // Progress of the asset being transferred (all its parts together): the
+    // store's byte count, the screen and the speed estimate.
+    private val progressLock = Object()
+    private var progressSampleAt = 0L
+    private var progressSampleBytes = 0L
+    private var progressSavedAt = 0L
+    private var progressEmitAt = 0L
+
+    private fun progress(id: String, urlPath: String, received: Long) {
+        val now = System.currentTimeMillis()
+        synchronized(progressLock) {
+            if (progressSampleAt == 0L || received < progressSampleBytes) {
+                progressSampleAt = now
+                progressSampleBytes = received
+            } else if (now - progressSampleAt >= 1000) {
+                val instant = (received - progressSampleBytes) * 1000.0 / (now - progressSampleAt)
+                speeds[id] = (speeds[id] ?: instant) * 0.7 + instant * 0.3
+                progressSampleAt = now
+                progressSampleBytes = received
+            }
+            val persist = now - progressSavedAt >= 5_000
+            if (persist) progressSavedAt = now
+            store.setReceived(id, urlPath, received, persist)
+            if (now - progressEmitAt < 500) return
+            progressEmitAt = now
+        }
         emitChange()
     }
 
