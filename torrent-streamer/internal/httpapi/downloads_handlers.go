@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"torrent-streamer/internal/buildinfo"
@@ -75,6 +76,7 @@ func (h DownloadsHandlers) Register(mux *http.ServeMux) {
 		{"POST", "/v1/downloads/jobs/{id}/cancel", h.handleCancel},
 		{"POST", "/v1/downloads/jobs/{id}/renew", h.handleRenew},
 		{"GET", "/v1/downloads/jobs/{id}/manifest", h.handleManifest},
+		{"GET", "/v1/downloads/transfers", handleTransfers},
 	}
 	if h.AssetRoot != "" {
 		routes = append(routes, struct {
@@ -342,7 +344,38 @@ func (h DownloadsHandlers) handleAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", "private, max-age=3600")
+	transferStarted()
+	defer transferEnded()
 	http.ServeContent(w, r, filepath.Base(diskAbs), time.Time{}, file)
+}
+
+// Files being sent to devices right now, and when the last one ended. The
+// auto-deploy (deploy-from-git.sh) asks GET /v1/downloads/transfers before
+// restarting this server: a restart cut a phone's transfer, and iOS holds a
+// backgrounded app's retry back, so the phone's downloads stopped until it
+// was opened again.
+var (
+	activeTransfers atomic.Int64
+	lastTransferEnd atomic.Int64 // unix seconds
+)
+
+func transferStarted() { activeTransfers.Add(1) }
+
+func transferEnded() {
+	lastTransferEnd.Store(time.Now().Unix())
+	activeTransfers.Add(-1)
+}
+
+// GET /v1/downloads/transfers -> {active, idleSeconds}; idleSeconds is -1
+// when nothing was sent since the server started.
+func handleTransfers(w http.ResponseWriter, _ *http.Request) {
+	idle := int64(-1)
+	if active := activeTransfers.Load(); active > 0 {
+		idle = 0
+	} else if last := lastTransferEnd.Load(); last > 0 {
+		idle = time.Now().Unix() - last
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"active": activeTransfers.Load(), "idleSeconds": idle})
 }
 
 // jobBody is the client-facing job representation (contracts.md §3): safe

@@ -77,6 +77,37 @@ if [ -n "$DEPLOYED" ] && git cat-file -e "$DEPLOYED^{commit}" 2>/dev/null; then
   fi
 fi
 
+# A restart cuts files being sent to phones, and iOS holds a backgrounded
+# app's retry back, so its downloads stop until the app is opened again.
+# Wait (checking again on the next timer run) while the server is sending
+# downloads or sent one in the last few minutes (a queue between episodes),
+# for at most TORWATCH_DEPLOY_MAX_DEFER_MIN minutes.
+DEFER_FILE="$STATE_DIR/deferred-since"
+if [ "$NEED_IMAGE" -eq 1 ] || [ "$NEED_COMPOSE" -eq 1 ]; then
+  TRANSFERS="$(curl -fsS --max-time 3 "http://127.0.0.1:${GATEWAY_PORT:-8080}/v1/downloads/transfers" 2>/dev/null || true)"
+  BUSY="$(python3 -c 'import json,sys
+try:
+    d = json.loads(sys.argv[1])
+    print(1 if d.get("active", 0) > 0 or 0 <= d.get("idleSeconds", -1) < 180 else 0)
+except Exception:
+    print(0)' "$TRANSFERS")"
+  if [ "$BUSY" = "1" ]; then
+    NOW="$(date +%s)"
+    SINCE="$NOW"
+    if [ -f "$DEFER_FILE" ]; then
+      read -r SINCE < "$DEFER_FILE" || SINCE="$NOW"
+    else
+      printf '%s\n' "$NOW" > "$DEFER_FILE"
+    fi
+    if [ $((NOW - SINCE)) -lt $((${TORWATCH_DEPLOY_MAX_DEFER_MIN:-90} * 60)) ]; then
+      log "downloads are being sent to a device ($TRANSFERS); deploying ${TARGET:0:12} once they finish"
+      exit 0
+    fi
+    log "downloads still running after ${TORWATCH_DEPLOY_MAX_DEFER_MIN:-90} min; deploying anyway"
+  fi
+fi
+rm -f "$DEFER_FILE"
+
 SHORT="${TARGET:0:12}"
 TAG="git-$SHORT"
 IMAGE="torwatch-server:$TAG"
