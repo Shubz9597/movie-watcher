@@ -212,6 +212,7 @@ func main() {
 	// (a dual-audio release's dub script), moved onto its dialogue.
 	httpapi.SubtitleMatchHandlers{Jobs: downloads.NewStore(db), Picks: pickRepo, ListenAddr: config.ListenAddr()}.Register(mux)
 	httpapi.RegisterTasteRoutes(mux, tasteStore)
+	httpapi.RegisterSpeedtest(mux) // /speedtest: this server's speed to the device opening it
 	mux.HandleFunc("/skip-segments", skipsegments.Handler)
 	// The phone player's events, readable on the server (diagnostics/phone.log).
 	mux.HandleFunc("/v1/diagnostics/events", httpapi.HandleDiagnosticEvents)
