@@ -4,6 +4,7 @@
 // composition error, not a silent Electron assumption.
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { ConnectionState, Platform } from './contracts.ts'
+import { SERVER_UNREACHABLE_EVENT } from '../lib/connection-banner.ts';
 
 const PlatformContext = createContext<Platform | null>(null);
 
@@ -56,9 +57,19 @@ function useAutoReconnect(platform: Platform) {
         check();
       }
     };
+    // A page's request failed: check now unless already retrying (at most
+    // every few seconds; the coordinator shares a probe in flight).
+    let lastFailureCheck = 0;
+    const onRequestFailed = () => {
+      const now = Date.now();
+      if (down || now - lastFailureCheck < 5000) return;
+      lastFailureCheck = now;
+      check();
+    };
     if (typeof window !== 'undefined') {
       window.addEventListener('online', onWake);
       document.addEventListener('visibilitychange', onWake);
+      window.addEventListener(SERVER_UNREACHABLE_EVENT, onRequestFailed);
     }
     return () => {
       disposed = true;
@@ -67,6 +78,7 @@ function useAutoReconnect(platform: Platform) {
       if (typeof window !== 'undefined') {
         window.removeEventListener('online', onWake);
         document.removeEventListener('visibilitychange', onWake);
+        window.removeEventListener(SERVER_UNREACHABLE_EVENT, onRequestFailed);
       }
     };
   }, [platform]);

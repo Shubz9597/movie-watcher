@@ -13,6 +13,8 @@ import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { ContinueCarousel } from '../components/shared/ContinueCarousel';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
+import { isUnreachable, OFFLINE_MESSAGE } from '../lib/user-error';
+import { requestReconnect } from '../lib/connection-banner';
 
 type ContinueItem = {
   seriesId: string;
@@ -383,7 +385,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         if (ac.signal.aborted || requestAc.signal.aborted) return;
         console.error('[HomePage] Error loading movies:', err);
         setMovies([]);
-        setMoviesError('Couldn’t load movies.');
+        setMoviesError(isUnreachable(err) ? OFFLINE_MESSAGE : 'Couldn’t load movies.');
       } finally {
         if (!ac.signal.aborted && !requestAc.signal.aborted) {
           setMoviesLoading(false);
@@ -561,6 +563,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
   const catalogUnavailable = !moviesLoading && !seriesLoading && !animeLoading
     && Boolean(moviesError) && Boolean(seriesError) && (Boolean(animeError) || anime.length === 0);
   const retryCatalog = useCallback(() => {
+    requestReconnect();
     setCatalogReloadToken((token) => token + 1);
   }, []);
 
@@ -723,9 +726,10 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         {/* Spec C5: when every catalog shelf fails, show ONE recovery block
             instead of repeating the same error per rail. */}
         {catalogUnavailable ? (
-          <section className="py-10" role="alert">
+          <section className="flex min-h-[50vh] flex-col items-center justify-center py-10 text-center" role="alert">
             <h2 className="type-panel-title text-white">Catalog unavailable</h2>
-            <div className="mt-5 flex flex-wrap gap-3">
+            <p className="type-secondary mt-2 max-w-sm text-white/65">{moviesError === OFFLINE_MESSAGE ? OFFLINE_MESSAGE : 'Your server couldn’t load the catalog. Try again in a moment.'}</p>
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
               <button type="button" onClick={retryCatalog} className={ACTION_PRIMARY_CLASS}>
                 Retry
               </button>

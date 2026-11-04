@@ -7,6 +7,7 @@
 // state (FR10).
 import { buildBackendUrl } from '../api-client.ts';
 import { backendGeneration, trackAbort } from '../connection-service.ts';
+import { reportServerUnreachable } from '../connection-banner.ts';
 import { getDeviceId } from '../device-id.ts';
 import type { MovieCard } from '../types';
 
@@ -119,6 +120,7 @@ export async function libraryFetch<T>(path: string, deps?: LibraryFetchDeps): Pr
     if (!deps?.fetchImpl && backendGeneration() !== startedGeneration) {
       throw new LibraryServiceError('origin_changed', 'The server origin changed while this request was in flight.', 0);
     }
+    if (!deps?.fetchImpl) reportServerUnreachable();
     throw new LibraryServiceError('backend_unreachable', `library backend unreachable: ${String(error)}`, 0);
   } finally {
     unregister?.();
@@ -193,6 +195,7 @@ export async function putLibraryFlag(
     if (!deps?.fetchImpl && backendGeneration() !== startedGeneration) {
       throw new LibraryServiceError('origin_changed', 'The server origin changed while this request was in flight.', 0);
     }
+    if (!deps?.fetchImpl) reportServerUnreachable();
     throw new LibraryServiceError('backend_unreachable', `library backend unreachable: ${String(error)}`, 0);
   } finally {
     unregister?.();

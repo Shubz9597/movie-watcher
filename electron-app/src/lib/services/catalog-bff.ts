@@ -5,6 +5,7 @@
 // renderer provider code is NOT called in bff mode.
 import { buildBackendUrl } from '../api-client.ts';
 import { backendGeneration, trackAbort } from '../connection-service.ts';
+import { reportServerUnreachable } from '../connection-banner.ts';
 import { getDeviceId } from '../device-id.ts';
 import type { Card } from '../adapters/media';
 
@@ -142,6 +143,7 @@ async function performCatalogFetch<T>(path: string, deps?: BffDeps): Promise<T> 
     if (!deps?.fetchImpl && backendGeneration() !== startedGeneration) {
       throw new CatalogBffError('origin_changed', 'The server origin changed while this request was in flight.');
     }
+    if (!deps?.fetchImpl) reportServerUnreachable();
     throw new CatalogBffError('backend_unreachable', `catalog backend unreachable: ${String(error)}`);
   } finally {
     unregister?.();

@@ -48,6 +48,18 @@ export function bannerReduce(state: BannerState, event: BannerEvent): BannerStat
   }
 }
 
+/**
+ * A request to the server failed to reach it. The connection is checked
+ * again (PlatformProvider) so the banner shows: before, the app checked
+ * only on launch, return to the foreground or a network change, and a VPN
+ * taking over (Mullvad on, Tailscale off) left the banner hidden while
+ * every page failed.
+ */
+export const SERVER_UNREACHABLE_EVENT = 'torwatch:server-unreachable';
+export function reportServerUnreachable(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SERVER_UNREACHABLE_EVENT));
+}
+
 /** Ask every page's connection banner to re-check the server now. */
 export const RECONNECT_EVENT = 'torwatch:reconnect';
 export function requestReconnect(): void {
