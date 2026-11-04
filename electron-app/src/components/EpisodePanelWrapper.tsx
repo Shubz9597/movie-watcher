@@ -189,6 +189,42 @@ function EpisodeArtworkMedia({
   );
 }
 
+/**
+ * An episode's description: 3 lines (4 on wider screens) with "More" when
+ * it runs longer, the rest on tap. Measured, so "More" shows only when
+ * text is actually hidden at this screen width.
+ */
+function EpisodeOverview({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLParagraphElement | null>(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || open) return;
+    const measure = () => setOverflows(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text, open]);
+  return (
+    <div className="-mt-1 px-4 pb-3">
+      <p ref={ref} className={`type-secondary break-words text-white/65 ${open ? '' : 'line-clamp-3 sm:line-clamp-4'}`}>{text}</p>
+      {overflows || open ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className="type-secondary -ml-2 mt-0.5 min-h-11 rounded-lg px-2 font-medium text-white/85 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+        >
+          {open ? 'Less' : 'More'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function EpisodePanel({
   kind,
   title,
@@ -1088,7 +1124,8 @@ export default function EpisodePanel({
               const watched = watchState?.watched === true;
               const partial = !watched && watchState && watchState.percent > 0 ? Math.min(100, watchState.percent) : 0;
               return (
-                <div key={episode.id} className="content-auto-row flex items-start border-b border-white/[0.08] last:border-b-0">
+                <div key={episode.id} className="content-auto-row border-b border-white/[0.08] last:border-b-0">
+                <div className="flex items-center">
                 <button
                   type="button"
                   ref={(element) => {
@@ -1099,12 +1136,9 @@ export default function EpisodePanel({
                   aria-label={isUpcoming
                     ? `${episode.name}, coming soon${releaseLabel ? ` on ${releaseLabel}` : ''}`
                     : episode.name}
-                  className="group flex min-w-0 flex-1 flex-col gap-2 py-3 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
+                  className="group flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
                   onClick={() => void fetchTorrentsForEpisode(episode)}
                 >
-                  {/* Like Netflix: still, title and details in a row; the
-                      whole description below, never cut off. */}
-                  <div className="flex w-full min-w-0 items-center gap-3">
                   <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] sm:w-32">
                     <EpisodeArtworkMedia
                       key={artwork || `missing-${episode.id}`}
@@ -1143,10 +1177,6 @@ export default function EpisodePanel({
                   ) : watchedSeriesId ? null : (
                     <ChevronRight className="h-4 w-4 shrink-0 text-white/20 transition group-hover:translate-x-0.5 group-hover:text-white/55" aria-hidden="true" />
                   )}
-                  </div>
-                  {episode.overview ? (
-                    <p className="type-secondary break-words text-white/65">{episode.overview}</p>
-                  ) : null}
                 </button>
                 {!isUpcoming && watchedSeriesId ? (
                   <button
@@ -1155,13 +1185,17 @@ export default function EpisodePanel({
                     aria-pressed={watched}
                     aria-label={`${watched ? 'Mark unwatched' : 'Mark watched'}: episode ${episode.episodeNumber}`}
                     title={watched ? 'Mark unwatched' : 'Mark watched'}
-                    className="mr-2 mt-3 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    className="mr-2 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                   >
                     {watched
                       ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
                       : <Circle className="h-6 w-6 text-white/35" aria-hidden="true" />}
                   </button>
                 ) : null}
+                </div>
+                {/* Like Netflix: the description under the row, full width;
+                    a long one shows its first lines and "More". */}
+                {episode.overview ? <EpisodeOverview text={episode.overview} /> : null}
               </div>
               );
             })}
