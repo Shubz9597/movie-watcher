@@ -122,7 +122,7 @@ function episodeLabel(episode: number | undefined, name: string | undefined): st
 function EpisodeStill({ src }: { src?: string }) {
   const [failed, setFailed] = useState(false);
   return (
-    <div className="relative aspect-video w-[112px] shrink-0 self-start overflow-hidden rounded-lg bg-white/[0.06] sm:w-[144px]">
+    <div className="relative aspect-video w-[104px] shrink-0 self-start overflow-hidden rounded-lg bg-white/[0.06] sm:w-[144px]">
       {src && !failed ? (
         <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover" />
       ) : (
@@ -596,6 +596,59 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         : { 'aria-disabled': true }
       : selectable ? longPress.bind(() => startSelecting([item.downloadId])) : {};
     const rowState = selecting ? (selectable ? `cursor-pointer ${checked ? 'ring-2 ring-white/80' : ''}` : 'pointer-events-none opacity-50') : '';
+    if (ready) {
+      // Like Netflix: the picture (play mark, watched bar) and the title
+      // play it; the title gets the row's width; one icon on the right.
+      const watched = watchedPercent(item);
+      const resumes = watched !== undefined && watched < 90;
+      return (
+        <li key={item.downloadId} className={`-mx-2 flex items-center gap-1 rounded-lg px-2 py-1.5 select-none [-webkit-touch-callout:none] ${rowState}`} {...rowProps}>
+          <button
+            type="button"
+            onClick={() => playLocal(item)}
+            tabIndex={selecting ? -1 : undefined}
+            aria-label={`${resumes ? 'Resume' : 'Play'} ${label}`}
+            className={`group flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left sm:gap-4 ${FOCUS_RING_CLASS}`}
+          >
+            <span className="relative shrink-0">
+              {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
+              <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
+                <span className={`grid h-10 w-10 place-items-center rounded-full border border-white/70 bg-black/55 transition group-hover:bg-black/75 ${selecting ? 'opacity-0' : ''}`}>
+                  <Play className="ml-0.5 h-4 w-4 fill-white text-white" />
+                </span>
+              </span>
+              {watched !== undefined ? (
+                <span className="absolute inset-x-0 bottom-0 h-1 overflow-hidden rounded-b-lg bg-white/25" aria-hidden="true">
+                  <span className="block h-full bg-red-600" style={{ width: `${watched}%` }} />
+                </span>
+              ) : null}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block break-words text-[15px] font-medium leading-snug text-white">{label}</span>
+              <span className="type-secondary text-numeric mt-1 block truncate text-white/60">
+                {[episodeView ? null : item.subtitle, size, resumes ? `${watched}% watched` : null].filter(Boolean).join(' · ')}
+              </span>
+            </span>
+          </button>
+          {selecting ? (
+            selectable ? <SelectMark checked={checked} /> : null
+          ) : downloads?.remove ? (
+            <button
+              type="button"
+              onClick={() => {
+                setRemoveError(null);
+                setPendingRemoval(item);
+              }}
+              aria-label={`Remove ${item.title}`}
+              title="Remove download"
+              className={`inline-flex h-12 w-10 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white ${FOCUS_RING_CLASS}`}
+            >
+              <Trash2 className="h-5 w-5" aria-hidden="true" />
+            </button>
+          ) : null}
+        </li>
+      );
+    }
     return (
       <li key={item.downloadId} className={`${ROW_CLASS} select-none [-webkit-touch-callout:none] ${rowState}`} {...rowProps}>
         {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
@@ -809,13 +862,29 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         // Selecting: what is ticked up here; the actions sit in the bar at
         // the bottom (in place of the tabs), in reach wherever the list is
         // scrolled.
-        <div className="flex min-h-12 items-center gap-2">
-          <button type="button" onClick={stopSelecting} aria-label="Cancel selection" className={CANCEL_CLASS}>
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-          <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-white" aria-live="polite">
-            {selectedItems.length ? `${selectedItems.length} selected` : 'Select downloads'}
-          </h1>
+        <div>
+          <div className="flex min-h-12 items-center gap-2">
+            <h1 className="type-section-title min-w-0 flex-1 truncate text-white" aria-live="polite">
+              {selectedItems.length ? `${selectedItems.length} selected` : 'Select'}
+            </h1>
+            <button
+              type="button"
+              onClick={() => setSelection(allSelected ? new Set() : new Set(selectableItems.map((item) => item.downloadId)))}
+              className={`inline-flex min-h-11 shrink-0 items-center rounded-full px-3 text-sm font-medium text-white/85 transition hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
+            >
+              {allSelected ? 'Clear' : 'Select all'}
+            </button>
+            <button
+              type="button"
+              onClick={stopSelecting}
+              className={`inline-flex min-h-11 shrink-0 items-center rounded-full bg-white px-4 text-sm font-semibold text-black transition hover:bg-white/90 ${FOCUS_RING_CLASS}`}
+            >
+              Done
+            </button>
+          </div>
+          <p className="type-secondary text-numeric mt-1 text-white/60">
+            {selectedItems.length ? formatSize(selectedBytes) ?? '' : 'Tap the downloads to delete.'}
+          </p>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
@@ -838,26 +907,17 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
           aria-label="Selected downloads"
           className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0a0a0a] pt-3 pb-[calc(var(--app-safe-bottom)+0.75rem)] pl-[max(1rem,var(--app-safe-left))] pr-[max(1rem,var(--app-safe-right))]"
         >
-          <div className="mx-auto flex max-w-4xl items-center gap-2">
-            <p className="type-secondary text-numeric min-w-0 flex-1 truncate text-white/75" aria-live="polite">
-              {selectedItems.length
-                ? [`${selectedItems.length} selected`, formatSize(selectedBytes)].filter(Boolean).join(' · ')
-                : 'Tap downloads to select'}
-            </p>
-            <button
-              type="button"
-              onClick={() => setSelection(allSelected ? new Set() : new Set(selectableItems.map((item) => item.downloadId)))}
-              className={`${ROW_ACTION_CLASS} shrink-0`}
-            >
-              {allSelected ? 'Clear' : 'Select all'}
-            </button>
+          <div className="mx-auto max-w-4xl">
             <button
               type="button"
               disabled={!selectedItems.length}
               onClick={() => { setBulkError(null); setConfirmingBulk(true); }}
-              className={`inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-medium text-white transition hover:bg-red-500 disabled:opacity-40 ${FOCUS_RING_CLASS}`}
+              className={`inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-base font-semibold text-white transition hover:bg-red-500 disabled:bg-white/[0.08] disabled:text-white/40 ${FOCUS_RING_CLASS}`}
             >
-              <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete
+              <Trash2 className="h-5 w-5" aria-hidden="true" />
+              {selectedItems.length
+                ? `Delete ${selectedItems.length} ${selectedItems.length === 1 ? 'download' : 'downloads'}`
+                : 'Select downloads to delete'}
             </button>
           </div>
         </div>
