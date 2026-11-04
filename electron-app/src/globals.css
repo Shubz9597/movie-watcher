@@ -418,7 +418,7 @@ html.native-playback .app-surface {
 
   .content-auto-row {
     content-visibility: auto;
-    contain-intrinsic-size: auto 5rem;
+    contain-intrinsic-size: auto 9rem; /* episode row with its description */
   }
 
   @media (min-width: 768px) {

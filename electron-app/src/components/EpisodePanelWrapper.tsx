@@ -1088,7 +1088,7 @@ export default function EpisodePanel({
               const watched = watchState?.watched === true;
               const partial = !watched && watchState && watchState.percent > 0 ? Math.min(100, watchState.percent) : 0;
               return (
-                <div key={episode.id} className="content-auto-row flex items-center border-b border-white/[0.08] last:border-b-0">
+                <div key={episode.id} className="content-auto-row flex items-start border-b border-white/[0.08] last:border-b-0">
                 <button
                   type="button"
                   ref={(element) => {
@@ -1099,9 +1099,12 @@ export default function EpisodePanel({
                   aria-label={isUpcoming
                     ? `${episode.name}, coming soon${releaseLabel ? ` on ${releaseLabel}` : ''}`
                     : episode.name}
-                  className="group flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
+                  className="group flex min-w-0 flex-1 flex-col gap-2 py-3 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
                   onClick={() => void fetchTorrentsForEpisode(episode)}
                 >
+                  {/* Like Netflix: still, title and details in a row; the
+                      whole description below, never cut off. */}
+                  <div className="flex w-full min-w-0 items-center gap-3">
                   <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] sm:w-32">
                     <EpisodeArtworkMedia
                       key={artwork || `missing-${episode.id}`}
@@ -1129,9 +1132,6 @@ export default function EpisodePanel({
                         </span>
                       ) : null}
                     </div>
-                    {episode.overview ? (
-                      <p className="type-secondary mt-1 line-clamp-2 text-white/65">{episode.overview}</p>
-                    ) : null}
                     <div className="type-caption text-numeric mt-1.5 flex flex-wrap gap-x-2 text-white/65">
                       {watched ? <span className="text-white/85">Watched</span> : null}
                       {releaseLabel ? <span>{releaseLabel}</span> : null}
@@ -1143,6 +1143,10 @@ export default function EpisodePanel({
                   ) : watchedSeriesId ? null : (
                     <ChevronRight className="h-4 w-4 shrink-0 text-white/20 transition group-hover:translate-x-0.5 group-hover:text-white/55" aria-hidden="true" />
                   )}
+                  </div>
+                  {episode.overview ? (
+                    <p className="type-secondary break-words text-white/65">{episode.overview}</p>
+                  ) : null}
                 </button>
                 {!isUpcoming && watchedSeriesId ? (
                   <button
@@ -1151,7 +1155,7 @@ export default function EpisodePanel({
                     aria-pressed={watched}
                     aria-label={`${watched ? 'Mark unwatched' : 'Mark watched'}: episode ${episode.episodeNumber}`}
                     title={watched ? 'Mark unwatched' : 'Mark watched'}
-                    className="mr-2 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    className="mr-2 mt-3 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                   >
                     {watched
                       ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
