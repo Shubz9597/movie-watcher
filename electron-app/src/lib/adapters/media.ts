@@ -48,6 +48,8 @@ export type Detail = {
   altTitles?: string[];
   tagline?: string | null;
   releaseDate?: string | null;
+  /** A film's first digital (streaming / to buy) release, YYYY-MM-DD. */
+  digitalRelease?: string | null;
   status?: string | null;
   directors?: string[];
   writers?: string[];
@@ -76,6 +78,8 @@ export type BackendTitleDetail = {
   seasons?: Array<{ number: number; name?: string; episodeCount?: number; airDate?: string; poster?: string }>;
   altTitles?: string[];
   anime?: boolean;
+  releaseDate?: string;
+  digitalRelease?: string;
 };
 
 // detailFromBackendTitle maps the BFF title detail onto the renderer Detail
@@ -122,5 +126,7 @@ export function detailFromBackendTitle(row: BackendTitleDetail): Detail {
     totalEpisodes: totalEpisodes > 0 ? totalEpisodes : null,
     malId: providerIds.jikan ? Number(providerIds.jikan) : null,
     anime: row.anime === true,
+    releaseDate: row.releaseDate || null,
+    digitalRelease: row.digitalRelease || null,
   };
 }

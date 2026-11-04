@@ -89,6 +89,12 @@ func mergeTitle(into *Title, from Title) {
 	if into.Runtime == 0 {
 		into.Runtime = from.Runtime
 	}
+	if into.ReleaseDate == "" {
+		into.ReleaseDate = from.ReleaseDate
+	}
+	if into.DigitalRelease == "" {
+		into.DigitalRelease = from.DigitalRelease
+	}
 	if len(into.Genres) == 0 {
 		into.Genres = from.Genres
 	}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { userMessage } from '../lib/user-error';
 import { nextUpEpisode } from '../lib/next-up';
+import { movieRelease, formatReleaseDate } from '../lib/movie-release';
 import { CheckCircle2, Circle, Download, ExternalLink, Play, RotateCcw, SlidersHorizontal, Youtube } from 'lucide-react';
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
@@ -495,6 +496,14 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
 
   const heroBackground = detail.backdropUrl || detail.posterUrl || null;
   const isMovie = kind === 'movie' || isAnimeMovie;
+  // Films not out yet (like an episode's "Coming soon"): no Play, no source
+  // search; in cinemas only, a note that copies are usually camera ones.
+  const release = isMovie ? movieRelease(detail) : { state: 'released' as const };
+  const releaseNote = release.state === 'upcoming'
+    ? [`In cinemas ${formatReleaseDate(release.releaseDate)}`, release.digitalRelease ? `to stream from ${formatReleaseDate(release.digitalRelease)}` : null].filter(Boolean).join(' · ')
+    : release.state === 'theatres'
+      ? `In cinemas now · to stream from ${formatReleaseDate(release.digitalRelease)}. Until then, copies are usually filmed in the cinema.`
+      : null;
 
   // WF03 compact toolbar (M2.3): bare Back / save / source tools. Save
   // actions are DISABLED and truthful — library persistence lands with M3,
@@ -567,6 +576,11 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white">
           <div className={platform.desktop ? 'hidden lg:block' : 'hidden'}><PageBackButton /></div>
           <div className="type-caption text-numeric flex flex-wrap items-center gap-2 font-medium text-white/70">
+            {release.state !== 'released' ? (
+              <span className="rounded-full border border-[#ffc285]/40 bg-black/20 px-3 py-1.5 text-[#ffc285] backdrop-blur">
+                {release.state === 'upcoming' ? 'Coming soon' : 'In cinemas'}
+              </span>
+            ) : null}
             <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">
               {isAnimeMovie ? 'Anime Movie' : kind === 'anime' || detail.anime ? (isMovie ? 'Anime Movie' : 'Anime Series') : kind === 'tv' ? 'Series' : 'Movie'}
             </span>
@@ -614,6 +628,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   </span>
                 ) : null}
               </div>
+              {releaseNote ? <p className="type-secondary text-[#ffc285]">{releaseNote}</p> : null}
               {detail.imdbRating ? (
                 <p className="type-caption text-white/45">
                   Information courtesy of{' '}
@@ -630,14 +645,14 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             <div aria-label="Title actions" className="flex flex-wrap items-center gap-1">
               {/* design-system.md: Play/Resume is the primary action. Without a
                   resumable source, Play opens source selection below. */}
-              <button
+              {release.state === 'upcoming' ? null : <button
                 type="button"
                 onClick={canDirectResume ? playResume : playNextUp}
                 className="mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 <Play className="h-4 w-4 fill-current" aria-hidden="true" />
                 {playLabel}
-              </button>
+              </button>}
               {/* Save toggles appear only when the server library can persist
                   them — never as unexplained disabled controls. */}
               {libraryAvailable && libraryCanonicalId ? (
@@ -761,7 +776,17 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           </div>
 
           <div ref={sourcesSectionRef} className={`min-w-0 space-y-4 scroll-mt-[calc(var(--app-safe-top)+5rem)] ${platform.desktop ? 'lg:sticky lg:top-24 lg:self-start' : ''}`}>
-            {isMovie ? (
+            {isMovie && release.state === 'upcoming' ? (
+              <section className="rounded-lg border border-white/10 bg-black/40 p-5 backdrop-blur" aria-label="Coming soon">
+                <h2 className="type-panel-title text-white">Coming soon</h2>
+                <p className="type-secondary mt-2 text-white/70">
+                  {detail.title} isn’t out yet. Sources appear once it is{release.digitalRelease ? `: it’s out to stream from ${formatReleaseDate(release.digitalRelease)}` : ''}.
+                </p>
+                {libraryAvailable && libraryCanonicalId ? (
+                  <p className="type-secondary mt-2 text-white/55">Add it to Watch later to find it again.</p>
+                ) : null}
+              </section>
+            ) : isMovie ? (
               <TorrentPanel
                 title={detail.title}
                 posterUrl={detail.posterUrl}

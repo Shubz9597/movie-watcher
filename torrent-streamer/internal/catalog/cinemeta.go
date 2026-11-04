@@ -42,6 +42,7 @@ type cinemetaMetaResponse struct {
 		Name        string        `json:"name"`
 		Type        string        `json:"type"`
 		ReleaseInfo string        `json:"releaseInfo"`
+		Released    string        `json:"released"`
 		Poster      jsonRawString `json:"poster"`
 		Background  jsonRawString `json:"background"`
 		Description string        `json:"description"`
@@ -159,6 +160,7 @@ func (p *Cinemeta) toTitle(externalID string, meta cinemetaMetaResponse) Title {
 		Type:          kind,
 		Title:         meta.Meta.Name,
 		Year:          yearFromReleaseInfo(meta.Meta.ReleaseInfo),
+		ReleaseDate:   isoDate(meta.Meta.Released),
 		Overview:      meta.Meta.Description,
 		Artwork:       artwork,
 		ProviderIDs:   providerIDs,

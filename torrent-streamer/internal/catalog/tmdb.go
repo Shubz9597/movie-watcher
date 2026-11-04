@@ -217,7 +217,34 @@ func (p *TMDb) titleFromMedia(mediaType string, id int64, title, name, originalT
 		ProviderIDs:   map[string]string{"tmdb": qualifiedID},
 		MergedFrom:    []string{"tmdb"},
 		Format:        mediaType,
+		ReleaseDate:   isoDate(date),
 	}
+}
+
+// isoDate is the YYYY-MM-DD part of a provider date, or "".
+func isoDate(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) < 10 || value[4] != '-' || value[7] != '-' {
+		return ""
+	}
+	return value[:10]
+}
+
+// tmdbDigitalRelease is a film's first digital release (TMDb release type
+// 4) in any country, or "".
+func tmdbDigitalRelease(payload tmdbDetailResponse) string {
+	first := ""
+	for _, country := range payload.ReleaseDates.Results {
+		for _, release := range country.ReleaseDates {
+			if release.Type != 4 {
+				continue
+			}
+			if date := isoDate(release.ReleaseDate); date != "" && (first == "" || date < first) {
+				first = date
+			}
+		}
+	}
+	return first
 }
 
 func containsInt(values []int, want int) bool {
@@ -291,6 +318,16 @@ type tmdbDetailResponse struct {
 			Title string `json:"title"`
 		} `json:"titles"`
 	} `json:"alternative_titles"`
+	// ReleaseDates (append_to_response=release_dates, films only): per
+	// country, each release's type (3 theatrical, 4 digital, 5 physical).
+	ReleaseDates struct {
+		Results []struct {
+			ReleaseDates []struct {
+				ReleaseDate string `json:"release_date"`
+				Type        int    `json:"type"`
+			} `json:"release_dates"`
+		} `json:"results"`
+	} `json:"release_dates"`
 }
 
 // Detail resolves a tmdb:<id> title. Qualified external ids ("movie:N" /
@@ -311,8 +348,10 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 	// Images ride along with every detail fetch (logo artwork for the player
 	// buffering overlay); one extra upstream field, no second request.
 	detailParams := map[string]string{"append_to_response": "images,alternative_titles,external_ids", "include_image_language": "en,null"}
+	// Films also bring their release dates (digital release: Coming soon).
+	movieParams := map[string]string{"append_to_response": detailParams["append_to_response"] + ",release_dates", "include_image_language": detailParams["include_image_language"]}
 	if mediaType == "" {
-		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, detailParams), &payload)
+		movieErr := fetchJSON(ctx, p.http, p.endpoint("/3/movie/"+externalID, movieParams), &payload)
 		if movieErr == nil {
 			return p.detailToTitle("movie", externalID, payload), nil
 		}
@@ -326,11 +365,11 @@ func (p *TMDb) Detail(ctx context.Context, request DetailRequest) (Title, error)
 		}
 		return Title{}, ErrNotFound
 	}
-	path := "/3/movie/"
+	path, params := "/3/movie/", movieParams
 	if mediaType == "tv" {
-		path = "/3/tv/"
+		path, params = "/3/tv/", detailParams
 	}
-	if err := fetchJSON(ctx, p.http, p.endpoint(path+externalID, detailParams), &payload); err != nil {
+	if err := fetchJSON(ctx, p.http, p.endpoint(path+externalID, params), &payload); err != nil {
 		return Title{}, err
 	}
 	return p.detailToTitle(mediaType, externalID, payload), nil
@@ -358,6 +397,9 @@ func (p *TMDb) detailToTitle(mediaType, externalID string, payload tmdbDetailRes
 	}
 	if fallbackLogo != "" {
 		title.Artwork["logo"] = "https://image.tmdb.org/t/p/w500" + fallbackLogo
+	}
+	if mediaType != "tv" {
+		title.DigitalRelease = tmdbDigitalRelease(payload)
 	}
 	imdbID := strings.TrimSpace(payload.IMDbID)
 	if imdbID == "" {

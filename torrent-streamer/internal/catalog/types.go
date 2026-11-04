@@ -34,6 +34,12 @@ type Title struct {
 	// Search uses both to label and order franchise entries.
 	Format     string  `json:"format,omitempty"`
 	Popularity float64 `json:"popularity,omitempty"`
+	// ReleaseDate (YYYY-MM-DD) is a film's release or a show's first air
+	// date; DigitalRelease a film's first digital (streaming / to buy)
+	// release, when good copies usually appear. Clients mark a title "Coming
+	// soon" until then.
+	ReleaseDate    string `json:"releaseDate,omitempty"`
+	DigitalRelease string `json:"digitalRelease,omitempty"`
 
 	// Detail-only enrichment (contracts/v2-catalog-api.md §title detail).
 	Runtime       int               `json:"runtime,omitempty"`
