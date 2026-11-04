@@ -501,7 +501,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="truncate text-base font-medium text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.jobId).episodeTitle) : item.title}</p>
+              <p className="break-words text-base font-medium leading-snug text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.jobId).episodeTitle) : item.title}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitleLabel, formatSize(item.sizeBytes), subtitleSummary(item.subtitles)].filter(Boolean).join(' · ')}
               </p>
@@ -602,7 +602,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="truncate text-base font-medium text-white">{label}</p>
+              <p className="break-words text-base font-medium leading-snug text-white">{label}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
               </p>
@@ -751,7 +751,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
               >
                 <DownloadPoster src={group.posterUrl} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-base font-medium text-white">{group.title}</p>
+                  <p className="break-words text-base font-medium leading-snug text-white">{group.title}</p>
                   <p className="type-secondary text-numeric mt-0.5 text-white/60">
                     {[`${group.count} ${group.count === 1 ? 'episode' : 'episodes'}`, formatSize(group.bytes)].filter(Boolean).join(' · ')}
                   </p>

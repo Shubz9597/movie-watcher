@@ -1121,8 +1121,8 @@ export default function EpisodePanel({
                     ) : null}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <div className="line-clamp-2 text-sm font-medium leading-5 text-white/90">{episode.name}</div>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <div className="min-w-0 break-words text-sm font-medium leading-5 text-white/90">{episode.name}</div>
                       {isUpcoming ? (
                         <span className="type-caption shrink-0 rounded border border-white/15 px-1.5 py-0.5 text-white/70">
                           Coming soon
@@ -1204,7 +1204,7 @@ export default function EpisodePanel({
                 </span>
               </div>
               <div className="min-w-0">
-                <h3 ref={sourceHeadingRef} data-source-heading tabIndex={-1} className="line-clamp-2 text-base text-white/85 outline-none">{activeEpisode.name}</h3>
+                <h3 ref={sourceHeadingRef} data-source-heading tabIndex={-1} className="break-words text-base text-white/85 outline-none">{activeEpisode.name}</h3>
                 <p className="type-secondary mt-1 text-white/65">Season {activeEpisode.seasonNumber ?? selectedSeason} · Episode {activeEpisode.episodeNumber}</p>
                 {activeEpisode.availableAt || activeEpisode.airDate ? (
                   <p className="source-episode-date type-secondary text-numeric mt-1 text-white/65">{formatAirDate(activeEpisode.availableAt || activeEpisode.airDate)}</p>
