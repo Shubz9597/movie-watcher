@@ -65,9 +65,9 @@ function PosterCardBase({
       onFocus={startPrefetchTimer}
       onBlur={clearPrefetchTimer}
       aria-label={`Open ${movie.title}`}
-      className="group block w-full text-left focus-visible:outline-none"
+      className="poster-card group block w-full text-left focus-visible:outline-none"
     >
-      <div className="relative aspect-[2/3] overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] transition duration-300 group-hover:-translate-y-1 group-hover:border-white/30 group-focus-visible:ring-2 group-focus-visible:ring-white/60">
+      <div className="poster-art relative aspect-[2/3] overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] transition duration-300 group-hover:-translate-y-1 group-hover:border-white/30 group-focus-visible:ring-2 group-focus-visible:ring-white/60">
         {posterUrl && !posterFailed ? (
           <img
             src={posterUrl}
@@ -87,11 +87,11 @@ function PosterCardBase({
 
         <div className="absolute inset-0 bg-black/0 transition group-hover:bg-black/25" />
 
-        {typeof rank === 'number' ? (
+        {typeof rank === 'number' && rank <= 3 ? (
           // No backdrop blur: one blur layer per rail card is a mobile-GPU
           // scroll killer; the solid scrim is equally readable.
-          <span className="type-caption text-numeric absolute left-2.5 top-2.5 rounded bg-black/80 px-2 py-1 font-medium text-white/90">
-            {String(rank).padStart(2, '0')}
+          <span className="poster-rank type-caption text-numeric absolute left-2.5 top-2.5 rounded bg-black/80 px-2 py-1 font-medium text-white/90">
+            #{rank}
           </span>
         ) : null}
 
@@ -115,7 +115,7 @@ function PosterCardBase({
         <h3 className="line-clamp-2 text-sm font-medium leading-snug text-white/90 transition group-hover:text-white">
           {movie.title}
         </h3>
-        <div className="type-caption text-numeric mt-1 flex items-center gap-2 text-white/70">
+        <div className="poster-meta type-caption text-numeric mt-1 flex items-center gap-2 text-white/70">
           {label ? <span>{label}</span> : null}
           {label && movie.year ? <span aria-hidden="true">·</span> : null}
           {movie.year ? <span>{movie.year}</span> : null}

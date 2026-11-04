@@ -108,7 +108,7 @@ function CarouselRow({
   };
 
   return (
-    <section className="tw-cull py-6 md:py-10">
+    <section className="catalog-shelf tw-cull py-6 md:py-10">
       <div className="shelf-heading mb-5">
         <div className="min-w-0">
           <h2 className="type-row-title text-white">{title}</h2>
@@ -146,7 +146,7 @@ function CarouselRow({
                       controls stay clear of the rank badge and readable on
                       busy poster art. */}
                   {libraryKind ? (
-                    <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1.5">
+                    <div className="poster-actions absolute right-1.5 top-1.5 z-10 flex flex-col gap-1.5">
                       <LibraryToggle canonicalId={canonicalIdFor(movie)} field="watch-later" variant="overlay" />
                       <LibraryToggle canonicalId={canonicalIdFor(movie)} field="favourites" variant="overlay" />
                     </div>
@@ -159,7 +159,7 @@ function CarouselRow({
                 <button
                   type="button"
                   onClick={handleSeeAll}
-                  className="group block w-full text-left focus-visible:outline-none"
+                  className="shelf-view-all group block w-full text-left focus-visible:outline-none"
                   aria-label={`View all ${title}`}
                 >
                   <span className="flex aspect-[2/3] w-full items-center justify-center rounded-lg border border-white/[0.14] bg-white/[0.035] text-white/65 transition duration-300 group-hover:-translate-y-1 group-hover:border-white/35 group-hover:bg-white/[0.07] group-hover:text-white group-focus-visible:ring-2 group-focus-visible:ring-white/60">

@@ -1,0 +1,56 @@
+{
+  "screenshots": [
+    {
+      "name": "home",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "shelves",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "title-movie",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "title-movie-sources",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "title-series",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "title-series-episodes",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "library",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "search",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "downloads",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "settings",
+      "width": 390,
+      "scrollWidth": 390
+    }
+  ],
+  "runtimeErrors": [],
+  "safeAreaEmulation": "chrome-override"
+}

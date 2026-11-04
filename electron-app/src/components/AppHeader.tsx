@@ -9,7 +9,7 @@ const GlobalSearch = lazy(loadGlobalSearch);
 
 type Navigate = (path: string, params?: Record<string, string>) => void;
 
-export default function AppHeader({ navigate }: { navigate: Navigate }) {
+export default function AppHeader({ navigate, routePath = 'home' }: { navigate: Navigate; routePath?: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
 
@@ -57,12 +57,12 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
   };
 
   return (
-    <header className="sticky top-10 z-40 border-b border-white/[0.08] bg-[#0a0a0a]/95 backdrop-blur-xl">
+    <header className="app-header sticky top-10 z-40 border-b border-white/[0.08] bg-[#0a0a0a]/95 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-4 px-5 md:px-8 xl:px-12">
         <button
           type="button"
           onClick={() => navigate('home')}
-          className="group inline-flex h-12 w-16 shrink-0 items-center justify-center rounded-xl transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+          className="brand-home group inline-flex h-12 shrink-0 items-center gap-2 rounded-xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
           aria-label="TorWatch home"
         >
           <img
@@ -70,9 +70,11 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
             alt=""
             className="h-9 w-9 object-contain transition-opacity group-hover:opacity-85"
           />
+          <span className="brand-wordmark">Tor<span>Watch</span></span>
         </button>
 
         <nav className="hidden items-center gap-1 border-l border-white/10 pl-4 lg:flex" aria-label="Browse library">
+          <button type="button" onClick={() => navigate('home')} aria-current={routePath === 'home' ? 'page' : undefined} className="header-nav-home min-h-11 rounded-full px-3.5 py-2 text-sm text-white/65 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50">Discover</button>
           <button
             type="button"
             onClick={() => browse('Trending movies', 'tmdb:trending:movie', 'movie')}
@@ -108,6 +110,8 @@ export default function AppHeader({ navigate }: { navigate: Navigate }) {
           <button
             type="button"
             onClick={() => navigate('library', { collection: 'watch-later' })}
+            aria-label="Library"
+            aria-current={routePath.startsWith('library') ? 'page' : undefined}
             className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white/80 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 md:w-auto md:gap-2.5 md:px-3.5"
           >
             <LibraryBig className="h-5 w-5 shrink-0" strokeWidth={1.9} aria-hidden="true" />

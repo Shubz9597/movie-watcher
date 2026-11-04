@@ -1,0 +1,36 @@
+{
+  "screenshots": [
+    {
+      "name": "downloads",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "downloads-end",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "downloads-series",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "downloads-select",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "downloads-empty",
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "name": "downloads-error",
+      "width": 390,
+      "scrollWidth": 390
+    }
+  ],
+  "runtimeErrors": [],
+  "safeAreaEmulation": "chrome-override"
+}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { userMessage } from '../lib/user-error';
 import { nextUpEpisode } from '../lib/next-up';
 import { movieRelease, formatReleaseDate } from '../lib/movie-release';
-import { CheckCircle2, Circle, Download, ExternalLink, Play, RotateCcw, SlidersHorizontal, Youtube } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, Play, RotateCcw, SlidersHorizontal, Youtube } from 'lucide-react';
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
@@ -552,9 +552,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
   };
 
   return (
-    <div className="relative isolate min-h-screen px-5 pb-14 pt-6 md:px-8 lg:px-12">
+    <div className="title-page relative isolate min-h-screen px-5 pb-14 pt-6 md:px-8 lg:px-12">
       {pullIndicator}
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-[#0a0a0a]">
+      <div className="title-backdrop pointer-events-none fixed inset-0 -z-10 bg-[#0a0a0a]">
         {heroBackground ? (
           <img
             key={heroBackground}
@@ -569,12 +569,12 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           />
         ) : null}
       </div>
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/85 to-[#0a0a0a]/20" />
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-t from-[#0a0a0a] via-transparent to-black/15" />
+      <div className="title-scrim pointer-events-none fixed inset-0 -z-10 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/85 to-[#0a0a0a]/20" />
+      <div className="title-scrim title-scrim--bottom pointer-events-none fixed inset-0 -z-10 bg-gradient-to-t from-[#0a0a0a] via-transparent to-black/15" />
 
       <div className="mx-auto max-w-[1600px] space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white">
-          <div className={platform.desktop ? 'hidden lg:block' : 'hidden'}><PageBackButton /></div>
+        <div className="title-topline flex flex-wrap items-center justify-between gap-3 text-sm text-white">
+          <div className="hidden lg:block"><PageBackButton /></div>
           <div className="type-caption text-numeric flex flex-wrap items-center gap-2 font-medium text-white/70">
             {release.state !== 'released' ? (
               <span className="rounded-full border border-[#ffc285]/40 bg-black/20 px-3 py-1.5 text-[#ffc285] backdrop-blur">
@@ -604,7 +604,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
-              <h1 className="type-feature-title !text-[1.75rem] !leading-[2.125rem] text-white md:!text-[4.5rem] md:!leading-[1.02]">{detail.title}</h1>
+              <h1 className="type-feature-title !text-[2rem] !leading-[2.375rem] text-white md:!text-[4.5rem] md:!leading-[1.02]">{detail.title}</h1>
               {detail.tagline ? <p className="measure-compact type-body text-white/70">{detail.tagline}</p> : null}
               <div className="type-secondary text-numeric flex flex-wrap items-center gap-2 text-white/70">
                 {metaBadges.map((item, index) => (
@@ -624,6 +624,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                     >
                       <IMDbMark />
                       <span>{detail.imdbRating.toFixed(1)}</span>
+                      {detail.imdbVotes ? <span className="text-white/45">({formatNumber(detail.imdbVotes)} votes)</span> : null}
                     </a>
                   </span>
                 ) : null}
@@ -648,7 +649,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
               {release.state === 'upcoming' ? null : <button
                 type="button"
                 onClick={canDirectResume ? playResume : playNextUp}
-                className="mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                className="cinema-primary mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 <Play className="h-4 w-4 fill-current" aria-hidden="true" />
                 {playLabel}
@@ -672,7 +673,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                 >
                   {movieWatched
                     ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
-                    : <Circle className="h-6 w-6 text-white/70" aria-hidden="true" />}
+                    : <CheckCircle2 className="h-6 w-6 text-white/70" aria-hidden="true" />}
                 </button>
               ) : null}
               {nativeDownloadsSupported() ? (
@@ -703,7 +704,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
 
             <div className="flex flex-wrap gap-2 text-sm text-white/65">
               {detail.genres?.map((genre) => (
-                <span key={genre} className="rounded-full border border-white/12 bg-black/15 px-3 py-1.5 backdrop-blur">
+                <span key={genre} className="genre-chip rounded-full border border-white/12 bg-black/15 px-3 py-1.5 backdrop-blur">
                   {genre}
                 </span>
               ))}
@@ -724,6 +725,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
               </div>
             ) : null}
 
+            {detail.directors?.length || detail.writers?.length || detail.networks?.length || (detail.imdbVotes && !detail.imdbRating) ? (
             <dl className="grid gap-x-10 gap-y-5 border-t border-white/[0.08] pt-6 md:grid-cols-2">
               {detail.directors?.length ? (
                 <div>
@@ -743,19 +745,16 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   <dd className="type-body mt-1.5 text-white/85">{detail.networks.join(', ')}</dd>
                 </div>
               ) : null}
-              {detail.totalEpisodes ? (
-                <div>
-                  <dt className="type-secondary font-medium text-white/60">Episodes</dt>
-                  <dd className="type-body text-numeric mt-1.5 text-white/85">{detail.totalEpisodes}</dd>
-                </div>
-              ) : null}
-              {detail.imdbVotes ? (
+              {/* The episode count lives in the Episodes panel header. */}
+              {/* With a rating, the vote count already sits beside it. */}
+              {detail.imdbVotes && !detail.imdbRating ? (
                 <div>
                   <dt className="type-secondary font-medium text-white/60">IMDb votes</dt>
                   <dd className="type-body text-numeric mt-1.5 text-white/85">{formatNumber(detail.imdbVotes)}</dd>
                 </div>
               ) : null}
             </dl>
+            ) : null}
 
             {detail.cast?.length ? (
               <div>

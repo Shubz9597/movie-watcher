@@ -56,7 +56,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
         return (
           <article
             key={`${item.seriesId}-${item.season}-${item.episode}`}
-            className="w-[240px] shrink-0 snap-start sm:w-[260px]"
+            className="continue-card w-[240px] shrink-0 snap-start sm:w-[260px]"
           >
             <div className="relative aspect-video overflow-hidden rounded-lg border border-white/10 bg-[var(--surface-raised)]">
               {item.posterPath ? (

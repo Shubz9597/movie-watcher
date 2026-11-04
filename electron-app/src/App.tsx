@@ -133,7 +133,7 @@ export default function App() {
         <WindowChrome />
         {!isPlayerPage ? (
           <>
-            <AppHeader navigate={navigate} />
+            <AppHeader navigate={navigate} routePath={route.path} />
             {/* As on the phone: Reconnecting… / Server offline / Connected. */}
             <ConnectionBanner stickTo="top-[6.5rem]" />
             <RuntimeStatusBar />

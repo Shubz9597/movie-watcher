@@ -1,6 +1,6 @@
 // Electron-compatible wrapper for TorrentPanel that fixes API calls
 import { userMessage } from '../lib/user-error';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
 import { Button } from './ui/button';
 import { ArrowDown, ArrowUp, Loader2, Play, RotateCcw } from 'lucide-react';
@@ -68,6 +68,14 @@ const formatDate = (iso?: string) => {
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
+
+// Release names are long dotted tokens: offer line breaks after their
+// separators so wrapping never splits a word ("1080 / p").
+function breakableReleaseName(title: string) {
+  return title.split(/(?<=[./_\-\]])/).map((part, index) => (
+    <Fragment key={index}>{index > 0 ? <wbr /> : null}{part}</Fragment>
+  ));
+}
 
 function qualityFromTitle(title: string) {
   const lower = title.toLowerCase();
@@ -356,7 +364,7 @@ export default function TorrentPanel({
   }
 
   return (
-    <aside data-source-panel className={`flex min-w-0 max-w-full flex-col bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
+    <aside data-source-panel className={`source-panel flex min-w-0 max-w-full flex-col bg-[#0a0a0a] scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden lg:max-h-[min(78dvh,760px)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-4">
         <div className="min-w-0">
           <h3 className="type-panel-title text-white">Sources</h3>
@@ -434,7 +442,7 @@ export default function TorrentPanel({
                 >
                   <div className="px-5 py-4">
                     <div className="flex items-start gap-3 sm:items-center sm:justify-between">
-                      <button type="button" aria-label={`Play source ${t.title}`} onClick={() => { setSelectedKey(torrentActionKey); void playInMpv(t); }} disabled={Boolean(busyActionId)} className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-black disabled:opacity-50 sm:hidden ${FOCUS_RING_CLASS}`}>
+                      <button type="button" aria-label={`Play source ${t.title}`} onClick={() => { setSelectedKey(torrentActionKey); void playInMpv(t); }} disabled={Boolean(busyActionId)} className={`source-play inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-black disabled:opacity-50 sm:hidden ${FOCUS_RING_CLASS}`}>
                         {busyActionId === playActionId ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
                       </button>
                       {/* WF06: tapping a row selects it --- playback is a
@@ -450,7 +458,7 @@ export default function TorrentPanel({
                       >
                         <div className="min-w-0 flex-1">
                             <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <p className={`break-all text-sm ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{t.title}</p>
+                              <p className={`source-name text-sm [overflow-wrap:anywhere] ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{breakableReleaseName(t.title)}</p>
                               {quality ? (
                                 <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">
                                   {quality}
@@ -514,7 +522,7 @@ export default function TorrentPanel({
                                   void playInMpv(t);
                                 }}
                                 disabled={Boolean(busyActionId)}
-                                className="min-h-12 rounded-lg bg-white px-5 text-black hover:bg-white/85"
+                                className="source-play min-h-12 rounded-lg bg-white px-5 text-black hover:bg-white/85"
                               >
                                 <Play className="mr-2 h-4 w-4 fill-current" aria-hidden="true" />
                                 {busyActionId === playActionId ? 'Opening…' : 'Play'}
@@ -571,7 +579,7 @@ export default function TorrentPanel({
                         onClick={() => setDetailsOpenKey(detailsOpen ? null : torrentActionKey)}
                         aria-expanded={detailsOpen}
                         aria-controls={`source-details-${idx}`}
-                        className={`inline-flex min-h-12 items-center gap-1 rounded-lg px-3 text-sm text-white/70 transition hover:text-white ${FOCUS_RING_CLASS}`}
+                        className={`source-details-toggle inline-flex min-h-12 items-center gap-1 rounded-lg px-3 text-sm text-white/70 transition hover:text-white ${FOCUS_RING_CLASS}`}
                       >
                         {detailsOpen ? 'Hide details' : 'Details'}
                       </button>

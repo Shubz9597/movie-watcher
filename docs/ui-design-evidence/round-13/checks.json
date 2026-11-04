@@ -1,0 +1,96 @@
+{
+  "fixtureData": true,
+  "screenshots": [
+    {
+      "name": "home-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "shelves-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "browse-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "title-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "library-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "home-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "shelves-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "browse-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "title-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "library-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "search-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    }
+  ],
+  "checks": [
+    {
+      "device": "desktop",
+      "runtimeErrors": []
+    },
+    {
+      "device": "phone",
+      "runtimeErrors": []
+    },
+    {
+      "mobileSearchToTitle": true
+    },
+    {
+      "width": 320,
+      "scrollWidth": 320
+    },
+    {
+      "width": 768,
+      "scrollWidth": 768
+    },
+    {
+      "width": 1024,
+      "scrollWidth": 1024
+    }
+  ]
+}

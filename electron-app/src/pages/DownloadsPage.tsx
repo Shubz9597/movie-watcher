@@ -8,7 +8,7 @@
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { useEffect, useState } from 'react';
 import type { HTMLAttributes } from 'react';
-import { Check, ChevronRight, Film, ListChecks, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Download, Film, ListChecks, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from '../platform/contracts';
 import { SelectionSurface } from '../components/primitives';
@@ -119,15 +119,17 @@ function episodeLabel(episode: number | undefined, name: string | undefined): st
 
 // Episode rows lead with the episode still (16:9), stored on the device so
 // it also shows offline.
-function EpisodeStill({ src }: { src?: string }) {
+function EpisodeStill({ src, label }: { src?: string; label?: string }) {
   const [failed, setFailed] = useState(false);
   return (
     <div className="relative aspect-video w-[104px] shrink-0 self-start overflow-hidden rounded-lg bg-white/[0.06] sm:w-[144px]">
       {src && !failed ? (
         <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover" />
       ) : (
-        <div className="grid h-full place-items-center text-white/25" aria-hidden="true">
-          <Film className="h-5 w-5" aria-hidden="true" />
+        // No still: a quiet tile that names the episode (the play mark of a
+        // finished row sits over its centre).
+        <div className="download-still-empty h-full" aria-hidden="true">
+          {label ? <span className="absolute left-2 top-1.5 text-xs font-semibold text-white/75">{label}</span> : null}
         </div>
       )}
     </div>
@@ -136,10 +138,10 @@ function EpisodeStill({ src }: { src?: string }) {
 
 // Unknown totals stay indeterminate (spec D2): no invented percentage.
 /** The tick circle a row shows while selecting (state is on the row). */
-function SelectMark({ checked }: { checked: boolean }) {
+function SelectMark({ checked, disabled = false }: { checked: boolean; disabled?: boolean }) {
   return (
     <span aria-hidden="true" className="inline-flex h-12 w-12 shrink-0 items-center justify-center">
-      <span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition ${checked ? 'border-white bg-white text-black' : 'border-white/50'}`}>
+      <span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition ${checked ? 'border-white bg-white text-black' : disabled ? 'border-dashed border-white/25' : 'border-white/50'}`}>
         {checked ? <Check className="h-4 w-4" strokeWidth={3} /> : null}
       </span>
     </span>
@@ -158,7 +160,7 @@ function DownloadProgress({ value, label }: { value?: number; label: string }) {
       {...(determinate ? { 'aria-valuenow': value } : {})}
     >
       <div
-        className={`h-full rounded-full bg-white transition-[width] duration-500 ${determinate ? '' : 'motion-safe:animate-pulse'}`}
+        className={`download-progress-fill h-full rounded-full bg-white transition-[width] duration-500 ${determinate ? '' : 'motion-safe:animate-pulse'}`}
         style={{ width: determinate ? `${value}%` : '38%' }}
       />
     </div>
@@ -226,11 +228,11 @@ type DownloadGroup =
 // anything without series identity stay individual rows.
 function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[]): DownloadGroup[] {
   const groups: DownloadGroup[] = [];
-  const shows = new Map<string, Extract<DownloadGroup, { kind: 'show' }> & { downloading: number; preparing: number; failed: number }>();
+  const shows = new Map<string, Extract<DownloadGroup, { kind: 'show' }> & { downloading: number; preparing: number; failed: number; inReceived: number; inTotal: number }>();
   const showFor = (seriesId: string, title: string, posterUrl?: string | null) => {
     let show = shows.get(seriesId);
     if (!show) {
-      show = { kind: 'show', seriesId, title, posterUrl, count: 0, bytes: 0, summary: null, needsAttention: false, downloading: 0, preparing: 0, failed: 0 };
+      show = { kind: 'show', seriesId, title, posterUrl, count: 0, bytes: 0, summary: null, needsAttention: false, downloading: 0, preparing: 0, failed: 0, inReceived: 0, inTotal: 0 };
       shows.set(seriesId, show);
       groups.push(show);
     }
@@ -256,11 +258,16 @@ function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[
     show.count += 1;
     show.bytes += item.sizeBytes ?? 0;
     if (item.transferState === 'failed' || (item.transferState == null && item.state === 'needs-repair')) show.failed += 1;
-    else if (item.transferState && item.transferState !== 'ready') show.downloading += 1;
+    else if (item.transferState && item.transferState !== 'ready') {
+      show.downloading += 1;
+      show.inReceived += item.receivedBytes ?? 0;
+      show.inTotal += item.sizeBytes ?? 0;
+    }
   }
   for (const show of shows.values()) {
     const parts = [
-      show.downloading ? `${show.downloading} downloading` : null,
+      // How far the show's downloads are, when their sizes are known.
+      show.downloading ? `${show.downloading} downloading${show.inTotal > 0 ? ` · ${progressPercent(show.inReceived, show.inTotal)}%` : ''}` : null,
       show.preparing ? `${show.preparing} preparing` : null,
       show.failed ? `${show.failed} need${show.failed === 1 ? 's' : ''} repair` : null,
     ].filter(Boolean);
@@ -270,9 +277,10 @@ function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[
   return groups;
 }
 
-const ROW_CLASS = 'flex gap-4 rounded-lg bg-[var(--surface-raised)] p-3 sm:p-4';
+// Every row is flat like a finished download (one list, not cards).
+const ROW_CLASS = '-mx-2 flex gap-3 rounded-lg px-2 py-1.5 sm:gap-4';
 const CANCEL_CLASS = `inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white disabled:text-white/35 ${FOCUS_RING_CLASS}`;
-const ROW_ACTION_CLASS = `${ACTION_SECONDARY_CLASS} px-4`;
+const ROW_ACTION_CLASS = `download-row-action ${ACTION_SECONDARY_CLASS} px-4`;
 
 export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps) {
   const { downloads } = usePlatform();
@@ -294,6 +302,14 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   // Bulk delete: holding a finished row (or Select) starts selecting; null
   // means not selecting.
   const [selection, setSelection] = useState<Set<string> | null>(null);
+  // Selecting owns the screen's actions: the shell's top-bar actions step
+  // aside (cinema.css) so only Select all / Done remain.
+  const selectingActive = selection != null;
+  useEffect(() => {
+    if (!selectingActive) return undefined;
+    document.body.classList.add('downloads-selecting');
+    return () => document.body.classList.remove('downloads-selecting');
+  }, [selectingActive]);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [bulkRemoving, setBulkRemoving] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -497,11 +513,11 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     const fraction = preparingFraction(progress);
     return (
       <li key={`pending-${item.jobId}`} className={ROW_CLASS}>
-        {episodeView ? <EpisodeStill src={downloadMeta(item.jobId).still} /> : <DownloadPoster src={downloadMeta(item.jobId).poster ?? item.posterUrl} />}
+        {episodeView ? <EpisodeStill src={downloadMeta(item.jobId).still} label={item.episode != null ? `E${item.episode > 1000 ? item.episode - 1000 : item.episode}` : undefined} /> : <DownloadPoster src={downloadMeta(item.jobId).poster ?? item.posterUrl} />}
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="break-words text-base font-medium leading-snug text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.jobId).episodeTitle) : item.title}</p>
+              <p className="break-words text-[15px] font-semibold leading-snug text-white">{episodeView ? episodeLabel(item.episode, downloadMeta(item.jobId).episodeTitle) : item.title}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitleLabel, formatSize(item.sizeBytes), subtitleSummary(item.subtitles)].filter(Boolean).join(' · ')}
               </p>
@@ -523,7 +539,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             </span>
             {fraction != null ? (
               <div className="h-1 w-full overflow-hidden rounded-full bg-white/15" role="progressbar" aria-label="Server download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.floor(fraction * 100)}>
-                <div className="h-full rounded-full bg-white/80" style={{ width: `${fraction * 100}%` }} />
+                <div className="download-progress-fill h-full rounded-full bg-white/80" style={{ width: `${fraction * 100}%` }} />
               </div>
             ) : null}
             {failed ? (
@@ -611,7 +627,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             className={`group flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left sm:gap-4 ${FOCUS_RING_CLASS}`}
           >
             <span className="relative shrink-0">
-              {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
+              {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} label={item.episode != null ? `E${item.episode > 1000 ? item.episode - 1000 : item.episode}` : undefined} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
               <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
                 <span className={`grid h-10 w-10 place-items-center rounded-full border border-white/70 bg-black/55 transition group-hover:bg-black/75 ${selecting ? 'opacity-0' : ''}`}>
                   <Play className="ml-0.5 h-4 w-4 fill-white text-white" />
@@ -619,12 +635,12 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
               </span>
               {watched !== undefined ? (
                 <span className="absolute inset-x-0 bottom-0 h-1 overflow-hidden rounded-b-lg bg-white/25" aria-hidden="true">
-                  <span className="block h-full bg-red-600" style={{ width: `${watched}%` }} />
+                  <span className="download-progress-fill block h-full bg-red-600" style={{ width: `${watched}%` }} />
                 </span>
               ) : null}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block break-words text-[15px] font-medium leading-snug text-white">{label}</span>
+              <span className="block break-words text-[15px] font-semibold leading-snug text-white">{label}</span>
               <span className="type-secondary text-numeric mt-1 block truncate text-white/60">
                 {[episodeView ? null : item.subtitle, size, resumes ? `${watched}% watched` : null].filter(Boolean).join(' · ')}
               </span>
@@ -641,7 +657,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
               }}
               aria-label={`Remove ${item.title}`}
               title="Remove download"
-              className={`inline-flex h-12 w-10 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white ${FOCUS_RING_CLASS}`}
+              className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white ${FOCUS_RING_CLASS}`}
             >
               <Trash2 className="h-5 w-5" aria-hidden="true" />
             </button>
@@ -651,17 +667,17 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     }
     return (
       <li key={item.downloadId} className={`${ROW_CLASS} select-none [-webkit-touch-callout:none] ${rowState}`} {...rowProps}>
-        {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
+        {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} label={item.episode != null ? `E${item.episode > 1000 ? item.episode - 1000 : item.episode}` : undefined} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 pt-1">
-              <p className="break-words text-base font-medium leading-snug text-white">{label}</p>
+              <p className="break-words text-[15px] font-semibold leading-snug text-white">{label}</p>
               <p className="type-secondary text-numeric mt-0.5 truncate text-white/60">
                 {[episodeView ? null : item.subtitle, ready ? size : null].filter(Boolean).join(' · ')}
               </p>
             </div>
-            {selecting && selectable ? (
-              <SelectMark checked={checked} />
+            {selecting ? (
+              <SelectMark checked={checked} disabled={!selectable} />
             ) : !ready && item.transferState !== 'verifying' ? (
               <button
                 type="button"
@@ -710,7 +726,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
           ) : (
             <div aria-live="polite">
               <div className={`type-secondary mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${needsRepair ? 'text-red-300' : 'text-white/70'}`}>
-                <span>{transferStatus(item)}</span>
+                {/* A plain "Downloading" adds nothing above its own progress
+                    bar; other states (Wi-Fi, paused, checking) still say so. */}
+                {item.transferState === 'downloading' && !item.waitingForWifi && amount ? null : <span>{transferStatus(item)}</span>}
                 {inTransfer && amount ? <span className="text-numeric shrink-0 text-white/60">{amount}</span> : null}
               </div>
               {inTransfer ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
@@ -719,7 +737,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
               ) : null}
               <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 {rate || eta ? (
-                  <div className="type-secondary text-numeric flex items-center gap-4 text-white/60">
+                  <div className="download-rate type-secondary text-numeric flex items-center gap-4 text-white/60">
                     {rate ? <span>Speed <span className="text-white/85">{rate}</span></span> : null}
                     {eta ? <span>ETA <span className="text-white/85">{eta}</span></span> : null}
                   </div>
@@ -800,19 +818,19 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
                     ...(selectable ? longPress.bind(() => startSelecting(showIds)) : {}),
                     onClick: () => navigate('downloads-series', { series: group.seriesId }),
                   })}
-                className={`${ROW_CLASS} w-full select-none items-center text-left transition [-webkit-touch-callout:none] hover:bg-white/[0.06] disabled:opacity-50 ${checked ? 'ring-2 ring-white/80' : ''} ${FOCUS_RING_CLASS}`}
+                className={`${ROW_CLASS} w-[calc(100%+1rem)] select-none items-center text-left transition [-webkit-touch-callout:none] hover:bg-white/[0.06] disabled:opacity-50 ${checked ? 'ring-2 ring-white/80' : ''} ${FOCUS_RING_CLASS}`}
               >
                 <DownloadPoster src={group.posterUrl} />
                 <div className="min-w-0 flex-1">
-                  <p className="break-words text-base font-medium leading-snug text-white">{group.title}</p>
+                  <p className="break-words text-[15px] font-semibold leading-snug text-white">{group.title}</p>
                   <p className="type-secondary text-numeric mt-0.5 text-white/60">
                     {[`${group.count} ${group.count === 1 ? 'episode' : 'episodes'}`, formatSize(group.bytes)].filter(Boolean).join(' · ')}
                   </p>
                   {group.summary ? (
-                    <p className={`type-secondary mt-2 ${group.needsAttention ? 'text-red-300' : 'text-white/70'}`}>{group.summary}</p>
+                    <p className={`type-secondary mt-1.5 ${group.needsAttention ? 'text-red-300' : 'download-active-text text-white/70'}`}>{group.summary}</p>
                   ) : null}
                 </div>
-                {selecting ? (selectable ? <SelectMark checked={checked} /> : null) : <ChevronRight className="h-5 w-5 shrink-0 text-white/50" aria-hidden="true" />}
+                {selecting ? <SelectMark checked={checked} disabled={!selectable} /> : <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center" aria-hidden="true"><ChevronRight className="h-5 w-5 text-white/50" /></span>}
               </button>
             </li>
           );
@@ -856,7 +874,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
 
 
   return (
-    <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
+    <section className="downloads-page mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
       {selection ? (
         // Selecting: what is ticked up here; the actions sit in the bar at
@@ -877,7 +895,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             <button
               type="button"
               onClick={stopSelecting}
-              className={`inline-flex min-h-11 shrink-0 items-center rounded-full bg-white px-4 text-sm font-semibold text-black transition hover:bg-white/90 ${FOCUS_RING_CLASS}`}
+              className={`download-done inline-flex min-h-11 shrink-0 items-center rounded-full bg-white px-4 text-sm font-semibold text-black transition hover:bg-white/90 ${FOCUS_RING_CLASS}`}
             >
               Done
             </button>
@@ -905,7 +923,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         <div
           role="toolbar"
           aria-label="Selected downloads"
-          className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0a0a0a] pt-3 pb-[calc(var(--app-safe-bottom)+0.75rem)] pl-[max(1rem,var(--app-safe-left))] pr-[max(1rem,var(--app-safe-right))]"
+          className="download-select-bar fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0a0a0a] pt-3 pb-[calc(var(--app-safe-bottom)+0.75rem)] pl-[max(1rem,var(--app-safe-left))] pr-[max(1rem,var(--app-safe-right))]"
         >
           <div className="mx-auto max-w-4xl">
             <button
@@ -923,9 +941,15 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
         </div>
       ) : null}
       {!seriesId && storage && inventory?.items.length ? (
-        <p className="type-secondary text-numeric mt-1 text-white/60">
-          {formatSize(storage.usedBytes) ?? '0 MB'} used · {formatSize(storage.freeBytes) ?? '0 MB'} free
-        </p>
+        <div className="download-storage mt-2 max-w-4xl">
+          <p className="type-secondary text-numeric text-white/60">
+            {formatSize(storage.usedBytes) ?? '0 MB'} used · {formatSize(storage.freeBytes) ?? '0 MB'} free
+          </p>
+          {/* How full the device is, at a glance. */}
+          <div className="download-storage-meter mt-2 h-1 overflow-hidden rounded-full bg-white/10" aria-hidden="true">
+            <div className="download-progress-fill h-full rounded-full bg-white" style={{ width: `${Math.max(2, Math.min(100, (storage.usedBytes / Math.max(1, storage.usedBytes + storage.freeBytes)) * 100))}%` }} />
+          </div>
+        </div>
       ) : null}
 
       {/* Placeholders only before the first read: later refreshes (pause,
@@ -940,7 +964,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       ) : inventory?.unreadable ? (
         // Storage failure: repair/retry, never an empty state (wireframes
         // "Downloads storage failure").
-        <div className="mt-6">
+        <div className="download-state mt-6">
+          <span className="download-state-icon download-state-icon--error" aria-hidden="true"><AlertTriangle className="h-6 w-6" /></span>
           <p className="type-body text-white">Couldn’t read your downloads</p>
           <div className="mt-4 flex flex-wrap gap-3">
             <button type="button" onClick={() => setReloadKey((key) => key + 1)} className={ACTION_PRIMARY_CLASS}>
@@ -954,7 +979,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       ) : (!inventory || inventory.items.length === 0) && pending.length === 0 ? (
         // Empty: concise, no travel/setup explanation paragraph. The online
         // action finds something; the offline action goes to settings.
-        <div className="mt-6">
+        <div className="download-state mt-6">
+          <span className="download-state-icon" aria-hidden="true"><Download className="h-6 w-6" /></span>
           <p className="type-body text-white">No downloads yet</p>
           <div className="mt-4 flex flex-wrap gap-3">
             {online ? (

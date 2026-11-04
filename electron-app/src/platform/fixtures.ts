@@ -25,7 +25,7 @@ export type FixtureTitle = {
   seasons?: Array<{ number: number; name?: string; episodeCount?: number; airDate?: string }>;
 };
 
-const TITLES: FixtureTitle[] = [
+const BASE_TITLES: FixtureTitle[] = [
   {
     id: 'anilist:154587',
     type: 'anime',
@@ -70,6 +70,50 @@ const TITLES: FixtureTitle[] = [
     seasons: [{ number: 1, name: 'Season 1', episodeCount: 7 }],
   },
 ];
+
+// Opt-in visual-review workload. Default characterization fixtures stay small.
+// These are real catalog titles, rendered by the production page components.
+const showcase = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('showcase') === '1';
+const showcaseMovies: Array<[number, string, number, string]> = [
+  [335984, 'Blade Runner 2049', 2017, 'gajva2L0rPYkEWjzgFlBXCAVBE5.jpg'],
+  [157336, 'Interstellar', 2014, 'gEU2QniE6E77NI6lCU6MxlNBvIx.jpg'],
+  [872585, 'Oppenheimer', 2023, 'ptpr0kGAckfQkJeJIt8st5dglvd.jpg'],
+  [569094, 'Spider-Man: Across the Spider-Verse', 2023, '8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg'],
+  [438631, 'Dune', 2021, 'd5NXSklXo0qyIYkgV94XAgMIckC.jpg'],
+  [545611, 'Everything Everywhere All at Once', 2022, 'w3LxiVYdWWRvEVdn5RYq6jIqkb1.jpg'],
+  [27205, 'Inception', 2010, 'oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg'],
+];
+const showcaseShows: Array<[number, 'series' | 'anime', string, number, string]> = [
+  [66732, 'series', 'Stranger Things', 2016, '49WJfeN0moxb9IPfGn8AIqMGskD.jpg'],
+  [100088, 'series', 'The Last of Us', 2023, 'uKvVjHNqB5VmOrdxqAt2F7J78ED.jpg'],
+  [87108, 'series', 'Chernobyl', 2019, 'hlLXt2tOPT6RRnjiUmoxyG1LTFi.jpg'],
+  [95396, 'series', 'Severance', 2022, 'lFf6LLrQjYldcZItzOkGmMMigP7.jpg'],
+  [1399, 'series', 'Game of Thrones', 2011, '1XS1oqL89opfnbLl8WnZY1O1uJx.jpg'],
+  [94605, 'series', 'Arcane', 2021, 'fqldf2t8ztc9aiwn3k6mlX3tvRT.jpg'],
+  [1429, 'anime', 'Attack on Titan', 2013, 'hTP1DtLGFamjfu8WqjnuQdP1n4i.jpg'],
+  [95479, 'anime', 'Jujutsu Kaisen', 2020, 'fHpKWq9ayzSk8nSwqRuaAUemRKh.jpg'],
+  [85937, 'anime', 'Demon Slayer', 2019, 'xUfRZu2mi8jH6SzQEJGP6tjBuYj.jpg'],
+  [30991, 'anime', 'Cowboy Bebop', 1998, 'xDiXDfZwC6XYC6fxHI1jl3A3Ill.jpg'],
+  [114410, 'anime', 'Chainsaw Man', 2022, 'npdB6eFzizki0WaZ1OvKcJrWe97.jpg'],
+  [37854, 'anime', 'One Piece', 1999, 'cMD9Ygz11zjJzAovURpO75Qg7rT.jpg'],
+];
+const TITLES: FixtureTitle[] = showcase ? [
+  ...BASE_TITLES.map((title) => title.type === 'movie' ? {
+    ...title,
+    overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family. A choice between love and the fate of the universe awaits.',
+    artwork: { ...title.artwork, background: 'https://images.metahub.space/background/medium/tt15239678/img' },
+  } : title),
+  ...showcaseMovies.map(([id, title, year, poster]): FixtureTitle => ({
+    id: `tmdb:movie:${id}`, type: 'movie', title, year,
+    artwork: { poster: `https://image.tmdb.org/t/p/w342/${poster}` },
+    providerIds: { tmdb: `movie:${id}` }, mergedFrom: ['tmdb'],
+  })),
+  ...showcaseShows.map(([id, type, title, year, poster]): FixtureTitle => ({
+    id: `tmdb:tv:${id}`, type, title, year,
+    artwork: { poster: `https://image.tmdb.org/t/p/w342/${poster}` },
+    providerIds: { tmdb: `tv:${id}` }, mergedFrom: ['tmdb'],
+  })),
+] : BASE_TITLES;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

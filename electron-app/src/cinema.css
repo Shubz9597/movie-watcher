@@ -1,0 +1,291 @@
+/* TorWatch browsing: warm charcoal, readable type, artwork first. */
+@font-face {
+  font-family: Manrope;
+  src: url('./assets/fonts/manrope-regular.ttf') format('truetype');
+  font-weight: 400 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: Manrope;
+  src: url('./assets/fonts/manrope-semibold.ttf') format('truetype');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: Manrope;
+  src: url('./assets/fonts/manrope-bold.ttf') format('truetype');
+  font-weight: 700 900;
+  font-display: swap;
+}
+
+:root {
+  --cinema-canvas: #101112;
+  --cinema-panel: #191b1d;
+  --cinema-ink: #f2f0eb;
+  --cinema-muted: #b0b1b0;
+  --cinema-accent: #e7bd82;
+}
+
+html body {
+  font-family: Manrope, 'Segoe UI', sans-serif;
+  background: var(--cinema-canvas);
+  color: var(--cinema-ink);
+  -webkit-font-smoothing: antialiased;
+}
+body .app-surface, body .torwatch-app-shell {
+  --font-ui: Manrope, 'Segoe UI', sans-serif;
+  background-color: var(--cinema-canvas);
+}
+::selection { background: #e7bd8240; color: #fff4e4; }
+input { caret-color: var(--cinema-accent); }
+button, a { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+body :focus-visible { outline-color: var(--cinema-accent); }
+
+.app-header { background: #101112f5; backdrop-filter: blur(16px); }
+.app-header > div { height: 84px; gap: 30px; }
+.brand-home { padding-right: 10px; }
+.brand-home img { width: 40px; height: 40px; }
+.brand-wordmark { font-size: 21px; font-weight: 700; letter-spacing: -.035em; color: var(--cinema-ink); }
+.brand-wordmark > span { color: var(--cinema-accent); }
+.app-header nav { border: 0; padding-left: 0; gap: 4px; }
+.app-header nav button { position: relative; border-radius: 8px; font-weight: 500; }
+.app-header [aria-current='page'] { color: var(--cinema-accent); }
+.app-header nav [aria-current='page']::after {
+  content: ''; position: absolute; bottom: -20px; left: 16px; right: 16px; height: 2px; background: var(--cinema-accent);
+}
+.app-header button[aria-label='Search titles'] { border-color: #ffffff12; background: #ffffff04; border-radius: 10px; width: 250px; }
+.app-header kbd { font-size: 10px; border: 1px solid #ffffff1c; padding: 2px 5px; border-radius: 4px; }
+.app-header button[aria-label='Open TorWatch setup'] { border: 0; }
+.compact-header { background: #101112; }
+.mobile-settings, .mobile-settings > header { background: var(--cinema-canvas); }
+.mobile-settings input { background: #191b1d; border-color: #ffffff1f; border-radius: 10px; }
+.compact-header .brand-wordmark { font-size: 18px; }
+.destination-bar { background: #141618; box-shadow: 0 -12px 24px -12px #000c; }
+.destination-bar button { color: #b3b4b2; }
+.destination-bar [aria-current='page'] { color: var(--cinema-accent); }
+.destination-bar button { position: relative; gap: 5px; }
+.destination-bar [aria-current='page']::before { content: ''; position: absolute; top: -8px; width: 26px; height: 2px; background: var(--cinema-accent); border-radius: 2px; }
+
+.featured-hero { min-height: 460px; }
+.featured-content { min-height: 460px; padding-top: 86px; padding-bottom: 48px; }
+.featured-art { object-position: 65% 35%; opacity: .95; -webkit-mask-image: linear-gradient(180deg, #000 50%, transparent 100%); mask-image: linear-gradient(180deg, #000 50%, transparent 100%); }
+.featured-scrim { background: linear-gradient(90deg, #101112 0%, #101112dd 24%, #10111270 50%, #10111208 80%), linear-gradient(0deg, #101112 0%, #101112d0 12%, #10111266 30%, #10111200 60%, #10111215 100%); }
+.featured-copy { max-width: 610px; }
+.featured-copy .type-feature-title { font-size: clamp(2.5rem, 4.5vw, 4.25rem); font-weight: 700; line-height: 1.08; letter-spacing: -.035em; max-width: 15ch; }
+.featured-meta { margin-top: 20px; color: #dedad2; font-size: 13px; }
+.featured-description { max-width: 49ch; font-size: 15px; line-height: 1.85; color: #c5c5c2; margin-top: 18px; }
+.featured-actions { margin-top: 26px; }
+.cinema-primary { background: var(--cinema-accent); color: #201a13; padding-inline: 26px; border-radius: 9px; font-weight: 700; }
+.cinema-primary:hover { background: #f1ce9c; }
+.featured-actions > button:not(.cinema-primary) { background: #151718aa; border-color: #ffffff2b; border-radius: 9px; }
+.featured-controls { bottom: 36px; }
+.featured-controls button { width: 40px; height: 48px; }
+.featured-controls span { font-size: 11px; color: #d0cec9; margin-right: 12px; }
+
+.home-shelves { padding-top: 0; }
+.home-shelves > section, .home-shelves > div > section { padding-block: 26px; }
+.home-shelves .type-row-title, .catalog-shelf .type-row-title { font-size: 21px; line-height: 1.4; letter-spacing: -.025em; font-weight: 600; }
+.shelf-see-all { font-size: 12px; color: #b6b7b5; gap: 6px; }
+.shelf-heading { align-items: center; }
+.catalog-shelf .shelf-heading { margin-bottom: 20px; }
+.poster-art { border-radius: 12px; border: 0; background: var(--cinema-panel); }
+.poster-card h3 { font-size: 13px; line-height: 1.55; font-weight: 600; color: #e3e2df; text-wrap: balance; }
+.poster-card .type-caption { font-size: 11px; color: #bdbdbb; }
+.poster-card .poster-rank { color: #f4eee5; font-size: 10px; background: #171818e8; border-radius: 5px; }
+.poster-actions button { background: #111315e8; }
+@media (hover: hover) and (pointer: fine) {
+  .poster-actions { opacity: 0; transition: opacity 160ms ease-out; }
+  .carousel-slide:hover .poster-actions, .carousel-slide:focus-within .poster-actions { opacity: 1; }
+  .poster-actions:has([aria-pressed='true']), .poster-actions:has([aria-busy='true']) { opacity: 1; }
+  /* At rest a saved card shows only its saved state, not the whole toolset. */
+  .carousel-slide:not(:hover):not(:focus-within) .poster-actions button[aria-pressed='false'] { visibility: hidden; }
+}
+.carousel-shell { --carousel-columns: 6.5; --carousel-gap: 20px; }
+.carousel-control { color: var(--cinema-accent); }
+.continue-card > div:first-child { border: 0; border-radius: 12px; }
+.continue-card > div:first-child > div:last-child { height: 3px; background: #ffffff30; }
+.continue-card > div:first-child > div:last-child > div { background: var(--cinema-accent); }
+.continue-card > div:first-child > button { width: 42px; height: 42px; background: #f3eee5; }
+.continue-card > div:last-child { margin-top: 6px; }
+@media (min-width: 1024px) { .continue-card { width: 280px; } }
+.continue-card > div:last-child > button:first-child { padding-left: 0; font-size: 15px; font-weight: 600; color: #ecebe7; }
+.continue-card > div:last-child > button:first-child :last-child { font-weight: 400; color: #b3b4b2; font-size: 12px; margin-top: 2px; }
+.library-page { padding-top: 44px; }
+.library-page > div:first-of-type h1 { font-size: 32px; font-weight: 600; }
+.library-page [role='tab'][aria-selected='true'] { color: var(--cinema-accent); border-color: var(--cinema-accent); }
+.library-page [role='tab'][aria-selected='true']::after { background: var(--cinema-accent); }
+.library-card { align-self: start; }
+@media (min-width: 1024px) {
+  /* Library posters match the home shelves' size instead of stretching. */
+  .library-page .grid:has(> .library-card) { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 20px; }
+}
+.library-card-placeholder { background: radial-gradient(120% 80% at 30% 20%, #2c2a26 0%, #1a1b1d 60%, #151618 100%); }
+.library-card-initials { font-size: 38px; font-weight: 700; letter-spacing: -.04em; color: #e7bd82c0; }
+.library-card .text-xs { color: #b3b4b2; }
+.library-card-badge { background: #101112cc; color: #d6d4cf; letter-spacing: .01em; font-size: 11px; }
+
+/* Headings: one weight family so page, panel and shelf titles read as a set. */
+.type-section-title, .type-panel-title { font-weight: 650; letter-spacing: -.03em; }
+.library-page h2, .catalog-shelf h2 { font-weight: 650; }
+
+/* "View all" closes a shelf quietly instead of posing as an empty poster. */
+.shelf-view-all > span:first-child { border: 1px dashed #ffffff1f; background: transparent; border-radius: 12px; color: #a6a8a7; }
+.shelf-view-all:hover > span:first-child { border-color: var(--cinema-accent); color: var(--cinema-accent); background: #e7bd820a; }
+.shelf-view-all > span:last-child { font-size: 13px; font-weight: 600; color: #c9c7c2; }
+
+.poster-meta { flex-wrap: wrap; column-gap: 6px; row-gap: 2px; }
+.poster-meta > span { white-space: nowrap; }
+.title-page { padding-top: 36px; }
+/* Title backdrop: artwork fades into the canvas (no hard edge where it ends). */
+.title-page > .title-backdrop, .title-page > .title-scrim { position: absolute; bottom: auto; height: min(780px, 100vh); }
+.title-page > .title-backdrop { background: transparent; -webkit-mask-image: linear-gradient(180deg, #000 40%, transparent 100%); mask-image: linear-gradient(180deg, #000 40%, transparent 100%); }
+.title-page > .title-backdrop img { filter: brightness(.74) saturate(.95); object-position: 70% 22%; }
+.title-page > .title-scrim { background: linear-gradient(90deg, #101112f2 0%, #101112d0 28%, #10111260 58%, #10111200 100%); }
+.title-page > .title-scrim--bottom { background: linear-gradient(0deg, #101112 0%, #10111200 45%, #10111230 100%); }
+.title-page .type-feature-title { font-weight: 700; letter-spacing: -.035em; }
+.title-page .title-topline { justify-content: flex-start; }
+.title-page .title-topline > div:first-child { margin-left: -14px; margin-right: -6px; }
+/* The back chevron's glyph sits on the content edge; its hit area overhangs. */
+.see-all-heading > :first-child:not(h1) { margin-left: -14px; }
+.title-page p { color: #c3c3bf; }
+.title-page .type-caption { color: #b8b8b5; }
+.title-page .genre-chip { border-color: #ffffff1f; background: #ffffff0a; color: #d6d4cf; font-size: 13px; }
+.title-page [aria-label='Title actions'] > button:not(.cinema-primary) { color: #e8e6e1; }
+
+/* Sources: one calm panel; Play is a quiet pill that warms on hover. */
+.source-panel { background: #16181a; border-color: #ffffff14; border-radius: 16px; box-shadow: 0 24px 48px -28px #000; }
+.source-panel h3 { font-weight: 650; letter-spacing: -.02em; }
+.source-panel h3 + p { font-size: 12px; color: #b3b4b2; }
+.source-panel .source-play.sm\:hidden { width: 40px; height: 40px; }
+.source-panel ul > li { transition: background-color 140ms ease-out; }
+.source-panel ul > li:hover { background: #ffffff05; }
+.source-panel ul > li p { color: #e6e4df; line-height: 1.5; }
+.source-panel ul .type-caption { font-size: 12px; color: #cfcdc8; }
+.source-panel .source-play { background: #ffffff0f; color: var(--cinema-ink); border: 0; border-radius: 999px; font-weight: 600; }
+.source-panel .source-play:hover { background: var(--cinema-accent); color: #201a13; border-color: transparent; }
+aside.source-panel { min-height: 0; }
+.source-panel ul > li > div { padding-block: 14px 8px; }
+.source-panel .source-details-toggle { padding-inline: 0; min-height: 32px; margin-top: -6px; font-size: 12px; font-weight: 600; color: #c9c7c2; text-decoration: underline; text-decoration-color: #ffffff30; text-underline-offset: 4px; }
+.source-panel .source-details-toggle:hover { color: var(--cinema-accent); }
+
+/* Episodes: the same calm panel as Sources. */
+aside.episode-panel { background: #16181a; border-color: #ffffff14; border-radius: 16px; min-height: 0; box-shadow: 0 24px 48px -28px #000; }
+.episode-panel h3 { font-weight: 650; letter-spacing: -.02em; }
+.episode-still { background: linear-gradient(150deg, #24262a 0%, #1a1c1e 100%); }
+.search-page { padding-top: 26px; }
+.search-page > div:first-child { border-color: #ffffff20; background: #191b1d; border-radius: 12px; }
+
+/* Downloads: one flat list, gold for anything in motion. */
+.downloads-page .type-secondary { color: #b3b4b2; }
+.downloads-page .download-progress-fill { background: var(--cinema-accent); }
+.downloads-page .download-active-text { color: var(--cinema-accent); }
+.downloads-page ul.space-y-3 > li + li { margin-top: 18px; }
+/* Row actions (Pause, Retry) sit with the status they act on. */
+.downloads-page li [aria-live='polite'] > .mt-2 { justify-content: flex-start; margin-top: 6px; }
+.downloads-page li [aria-live='polite'] > div:first-child { margin-bottom: 6px; }
+.downloads-page li [aria-live='polite'] > .mt-2 > span:empty { display: none; }
+.downloads-page .text-red-300 { color: #f19a8f; }
+.download-still-empty { position: relative; background: linear-gradient(150deg, #26282c 0%, #1a1c1e 100%); }
+.download-row-action { min-height: 40px; border: 0; background: #ffffff12; border-radius: 999px; font-weight: 600; }
+.download-row-action:hover { background: #ffffff1f; }
+.download-select-bar { background: #141618; }
+.downloads-selecting .compact-header > :last-child { visibility: hidden; }
+.downloads-page .download-done { background: transparent; color: var(--cinema-accent); font-weight: 700; padding-inline: 12px; }
+.downloads-page .download-done:hover { background: #e7bd8214; }
+.downloads-page .download-storage-meter { background: #ffffff14; }
+.downloads-page .download-storage-meter .download-progress-fill { background: #ecebe7; }
+/* Speed / ETA: quiet labels, bright values, one tight group with Pause. */
+.downloads-page .download-rate { gap: 14px; color: #8e908f; }
+.downloads-page .download-rate span span { color: #e6e4df; font-weight: 600; }
+.downloads-page li [aria-live='polite'] > .mt-2 { row-gap: 10px; }
+/* Selecting: the header is just the selection; the delete bar shows it's a
+   button even before anything is ticked. */
+.downloads-selecting .downloads-page .download-storage { display: none; }
+.downloads-selecting .downloads-page { padding-bottom: calc(var(--app-safe-bottom) + 120px); }
+.download-select-bar button:disabled { background: transparent; border: 1px solid #ffffff24; color: #8e908f; }
+.downloads-page li .font-semibold { text-wrap: balance; }
+/* In-progress and failed rows read top-down like finished rows: status sits
+   under the title instead of being pushed to the poster's foot. */
+.downloads-page li > div.flex-col { justify-content: flex-start; gap: 4px; }
+.downloads-page [role='progressbar'] { height: 5px; }
+.downloads-page .text-red-300 { color: #e8a49a; }
+/* Every row's trailing control sits on the row's vertical centre. */
+.downloads-page li:has(> div.flex-col) { position: relative; }
+.downloads-page li > div.flex-col { padding-right: 44px; }
+.downloads-page li > div.flex-col > div:first-child > :not(:first-child) { position: absolute; right: 8px; top: 50%; margin: 0; transform: translateY(-50%); }
+/* Episode rows run taller than their 16:9 tile: the control centres on the
+   tile, beside the title, and the progress bar keeps the full width. */
+.downloads-page li:has(> .aspect-video) > div.flex-col { padding-right: 0; }
+.downloads-page li:has(> .aspect-video) > div.flex-col > div:first-child { padding-right: 44px; }
+.downloads-page li:has(> .aspect-video) > div.flex-col > div:first-child > :not(:first-child) { top: 35px; }
+@media (min-width: 640px) {
+  .downloads-page li:has(> .aspect-video) > div.flex-col > div:first-child > :not(:first-child) { top: 46px; }
+}
+.download-select-bar button { border-radius: 999px; }
+.downloads-page h3 { font-weight: 600; color: #d6d4cf; }
+/* Downloads buttons are pills throughout. */
+.downloads-page .download-state button { border-radius: 999px; padding-inline: 24px; }
+/* Not selectable while selecting: clearly out of play. */
+.downloads-page li.pointer-events-none, .downloads-page li > button:disabled { opacity: .45; }
+.downloads-page li.pointer-events-none .download-active-text, .downloads-page li > button:disabled .download-active-text,
+.downloads-page li.pointer-events-none .text-red-300 { color: #b3b4b2; }
+.download-state { min-height: calc(100svh - 440px); justify-content: center; padding-top: 0; }
+.download-state { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 72px 24px 0; }
+.download-state > div { justify-content: center; }
+.download-state > p { font-size: 17px; font-weight: 600; }
+.download-state-icon { display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 18px; border-radius: 999px; background: #e7bd8214; color: var(--cinema-accent); }
+.download-state-icon--error { background: #f19a8f14; color: #f19a8f; }
+
+@media (min-width: 1600px) {
+  .featured-content { min-height: 580px; }
+  .carousel-shell { --carousel-columns: 7.5; }
+}
+@media (max-width: 1100px) and (min-width: 1024px) {
+  .app-header > div { gap: 14px; }
+  .app-header button[aria-label='Search titles'] { width: 190px; }
+}
+@media (max-width: 1023px) {
+  .featured-hero, .featured-content { min-height: 510px; }
+  .featured-content { padding-bottom: 76px; }
+  .featured-controls { bottom: 12px; }
+  .carousel-shell { --carousel-columns: 4.3; }
+}
+@media (max-width: 639px) {
+  .featured-hero { min-height: 515px; }
+  .featured-content { min-height: 515px; align-items: flex-end; padding-top: 180px; padding-bottom: 74px; }
+  .featured-art { object-position: 65% top; }
+  .featured-scrim { background: linear-gradient(0deg, #101112 0%, #101112ee 24%, #1011129c 48%, #10111205 85%); }
+  .featured-copy .type-feature-title { font-size: 36px; line-height: 1.12; max-width: 16ch; }
+  .featured-description { font-size: 13px; line-height: 1.75; margin-top: 12px; -webkit-line-clamp: 2; }
+  .featured-meta { font-size: 12px; margin-top: 14px; }
+  .featured-actions { margin-top: 20px; gap: 10px; }
+  .featured-actions button { font-size: 12px; }
+  .featured-controls { right: 20px; bottom: 8px; }
+  .featured-hero:not(:has(.featured-controls)) .featured-content { padding-bottom: 32px; }
+  .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 8px; }
+  .catalog-shelf .shelf-heading { margin-bottom: 14px; }
+  .continue-card > div:last-child > button:first-child { font-size: 14px; }
+  .home-shelves .type-row-title, .catalog-shelf .type-row-title { font-size: 19px; }
+  .carousel-shell { --carousel-columns: 2.6; --carousel-gap: 13px; }
+  /* Touch: one compact column of small chips; full 44px hit area kept. */
+  .poster-actions { gap: 0; right: 0; top: 0; }
+  .poster-actions button { background: transparent; border: 0; }
+  .poster-actions button::before { content: ''; position: absolute; inset: 7px; border-radius: 999px; background: #101112b8; z-index: -1; }
+  .poster-actions button { isolation: isolate; }
+  .poster-actions button svg { width: 15px; height: 15px; }
+  .poster-card .poster-rank { top: 8px; left: 8px; }
+  /* Details lines up with the release text, past the 40px play tile. */
+  .source-panel .source-details-toggle { margin-left: 52px; }
+  .library-page { padding-top: 24px; }
+  .title-page { padding-top: 24px; }
+}
+/* Touch has no hover reveal: rails show only what is already saved; saving
+   happens on the title page. Keeps the artwork clear. */
+@media (hover: none) {
+  .poster-actions button[aria-pressed='false'] { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-actions { transition: none; }
+}

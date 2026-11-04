@@ -40,11 +40,11 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
       {/* Desktop: the existing shared header (Electron parity). The browser
           has no window chrome, so the header's titlebar offset is reset. */}
       <div className="sticky top-0 z-40 hidden bg-[#0a0a0a] pt-[var(--app-safe-top)] [&_header]:!top-0 lg:block">
-        <AppHeader navigate={navigate} />
+        <AppHeader navigate={navigate} routePath={routePath} />
       </div>
 
       {/* Compact: slim top bar — logo on tab roots, back on detail screens. */}
-      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-white/[0.08] bg-[#0a0a0a] px-4 pb-2 pt-[calc(var(--app-safe-top)+0.5rem)] lg:hidden">
+      <header className="compact-header sticky top-0 z-40 flex items-center justify-between border-b border-white/[0.08] bg-[#0a0a0a] px-4 pb-2 pt-[calc(var(--app-safe-top)+0.5rem)] lg:hidden">
         <div className="flex items-center">
           {!tabRoot ? (
             <button
@@ -60,11 +60,12 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
               type="button"
               onClick={() => navigate('home')}
               aria-label="TorWatch home"
-              className={`inline-flex h-12 w-12 items-center justify-center rounded-xl ${FOCUS_RING_CLASS}`}
+              className={`brand-home inline-flex h-12 items-center gap-1 rounded-xl ${FOCUS_RING_CLASS}`}
             >
               {/* -translate-y-1: the icon artwork sits low inside its PNG;
                   optically centered against the row of 44px action buttons. */}
               <img src={torWatchLogo} alt="" className="h-9 w-9 -translate-y-1 object-contain" />
+              <span className="brand-wordmark">Tor<span>Watch</span></span>
             </button>
           )}
         </div>
@@ -104,7 +105,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
           back button is removed (M1.4 UI pass). */}
       <nav
         aria-label="Main destinations"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--hairline)] bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
+        className="destination-bar fixed inset-x-0 bottom-0 z-40 border-t border-[var(--hairline)] bg-[#0a0a0a] pt-2 pb-[calc(var(--app-safe-bottom)+0.5rem)] pl-[var(--app-safe-left)] pr-[var(--app-safe-right)] lg:hidden"
       >
         <div className="flex items-stretch justify-around">
           {DESTINATIONS.map((destination) => {
@@ -137,12 +138,13 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
             <span>Search</span>
           </button>
           {downloadsAvailable ? (
+            // A show's downloaded episodes are still inside Downloads.
             <button
               type="button"
               onClick={() => navigate('downloads')}
-              aria-current={routePath === 'downloads' ? 'page' : undefined}
+              aria-current={routePath === 'downloads' || routePath === 'downloads-series' ? 'page' : undefined}
               className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-xs transition ${FOCUS_RING_CLASS} ${
-                routePath === 'downloads' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
+                routePath === 'downloads' || routePath === 'downloads-series' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
               }`}
             >
               <Download className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />

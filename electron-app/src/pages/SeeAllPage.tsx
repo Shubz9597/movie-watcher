@@ -160,10 +160,13 @@ export default function SeeAllPage({
     <div className="mx-auto max-w-[1600px] space-y-8 px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <h1 className="type-section-title text-white">{title}</h1>
+        {/* Back sits before the title, where it is on every other screen. */}
+        <div className="see-all-heading flex min-w-0 items-center gap-2">
+          <PageBackButton />
+          <h1 className="type-section-title text-white">{title}</h1>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <CatalogFilters kind={kind} api={api} navigate={navigate} />
-          <PageBackButton />
         </div>
       </div>
 

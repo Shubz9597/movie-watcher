@@ -358,6 +358,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
   const [featuredUserPaused, setFeaturedUserPaused] = useState(false);
   const [featuredPointerPaused, setFeaturedPointerPaused] = useState(false);
   const [featuredFocusPaused, setFeaturedFocusPaused] = useState(false);
+  const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null);
   const featuredMoveId = useRef(0);
   const featuredPaused = featuredUserPaused || featuredPointerPaused || featuredFocusPaused;
 
@@ -577,13 +578,13 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
   });
 
   return (
-    <div>
+    <div className="home-page">
       {pullIndicator}
       {/* No featured title (catalog failure): omit the hero rather than
           show an empty placeholder. */}
       {featuredLoading || featuredItem ? (
       <section
-        className="relative isolate min-h-[520px] overflow-hidden border-b border-white/[0.08] md:min-h-[610px]"
+        className="featured-hero relative isolate overflow-hidden"
         onMouseEnter={() => setFeaturedPointerPaused(true)}
         onMouseLeave={() => setFeaturedPointerPaused(false)}
         onFocusCapture={() => setFeaturedFocusPaused(true)}
@@ -594,28 +595,23 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         }}
         aria-label="Trending highlights"
       >
-        {featuredItem?.backdropUrl ? (
+        {featuredItem?.backdropUrl && featuredItem.backdropUrl !== failedBackdrop ? (
           <img
             key={`${featuredItem.kind}-${featuredItem.id}`}
             src={featuredItem.backdropUrl}
             alt=""
             fetchPriority="high"
             decoding="async"
-            className="absolute inset-0 -z-20 h-full w-full object-cover object-center opacity-70"
+            onError={() => setFailedBackdrop(featuredItem.backdropUrl ?? null)}
+            className="featured-art absolute inset-0 -z-20 h-full w-full object-cover object-center"
           />
         ) : (
           <div className="absolute inset-0 -z-20 bg-[#151515]" />
         )}
-        <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/80 to-[#0a0a0a]/15" />
-        <div className="absolute inset-0 -z-10 bg-gradient-to-t from-[#0a0a0a] via-transparent to-black/10" />
+        <div className="featured-scrim absolute inset-0 -z-10" />
 
-        <div className="mx-auto flex min-h-[520px] max-w-[1600px] items-end px-5 pb-12 pt-20 md:min-h-[610px] md:px-8 md:pb-16 xl:px-12">
-          <div className="max-w-2xl">
-            {featuredItem && !featuredLoading ? (
-              <p className="type-secondary mb-5 font-medium text-white/70">
-                {`Trending · ${featuredItem.kind === 'tv' ? 'Series' : featuredItem.kind === 'anime' ? 'Anime' : 'Movie'}`}
-              </p>
-            ) : null}
+        <div className="featured-content mx-auto flex max-w-[1600px] items-end px-5 md:px-8 xl:px-12">
+          <div className="featured-copy max-w-2xl">
             {featuredLoading ? (
               <div aria-label="Loading featured title">
                 <div className="h-16 w-3/4 animate-pulse rounded bg-white/10 md:h-20" />
@@ -636,7 +632,9 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                     {featuredItem?.title || 'TorWatch'}
                   </h1>
                 </button>
-                <div className="type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
+                <div className="featured-meta type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
+                  <span>{featuredItem.kind === 'tv' ? 'Series' : featuredItem.kind === 'anime' ? 'Anime' : 'Movie'}</span>
+                  <span aria-hidden="true">·</span>
                   {featuredItem?.year ? <span>{featuredItem.year}</span> : null}
                   {featuredItem?.year && typeof featuredItem?.tmdbRatingPct === 'number' ? <span>·</span> : null}
                   {typeof featuredItem?.tmdbRatingPct === 'number' ? (
@@ -644,14 +642,14 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                   ) : null}
                 </div>
                 {featuredItem?.overview ? (
-                  <p className="measure-compact mt-5 line-clamp-3 text-base leading-7 text-white/70 md:text-lg">
+                  <p className="featured-description measure-compact mt-5 line-clamp-3 text-base leading-7 text-white/70 md:text-lg">
                     {featuredItem.overview}
                   </p>
                 ) : null}
               </>
             )}
 
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="featured-actions mt-8 flex flex-wrap items-center gap-3">
               {/* Every highlight has the same two actions and opaque colors. */}
               {featuredItem ? (
                 <button
@@ -680,7 +678,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
         {featuredItems.length > 1 ? (
           <>
-            <div className="absolute right-5 top-5 flex items-center gap-2 md:right-8 md:top-8 xl:right-12">
+            <div className="featured-controls absolute right-5 bottom-5 flex items-center gap-1 md:right-8 xl:right-12">
               <span className="type-secondary text-numeric mr-1 text-white/70">
                 {String(featuredIndex + 1).padStart(2, '0')} / {String(featuredItems.length).padStart(2, '0')}
               </span>
@@ -716,7 +714,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
       </section>
       ) : null}
 
-      <div className="mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
+      <div className="home-shelves mx-auto max-w-[1600px] px-5 md:px-8 xl:px-12">
         <ContinueRail navigate={navigate} variant={continueVariant} onResumeRequest={onResumeRequest} reloadKey={continueReloadKey} />
 
         {/* Recommendations follow personal progress, before the broader

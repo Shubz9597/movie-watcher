@@ -83,7 +83,7 @@ export function LibraryPage({ navigate, provider, collection, sort = 'recent' }:
   const { indicator: pullIndicator } = usePullToRefresh(() => library?.loadOverview(collection, sort));
 
   return (
-    <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
+    <section className="library-page mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
       <div className="flex items-center justify-between gap-3">
         <h1 className="type-section-title text-white">Library</h1>
@@ -274,7 +274,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
             className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
             aria-label={`View all ${meta.label} (${count})`}
           >
-            View all
+            See all
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
@@ -297,6 +297,11 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
   );
 }
 
+// Missing artwork shows the title's initials ("The Simpsons" → "TS").
+function initialsOf(title: string) {
+  return title.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]?.toUpperCase() ?? '').join('');
+}
+
 function LibraryCardButton({ row, navigate, label }: {
   row: LibraryItemRow;
   navigate: Navigate;
@@ -310,9 +315,10 @@ function LibraryCardButton({ row, navigate, label }: {
     <button
       type="button"
       onClick={() => navigate('title', params)}
-      className={`group relative aspect-[2/3] overflow-hidden rounded-lg border border-white/[0.08] bg-[#151515] ${FOCUS_RING_CLASS}`}
+      className={`library-card group block min-w-0 text-left rounded-lg ${FOCUS_RING_CLASS}`}
       aria-label={label}
     >
+      <span className="relative block aspect-[2/3] overflow-hidden rounded-xl bg-[#1c1e20]">
       {row.artwork?.poster ? (
         <img
           src={row.artwork.poster}
@@ -324,20 +330,23 @@ function LibraryCardButton({ row, navigate, label }: {
           className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
         />
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-          <span className="text-3xl opacity-30" aria-hidden="true"><Film className="h-7 w-7" /></span>
-        </div>
+        <span className="library-card-placeholder absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40" aria-hidden="true">
+          <span className="library-card-initials">{initialsOf(row.title)}</span>
+          <Film className="h-4 w-4 opacity-40" />
+        </span>
       )}
       {!row.metadataAvailable ? (
-        <span className="absolute right-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white/80" aria-label="Metadata unavailable">
+        <span className="library-card-badge absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white/80" aria-label="Metadata unavailable">
           Info unavailable
         </span>
       ) : null}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 pb-1.5 pt-6 text-left">
+      </span>
+      <span className="mt-2.5 block text-left">
         {/* Stored snapshot title: an unavailable-metadata entry renders from
             the server's snapshot, never a guessed name. */}
-        <span className="line-clamp-2 text-xs font-medium leading-4 text-white">{row.title}</span>
-      </div>
+        <span className="line-clamp-2 text-[13px] font-semibold leading-5 text-white/90">{row.title}</span>
+        {row.year ? <span className="mt-1 block text-xs text-white/60">{row.year}</span> : null}
+      </span>
     </button>
   );
 }
@@ -395,7 +404,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
               className={`shelf-see-all rounded-lg text-sm text-white/75 hover:text-white ${FOCUS_RING_CLASS}`}
               aria-label={`View all ${SHELF_META[shelf.kind].label} (${shelf.count})`}
             >
-              View all
+              See all
               <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button> : null}
           </div>

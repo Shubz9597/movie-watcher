@@ -165,8 +165,10 @@ function EpisodeArtworkMedia({
 
   return (
     <>
-      <div className="type-caption absolute inset-0 grid place-items-center bg-[#141414] text-white/40" aria-hidden="true">
-        {showLoading ? <ArtworkLoadingDots /> : 'No still'}
+      {/* Without a still the tile stays a quiet surface; the episode number
+          label over it already identifies the episode. */}
+      <div className="episode-still type-caption absolute inset-0 grid place-items-center bg-[#141414] text-white/40" aria-hidden="true">
+        {showLoading ? <ArtworkLoadingDots /> : null}
       </div>
       {src && loadState !== 'error' ? (
         <img
@@ -1063,7 +1065,7 @@ export default function EpisodePanel({
   const episodeArtwork = (episode: EpisodeSummary) => episode.stillUrl || null;
 
   return (
-    <aside ref={panelRef} data-source-panel data-source-layout={platform.desktop ? 'desktop' : 'page'} className={`min-w-0 max-w-full scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden bg-[#0a0a0a] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'bg-[#0a0a0a] min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
+    <aside ref={panelRef} data-source-panel data-source-layout={platform.desktop ? 'desktop' : 'page'} className={`episode-panel min-w-0 max-w-full scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden bg-[#0a0a0a] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'bg-[#0a0a0a] min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
       {artworkHydrating ? (
         <span className="sr-only" role="status" aria-live="polite">Loading episode artwork.</span>
       ) : null}

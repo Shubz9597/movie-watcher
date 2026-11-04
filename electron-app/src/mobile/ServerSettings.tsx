@@ -87,7 +87,7 @@ export function ServerSettings(props: {
   };
 
   return (
-    <main className="min-h-screen bg-[#0a0a0a] text-white">
+    <main className="mobile-settings min-h-screen bg-[#0a0a0a] text-white">
       {/* Nav-style header: chevron beside the title, safe-area aware. */}
       <header className="sticky top-0 z-10 flex items-center gap-1 border-b border-white/[0.08] bg-[#0a0a0a]/95 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur">
         <button
@@ -140,7 +140,7 @@ export function ServerSettings(props: {
             type="button"
             onClick={() => void save()}
             disabled={!normalized || !changed || saving}
-            className="flex min-h-12 w-full items-center justify-center rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
+            className="cinema-primary flex min-h-12 w-full items-center justify-center rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
