@@ -434,6 +434,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       title: item.title,
       ...(item.posterUrl ? { posterUrl: item.posterUrl } : {}),
       ...(item.subtitle ? { subtitle: item.subtitle } : {}),
+      // The title, for the player's loading-screen logo.
+      ...(item.seriesId ? { titleId: item.seriesId } : {}),
       // Show identity lets offline playback continue with the next
       // downloaded episode.
       ...(item.seriesId ? { localSeriesId: item.seriesId, season: String(item.season ?? 0), episode: String(item.episode ?? 0) } : {}),

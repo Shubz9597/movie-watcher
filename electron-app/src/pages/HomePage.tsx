@@ -57,6 +57,19 @@ const catalogRequests = {
 
 type FeaturedItem = MovieCard & { kind: 'movie' | 'tv' | 'anime' };
 
+/** At most 7 dots, following the current title; the end dots shrink when
+ *  more titles lie beyond them (the hero can rotate through ~20). */
+const MAX_FEATURED_DOTS = 7;
+function featuredDotWindow(count: number, current: number): Array<{ index: number; edge: boolean }> {
+  if (count <= MAX_FEATURED_DOTS) return Array.from({ length: count }, (_, index) => ({ index, edge: false }));
+  const start = Math.min(Math.max(0, current - Math.floor(MAX_FEATURED_DOTS / 2)), count - MAX_FEATURED_DOTS);
+  return Array.from({ length: MAX_FEATURED_DOTS }, (_, offset) => {
+    const index = start + offset;
+    const edge = (offset === 0 && start > 0) || (offset === MAX_FEATURED_DOTS - 1 && index < count - 1);
+    return { index, edge };
+  });
+}
+
 /** The catalog id of a hero item (same rule as its Watch later toggle). */
 function featuredCatalogId(item: FeaturedItem): string {
   return item.catalogId ?? (item.kind === 'anime' && item.sourceProvider !== 'tmdb'
@@ -741,7 +754,9 @@ export default function HomePage({ navigate, continueVariant = 'carousel', onRes
               {/* Where the rotation is: each dot is a button (44px tall touch
                   area); the current one is the longer gold one. */}
               <div className="featured-dots flex items-center" role="group" aria-label={`Featured ${featuredIndex + 1} of ${featuredItems.length}`}>
-                {featuredItems.map((item, index) => (
+                {featuredDotWindow(featuredItems.length, featuredIndex).map(({ index, edge }) => {
+                  const item = featuredItems[index];
+                  return (
                   <button
                     key={index}
                     type="button"
@@ -750,9 +765,10 @@ export default function HomePage({ navigate, continueVariant = 'carousel', onRes
                     aria-current={index === featuredIndex ? 'true' : undefined}
                     className="featured-dot grid h-11 min-w-7 place-items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                   >
-                    <span aria-hidden="true" className={`block h-1.5 rounded-full transition-all ${index === featuredIndex ? 'w-5 bg-[#e7bd82]' : 'w-1.5 bg-white/45'}`} />
+                    <span aria-hidden="true" className={`block rounded-full transition-all ${index === featuredIndex ? 'h-1.5 w-5 bg-[#e7bd82]' : edge ? 'h-1 w-1 bg-white/35' : 'h-1.5 w-1.5 bg-white/45'}`} />
                   </button>
-                ))}
+                  );
+                })}
               </div>
               <button
                 type="button"

@@ -6,6 +6,8 @@ export type DownloadMeta = {
   episodeTitle?: string;
   still?: string;
   poster?: string;
+  /** The title's logo artwork, for the player's loading screen. */
+  logo?: string;
 };
 
 const STORAGE_KEY = 'torwatch_download_meta_v1';
@@ -38,6 +40,7 @@ export function shrinkDownloadMeta(): void {
   for (const meta of Object.values(all)) {
     if (meta.still?.startsWith('data:')) delete meta.still;
     if (meta.poster?.startsWith('data:')) delete meta.poster;
+    if (meta.logo?.startsWith('data:')) delete meta.logo;
   }
   writeAll(all);
 }
@@ -69,6 +72,26 @@ function lighter(url: string, size: 'w300' | 'w185'): string {
   return url.replace(/(image\.tmdb\.org\/t\/p\/)(w\d+|original)\//, `$1${size}/`);
 }
 
+/** The title's logo for a download: saved with it, or looked up (and saved)
+ *  while online for downloads made before logos were kept. */
+export async function downloadLogo(downloadId: string, titleId?: string | null): Promise<string | null> {
+  const known = downloadMeta(downloadId).logo;
+  if (known) return known;
+  if (!titleId) return null;
+  try {
+    const { bffTitleDetail, catalogIdForSeriesId } = await import('./services/catalog-bff.ts');
+    const catalogId = catalogIdForSeriesId(titleId) ?? titleId;
+    const logoUrl = (await bffTitleDetail(catalogId)).artwork?.logo;
+    if (!logoUrl) return null;
+    const logo = await inlineImage(lighter(logoUrl, 'w300'));
+    const all = readAll();
+    writeAll({ ...all, [downloadId]: { ...(all[downloadId] ?? {}), logo } });
+    return logo;
+  } catch {
+    return null; // offline: the title shows as text
+  }
+}
+
 async function inlineImage(url: string): Promise<string> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
@@ -88,7 +111,7 @@ async function inlineImage(url: string): Promise<string> {
 
 export async function cacheDownloadMeta(
   downloadId: string,
-  input: { episodeTitle?: string; stillUrl?: string | null; posterUrl?: string | null },
+  input: { episodeTitle?: string; stillUrl?: string | null; posterUrl?: string | null; titleId?: string | null },
 ): Promise<void> {
   const meta: DownloadMeta = {};
   if (input.episodeTitle) meta.episodeTitle = input.episodeTitle;
@@ -98,7 +121,10 @@ export async function cacheDownloadMeta(
   ]);
   if (still) meta.still = still;
   if (poster) meta.poster = poster;
-  if (writeAll({ ...readAll(), [downloadId]: meta })) return;
+  if (writeAll({ ...readAll(), [downloadId]: meta })) {
+    void downloadLogo(downloadId, input.titleId); // the loading screen's logo
+    return;
+  }
   // Storage full: the image links (they show while online), not nothing.
   const linked: DownloadMeta = { ...meta };
   if (input.stillUrl) linked.still = lighter(input.stillUrl, 'w300');

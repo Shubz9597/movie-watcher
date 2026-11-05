@@ -8,6 +8,7 @@ import { resolveTorrentFile } from '../lib/services/resolve-service';
 import NativePlayerControls from '../mobile/NativePlayerControls';
 import { advancePackParams } from '../lib/pack-advance';
 import { nextEpisodeTitleRoute } from '../lib/next-episode-route';
+import { downloadLogo, downloadMeta } from '../lib/offline-download-meta';
 import { getTvSeason } from '../lib/services/catalog-gateway';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../lib/design-tokens';
 
@@ -39,7 +40,10 @@ export default function PlayerPage({ navigate, params }: Props) {
     nextEpisodeRoute,
     packFallbackRoute,
     localSeriesId,
+    titleId: paramTitleId,
   } = params;
+  // A download's title (movie or show): its logo on the loading screen.
+  const localTitleId = paramTitleId || localSeriesId;
   const platform = usePlatform();
   // Latest route params for auto-advance without re-creating callbacks (the
   // params object is rebuilt on every render).
@@ -78,6 +82,7 @@ export default function PlayerPage({ navigate, params }: Props) {
         ...(next.posterUrl ? { posterUrl: next.posterUrl } : {}),
         ...(next.subtitle ? { subtitle: next.subtitle } : {}),
         localSeriesId: next.seriesId,
+        titleId: next.seriesId,
         season: String(next.season ?? 0),
         episode: String(next.episode ?? 0),
       };
@@ -198,11 +203,19 @@ export default function PlayerPage({ navigate, params }: Props) {
             throw new Error('Downloads can’t be played on this device.');
           }
           const localTitle = paramTitle || 'Downloaded video';
+          // The logo saved with the download shows at once on the loading
+          // screen; older downloads look it up while online (never delaying
+          // playback, which must work offline).
           setPlaybackMeta({
             title: localTitle,
             posterUrl: localPosterUrl || null,
-            logoUrl: null,
+            logoUrl: downloadMeta(downloadId).logo ?? null,
           });
+          if (!downloadMeta(downloadId).logo) {
+            void downloadLogo(downloadId, localTitleId || null).then((logo) => {
+              if (!cancelled && logo) setPlaybackMeta((meta) => ({ ...meta, logoUrl: logo }));
+            });
+          }
           await platform.player.startLocal({
             downloadId,
             title: localTitle,
