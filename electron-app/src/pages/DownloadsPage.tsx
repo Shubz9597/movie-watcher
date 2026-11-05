@@ -959,7 +959,7 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             <button
               type="button"
               onClick={() => startSelecting([])}
-              className={`-mr-3 inline-flex min-h-11 shrink-0 items-center rounded-lg px-3 text-[15px] font-semibold text-[var(--cinema-accent,#e7bd82)] transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
+              className={`inline-flex min-h-11 shrink-0 items-center rounded-lg px-3 text-[15px] font-semibold text-[var(--cinema-accent,#e7bd82)] transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
             >
               Select
             </button>

@@ -80,9 +80,6 @@ body :focus-visible { outline-color: var(--cinema-accent); }
 .cinema-primary { background: var(--cinema-accent); color: #201a13; padding-inline: 26px; border-radius: 9px; font-weight: 700; }
 .cinema-primary:hover { background: #f1ce9c; }
 .featured-actions > button:not(.cinema-primary) { background: #151718aa; border-color: #ffffff2b; border-radius: 9px; }
-.featured-controls { bottom: 36px; }
-.featured-controls button { width: 40px; height: 48px; }
-.featured-controls span { font-size: 11px; color: #d0cec9; margin-right: 12px; }
 
 .home-shelves { padding-top: 0; }
 .home-shelves > section, .home-shelves > div > section { padding-block: 26px; }
@@ -249,7 +246,6 @@ aside.episode-panel { background: #16181a; border-color: #ffffff14; border-radiu
 @media (max-width: 1023px) {
   .featured-hero, .featured-content { min-height: 510px; }
   .featured-content { padding-bottom: 76px; }
-  .featured-controls { bottom: 12px; }
   .carousel-shell { --carousel-columns: 4.3; }
 }
 @media (max-width: 639px) {
@@ -262,7 +258,6 @@ aside.episode-panel { background: #16181a; border-color: #ffffff14; border-radiu
   .featured-meta { font-size: 12px; margin-top: 14px; }
   .featured-actions { margin-top: 20px; gap: 10px; }
   .featured-actions button { font-size: 12px; }
-  .featured-controls { right: 20px; bottom: 8px; }
   .featured-hero:not(:has(.featured-controls)) .featured-content { padding-bottom: 32px; }
   .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 8px; }
   .catalog-shelf .shelf-heading { margin-bottom: 14px; }
@@ -332,7 +327,6 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 /* Phone shelves breathe: more space between rows. */
 @media (max-width: 639px) {
   .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 16px; }
-  .featured-controls span { font-size: 13px; color: #e2dfd8; }
 }
 /* Library: a clear active tab. */
 .library-page [role='tab'][aria-selected='true']::after { height: 3px; border-radius: 2px; }
@@ -504,7 +498,6 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 
 /* Phone hero: swipe moves it; keep the dots and pause, tighten the gaps. */
 @media (max-width: 639px) {
-  .featured-controls button[aria-label$='featured title'] { display: none; }
   .featured-content { padding-bottom: 58px; }
   .catalog-shelf .shelf-heading { margin-bottom: 8px; }
 }
@@ -591,11 +584,9 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 .library-card-cover-title { color: #fff; }
 /* Phone hero: dots and pause centred under the buttons, inside the hero. */
 @media (max-width: 639px) {
-  .featured-controls { left: 0; right: 0; justify-content: center; bottom: 10px; }
   .featured-content { padding-bottom: 64px; }
 }
 /* Desktop hero: controls level with the buttons. */
-@media (min-width: 640px) { .featured-controls { bottom: 48px; } }
 /* Downloads: the round pause/resume control. */
 .download-row-icon { background: #2a2c33; box-shadow: inset 0 0 0 1px #ffffff24; }
 .download-row-icon:hover { background: #33363e; }
@@ -652,7 +643,6 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
   .title-page .measure-prose { font-size: 16px; line-height: 1.5; }
   .title-page .title-genres { margin-top: -4px; }
   /* Hero: dots and pause just under the buttons, left-aligned with them. */
-  .featured-controls { left: 20px; right: auto; justify-content: flex-start; bottom: 18px; }
   .featured-content { padding-bottom: 66px; }
   .featured-scrim { background: linear-gradient(0deg, #101112 0%, #101112f0 30%, #101112c4 52%, #10111240 75%, #10111200 100%); }
   .featured-description { color: #e4e2dc; }
@@ -683,7 +673,6 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 .download-row-action { min-height: 36px; padding-inline: 14px; font-size: 14px; }
 /* Phone hero: dots and pause centred together under the buttons. */
 @media (max-width: 639px) {
-  .featured-controls { left: 0; right: 0; justify-content: center; }
 }
 
 /* ==== Opus round 1 ==== */
@@ -732,8 +721,6 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 /* Phone home: hero to shelf gap 40px; a filled pause glyph. */
 @media (max-width: 639px) {
   .home-shelves { padding-top: 0; }
-  .featured-controls { gap: 12px; }
-  .featured-controls button svg { fill: currentColor; }
 }
 /* Phone title page: room before the Sources card so it never peeks. */
 @media (max-width: 639px) {
@@ -885,7 +872,6 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 .app-header nav button, .app-header button[aria-label*='Library'] { font-weight: 500; }
 /* Phone hero: dots at the left gutter, pause at the right margin. */
 @media (max-width: 639px) {
-  .featured-controls { left: 20px !important; right: 12px !important; justify-content: space-between !important; }
 }
 /* "More" sits under the text on the right (the earlier inline/fade styles are retired). */
 .episode-overview .episode-more, .episode-overview .episode-more:not([aria-expanded='true']) { position: relative !important; padding: 0 8px !important; background: none !important; }
@@ -920,3 +906,29 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 .downloads-page svg.progress-ring-svg { width: 36px !important; height: 36px !important; stroke-width: initial; }
 .downloads-page .download-status > span > svg:not(.progress-ring-svg) { width: 14px !important; height: 14px !important; }
 @media (min-width: 640px) { .source-panel .source-row-text { align-items: flex-start; text-align: left; } }
+
+
+/* ==== Hero carousel controls (one definition) ==== */
+/* Dots (real buttons, 44px tall) then pause, then arrows on desktop. */
+.featured-controls { right: 48px; bottom: 48px; gap: 4px; }
+.featured-controls .featured-dot { min-width: 28px; }
+.featured-controls .featured-pause svg { width: 16px; height: 16px; }
+@media (max-width: 639px) {
+  /* Phones: one row inside the 20px margins, under the buttons; dots on the
+     left, pause on the right, both fully tappable; arrows hidden (swipe). */
+  .featured-controls { left: 20px; right: 20px; bottom: 14px; justify-content: space-between; }
+  .featured-controls .featured-dots { margin-left: -8px; }
+  .featured-controls button[aria-label$='featured title'] { display: none; }
+  .featured-content { padding-bottom: 78px !important; }
+}
+@media (min-width: 640px) and (max-width: 1023px) { .featured-controls { right: 32px; bottom: 24px; } }
+
+/* ==== Touch targets near the screen edge (device check) ==== */
+.featured-controls .featured-dot { min-width: 36px; }
+@media (max-width: 639px) { .featured-controls .featured-dots { margin-left: -8px; } }
+/* Row controls end on the 20px margin, not past it. */
+.downloads-page li > div.flex-col > div:first-child > .download-status { right: 4px !important; }
+.download-ready-row .download-status { margin-right: 2px; }
+/* Small text actions get a full 44px touch height. */
+.episode-overview .episode-more, .title-page .title-more, .source-panel .source-details-toggle { min-height: 44px; }
+.title-page a[href*='imdb.com/title'] { padding-block: 12px; margin-block: -12px; }

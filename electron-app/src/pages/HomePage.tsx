@@ -524,6 +524,17 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
     };
   }, [featuredIndex, featuredItems, featuredPaused]);
 
+  // A dot jumps straight to its title (same preload as the arrows).
+  const goToFeatured = async (index: number) => {
+    if (!featuredItems.length || index === featuredIndex) return;
+    const moveId = featuredMoveId.current + 1;
+    featuredMoveId.current = moveId;
+    await preloadBackdrop(featuredItems[index]?.backdropUrl);
+    if (featuredMoveId.current === moveId) setFeaturedIndex(index);
+  };
+  // Touch: a horizontal swipe on the hero changes title.
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+
   const moveFeatured = async (direction: -1 | 1) => {
     if (!featuredItems.length) return;
     const moveId = featuredMoveId.current + 1;
@@ -594,6 +605,18 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           }
         }}
         aria-label="Trending highlights"
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          swipeStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+        }}
+        onTouchEnd={(event) => {
+          const start = swipeStart.current;
+          const touch = event.changedTouches[0];
+          swipeStart.current = null;
+          if (!start || !touch || featuredItems.length < 2) return;
+          const dx = touch.clientX - start.x;
+          if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(touch.clientY - start.y) * 1.5) void moveFeatured(dx < 0 ? 1 : -1);
+        }}
       >
         {featuredItem?.backdropUrl && featuredItem.backdropUrl !== failedBackdrop ? (
           <img
@@ -678,22 +701,31 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
         {featuredItems.length > 1 ? (
           <>
-            <div className="featured-controls absolute right-5 bottom-5 flex items-center gap-1 md:right-8 xl:right-12">
-              {/* Where the rotation is: quiet dots, the current one longer. */}
-              <span className="featured-dots mr-2 flex items-center gap-1.5" aria-hidden="true">
-                {featuredItems.map((_, index) => (
-                  <span key={index} className={`h-1.5 rounded-full transition-all ${index === featuredIndex ? 'w-5 bg-[#e7bd82]' : 'w-1.5 bg-white/40'}`} />
+            <div className="featured-controls absolute flex items-center">
+              {/* Where the rotation is: each dot is a button (44px tall touch
+                  area); the current one is the longer gold one. */}
+              <div className="featured-dots flex items-center" role="group" aria-label={`Featured ${featuredIndex + 1} of ${featuredItems.length}`}>
+                {featuredItems.map((item, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => void goToFeatured(index)}
+                    aria-label={`Show ${item.title || `featured title ${index + 1}`}`}
+                    aria-current={index === featuredIndex ? 'true' : undefined}
+                    className="featured-dot grid h-11 min-w-7 place-items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  >
+                    <span aria-hidden="true" className={`block h-1.5 rounded-full transition-all ${index === featuredIndex ? 'w-5 bg-[#e7bd82]' : 'w-1.5 bg-white/45'}`} />
+                  </button>
                 ))}
-              </span>
-              <span className="sr-only">Featured {featuredIndex + 1} of {featuredItems.length}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setFeaturedUserPaused((paused) => !paused)}
-                className="flex h-12 w-10 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="featured-pause flex h-11 w-11 items-center justify-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label={featuredUserPaused ? 'Resume featured title rotation' : 'Pause featured title rotation'}
                 aria-pressed={featuredUserPaused}
               >
-                {featuredUserPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                {featuredUserPaused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
               </button>
               <button
                 type="button"
