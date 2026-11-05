@@ -1,0 +1,192 @@
+{
+  "fixtureData": true,
+  "screenshots": [
+    {
+      "name": "home-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "shelves-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "browse-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "title-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "library-desktop",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "home-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "shelves-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "browse-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "title-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "library-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    },
+    {
+      "name": "search-phone",
+      "width": 390,
+      "scrollWidth": 390,
+      "brokenVisibleImages": []
+    }
+  ],
+  "checks": [
+    {
+      "device": "desktop",
+      "sourceDetailsDisclosure": true
+    },
+    {
+      "device": "desktop",
+      "runtimeErrors": []
+    },
+    {
+      "device": "phone",
+      "sourceDetailsDisclosure": true
+    },
+    {
+      "device": "phone",
+      "runtimeErrors": []
+    },
+    {
+      "mobileSearchToTitle": true
+    },
+    {
+      "width": 320,
+      "route": "home",
+      "scrollWidth": 320
+    },
+    {
+      "width": 320,
+      "route": "#title?kind=movie&id=693134",
+      "scrollWidth": 320
+    },
+    {
+      "width": 320,
+      "route": "#title?kind=tv&id=1396",
+      "scrollWidth": 320
+    },
+    {
+      "width": 320,
+      "route": "#library",
+      "scrollWidth": 320
+    },
+    {
+      "width": 320,
+      "route": "#see-all?title=Trending%20movies&api=tmdb%3Atrending%3Amovie&kind=movie",
+      "scrollWidth": 320
+    },
+    {
+      "width": 768,
+      "route": "home",
+      "scrollWidth": 768
+    },
+    {
+      "width": 768,
+      "route": "#title?kind=movie&id=693134",
+      "scrollWidth": 768
+    },
+    {
+      "width": 768,
+      "route": "#title?kind=tv&id=1396",
+      "scrollWidth": 768
+    },
+    {
+      "width": 768,
+      "route": "#library",
+      "scrollWidth": 768
+    },
+    {
+      "width": 768,
+      "route": "#see-all?title=Trending%20movies&api=tmdb%3Atrending%3Amovie&kind=movie",
+      "scrollWidth": 768
+    },
+    {
+      "width": 1024,
+      "route": "home",
+      "scrollWidth": 1024
+    },
+    {
+      "width": 1024,
+      "route": "#title?kind=movie&id=693134",
+      "scrollWidth": 1024
+    },
+    {
+      "width": 1024,
+      "route": "#title?kind=tv&id=1396",
+      "scrollWidth": 1024
+    },
+    {
+      "width": 1024,
+      "route": "#library",
+      "scrollWidth": 1024
+    },
+    {
+      "width": 1024,
+      "route": "#see-all?title=Trending%20movies&api=tmdb%3Atrending%3Amovie&kind=movie",
+      "scrollWidth": 1024
+    },
+    {
+      "width": 1920,
+      "route": "home",
+      "scrollWidth": 1920
+    },
+    {
+      "width": 1920,
+      "route": "#title?kind=movie&id=693134",
+      "scrollWidth": 1920
+    },
+    {
+      "width": 1920,
+      "route": "#title?kind=tv&id=1396",
+      "scrollWidth": 1920
+    },
+    {
+      "width": 1920,
+      "route": "#library",
+      "scrollWidth": 1920
+    },
+    {
+      "width": 1920,
+      "route": "#see-all?title=Trending%20movies&api=tmdb%3Atrending%3Amovie&kind=movie",
+      "scrollWidth": 1920
+    }
+  ]
+}

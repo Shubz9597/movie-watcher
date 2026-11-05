@@ -226,7 +226,7 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
   const empty = overview.shelves.every((shelf) => shelf.count === 0);
 
   return (
-    <div className="mt-4 space-y-8">
+    <div className="library-collections mt-4 space-y-8">
       {overview.stale ? (
         <p className="type-secondary text-white/60" role="note">
           Offline · Last synced
@@ -282,7 +282,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
       {count === 0 ? (
         <p className="type-secondary text-white/60">No titles</p>
       ) : (
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-6">
           {previews.map((row) => (
             <LibraryCardButton
               key={row.canonicalId}
@@ -353,7 +353,7 @@ function LibraryCardButton({ row, navigate, label }: {
 
 function ShelfSkeleton() {
   return (
-    <div className="mt-8 grid grid-cols-3 gap-4 sm:grid-cols-6" role="status" aria-label="Loading library">
+    <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-6" role="status" aria-label="Loading library">
       {Array.from({ length: 6 }).map((_, index) => (
         <div key={index} className="aspect-[2/3] animate-pulse rounded-lg bg-white/[0.06]" />
       ))}
@@ -386,7 +386,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
   }
   const empty = overview.shelves.every((shelf) => shelf.count === 0);
   return (
-    <div className="mt-4 space-y-8">
+    <div className="library-collections mt-4 space-y-8">
       <p className="type-secondary text-white/60" role="note">{overview.sourceLabel}</p>
       {empty ? (
         <p className="type-secondary text-white/60">No saved titles.</p>
@@ -411,7 +411,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
           {shelf.count === 0 ? (
             <p className="type-secondary text-white/60">No titles</p>
           ) : (
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-6">
               {shelf.previews.map((card) => (
                 <button
                   key={`${shelf.kind}-${card.id}`}
@@ -544,7 +544,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
           Offline · {page.total} {page.total === 1 ? 'title' : 'titles'}
         </p>
       ) : null}
-      <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-6">
         {page.items.map((row) => (
           <LibraryCardButton key={row.canonicalId} row={row} navigate={navigate} label={`Open ${row.title}${row.metadataAvailable ? '' : ' (metadata unavailable)'}`} />
         ))}
@@ -605,7 +605,7 @@ function PreviewLibraryGrid({ provider, collection, kind }: {
   return (
     <>
       <p className="mt-2 type-secondary text-white/60" role="note">{state.sourceLabel} · {state.count} titles</p>
-      <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-6">
         {state.items.map((card) => (
           <button
             key={card.id}

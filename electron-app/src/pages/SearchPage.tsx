@@ -279,7 +279,7 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
               <span className="text-white/60">No results for “{debounced}”</span>
             ) : null}
           </div>
-          <ul className="search-result-grid mt-5 grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-6 md:gap-x-4 lg:grid-cols-7 xl:grid-cols-8">
+          <ul className="search-result-grid mt-5 grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {cards.map((entry) => (
               <li key={entry.key}>
                 <PosterCard movie={entry.card} label={entry.label} onOpen={entry.onOpen} />

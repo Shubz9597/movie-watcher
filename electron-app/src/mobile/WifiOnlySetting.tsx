@@ -39,27 +39,30 @@ export function WifiOnlySetting() {
       .catch(() => setRule(previous));
   };
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={rule.wifiOnly}
-      onClick={toggle}
-      className={`flex min-h-12 w-full items-center gap-3 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3.5 py-3 text-left ${FOCUS_RING_CLASS}`}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-white">Download on Wi-Fi only</span>
-        <span className="type-secondary block text-white/60">
-          {rule.wifiOnly
-            ? rule.waitingForWifi ? 'Not on Wi-Fi: downloads wait' : 'Mobile data is never used'
-            : 'Mobile data is used when there’s no Wi-Fi'}
-        </span>
-      </span>
-      <span
-        aria-hidden="true"
-        className={`relative h-7 w-12 shrink-0 rounded-full transition ${rule.wifiOnly ? 'bg-green-500' : 'bg-white/20'}`}
+    <section className="mt-10" aria-label="Download preferences">
+      <h2 className="type-secondary mb-2 text-left font-medium text-white/70">Downloads</h2>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={rule.wifiOnly}
+        onClick={toggle}
+        className={`flex min-h-12 w-full items-center gap-3 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3.5 py-3 text-left ${FOCUS_RING_CLASS}`}
       >
-        <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all ${rule.wifiOnly ? 'left-[1.375rem]' : 'left-0.5'}`} />
-      </span>
-    </button>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-white">Download on Wi-Fi only</span>
+          <span className="type-secondary block text-white/60">
+            {rule.wifiOnly
+              ? rule.waitingForWifi ? 'Not on Wi-Fi: downloads wait' : 'Mobile data is never used'
+              : 'Mobile data is used when there’s no Wi-Fi'}
+          </span>
+        </span>
+        <span
+          aria-hidden="true"
+          className={`relative h-7 w-12 shrink-0 rounded-full transition ${rule.wifiOnly ? 'bg-green-500' : 'bg-white/20'}`}
+        >
+          <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all ${rule.wifiOnly ? 'left-[1.375rem]' : 'left-0.5'}`} />
+        </span>
+      </button>
+    </section>
   );
 }

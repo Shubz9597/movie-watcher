@@ -2,8 +2,8 @@
 // horizontal carousel with a next-card peek, progress on the artwork, and
 // SEPARATED resume/detail targets. A drag/swipe release never fires the tap
 // handlers, and there is deliberately no full-width resume bar.
-// The Electron desktop Home keeps its existing rail by default; this
-// component is the compact/alpha presentation selected explicitly.
+// Desktop and compact shells share this presentation and keep separate
+// resume/detail actions.
 import { memo, useRef } from 'react';
 import { Film, Play, X } from 'lucide-react';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
@@ -38,7 +38,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
 
   return (
     <div
-      className="hide-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 md:mx-0"
+      className="continue-carousel hide-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 md:mx-0"
       onPointerDown={beginPointer}
       onPointerMove={movePointer}
     >
@@ -53,15 +53,17 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
         const episodeBadge = item.kind !== 'movie'
           ? `S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}`
           : `${pct}%`;
+        const remainingMinutes = Math.ceil(Math.max(0, item.duration_s - item.position_s) / 60);
+        const progressLabel = item.upNext ? 'Up next' : remainingMinutes > 0 ? `${remainingMinutes} min left` : `${pct}% watched`;
         return (
           <article
             key={`${item.seriesId}-${item.season}-${item.episode}`}
             className="continue-card w-[240px] shrink-0 snap-start sm:w-[260px]"
           >
             <div className="relative aspect-video overflow-hidden rounded-lg border border-white/10 bg-[var(--surface-raised)]">
-              {item.posterPath ? (
+              {item.backdropPath || item.posterPath ? (
                 <img
-                  src={item.posterPath}
+                  src={item.backdropPath || item.posterPath || undefined}
                   alt=""
                   width="342"
                   height="193"
@@ -108,7 +110,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
               >
                 {displayTitle}
                 <span className="block text-xs font-normal text-white/60">
-                  {item.upNext ? 'Up next' : item.year ?? ''}
+                  {item.kind !== 'movie' ? `S${item.season} · E${item.episode} · ` : ''}{progressLabel}
                 </span>
               </button>
               {onDismiss ? (

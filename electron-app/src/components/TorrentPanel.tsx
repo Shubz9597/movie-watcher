@@ -447,8 +447,8 @@ export default function TorrentPanel({
                       </button>
                       {/* WF06: tapping a row selects it --- playback is a
                           separate, explicit action (footer button on compact,
-                          split button on desktop). The release name is never
-                          truncated. */}
+                          split button on desktop). Details keeps the complete
+                          release name available while the row stays scannable. */}
                       <button
                         type="button"
                         onClick={() => { setSelectedKey(torrentActionKey); setSelectionNotice(null); }}
@@ -458,7 +458,7 @@ export default function TorrentPanel({
                       >
                         <div className="min-w-0 flex-1">
                             <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <p className={`source-name text-sm [overflow-wrap:anywhere] ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{breakableReleaseName(t.title)}</p>
+                              <p title={t.title} className={`source-name line-clamp-2 text-sm [overflow-wrap:anywhere] ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{breakableReleaseName(t.title)}</p>
                               {quality ? (
                                 <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">
                                   {quality}

@@ -26,6 +26,7 @@ type ContinueItem = {
   updated_at: string;
   title: string;
   posterPath: string | null;
+  backdropPath?: string | null;
   year?: number;
   kind: 'movie' | 'tv' | 'anime';
   tmdbId?: number;
@@ -187,7 +188,6 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
     }
   }, []);
 
-    const handleResume = useCallback((item: ContinueItem) => onResumeRequest?.(item), [onResumeRequest]);
     const handleDismiss = useCallback((item: ContinueItem) => void dismiss(item), [dismiss]);
 
 // Stabilized for the memoized ContinueCarousel (see openItem note above).
@@ -212,9 +212,14 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
     navigate('title', titleParams);
   }, [navigate, subjectId]);
 
+  const handleResume = useCallback((item: ContinueItem) => {
+    if (onResumeRequest) onResumeRequest(item);
+    else openResumeSources(item);
+  }, [onResumeRequest, openResumeSources]);
+
   if (loading) {
     return (
-      <section className="tw-cull py-6 md:py-10">
+      <section className="continue-section tw-cull py-6 md:py-10">
         <div className="mb-4">
           <h2 className="type-row-title text-white">Continue watching</h2>
         </div>
@@ -236,7 +241,7 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
   if (!rows.length) return null;
 
   return (
-    <section className="tw-cull py-6 md:py-10">
+    <section className="continue-section tw-cull py-6 md:py-10">
       <div className="mb-4">
         <h2 className="type-row-title text-white">Continue watching</h2>
       </div>
@@ -335,7 +340,7 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
   );
 });
 
-export default function HomePage({ navigate, continueVariant = 'rail', onResumeRequest, recommendationDeps }: {
+export default function HomePage({ navigate, continueVariant = 'carousel', onResumeRequest, recommendationDeps }: {
   navigate: (path: string, params?: Record<string, string>) => void;
   continueVariant?: 'rail' | 'carousel';
   onResumeRequest?: (item: ContinueItem) => void;

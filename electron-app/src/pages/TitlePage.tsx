@@ -486,7 +486,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
   };
 
   const runtimeLabel = formatRuntime(detail.runtime);
+  const mediaLabel = isAnimeMovie ? 'Anime Movie' : kind === 'anime' || detail.anime ? (kind === 'movie' ? 'Anime Movie' : 'Anime Series') : kind === 'tv' ? 'Series' : 'Movie';
   const metaBadges = [
+    mediaLabel,
     runtimeLabel,
     detail.year ? `${detail.year}` : null,
     detail.tmdbRatingPct
@@ -581,9 +583,6 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                 {release.state === 'upcoming' ? 'Coming soon' : 'In cinemas'}
               </span>
             ) : null}
-            <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">
-              {isAnimeMovie ? 'Anime Movie' : kind === 'anime' || detail.anime ? (isMovie ? 'Anime Movie' : 'Anime Series') : kind === 'tv' ? 'Series' : 'Movie'}
-            </span>
             {languageName ? (
               <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">{languageName}</span>
             ) : null}
@@ -600,7 +599,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           </div>
         </div>
 
-        <div className={`mt-8 grid min-w-0 grid-cols-1 gap-12 ${platform.desktop ? 'lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-16' : ''}`}>
+        <div className={`title-layout mt-8 grid min-w-0 grid-cols-1 gap-12 ${platform.desktop ? 'lg:grid-cols-[minmax(0,1fr)_440px] xl:gap-16' : ''}`}>
           <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
@@ -624,7 +623,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                     >
                       <IMDbMark />
                       <span>{detail.imdbRating.toFixed(1)}</span>
-                      {detail.imdbVotes ? <span className="text-white/45">({formatNumber(detail.imdbVotes)} votes)</span> : null}
+                      {detail.imdbVotes ? <span className="title-vote-count text-[var(--cinema-muted)]">({formatNumber(detail.imdbVotes)} votes)</span> : null}
                     </a>
                   </span>
                 ) : null}
