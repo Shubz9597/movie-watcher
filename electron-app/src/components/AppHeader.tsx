@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ProfileButton } from './shared/ProfileGate';
-import { LibraryBig, Search, Settings2 } from 'lucide-react';
+import { LibraryBig, Search, Settings } from 'lucide-react';
 import { loadSeeAllPage } from '../lib/route-loaders';
 import torWatchLogo from '../assets/torwatch-app-icon.png';
 
@@ -148,7 +148,7 @@ export default function AppHeader({ navigate, routePath = 'home' }: { navigate: 
             onClick={() => void window.electronAPI?.openSetup()}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/15 text-white/75 transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
           >
-            <Settings2 className="h-4 w-4" strokeWidth={1.7} />
+            <Settings className="h-4 w-4" strokeWidth={1.7} />
           </button>
         </div>
       </div>

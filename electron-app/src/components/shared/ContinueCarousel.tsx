@@ -18,6 +18,13 @@ type ContinueCarouselProps = {
   onDismiss?: (item: EnrichedContinueItem) => void;
 };
 
+function continueCaption(item: EnrichedContinueItem): string {
+  const left = item.duration_s > 0 ? Math.max(0, Math.round((item.duration_s - item.position_s) / 60)) : 0;
+  const leftLabel = left > 0 ? (left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m left` : `${left}m left`) : '';
+  const episode = item.kind !== 'movie' ? `S${item.season} E${item.episode}` : '';
+  return [episode, leftLabel].filter(Boolean).join(' · ') || (item.year ? String(item.year) : '');
+}
+
 export const ContinueCarousel = memo(function ContinueCarousel({ items, onResumeRequest, onOpenTitle, onDismiss }: ContinueCarouselProps) {
   // Drag detection: any pointer movement beyond the threshold between down
   // and up marks the gesture as a scroll, not a tap, so releasing a swipe on
@@ -50,9 +57,10 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
       {items.map((item) => {
         const pct = Math.max(0, Math.min(100, Math.round(Number(item.percent) || 0)));
         const displayTitle = item.title || item.seriesId;
+        // Series show where you are; a film's progress bar says it all.
         const episodeBadge = item.kind !== 'movie'
           ? `S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}`
-          : `${pct}%`;
+          : null;
         return (
           <article
             key={`${item.seriesId}-${item.season}-${item.episode}`}
@@ -87,11 +95,13 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
                 <Play className="ml-0.5 h-5 w-5 fill-current" aria-hidden="true" />
               </button>
 
-              <div className="absolute left-3 top-3">
-                <span className="type-caption text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90">
-                  {episodeBadge}
-                </span>
-              </div>
+              {episodeBadge ? (
+                <div className="absolute left-3 top-3">
+                  <span className="type-caption text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90">
+                    {episodeBadge}
+                  </span>
+                </div>
+              ) : null}
 
               {/* Progress lives on the artwork (accepted alpha design). */}
               <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/10">
@@ -108,7 +118,8 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
               >
                 {displayTitle}
                 <span className="block text-xs font-normal text-white/60">
-                  {item.upNext ? 'Up next' : item.year ?? ''}
+                  {/* What resuming means, like the major apps: the episode and time left. */}
+                  {item.upNext ? 'Up next' : continueCaption(item)}
                 </span>
               </button>
               {onDismiss ? (

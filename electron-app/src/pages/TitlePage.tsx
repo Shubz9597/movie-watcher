@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { userMessage } from '../lib/user-error';
 import { nextUpEpisode } from '../lib/next-up';
 import { movieRelease, formatReleaseDate } from '../lib/movie-release';
-import { CheckCircle2, Download, ExternalLink, Play, RotateCcw, SlidersHorizontal, Youtube } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, Play, RotateCcw, ListVideo, Youtube } from 'lucide-react';
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
 import { Button } from '../components/ui/button';
@@ -31,7 +31,7 @@ function IMDbMark({ className = '' }: { className?: string }) {
   return (
     <span
       aria-label="IMDb"
-      className={`inline-flex h-[1.15rem] min-w-[2rem] items-center justify-center rounded-[3px] bg-[#f5c518] px-1 font-sans text-[0.62rem] font-black leading-none tracking-[-0.035em] text-black ${className}`}
+      className={`inline-flex h-[1.15rem] min-w-[2rem] items-center justify-center rounded-[3px] border border-white/35 px-1 font-sans text-[0.62rem] font-black leading-none tracking-[-0.035em] text-white/85 ${className}`}
     >
       IMDb
     </span>
@@ -43,6 +43,36 @@ const languageFormatter =
   typeof Intl !== 'undefined' && 'DisplayNames' in Intl
     ? new Intl.DisplayNames(['en'], { type: 'language' })
     : null;
+
+/** The synopsis: four lines on phones with "More"; whole on wide screens. */
+function TitleOverview({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLParagraphElement | null>(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || open) return;
+    const measure = () => setOverflows(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text, open]);
+  return (
+    <div>
+      <p ref={ref} className={`measure-prose type-body text-white/75 ${open ? '' : 'max-sm:line-clamp-4'}`}>{text}</p>
+      {overflows || open ? (
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="title-more mt-1 min-h-10 rounded-lg text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+          {open ? 'Less' : 'More'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+// Title tools: icon over a short label (Apple TV / Netflix style), one size.
+const STACKED_ACTION_CLASS = 'title-action inline-flex min-h-14 min-w-[4.5rem] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[12px] font-medium text-white/75 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70';
 
 export default function TitlePage({
   navigate,
@@ -493,6 +523,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
       ? `${detail.tmdbRatingPct}% ${kind === 'anime' && !isTmdbBackedAnime ? 'AniList' : 'TMDB'}`
       : null,
   ].filter(Boolean);
+  // Genres join the details line on wide screens; on phones they get their
+  // own line (one line wrapping left a stray separator at a line start).
+  const genreLabel = (detail.genres ?? []).slice(0, 3).join(' · ');
 
   const heroBackground = detail.backdropUrl || detail.posterUrl || null;
   const isMovie = kind === 'movie' || isAnimeMovie;
@@ -528,7 +561,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
   const playLabel = canDirectResume
     ? 'Resume'
     : nextUp && !isMovie
-      ? `${nextUp.started ? 'Continue' : 'Play'} S${nextUp.season} E${nextUp.episode}`
+      ? `${nextUp.started ? 'Resume' : 'Play'} S${nextUp.season} E${nextUp.episode}`
       : 'Play';
 
   const playResume = () => {
@@ -587,7 +620,7 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
             {languageName ? (
               <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 backdrop-blur">{languageName}</span>
             ) : null}
-            {detail.imdbId ? (
+            {detail.imdbId && !detail.imdbRating ? (
               <a
                 href={`https://www.imdb.com/title/${detail.imdbId}`}
                 target="_blank"
@@ -613,6 +646,12 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                     {item}
                   </span>
                 ))}
+                {genreLabel ? (
+                  <span className="hidden items-center gap-2 sm:inline-flex">
+                    {metaBadges.length > 0 ? <span className="text-white/25">·</span> : null}
+                    {genreLabel}
+                  </span>
+                ) : null}
                 {detail.imdbRating ? (
                   <span className="inline-flex items-center gap-2">
                     {metaBadges.length > 0 ? <span className="text-white/25">·</span> : null}
@@ -629,37 +668,40 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   </span>
                 ) : null}
               </div>
+              {genreLabel ? <p className="title-genres type-secondary text-white/60 sm:hidden">{genreLabel}</p> : null}
               {releaseNote ? <p className="type-secondary text-[#ffc285]">{releaseNote}</p> : null}
-              {detail.imdbRating ? (
-                <p className="type-caption text-white/45">
-                  Information courtesy of{' '}
-                  <a className="underline decoration-white/25 underline-offset-2 hover:text-white/70" href="https://www.imdb.com" target="_blank" rel="noreferrer">
-                    IMDb
-                  </a>
-                  . Used with permission.
-                </p>
-              ) : null}
+
             </div>
 
             {/* Title actions sit under the title and metadata on every screen
                 (Play first, then bare save/download/source tools). */}
-            <div aria-label="Title actions" className="flex flex-wrap items-center gap-1">
+            <div aria-label="Title actions" className="title-actions flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
               {/* design-system.md: Play/Resume is the primary action. Without a
                   resumable source, Play opens source selection below. */}
               {release.state === 'upcoming' ? null : <button
                 type="button"
                 onClick={canDirectResume ? playResume : playNextUp}
-                className="cinema-primary mr-1 inline-flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 text-sm font-medium text-black transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                className="cinema-primary relative inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-white px-5 text-[15px] font-semibold text-black sm:mr-2 sm:w-auto transition hover:bg-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 <Play className="h-4 w-4 fill-current" aria-hidden="true" />
                 {playLabel}
+                {/* Resuming an episode: how far in, on the button (Netflix/Disney+ style). */}
+                {!isMovie && nextUp?.started && nextUp.remainingMinutes ? (
+                  <span className="title-resume-left font-medium opacity-70">· {nextUp.remainingMinutes}m left</span>
+                ) : null}
+                {!isMovie && nextUp?.started && nextUp.percent ? (
+                  <span className="title-resume-bar pointer-events-none absolute inset-x-3 bottom-1.5 h-[3px] overflow-hidden rounded-full bg-black/15" aria-hidden="true">
+                    <span className="block h-full rounded-full bg-black/70" style={{ width: `${nextUp.percent}%` }} />
+                  </span>
+                ) : null}
               </button>}
               {/* Save toggles appear only when the server library can persist
                   them — never as unexplained disabled controls. */}
+              <div className="title-action-tools flex flex-wrap items-start gap-1">
               {libraryAvailable && libraryCanonicalId ? (
                 <>
-                  <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" />
-                  <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" />
+                  <LibraryToggle canonicalId={libraryCanonicalId} field="watch-later" variant="stacked" />
+                  <LibraryToggle canonicalId={libraryCanonicalId} field="favourites" variant="stacked" />
                 </>
               ) : null}
               {movieWatchId ? (
@@ -669,11 +711,12 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   aria-pressed={movieWatched}
                   aria-label={movieWatched ? 'Mark unwatched' : 'Mark watched'}
                   title={movieWatched ? 'Watched' : 'Mark watched'}
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                  className={STACKED_ACTION_CLASS}
                 >
                   {movieWatched
-                    ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
-                    : <CheckCircle2 className="h-6 w-6 text-white/70" aria-hidden="true" />}
+                    ? <CheckCircle2 className="h-5 w-5 fill-white text-black" aria-hidden="true" />
+                    : <CheckCircle2 className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />}
+                  <span aria-hidden="true">Watched</span>
                 </button>
               ) : null}
               {nativeDownloadsSupported() ? (
@@ -682,9 +725,10 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   onClick={scrollToSources}
                   aria-label="Download"
                   title="Download"
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                  className={STACKED_ACTION_CLASS}
                 >
-                  <Download className="h-5 w-5" aria-hidden="true" />
+                  <Download className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
+                  <span aria-hidden="true">Download</span>
                 </button>
               ) : null}
               <button
@@ -692,23 +736,17 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                 onClick={scrollToSources}
                 aria-label="Sources"
                 title="Sources"
-                className="inline-flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                className={STACKED_ACTION_CLASS}
               >
-                <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
+                <ListVideo className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
+                <span aria-hidden="true">Sources</span>
               </button>
+              </div>
             </div>
 
-            {detail.overview ? (
-              <p className="measure-prose type-body text-white/75">{detail.overview}</p>
-            ) : null}
+            {detail.overview ? <TitleOverview text={detail.overview} /> : null}
 
-            <div className="flex flex-wrap gap-2 text-sm text-white/65">
-              {detail.genres?.map((genre) => (
-                <span key={genre} className="genre-chip rounded-full border border-white/12 bg-black/15 px-3 py-1.5 backdrop-blur">
-                  {genre}
-                </span>
-              ))}
-            </div>
+
 
             {detail.trailerKey ? (
               <div className="flex flex-wrap gap-3">
@@ -771,6 +809,16 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
                   ))}
                 </div>
               </div>
+            ) : null}
+            {/* Legal credit for the ratings: footer weight, at the end. */}
+            {detail.imdbRating ? (
+              <p className="title-attribution text-[11px] leading-4 text-white/40">
+                Ratings courtesy of{' '}
+                <a className="underline decoration-white/20 underline-offset-2 hover:text-white/70" href="https://www.imdb.com" target="_blank" rel="noreferrer">
+                  IMDb
+                </a>
+                . Used with permission.
+              </p>
             ) : null}
           </div>
 

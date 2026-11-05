@@ -6,7 +6,8 @@
 // every pushed detail screen shows one back chevron in the same place, the
 // iOS navigation-bar convention. Gesture/hardware back still works.
 import { ProfileButton } from './ProfileGate';
-import { ChevronLeft, Download, Home, Library, Search, Settings2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronLeft, Download, Home, Library, Search, Settings } from 'lucide-react';
 import AppHeader from '../AppHeader';
 import torWatchLogo from '../../assets/torwatch-app-icon.png';
 import { FOCUS_RING_CLASS } from '../../lib/design-tokens';
@@ -33,6 +34,19 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
   const search = routePath === 'search';
   const tabRoot = ['home', 'library', 'search', 'downloads'].includes(routePath);
   const frame = useSearchViewport(search);
+  // Home and title pages open on artwork: the phone bar floats over it
+  // (transparent, a soft top shade) and turns solid once the page scrolls,
+  // like the major streaming apps.
+  const heroRoute = routePath === 'home' || routePath === 'title';
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    if (!heroRoute) return;
+    const update = () => setScrolled(window.scrollY > 24);
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    return () => window.removeEventListener('scroll', update);
+  }, [heroRoute, routePath]);
+  const overHero = heroRoute && !scrolled;
 
 
   return (
@@ -44,7 +58,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
       </div>
 
       {/* Compact: slim top bar — logo on tab roots, back on detail screens. */}
-      <header className="compact-header sticky top-0 z-40 flex items-center justify-between border-b border-white/[0.08] bg-[#0a0a0a] px-4 pb-2 pt-[calc(var(--app-safe-top)+0.5rem)] lg:hidden">
+      <header className={`compact-header ${heroRoute ? 'compact-header--hero' : ''} ${overHero ? 'compact-header--over border-transparent' : 'border-white/[0.08] bg-[#0a0a0a]'} sticky top-0 z-40 flex items-center justify-between border-b px-4 pb-2 pt-[calc(var(--app-safe-top)+0.5rem)] lg:hidden`}>
         <div className="flex items-center">
           {!tabRoot ? (
             <button
@@ -87,7 +101,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
             onClick={onOpenSettings}
             className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-white/75 hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
           >
-            <Settings2 className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
+            <Settings className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
           </button>
         </div>
       </header>

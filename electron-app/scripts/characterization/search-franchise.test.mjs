@@ -30,7 +30,7 @@ test("franchise entries group with the main series first and extras collapsed", 
 
 test("labels name kind and format", () => {
   assert.equal(resultLabel({ sourceProvider: "anilist", format: "movie" }), "Anime movie");
-  assert.equal(resultLabel({ sourceProvider: "anilist", format: "tv" }), "Anime series");
+  assert.equal(resultLabel({ sourceProvider: "anilist", format: "tv" }), "Anime");
   assert.equal(resultLabel({ sourceProvider: "tmdb", sourceKind: "tv", format: "tv" }), "Series");
   assert.equal(resultLabel({ sourceProvider: "tmdb", sourceKind: "movie", format: "movie" }), "Movie");
 });

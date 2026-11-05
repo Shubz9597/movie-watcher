@@ -36,7 +36,7 @@ const FIELD_META = {
   },
 } as const;
 
-export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canonicalId: string; field: LibraryCollection; variant?: 'icon' | 'overlay' | 'label' }) {
+export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canonicalId: string; field: LibraryCollection; variant?: 'icon' | 'overlay' | 'label' | 'stacked' }) {
   const store = useLibrary();
   // Sliced subscriptions (perf): a toggle re-renders only when ITS membership,
   // pending flag, or error changes — not on every library publish. With
@@ -99,7 +99,7 @@ export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canoni
         aria-busy={pending || undefined}
         title={label}
         onClick={onClick}
-        className={`relative inline-flex ${variant === 'label' ? 'min-h-12 gap-2 border border-white/20 bg-black/30 px-4 text-sm font-medium hover:border-white/40 hover:bg-white/[0.06]' : variant === 'overlay' ? 'h-11 w-11 border border-white/15 bg-black/60' : TOUCH_TARGET_CLASS} items-center justify-center ${variant === 'label' ? 'rounded-lg' : 'rounded-full'} transition ${FOCUS_RING_CLASS} ${
+        className={`relative inline-flex ${variant === 'stacked' ? 'title-action min-h-14 min-w-[4.5rem] flex-col gap-1 px-1 text-[12px] font-medium' : variant === 'label' ? 'min-h-12 gap-2 border border-white/20 bg-black/30 px-4 text-sm font-medium hover:border-white/40 hover:bg-white/[0.06]' : variant === 'overlay' ? 'h-11 w-11 border border-white/15 bg-black/60' : TOUCH_TARGET_CLASS} items-center justify-center ${variant === 'label' || variant === 'stacked' ? 'rounded-lg' : 'rounded-full'} transition ${FOCUS_RING_CLASS} ${
           error
             ? 'text-red-300 after:absolute after:inset-0 after:rounded-[inherit] after:ring-2 after:ring-red-400/70'
             : active
@@ -112,7 +112,8 @@ export function LibraryToggle({ canonicalId, field, variant = 'icon' }: { canoni
           strokeWidth={1.7}
           aria-hidden="true"
         />
-        {variant === 'label' ? <span>{shownTarget ? 'Saved' : 'Watch Later'}</span> : null}
+        {variant === 'label' ? <span>Watch later</span> : null}
+        {variant === 'stacked' ? <span aria-hidden="true">{field === 'watch-later' ? 'Watch later' : 'Favourite'}</span> : null}
       </button>
       {/* Truthful state feedback in text: pending, success, and failure are
           announced, never color-only. */}

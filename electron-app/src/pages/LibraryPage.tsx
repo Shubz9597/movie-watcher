@@ -31,7 +31,7 @@ import type {
 import type { MovieCard } from '../lib/types';
 
 const COLLECTION_TABS = [
-  { id: 'watch-later' as const, label: 'Watch Later' },
+  { id: 'watch-later' as const, label: 'Watch later' },
   { id: 'favourites' as const, label: 'Favourites' },
 ];
 
@@ -267,7 +267,8 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
           {/* Full-scope count from the server ” independent of preview length. */}
           <span className="text-numeric text-sm font-normal text-white/50">{count}</span>
         </h2>
-        {count > 0 ? (
+        {/* "See all" only when the shelf shows part of the collection. */}
+        {count > previews.length ? (
           <button
             type="button"
             onClick={() => navigate('library-category', { collection, kind, sort })}
@@ -295,11 +296,6 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
       )}
     </section>
   );
-}
-
-// Missing artwork shows the title's initials ("The Simpsons" → "TS").
-function initialsOf(title: string) {
-  return title.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]?.toUpperCase() ?? '').join('');
 }
 
 function LibraryCardButton({ row, navigate, label }: {
@@ -330,16 +326,12 @@ function LibraryCardButton({ row, navigate, label }: {
           className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
         />
       ) : (
-        <span className="library-card-placeholder absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40" aria-hidden="true">
-          <span className="library-card-initials">{initialsOf(row.title)}</span>
-          <Film className="h-4 w-4 opacity-40" />
+        // No poster: a title card in the app's colours, like a cover.
+        <span className="library-card-placeholder absolute inset-0 flex flex-col justify-between p-3" aria-hidden="true">
+          {row.type === 'movie' ? <Film className="h-5 w-5 text-[#e7bd82]/70" /> : <Tv className="h-5 w-5 text-[#e7bd82]/70" />}
+          <span className="library-card-cover-title line-clamp-4 text-[15px] font-bold leading-tight text-[#efe9df]">{row.title}</span>
         </span>
       )}
-      {!row.metadataAvailable ? (
-        <span className="library-card-badge absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white/80" aria-label="Metadata unavailable">
-          Info unavailable
-        </span>
-      ) : null}
       </span>
       <span className="mt-2.5 block text-left">
         {/* Stored snapshot title: an unavailable-metadata entry renders from

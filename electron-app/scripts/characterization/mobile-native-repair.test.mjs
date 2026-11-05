@@ -142,7 +142,7 @@ test("downloads expose poster progress controls and an embedded Live Activity", 
   assert.match(page, /role="progressbar"/u);
   assert.match(page, /native\[action\]\(\{ downloadId \}\)/u);
   assert.match(page, /Cancel download of/u);
-  assert.match(page, /Speed <span[\s\S]+ETA <span/u);
+  assert.match(page, /\[rate, eta \? `\$\{eta\} left` : null\]/u);
   assert.match(page, /navigate\('player',[\s\S]+downloadId:/u);
   assert.match(nativePlugin, /CAPPluginMethod\(name: "playLocal"/u);
   assert.match(queue, /export async function cancelPendingDownload/u);

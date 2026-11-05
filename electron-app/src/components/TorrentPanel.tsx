@@ -1,4 +1,5 @@
 // Electron-compatible wrapper for TorrentPanel that fixes API calls
+import { releaseFeatures } from '../lib/release-summary';
 import { userMessage } from '../lib/user-error';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
@@ -447,8 +448,8 @@ export default function TorrentPanel({
                       </button>
                       {/* WF06: tapping a row selects it --- playback is a
                           separate, explicit action (footer button on compact,
-                          split button on desktop). The release name is never
-                          truncated. */}
+                          split button on desktop). The release name shows two
+                          lines; Details has it in full. */}
                       <button
                         type="button"
                         onClick={() => { setSelectedKey(torrentActionKey); setSelectionNotice(null); }}
@@ -456,30 +457,23 @@ export default function TorrentPanel({
                         className={`block min-w-0 flex-1 text-left ${FOCUS_RING_CLASS}`}
                         aria-label={`Select source ${t.title}`}
                       >
-                        <div className="min-w-0 flex-1">
-                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <p className={`source-name text-sm [overflow-wrap:anywhere] ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{breakableReleaseName(t.title)}</p>
-                              {quality ? (
-                                <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">
-                                  {quality}
-                                </span>
-                              ) : (
-                                <span className="type-caption shrink-0 rounded border border-white/15 px-1.5 py-0.5 text-white/60">Unknown quality</span>
-                              )}
-                              {t.source ? (
-                                <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">{t.source}</span>
-                              ) : null}
-                              {t.audio ? (
-                                <span className="type-caption shrink-0 rounded border border-white/20 px-1.5 py-0.5 font-medium text-white/80">{t.audio}</span>
-                              ) : null}
+                        <div className="source-row-text min-w-0 flex-1">
+                            {/* What you choose by, in words (quality, picture, sound,
+                                source, size); the release name sits small underneath. */}
+                            <div className="source-badges mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className={`source-summary text-[15px] leading-snug ${isSelected ? 'font-semibold text-white' : 'font-semibold text-white/90'}`}>
+                                {[...releaseFeatures(t.title, quality), t.size ? formatBytes(t.size) : null].filter(Boolean).join(' · ') || 'Unknown quality'}
+                              </span>
                               {isSelected ? (
                                 <span className="type-caption shrink-0 rounded bg-white px-1.5 py-0.5 font-medium text-black">Selected</span>
                               ) : isPreviouslyUsed ? (
                                 <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
                               ) : null}
                             </div>
-                            <div className="type-caption text-numeric flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
-                              <span>{t.size ? formatBytes(t.size) : 'Unknown size'}</span>
+                            {/* Two lines of the release name; Details has it in full. */}
+                            <p title={t.title} className={`source-name mb-1.5 line-clamp-2 text-sm [overflow-wrap:anywhere] ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{breakableReleaseName(t.title)}</p>
+                            <div className="source-meta type-caption text-numeric flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
+                              {t.size ? null : <span>Unknown size</span>}
                               {typeof t.seeders === 'number' ? (
                                 <span className="inline-flex items-center gap-1 text-emerald-300/80" title={`${t.seeders} seeders`}>
                                   <ArrowUp className="h-3 w-3" aria-hidden="true" />

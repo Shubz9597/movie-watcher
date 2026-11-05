@@ -51,7 +51,7 @@ export function resultLabel(item: SearchItemLike): string {
     if (format === 'ova') return 'Anime OVA';
     if (format === 'ona') return 'Anime ONA';
     if (format === 'special') return 'Anime special';
-    return 'Anime series';
+    return 'Anime';
   }
   return item.sourceKind === 'tv' || format === 'tv' ? 'Series' : 'Movie';
 }

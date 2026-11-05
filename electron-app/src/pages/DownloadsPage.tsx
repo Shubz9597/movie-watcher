@@ -7,8 +7,9 @@
 // transfer states are merged into one concise queue.
 import { usePullToRefresh } from '../lib/pull-to-refresh';
 import { useEffect, useState } from 'react';
+import type React from 'react';
 import type { HTMLAttributes } from 'react';
-import { AlertTriangle, Check, ChevronRight, Download, Film, ListChecks, LoaderCircle, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Download, Film, LoaderCircle, MoreHorizontal, Pause, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { useConnectionStatus, usePlatform } from '../platform/PlatformProvider';
 import type { DownloadItemSnapshot, DownloadsInventory, DownloadsStorage } from '../platform/contracts';
 import { SelectionSurface } from '../components/primitives';
@@ -114,7 +115,7 @@ function episodeLabel(episode: number | undefined, name: string | undefined): st
   if (episode == null) return name ?? 'Episode';
   // Extras are filed as 1000 + the pack's own number (refile-downloads.ts).
   const shown = episode > 1000 ? episode - 1000 : episode;
-  return name ? `${shown} · ${name}` : `Episode ${shown}`;
+  return name ? `${shown}. ${name}` : `Episode ${shown}`;
 }
 
 // Episode rows lead with the episode still (16:9), stored on the device so
@@ -132,6 +133,54 @@ function EpisodeStill({ src, label }: { src?: string; label?: string }) {
           {label ? <span className="absolute left-2 top-1.5 text-xs font-semibold text-white/75">{label}</span> : null}
         </div>
       )}
+    </div>
+  );
+}
+
+// Every row ends in one 44px status control (Netflix-style): a progress ring
+// while it downloads, "⋯" when it is done, a red ring when it failed. A tap
+// shows that row's actions beneath it.
+function ProgressRing({ value, tone = 'accent', spinning = false, children }: {
+  value?: number;
+  tone?: 'accent' | 'error';
+  spinning?: boolean;
+  children?: React.ReactNode;
+}) {
+  const radius = 15;
+  const circumference = 2 * Math.PI * radius;
+  const stroke = tone === 'error' ? '#f08a80' : 'var(--cinema-accent, #e7bd82)';
+  return (
+    <span className="relative grid h-9 w-9 place-items-center" aria-hidden="true">
+      <svg viewBox="0 0 36 36" className={`progress-ring-svg absolute inset-0 -rotate-90 ${spinning ? 'motion-safe:animate-spin' : ''}`}>
+        <circle cx="18" cy="18" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.5" />
+        <circle
+          cx="18" cy="18" r={radius} fill="none" stroke={stroke} strokeWidth="2.5" strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={typeof value === 'number' ? circumference * (1 - Math.max(0, Math.min(100, value)) / 100) : circumference * 0.75}
+        />
+      </svg>
+      {children}
+    </span>
+  );
+}
+
+type RowAction = { label: string; ariaLabel: string; onClick: () => void; tone?: 'danger'; disabled?: boolean };
+
+function RowActions({ actions }: { actions: RowAction[] }) {
+  return (
+    <div className="download-row-menu mt-3 flex flex-wrap gap-2" role="group" aria-label="Download actions">
+      {actions.map((action) => (
+        <button
+          key={action.label}
+          type="button"
+          onClick={action.onClick}
+          disabled={action.disabled}
+          aria-label={action.ariaLabel}
+          className={`download-row-action inline-flex min-h-10 items-center rounded-full px-4 text-sm font-semibold transition disabled:opacity-50 ${action.tone === 'danger' ? 'text-[#f08a80]' : 'text-white'} ${FOCUS_RING_CLASS}`}
+        >
+          {action.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -279,7 +328,6 @@ function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[
 
 // Every row is flat like a finished download (one list, not cards).
 const ROW_CLASS = '-mx-2 flex gap-3 rounded-lg px-2 py-1.5 sm:gap-4';
-const CANCEL_CLASS = `inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white disabled:text-white/35 ${FOCUS_RING_CLASS}`;
 const ROW_ACTION_CLASS = `download-row-action ${ACTION_SECONDARY_CLASS} px-4`;
 
 export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps) {
@@ -297,6 +345,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
   const [now, setNow] = useState(() => Date.now());
   const [storage, setStorage] = useState<DownloadsStorage | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<DownloadItemSnapshot | null>(null);
+  // The row whose actions are showing (its status control was tapped).
+  const [openActions, setOpenActions] = useState<string | null>(null);
+  const toggleActions = (id: string) => setOpenActions((open) => (open === id ? null : id));
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
   // Bulk delete: holding a finished row (or Select) starts selecting; null
@@ -524,14 +575,22 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             </div>
             <button
               type="button"
-              onClick={() => void cancelPendingDownload(item)}
-              aria-label={`Cancel download of ${item.title}`}
-              title="Cancel download"
-              className={CANCEL_CLASS}
+              onClick={() => toggleActions(`pending-${item.jobId}`)}
+              aria-expanded={openActions === `pending-${item.jobId}`}
+              aria-label={`${failed ? 'Preparing failed' : 'Preparing'}: ${item.title}. Show actions`}
+              title={failed ? 'Retry or cancel' : 'Cancel'}
+              className={`download-status inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
             >
-              <X className="h-5 w-5" aria-hidden="true" />
+              {failed
+                ? <ProgressRing value={100} tone="error"><span className="text-[15px] font-bold leading-none text-[#f08a80]">!</span></ProgressRing>
+                : <ProgressRing value={fraction != null ? fraction * 100 : undefined} spinning={fraction == null} />}
             </button>
           </div>
+          {openActions === `pending-${item.jobId}` ? (
+            <RowActions actions={[
+              { label: 'Cancel download', ariaLabel: `Cancel download of ${item.title}`, tone: 'danger', onClick: () => { setOpenActions(null); void cancelPendingDownload(item); } },
+            ]} />
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2" aria-live="polite">
             <span className={`type-secondary inline-flex min-w-0 items-center gap-2 ${failed ? 'text-red-300' : 'text-white/70'}`}>
               {!failed ? <LoaderCircle className="h-4 w-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" /> : null}
@@ -618,7 +677,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       const watched = watchedPercent(item);
       const resumes = watched !== undefined && watched < 90;
       return (
-        <li key={item.downloadId} className={`-mx-2 flex items-center gap-1 rounded-lg px-2 py-1.5 select-none [-webkit-touch-callout:none] ${rowState}`} {...rowProps}>
+        <li key={item.downloadId} className={`download-ready-row -mx-2 rounded-lg px-2 py-1.5 select-none [-webkit-touch-callout:none] ${rowState}`} {...rowProps}>
+          <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => playLocal(item)}
@@ -629,8 +689,8 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             <span className="relative shrink-0">
               {episodeView ? <EpisodeStill src={downloadMeta(item.downloadId).still} label={item.episode != null ? `E${item.episode > 1000 ? item.episode - 1000 : item.episode}` : undefined} /> : <DownloadPoster src={downloadMeta(item.downloadId).poster ?? item.posterUrl} />}
               <span className="absolute inset-0 grid place-items-center" aria-hidden="true">
-                <span className={`grid h-10 w-10 place-items-center rounded-full border border-white/70 bg-black/55 transition group-hover:bg-black/75 ${selecting ? 'opacity-0' : ''}`}>
-                  <Play className="ml-0.5 h-4 w-4 fill-white text-white" />
+                <span className={`grid h-9 w-9 place-items-center rounded-full bg-[#f3eee5] shadow-[0_2px_10px_rgba(0,0,0,0.45)] transition group-hover:scale-105 ${selecting ? 'opacity-0' : ''}`}>
+                  <Play className="ml-0.5 h-4 w-4 fill-[#141414] text-[#141414]" />
                 </span>
               </span>
               {watched !== undefined ? (
@@ -651,16 +711,20 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
           ) : downloads?.remove ? (
             <button
               type="button"
-              onClick={() => {
-                setRemoveError(null);
-                setPendingRemoval(item);
-              }}
-              aria-label={`Remove ${item.title}`}
-              title="Remove download"
-              className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/[0.06] hover:text-white ${FOCUS_RING_CLASS}`}
+              onClick={() => toggleActions(item.downloadId)}
+              aria-expanded={openActions === item.downloadId}
+              aria-label={`More for ${item.title}`}
+              title="More"
+              className={`download-status inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white/75 transition hover:bg-white/[0.06] hover:text-white ${FOCUS_RING_CLASS}`}
             >
-              <Trash2 className="h-5 w-5" aria-hidden="true" />
+              <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
             </button>
+          ) : null}
+          </div>
+          {!selecting && openActions === item.downloadId ? (
+            <RowActions actions={[
+              { label: 'Remove download', ariaLabel: `Remove ${item.title}`, tone: 'danger', onClick: () => { setOpenActions(null); setRemoveError(null); setPendingRemoval(item); } },
+            ]} />
           ) : null}
         </li>
       );
@@ -678,31 +742,28 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             </div>
             {selecting ? (
               <SelectMark checked={checked} disabled={!selectable} />
-            ) : !ready && item.transferState !== 'verifying' ? (
+            ) : item.transferState === 'verifying' ? null : (
+              // One status control: the progress ring (pause/resume, cancel)
+              // or a red ring when it failed (retry, cancel).
               <button
                 type="button"
-                onClick={() => void runNativeAction(item.downloadId, 'cancel')}
-                disabled={busy}
-                aria-label={`Cancel download of ${item.title}`}
-                title="Cancel download"
-                className={CANCEL_CLASS}
+                onClick={() => toggleActions(item.downloadId)}
+                aria-expanded={openActions === item.downloadId}
+                aria-label={`${needsRepair ? 'Download failed' : item.transferState === 'paused' ? 'Paused' : 'Downloading'}: ${item.title}. Show actions`}
+                title={needsRepair ? 'Retry or cancel' : 'Pause or cancel'}
+                className={`download-status inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
               >
-                <X className="h-5 w-5" aria-hidden="true" />
+                {needsRepair ? (
+                  <ProgressRing value={100} tone="error"><span className="text-[15px] font-bold leading-none text-[#f08a80]">!</span></ProgressRing>
+                ) : item.transferState === 'paused' ? (
+                  <ProgressRing value={percent}><Play className="ml-0.5 h-3.5 w-3.5 fill-current" /></ProgressRing>
+                ) : item.transferState === 'downloading' ? (
+                  <ProgressRing value={percent}><Pause className="h-3.5 w-3.5 fill-current" /></ProgressRing>
+                ) : (
+                  <ProgressRing spinning />
+                )}
               </button>
-            ) : ready && downloads?.remove ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setRemoveError(null);
-                  setPendingRemoval(item);
-                }}
-                aria-label={`Remove ${item.title}`}
-                title="Remove download"
-                className={CANCEL_CLASS}
-              >
-                <Trash2 className="h-5 w-5" aria-hidden="true" />
-              </button>
-            ) : null}
+            )}
           </div>
 
           {ready ? (
@@ -731,49 +792,35 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
                 {item.transferState === 'downloading' && !item.waitingForWifi && amount ? null : <span>{transferStatus(item)}</span>}
                 {inTransfer && amount ? <span className="text-numeric shrink-0 text-white/60">{amount}</span> : null}
               </div>
-              {inTransfer ? <DownloadProgress value={percent} label={`${item.title} download progress`} /> : null}
+              {/* One row: the bar with its pause/resume control; speed and
+                  time left on one quiet line beneath. */}
+              {inTransfer ? (
+                <div className="flex items-center gap-3">
+                  <div className="min-w-0 flex-1"><DownloadProgress value={percent} label={`${item.title} download progress`} /></div>
+                </div>
+              ) : null}
+              {rate || eta ? (
+                <p className="download-rate type-secondary text-numeric mt-1.5 text-white/60">
+                  {[rate, eta ? `${eta} left` : null].filter(Boolean).join(' · ')}
+                </p>
+              ) : null}
               {repairErrors[item.downloadId] ? (
                 <p className="type-secondary mt-2 text-red-300" role="status">{repairErrors[item.downloadId]}</p>
               ) : null}
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                {rate || eta ? (
-                  <div className="download-rate type-secondary text-numeric flex items-center gap-4 text-white/60">
-                    {rate ? <span>Speed <span className="text-white/85">{rate}</span></span> : null}
-                    {eta ? <span>ETA <span className="text-white/85">{eta}</span></span> : null}
-                  </div>
-                ) : <span />}
-                {item.transferState === 'downloading' ? (
-                  <button
-                    type="button"
-                    onClick={() => void runNativeAction(item.downloadId, 'pause')}
-                    disabled={busy}
-                    aria-label={`Pause ${item.title}`}
-                    className={ROW_ACTION_CLASS}
-                  >
-                    <Pause className="h-4 w-4 fill-current" aria-hidden="true" /> Pause
-                  </button>
-                ) : item.transferState === 'paused' ? (
-                  <button
-                    type="button"
-                    onClick={() => void runNativeAction(item.downloadId, 'resume')}
-                    disabled={busy}
-                    aria-label={`Resume ${item.title}`}
-                    className={ROW_ACTION_CLASS}
-                  >
-                    <Play className="h-4 w-4 fill-current" aria-hidden="true" /> Resume
-                  </button>
-                ) : needsRepair ? (
-                  <button
-                    type="button"
-                    onClick={() => void runNativeAction(item.downloadId, 'resume')}
-                    disabled={busy}
-                    aria-label={`Retry download of ${item.title}`}
-                    className={`${ROW_ACTION_CLASS} disabled:cursor-wait`}
-                  >
-                    <RotateCcw className="h-4 w-4" aria-hidden="true" /> {busy ? 'Retrying…' : 'Retry'}
-                  </button>
-                ) : null}
-              </div>
+              {!selecting && openActions === item.downloadId ? (
+                <RowActions actions={needsRepair ? [
+                  { label: busy ? 'Retrying…' : 'Retry', ariaLabel: `Retry download of ${item.title}`, disabled: busy, onClick: () => { setOpenActions(null); void runNativeAction(item.downloadId, 'resume'); } },
+                  { label: 'Cancel', ariaLabel: `Cancel download of ${item.title}`, tone: 'danger', disabled: busy, onClick: () => { setOpenActions(null); void runNativeAction(item.downloadId, 'cancel'); } },
+                ] : [
+                  ...(item.transferState === 'downloading' || item.transferState === 'paused' ? [{
+                    label: item.transferState === 'paused' ? 'Resume' : 'Pause',
+                    ariaLabel: `${item.transferState === 'paused' ? 'Resume' : 'Pause'} ${item.title}`,
+                    disabled: busy,
+                    onClick: () => { setOpenActions(null); void runNativeAction(item.downloadId, item.transferState === 'paused' ? 'resume' : 'pause'); },
+                  }] : []),
+                  { label: 'Cancel download', ariaLabel: `Cancel download of ${item.title}`, tone: 'danger' as const, disabled: busy, onClick: () => { setOpenActions(null); void runNativeAction(item.downloadId, 'cancel'); } },
+                ]} />
+              ) : null}
             </div>
           )}
         </div>
@@ -912,9 +959,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
             <button
               type="button"
               onClick={() => startSelecting([])}
-              className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-4 text-sm font-medium text-white transition hover:bg-white/[0.12] ${FOCUS_RING_CLASS}`}
+              className={`-mr-3 inline-flex min-h-11 shrink-0 items-center rounded-lg px-3 text-[15px] font-semibold text-[var(--cinema-accent,#e7bd82)] transition hover:bg-white/[0.06] ${FOCUS_RING_CLASS}`}
             >
-              <ListChecks className="h-4 w-4" aria-hidden="true" /> Select
+              Select
             </button>
           ) : null}
         </div>

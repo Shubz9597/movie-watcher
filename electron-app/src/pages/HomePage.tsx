@@ -632,7 +632,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                     {featuredItem?.title || 'TorWatch'}
                   </h1>
                 </button>
-                <div className="featured-meta type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
+                <div className="featured-meta type-secondary text-numeric mt-5 flex items-center gap-1.5 text-white/70">
                   <span>{featuredItem.kind === 'tv' ? 'Series' : featuredItem.kind === 'anime' ? 'Anime' : 'Movie'}</span>
                   <span aria-hidden="true">·</span>
                   {featuredItem?.year ? <span>{featuredItem.year}</span> : null}
@@ -658,7 +658,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                   className={ACTION_PRIMARY_CLASS}
                 >
                   <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-                  Watch
+                  Play
                 </button>
               ) : null}
               {featuredItem ? (
@@ -679,13 +679,17 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
         {featuredItems.length > 1 ? (
           <>
             <div className="featured-controls absolute right-5 bottom-5 flex items-center gap-1 md:right-8 xl:right-12">
-              <span className="type-secondary text-numeric mr-1 text-white/70">
-                {String(featuredIndex + 1).padStart(2, '0')} / {String(featuredItems.length).padStart(2, '0')}
+              {/* Where the rotation is: quiet dots, the current one longer. */}
+              <span className="featured-dots mr-2 flex items-center gap-1.5" aria-hidden="true">
+                {featuredItems.map((_, index) => (
+                  <span key={index} className={`h-1.5 rounded-full transition-all ${index === featuredIndex ? 'w-5 bg-[#e7bd82]' : 'w-1.5 bg-white/40'}`} />
+                ))}
               </span>
+              <span className="sr-only">Featured {featuredIndex + 1} of {featuredItems.length}</span>
               <button
                 type="button"
                 onClick={() => setFeaturedUserPaused((paused) => !paused)}
-                className="flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="flex h-12 w-10 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label={featuredUserPaused ? 'Resume featured title rotation' : 'Pause featured title rotation'}
                 aria-pressed={featuredUserPaused}
               >
