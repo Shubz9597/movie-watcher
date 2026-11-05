@@ -113,12 +113,12 @@ const TITLES: FixtureTitle[] = showcase ? [
   ...BASE_TITLES.map((title) => title.type === 'movie' ? {
     ...title,
     overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family. A choice between love and the fate of the universe awaits.',
-    artwork: { ...title.artwork, background: 'https://images.metahub.space/background/medium/tt15239678/img' },
+    artwork: { ...title.artwork, background: 'https://images.metahub.space/background/medium/tt15239678/img', logo: 'https://image.tmdb.org/t/p/w500/eYvF1LhPKuoBxOAmWjFTAK7EPWl.png' },
   } : title.id === 'tmdb:tv:1396' ? {
     ...title,
     overview: 'Walter White, a New Mexico chemistry teacher, is diagnosed with Stage III cancer and given a prognosis of only two years left to live. He becomes filled with a sense of fearlessness and an unrelenting desire to secure his family\'s financial future at any cost.',
     imdbId: 'tt0903747',
-    artwork: { ...title.artwork, background: BB_STILL },
+    artwork: { ...title.artwork, background: BB_STILL, logo: 'https://image.tmdb.org/t/p/w500/chw44B2VnLha8iiTdyZcIW0ZELC.png' },
   } : title),
   ...showcaseMovies.map(([id, title, year, poster]): FixtureTitle => ({
     id: `tmdb:movie:${id}`, type: 'movie', title, year,

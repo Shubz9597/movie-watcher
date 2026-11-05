@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { userMessage } from '../lib/user-error';
 import { nextUpEpisode } from '../lib/next-up';
 import { movieRelease, formatReleaseDate } from '../lib/movie-release';
+import { TitleWordmark } from '../components/shared/TitleWordmark';
 import { CheckCircle2, Download, ExternalLink, Play, RotateCcw, ListVideo, Youtube } from 'lucide-react';
 import { fetchWatched, setWatched, watchedKey } from '../lib/services/watched-service';
 import { PageBackButton } from '../components/shared/PageBackButton';
@@ -636,7 +637,9 @@ const { indicator: pullIndicator } = usePullToRefresh(() => setRefreshKey((key) 
           <div className="relative min-w-0 max-w-4xl space-y-7 [overflow-wrap:anywhere]">
 
             <div className="space-y-3">
-              <h1 className="type-feature-title !text-[2rem] !leading-[2.375rem] text-white md:!text-[4.5rem] md:!leading-[1.02]">{detail.title}</h1>
+              <TitleWordmark logoUrl={detail.logoUrl} title={detail.title} className="title-page-wordmark">
+                <h1 className="type-feature-title !text-[2rem] !leading-[2.375rem] text-white md:!text-[4.5rem] md:!leading-[1.02]">{detail.title}</h1>
+              </TitleWordmark>
               {detail.tagline ? <p className="measure-compact type-body text-white/70">{detail.tagline}</p> : null}
               <div className="type-secondary text-numeric flex flex-wrap items-center gap-2 text-white/70">
                 {metaBadges.map((item, index) => (

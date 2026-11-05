@@ -128,8 +128,8 @@ test("ContinueCarousel separates resume and detail targets with progress on artw
   assert.match(html, /aria-label="Resume Dune: Part Two"/, "resume is its own named target");
   assert.match(html, /aria-label="Resume Breaking Bad"/);
   assert.match(html, /src="https:\/\/backdrop.example\/dune.jpg"/, "landscape artwork is preferred to a cropped poster");
-  assert.match(html, /102 min left/, "remaining time comes from duration and current position");
-  assert.match(html, /S1 · E4 · 37 min left/, "episode progress is readable beside remaining time");
+  assert.match(html, /1h 42m left/, "remaining time comes from duration and current position");
+  assert.match(html, /S1 E4 · 37m left/, "episode progress is readable beside remaining time");
   assert.match(html, /width:39%/, "progress lives on the artwork");
   assert.match(html, /width:21%/);
   assert.match(html, /Dune: Part Two/, "title text is a separate element (detail intent)");

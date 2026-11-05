@@ -57,10 +57,6 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
       {items.map((item) => {
         const pct = Math.max(0, Math.min(100, Math.round(Number(item.percent) || 0)));
         const displayTitle = item.title || item.seriesId;
-        // Series show where you are; a film's progress bar says it all.
-        const episodeBadge = item.kind !== 'movie'
-          ? `S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}`
-          : null;
         return (
           <article
             key={`${item.seriesId}-${item.season}-${item.episode}`}
@@ -96,13 +92,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
                 <Play className="ml-0.5 h-5 w-5 fill-current" aria-hidden="true" />
               </button>
 
-              {episodeBadge ? (
-                <div className="absolute left-3 top-3">
-                  <span className="type-caption text-numeric rounded-md bg-black/70 px-2 py-1 text-white/90">
-                    {episodeBadge}
-                  </span>
-                </div>
-              ) : null}
+
 
               {/* Progress lives on the artwork (accepted alpha design). */}
               <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/10">

@@ -1174,7 +1174,7 @@ export default function EpisodePanel({
                     ) : null}
                     {partial ? (
                       <div className="absolute inset-x-0 bottom-0 h-1 bg-white/20" aria-hidden="true">
-                        <div className="h-full bg-white" style={{ width: `${partial}%` }} />
+                        <div className="h-full bg-[var(--cinema-accent,#e7bd82)]" style={{ width: `${partial}%` }} />
                       </div>
                     ) : null}
                   </div>

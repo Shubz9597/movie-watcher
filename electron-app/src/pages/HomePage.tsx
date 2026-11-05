@@ -15,6 +15,8 @@ import { RecommendationRow } from '../components/shared/RecommendationRow';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 import { isUnreachable, OFFLINE_MESSAGE } from '../lib/user-error';
 import { requestReconnect } from '../lib/connection-banner';
+import { TitleWordmark } from '../components/shared/TitleWordmark';
+import { bffTitleDetail } from '../lib/services/catalog-bff';
 
 type ContinueItem = {
   seriesId: string;
@@ -54,6 +56,13 @@ const catalogRequests = {
 };
 
 type FeaturedItem = MovieCard & { kind: 'movie' | 'tv' | 'anime' };
+
+/** The catalog id of a hero item (same rule as its Watch later toggle). */
+function featuredCatalogId(item: FeaturedItem): string {
+  return item.catalogId ?? (item.kind === 'anime' && item.sourceProvider !== 'tmdb'
+    ? `anilist:${item.id}`
+    : `tmdb:${item.sourceKind === 'movie' || item.kind === 'movie' ? 'movie' : 'tv'}:${item.id}`);
+}
 
 function buildFeaturedQueue(movies: MovieCard[], series: MovieCard[], anime: MovieCard[]): FeaturedItem[] {
   // M1.4 UI pass: a deeper, dynamic queue (was 6+6+6 capped at 8) so the
@@ -503,6 +512,22 @@ export default function HomePage({ navigate, continueVariant = 'carousel', onRes
   }, [movies, series, anime, moviesLoading, seriesLoading, animeLoading]);
 
   const featuredItem = featuredItems[featuredIndex % Math.max(featuredItems.length, 1)];
+  // Hero titles show their logo artwork (title detail artwork.logo); this
+  // and the next item are looked up so a rotation never waits on it.
+  const [heroLogos, setHeroLogos] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    if (!featuredItems.length) return;
+    const wanted = [featuredItem, featuredItems[(featuredIndex + 1) % featuredItems.length]]
+      .filter((item): item is FeaturedItem => Boolean(item))
+      .map(featuredCatalogId)
+      .filter((id) => !(id in heroLogos));
+    for (const id of wanted) {
+      setHeroLogos((logos) => (id in logos ? logos : { ...logos, [id]: null }));
+      void bffTitleDetail(id)
+        .then((row) => setHeroLogos((logos) => ({ ...logos, [id]: row.artwork?.logo ?? null })))
+        .catch(() => {});
+    }
+  }, [featuredItem, featuredItems, featuredIndex, heroLogos]);
   const featuredLoading = !featuredItems.length && (moviesLoading || seriesLoading || animeLoading);
 
   useEffect(() => {
@@ -656,9 +681,15 @@ export default function HomePage({ navigate, continueVariant = 'carousel', onRes
                   onClick={() => openItem(featuredItem.kind, featuredItem)}
                   className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 >
-                  <h1 className="type-feature-title text-white transition hover:text-white/85">
-                    {featuredItem?.title || 'TorWatch'}
-                  </h1>
+                  <TitleWordmark
+                    logoUrl={featuredItem ? heroLogos[featuredCatalogId(featuredItem)] : null}
+                    title={featuredItem?.title || 'TorWatch'}
+                    className="featured-wordmark"
+                  >
+                    <h1 className="type-feature-title text-white transition hover:text-white/85">
+                      {featuredItem?.title || 'TorWatch'}
+                    </h1>
+                  </TitleWordmark>
                 </button>
                 <div className="featured-meta type-secondary text-numeric mt-5 flex items-center gap-1.5 text-white/70">
                   <span>{featuredItem.kind === 'tv' ? 'Series' : featuredItem.kind === 'anime' ? 'Anime' : 'Movie'}</span>

@@ -982,3 +982,12 @@ body :focus-visible { --tw-ring-color: var(--cinema-accent); }
   .title-layout .episode-panel--page .app-scrollbar { max-height: calc(100vh - 290px); overflow-y: auto; overscroll-behavior: contain; }
   .title-layout .episode-panel .episode-row-main .text-\[15px\] { font-size: 15px; }
 }
+
+/* ==== Title logos (TitleWordmark) ==== */
+.title-wordmark { filter: drop-shadow(0 2px 14px #000000b0); }
+.featured-wordmark { max-height: 132px; max-width: min(460px, 82%); }
+.title-page-wordmark { max-height: 150px; max-width: min(520px, 90%); margin-bottom: 6px; }
+@media (max-width: 639px) {
+  .featured-wordmark { max-height: 92px; max-width: 78%; }
+  .title-page-wordmark { max-height: 96px; max-width: 80%; }
+}
