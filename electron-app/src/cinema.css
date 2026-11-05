@@ -544,7 +544,7 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
    toggle sit with the season picker. */
 @media (min-width: 1024px) {
   aside.episode-panel.episode-panel--page { max-width: 1080px; }
-  .episode-panel--page > div:first-of-type > div:last-child { justify-content: flex-start; gap: 20px; }
+  .episode-panel--page .episode-season-row { justify-content: flex-start; gap: 20px; }
 }
 /* Shelves: readable years; rank numbers on a solid chip. */
 .poster-card .type-caption { color: #a7a9ad; }
@@ -560,7 +560,7 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 .downloads-page [role='progressbar'] { background: #2a2d33; }
 .downloads-page h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9a9b98; }
 @media (min-width: 1024px) {
-  .episode-panel--page > div:first-of-type > div:first-child { justify-content: flex-start; gap: 14px; }
+  .episode-panel--page .episode-heading-row { justify-content: flex-start; gap: 14px; }
 }
 
 /* ==== Sonnet round 3 ==== */
@@ -774,7 +774,7 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 }
 /* Phone season controls on one row: picker and a compact watched pill. */
 @media (max-width: 639px) {
-  .episode-panel--page > div:first-of-type > div:last-child { flex-wrap: nowrap; justify-content: space-between; }
+  .episode-panel--page .episode-season-row { flex-wrap: nowrap; justify-content: space-between; }
   .season-watched-button { padding-inline: 12px; white-space: nowrap; }
 }
 
@@ -799,7 +799,7 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 }
 /* Phone season row: fits the width. */
 @media (max-width: 639px) {
-  .episode-panel--page > div:first-of-type > div:last-child > * { min-width: 0; }
+  .episode-panel--page .episode-season-row > * { min-width: 0; }
   .episode-season-trigger { min-width: 0 !important; flex: 0 1 auto; }
   .season-watched-button { font-size: 14px; }
 }
@@ -848,7 +848,7 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 .library-page section h2 { font-size: 17px; line-height: 22px; font-weight: 600; }
 .library-page section h2 .text-numeric, .episode-panel > div:first-of-type .text-sm { font-size: 15px; color: #ffffff8c; }
 .downloads-page h3 { font-size: 17px; line-height: 22px; font-weight: 600; color: #fff; }
-.episode-panel--page > div:first-of-type > div:first-child { justify-content: flex-start; gap: 12px; align-items: baseline; }
+.episode-panel--page .episode-heading-row { justify-content: flex-start; gap: 12px; align-items: baseline; }
 /* Card titles: one weight and size; one meta tone. */
 .poster-card h3, .library-card .line-clamp-2, .continue-card > div:last-child > button:first-child { font-weight: 500 !important; }
 @media (min-width: 640px) { .poster-card h3, .library-card .line-clamp-2, .continue-card > div:last-child > button:first-child { font-size: 15px !important; line-height: 20px; } }
@@ -991,3 +991,5 @@ body :focus-visible { --tw-ring-color: var(--cinema-accent); }
   .featured-wordmark { max-height: 92px; max-width: 78%; }
   .title-page-wordmark { max-height: 96px; max-width: 80%; }
 }
+/* Desktop search lines up with the app's 48px margin. */
+@media (min-width: 1024px) { .search-page { padding-inline: 48px; } }

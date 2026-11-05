@@ -6,7 +6,7 @@
 // every pushed detail screen shows one back chevron in the same place, the
 // iOS navigation-bar convention. Gesture/hardware back still works.
 import { ProfileButton } from './ProfileGate';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, Download, Home, Library, Search, Settings } from 'lucide-react';
 import AppHeader from '../AppHeader';
 import torWatchLogo from '../../assets/torwatch-app-icon.png';
@@ -33,6 +33,11 @@ const DESTINATIONS = [
 export function AppShell({ routePath, navigate, onOpenSettings, onBack, downloadsAvailable, children }: AppShellProps) {
   const search = routePath === 'search';
   const tabRoot = ['home', 'library', 'search', 'downloads'].includes(routePath);
+  // Pages opened from a tab (a title, See all, a show's downloads) keep that
+  // tab lit, so you can see where you are.
+  const lastTab = useRef('home');
+  if (tabRoot) lastTab.current = routePath;
+  const activeTab = tabRoot ? routePath : routePath === 'downloads-series' ? 'downloads' : routePath === 'library-category' ? 'library' : lastTab.current;
   const frame = useSearchViewport(search);
   // Home and title pages open on artwork: the phone bar floats over it
   // (transparent, a soft top shade) and turns solid once the page scrolls,
@@ -124,7 +129,7 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
         <div className="flex items-stretch justify-around">
           {DESTINATIONS.map((destination) => {
             const Icon = destination.icon;
-            const current = routePath === destination.path;
+            const current = activeTab === destination.path;
             return (
               <button
                 key={destination.path}
@@ -143,9 +148,9 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
           <button
             type="button"
             onClick={() => navigate('search')}
-            aria-current={routePath === 'search' ? 'page' : undefined}
+            aria-current={activeTab === 'search' ? 'page' : undefined}
             className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-xs transition ${FOCUS_RING_CLASS} ${
-              routePath === 'search' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
+              activeTab === 'search' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
             }`}
           >
             <Search className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
@@ -156,9 +161,9 @@ export function AppShell({ routePath, navigate, onOpenSettings, onBack, download
             <button
               type="button"
               onClick={() => navigate('downloads')}
-              aria-current={routePath === 'downloads' || routePath === 'downloads-series' ? 'page' : undefined}
+              aria-current={activeTab === 'downloads' ? 'page' : undefined}
               className={`flex min-h-[var(--touch-target)] flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-xs transition ${FOCUS_RING_CLASS} ${
-                routePath === 'downloads' || routePath === 'downloads-series' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
+                activeTab === 'downloads' ? 'font-semibold text-white' : 'font-normal text-white/60 hover:text-white/85'
               }`}
             >
               <Download className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />

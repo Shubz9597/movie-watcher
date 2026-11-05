@@ -21,6 +21,7 @@ import { NativeDownloadButton } from './NativeDownloadButton';
 import { fetchWatched, setWatched, watchedKey, type WatchedItem } from '../lib/services/watched-service';
 import type { DownloadSelection } from '../mobile/download-queue';
 import { nextUpEpisode, type NextUp } from '../lib/next-up';
+import { releaseFeatures } from '../lib/release-summary';
 import type { BatchRange } from './NativeDownloadButton';
 
 type Props = {
@@ -1089,11 +1090,11 @@ export default function EpisodePanel({
       {!activeEpisode ? (
         <>
           <div className="px-5 pb-2 pt-5 md:px-8 lg:px-5">
-            <div className="flex items-baseline justify-between gap-3">
+            <div className="episode-heading-row flex items-baseline justify-between gap-3">
               <h3 className="type-panel-title text-white">Episodes</h3>
               <span className="text-sm text-white/60">{episodes.length} episodes</span>
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div className="episode-season-row mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <Select value={String(selectedSeason)} onValueChange={onSeasonChange}>
               <SelectTrigger className="episode-season-trigger min-h-11 w-auto min-w-[9.5rem] gap-3 rounded-lg border-0 bg-white/[0.08] px-4 text-[15px] font-semibold text-white">
                 <SelectValue />
@@ -1323,16 +1324,21 @@ export default function EpisodePanel({
                 return (
                   <div key={torrentRowKey} className={`content-auto-row border-t border-white/[0.08] px-5 py-4 ${torrent.previouslyUsed ? 'bg-white/[0.035]' : ''}`}>
                     <div className="flex items-center justify-between gap-3">
-                      <button type="button" aria-label={`Play source ${torrent.title}`} onClick={() => void playTorrent(torrent)} disabled={Boolean(playBusyId || externalBusyId)} className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-black disabled:opacity-50 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+                      <button type="button" aria-label={`Play source ${torrent.title}`} onClick={() => void playTorrent(torrent)} disabled={Boolean(playBusyId || externalBusyId)} className="episode-source-play inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/[0.12] text-white disabled:opacity-50 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
                         {playBusyId === torrentRowKey ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
                       </button>
                       <div className="min-w-0 flex-1">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="line-clamp-2 text-sm leading-5 text-white/80" title={torrent.title}>{torrent.title}</div>
+                        {/* What you choose by first (quality, picture, sound, size);
+                            the release name small underneath. */}
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <div className="episode-source-summary text-[15px] font-semibold leading-snug text-white/90">
+                            {[...releaseFeatures(torrent.title, torrent.quality), torrent.size ? formatBytes(torrent.size) : null].filter(Boolean).join(' · ') || 'Unknown quality'}
+                          </div>
                           {torrent.previouslyUsed ? (
                             <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
                           ) : null}
                         </div>
+                        <div className="episode-source-name mt-0.5 line-clamp-1 text-xs text-white/45" title={torrent.title}>{torrent.title}</div>
                         <div className="type-caption text-numeric mt-1 text-white/70">
                           <span>{torrent.indexer || 'Unknown indexer'}</span>
                           {torrent.pack ? (
@@ -1342,10 +1348,8 @@ export default function EpisodePanel({
                           ) : torrent.seasonPack ? (
                             <span> · Batch</span>
                           ) : null}
-                          {torrent.quality ? <span> · {torrent.quality}</span> : null}
                           {torrent.audio ? <span> · {torrent.audio}</span> : null}
                           {torrent.seeders ? <span> · {torrent.seeders} seeders</span> : null}
-                          {torrent.size ? <span> · {formatBytes(torrent.size)}</span> : null}
                         </div>
                       </div>
                       <div className="hidden shrink-0 gap-2 sm:flex">

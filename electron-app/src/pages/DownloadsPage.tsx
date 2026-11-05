@@ -271,6 +271,8 @@ type DownloadGroup =
     bytes: number;
     summary: string | null;
     needsAttention: boolean;
+    /** Percent of the show's in-progress downloads received, when known. */
+    progress?: number;
   };
 
 // Episodes collapse into one entry per show (first-seen order); movies and
@@ -321,6 +323,7 @@ function groupDownloads(pending: PendingDownload[], items: DownloadItemSnapshot[
       show.failed ? `${show.failed} need${show.failed === 1 ? 's' : ''} repair` : null,
     ].filter(Boolean);
     show.summary = parts.length ? parts.join(' · ') : null;
+    show.progress = show.downloading && show.inTotal > 0 ? progressPercent(show.inReceived, show.inTotal) : undefined;
     show.needsAttention = show.failed > 0;
   }
   return groups;
@@ -875,6 +878,11 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
                   </p>
                   {group.summary ? (
                     <p className={`type-secondary mt-1.5 ${group.needsAttention ? 'text-red-300' : 'download-active-text text-white/70'}`}>{group.summary}</p>
+                  ) : null}
+                  {typeof group.progress === 'number' ? (
+                    <div className="mt-2 h-1 max-w-[220px] overflow-hidden rounded-full bg-white/15" aria-hidden="true">
+                      <div className="download-progress-fill h-full rounded-full bg-[var(--cinema-accent,#e7bd82)]" style={{ width: `${group.progress}%` }} />
+                    </div>
                   ) : null}
                 </div>
                 {selecting ? <SelectMark checked={checked} disabled={!selectable} /> : <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center" aria-hidden="true"><ChevronRight className="h-5 w-5 text-white/50" /></span>}
