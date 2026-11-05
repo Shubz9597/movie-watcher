@@ -29,7 +29,12 @@ const sizes = { desktop: { width: 1440, height: 1100 }, phone: { width: 390, hei
 async function settle(page) {
   await page.evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all([...document.images].filter(img => img.loading !== 'lazy').map(img => img.decode().catch(() => {})));
+    await Promise.all([...document.images].filter(img => {
+      const r = img.getBoundingClientRect();
+      const clip = img.closest('.carousel-rail, .continue-carousel')?.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0 && r.left < Math.min(innerWidth, clip?.right ?? innerWidth) && r.right > Math.max(0, clip?.left ?? 0);
+    }).map(img => { img.loading = 'eager'; return img.decode().catch(() => {}); }));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   await new Promise(resolve => setTimeout(resolve, 700));
 }
@@ -40,7 +45,8 @@ async function capture(page, name) {
     scrollWidth: document.documentElement.scrollWidth,
     brokenVisibleImages: [...document.images].filter(img => {
       const r = img.getBoundingClientRect();
-      return img.complete && !img.naturalWidth && r.top < innerHeight && r.bottom > 0 && r.left < innerWidth && r.right > 0;
+      const clip = img.closest('.carousel-rail, .continue-carousel')?.getBoundingClientRect();
+      return (!img.complete || !img.naturalWidth) && r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0 && r.left < Math.min(innerWidth, clip?.right ?? innerWidth) && r.right > Math.max(0, clip?.left ?? 0);
     }).map(img => img.src),
   }));
   await page.screenshot({ path: path.join(out, `${name}.png`) });
@@ -56,7 +62,11 @@ try {
     await page.goto(base, { waitUntil: 'networkidle2' });
     await page.waitForSelector('.featured-copy h1');
     await capture(page, `home-${device}`);
-    await page.evaluate(() => document.querySelector('.catalog-shelf').scrollIntoView({ block: 'start' }));
+    await page.evaluate(() => {
+      const shelf = document.querySelector('.catalog-shelf');
+      const header = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+      window.scrollTo(0, shelf.getBoundingClientRect().top + scrollY - header - 20);
+    });
     await capture(page, `shelves-${device}`);
     await page.goto(`${base}#see-all?title=Trending%20movies&api=tmdb%3Atrending%3Amovie&kind=movie`, { waitUntil: 'networkidle2' });
     await page.waitForSelector('.poster-card');
@@ -64,6 +74,12 @@ try {
     await page.goto(`${base}#title?kind=movie&id=693134`, { waitUntil: 'networkidle2' });
     await page.waitForSelector('.title-page h1');
     await capture(page, `title-${device}`);
+    await page.click('.source-details-toggle');
+    await page.waitForSelector('[id^="source-details-"] dd');
+    const fullReleaseName = await page.$eval('[id^="source-details-"] dd', el => el.textContent);
+    if (!fullReleaseName.includes('GROUPNAMEWITHLONGTAGS')) throw new Error('Full release name unavailable');
+    report.checks.push({ device, sourceDetailsDisclosure: true });
+    await page.click('.source-details-toggle');
     await page.goto(`${base}#library`, { waitUntil: 'networkidle2' });
     await page.waitForSelector('[role="tabpanel"]');
     await capture(page, `library-${device}`);
@@ -82,14 +98,16 @@ try {
     await page.close();
   }
   // A narrow phone, tablet, and laptop are also checked for horizontal overflow.
-  for (const width of [320, 768, 1024]) {
+  for (const width of [320, 768, 1024, 1920]) {
     const page = await browser.newPage();
     await page.setViewport({ width, height: 900 });
-    await page.goto(base, { waitUntil: 'networkidle2' });
-    await settle(page);
-    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
-    report.checks.push({ width, scrollWidth });
-    if (scrollWidth > width) throw new Error(`Horizontal overflow at ${width}`);
+    for (const route of ['', '#title?kind=movie&id=693134', '#title?kind=tv&id=1396', '#library', '#see-all?title=Trending%20movies&api=tmdb%3Atrending%3Amovie&kind=movie']) {
+      await page.goto(`${base}${route}`, { waitUntil: 'networkidle2' });
+      await settle(page);
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+      report.checks.push({ width, route: route || 'home', scrollWidth });
+      if (scrollWidth > width) throw new Error(`Horizontal overflow at ${width} on ${route}`);
+    }
     await page.close();
   }
   await writeFile(path.join(out, 'checks.json'), JSON.stringify(report, null, 2));

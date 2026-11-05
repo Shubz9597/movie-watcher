@@ -18,6 +18,7 @@ type RawContinueItem = {
 export type EnrichedContinueItem = RawContinueItem & {
   title: string;
   posterPath: string | null;
+  backdropPath?: string | null;
   year?: number;
   kind: 'movie' | 'tv' | 'anime';
   tmdbId?: number;
@@ -43,17 +44,17 @@ function parseSeriesId(seriesId: string): { provider: string; type: string; id: 
 // (nulls) are cached too — a doomed lookup should not re-fan-out.
 const ENRICHMENT_TTL_MS = 300_000;
 const enrichmentCache = new Map<string, { at: number; data: {
-  title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number;
+  title: string; posterPath: string | null; backdropPath?: string | null; year?: number; anilistId?: number; malId?: number;
 } | null }>();
 
 async function fetchBffEnrichment(seriesId: string): Promise<{
-  title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number;
+  title: string; posterPath: string | null; backdropPath?: string | null; year?: number; anilistId?: number; malId?: number;
 } | null> {
   const cached = enrichmentCache.get(seriesId);
   if (cached && Date.now() - cached.at < ENRICHMENT_TTL_MS) return cached.data;
   if (cached) enrichmentCache.delete(seriesId);
   const catalogId = catalogIdForSeriesId(seriesId);
-  let data: { title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
+  let data: { title: string; posterPath: string | null; backdropPath?: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
   if (catalogId) {
     try {
       data = continueEnrichmentFromBackend(await bffTitleDetail(catalogId));
@@ -68,7 +69,7 @@ async function fetchBffEnrichment(seriesId: string): Promise<{
 async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> {
   const { provider, type, id } = parseSeriesId(item.seriesId);
 
-  let metadata: { title: string; posterPath: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
+  let metadata: { title: string; posterPath: string | null; backdropPath?: string | null; year?: number; anilistId?: number; malId?: number } | null = null;
   let kind: 'movie' | 'tv' | 'anime' = 'tv';
   let tmdbId: number | undefined;
   let malId: number | undefined;
@@ -93,6 +94,7 @@ async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> 
     ...item,
     title: metadata?.title || item.seriesId,
     posterPath: metadata?.posterPath || null,
+    backdropPath: metadata?.backdropPath || null,
     year: metadata?.year,
     kind,
     tmdbId,

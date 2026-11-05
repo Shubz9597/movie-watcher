@@ -932,3 +932,53 @@ aside.episode-panel.episode-panel--page { background: transparent; border: 0; bo
 /* Small text actions get a full 44px touch height. */
 .episode-overview .episode-more, .title-page .title-more, .source-panel .source-details-toggle { min-height: 44px; }
 .title-page a[href*='imdb.com/title'] { padding-block: 12px; margin-block: -12px; }
+
+/* ==== Merged from ui/robin-cinema-polish: desktop layout and finish ==== */
+:root { color-scheme: dark; }
+body :focus-visible { --tw-ring-color: var(--cinema-accent); }
+.app-header > div { height: 76px; }
+.app-header nav [aria-current='page']::after { bottom: -16px; }
+.featured-copy h1 { text-wrap: balance; }
+.featured-actions > button { min-height: 48px; }
+.poster-card h3 { text-align: left; }
+.poster-card:focus-visible .poster-art { outline: 2px solid var(--cinema-accent); outline-offset: 4px; }
+.library-card:focus-visible { outline: 2px solid var(--cinema-accent); outline-offset: 5px; }
+.shelf-see-all { min-height: 44px; }
+.library-collections > section { min-width: 0; }
+.library-collections .shelf-heading h2 > svg { color: #b3b4b2; }
+.source-panel, aside.episode-panel { box-shadow: none; }
+.browse-page { padding-top: 36px; }
+.browse-page > ul { row-gap: 32px; }
+@media (min-width: 640px) {
+  .featured-hero { min-height: 520px; }
+  .featured-content { min-height: 520px; padding-top: 110px; padding-bottom: 64px; }
+}
+@media (min-width: 1024px) {
+  .continue-card { width: 310px; }
+  .home-shelves > .continue-section { padding-top: 0; padding-bottom: 20px; }
+  .home-shelves > .continue-section > div:first-child { margin-bottom: 20px; }
+  /* Library: Movies, Series and Anime side by side. */
+  .library-collections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; padding-top: 22px; }
+  .library-collections > section { margin-top: 0 !important; }
+  .library-collections > p { grid-column: 1 / -1; }
+  /* Title page: details on the left, Sources / Episodes beside them (sticky). */
+  .title-page .title-layout { grid-template-columns: minmax(0, 1fr) 440px; gap: 64px; padding-top: 18px; align-items: start; }
+  .title-page .title-layout > :last-child { position: sticky; top: 100px; }
+  .title-page .type-feature-title { font-size: 64px !important; line-height: 1.08 !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-card *, .continue-card *, .library-card * { transition: none; }
+  .poster-art, .poster-art img, .library-card img { transform: none; }
+}
+@media (min-width: 1024px) {
+  /* Episodes in the 440px side column: the same card as Sources, compact rows. */
+  .title-layout aside.episode-panel.episode-panel--page { max-width: none; margin-inline: 0; background: #16181a; border: 1px solid #ffffff14; border-radius: 16px; overflow: hidden; min-height: 0; }
+  .title-layout .episode-panel--page > div:first-of-type { padding: 20px 20px 8px !important; }
+  .title-layout .episode-panel--page .episode-row-main { padding-left: 20px !important; gap: 14px; align-items: flex-start; }
+  .title-layout .episode-panel--page .episode-row-main > div:first-child { width: 128px; }
+  .title-layout .episode-panel--page .episode-overview { padding: 0 20px 0 !important; margin-top: 4px !important; }
+  .title-layout .episode-panel--page .episode-overview p { font-size: 13.5px; }
+  .title-layout .episode-panel--page .content-auto-row { padding-block: 12px; }
+  .title-layout .episode-panel--page .app-scrollbar { max-height: calc(100vh - 290px); overflow-y: auto; overscroll-behavior: contain; }
+  .title-layout .episode-panel .episode-row-main .text-\[15px\] { font-size: 15px; }
+}

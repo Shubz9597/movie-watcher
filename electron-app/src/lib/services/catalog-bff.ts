@@ -272,6 +272,7 @@ export function catalogIdForSeriesId(seriesId: string): string | null {
 export type ContinueEnrichment = {
   title: string;
   posterPath: string | null;
+  backdropPath?: string | null;
   year?: number;
   anilistId?: number;
   malId?: number;
@@ -287,6 +288,7 @@ export function continueEnrichmentFromBackend(row: BffTitle): ContinueEnrichment
   return {
     title: row.title,
     posterPath: row.artwork?.poster ?? null,
+    ...(row.artwork?.background ? { backdropPath: row.artwork.background } : {}),
     year: row.year,
     anilistId: Number.isFinite(anilistId) && anilistId > 0 ? anilistId : undefined,
     malId: Number.isFinite(malId) && malId > 0 ? malId : undefined,

@@ -1,0 +1,37 @@
+{
+  "testCommand": "npm test",
+  "testResults": {
+    "tests": 281,
+    "pass": 281,
+    "fail": 0,
+    "skipped": 0
+  },
+  "typecheck": {
+    "command": "npx tsc --noEmit",
+    "exitCode": 0
+  },
+  "builds": [
+    {
+      "command": "npm run build:browser",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run build:mobile",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run build:renderer",
+      "exitCode": 0
+    }
+  ],
+  "detectorFindings": [],
+  "review": {
+    "model": "gpt-6.1-sol",
+    "reasoningEffort": "high",
+    "disposition": "ship",
+    "score": 9.5,
+    "scope": "21 desktop, responsive phone, and mobile-shell production UI captures with synthetic fixtures; mobile safe areas emulated in Chrome"
+  },
+  "baseCommit": "ec5adddc14dcd9637292df31c8d6147c978a60a1",
+  "branch": "ui/robin-cinema-polish"
+}

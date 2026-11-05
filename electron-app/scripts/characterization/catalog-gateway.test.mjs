@@ -203,6 +203,10 @@ test("continue enrichment mapping keeps provider ids and covers seriesId shapes"
     providerIds: { anilist: "154587", jikan: "52991" },
   });
   assert.deepEqual(enrichment, { title: "Frieren", posterPath: "https://poster.png", year: 2023, anilistId: 154587, malId: 52991 });
+  assert.equal(continueEnrichmentFromBackend({
+    id: "tmdb:movie:123", type: "movie", title: "Film",
+    artwork: { poster: "https://poster.png", background: "https://backdrop.png" },
+  }).backdropPath, "https://backdrop.png", "continue enrichment retains landscape artwork");
   assert.equal(continueEnrichmentFromBackend({ id: "tmdb:1", type: "movie", title: "" }), null, "empty title is not an enrichment");
 });
 

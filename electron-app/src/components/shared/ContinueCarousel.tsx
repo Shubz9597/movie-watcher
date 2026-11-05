@@ -45,7 +45,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
 
   return (
     <div
-      className="hide-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 md:mx-0"
+      className="continue-carousel hide-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 md:mx-0"
       onPointerDown={beginPointer}
       onPointerMove={movePointer}
     >
@@ -67,9 +67,10 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
             className="continue-card w-[240px] shrink-0 snap-start sm:w-[260px]"
           >
             <div className="relative aspect-video overflow-hidden rounded-lg border border-white/10 bg-[var(--surface-raised)]">
-              {item.posterPath ? (
+              {item.backdropPath || item.posterPath ? (
                 <img
-                  src={item.posterPath}
+                  // Wide artwork suits the 16:9 card; the poster is the fallback.
+                  src={item.backdropPath || item.posterPath || undefined}
                   alt=""
                   width="342"
                   height="193"
