@@ -87,7 +87,27 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             self.persistLocalProgress(state: "stopped")
             self.teardown()
         }
+        // The first play after launch was ~3s slower than the rest (device
+        // 2026-11-06: 0.7s audio setup, 2.1s VLC start, vs 0.03s later), and
+        // the app froze while the player rotated in. Warm both up in the
+        // background shortly after launch: the audio category (setting it
+        // does not interrupt other apps' sound; only activation does) and a
+        // VLC engine, kept so its loaded modules stay loaded.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            let startedAt = Date()
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            let audioMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let engine = VLCMediaPlayer(options: ["--no-video-title-show"])
+            let totalMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DispatchQueue.main.async {
+                self?.warmEngine = engine
+                self?.warmUpTimes = ["audioMs": audioMs, "vlcMs": totalMs - audioMs]
+            }
+        }
     }
+    private var warmEngine: VLCMediaPlayer?
+    /// Reported with the first play (no diagnostics endpoint before it).
+    private var warmUpTimes: [String: Any]?
     // Size the drawable with UIKit, without changing VLC's crop/aspect or
     // seeking. This also updates the displayed picture while paused.
     private var videoScaleMode: String = "fit"
@@ -183,11 +203,17 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     /// Runs off the main thread every second.
     private func checkMainThread() {
+        let posted = Date()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.freezeLock.lock()
             self.lastMainBeat = Date()
+            let watching = self.watchingFreezes
             self.freezeLock.unlock()
+            // Shorter stalls than a freeze (the app stops answering touches
+            // and drawing, e.g. while the player rotates in).
+            let lagMs = Int(Date().timeIntervalSince(posted) * 1000)
+            if watching && lagMs >= 400 { self.diag("main-stall", ["ms": lagMs]) }
         }
         freezeLock.lock()
         let silent = Date().timeIntervalSince(lastMainBeat)
@@ -482,6 +508,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
         nowPlayingItem = item
         startSystemControls()
+        if let times = warmUpTimes {
+            warmUpTimes = nil
+            diag("warm-up", times)
+        }
         // No audio-session call may run on the main thread: on the device
         // (2026-11-06) setActive took 0.7s, and setCategory before play()
         // froze the whole app for 4s. Both run on audioSessionQueue; VLC
