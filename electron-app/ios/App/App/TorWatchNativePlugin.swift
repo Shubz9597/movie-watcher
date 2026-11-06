@@ -61,6 +61,10 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     ]
 
     private var mediaPlayer: VLCMediaPlayer?
+    /// Activating the audio session can take ~3 s the first time after
+    /// launch; on the main thread that froze the whole app (Xcode: "can lead
+    /// to UI unresponsiveness if called on the main thread").
+    private let audioSessionQueue = DispatchQueue(label: "app.torwatch.audio-session", qos: .userInitiated)
     private var surfaceView: VideoSurfaceView?
     private var playId = ""
     private var terminalSent = false
@@ -448,8 +452,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         TorWatchPlaybackState.videoAttached = true
         requestOrientation(true)
         applyVideoScale(player)
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
         UIApplication.shared.isIdleTimerDisabled = true
         // Pause only when the app really leaves the screen: willResignActive
         // also fires for Control Center, Notification Center and Siri, which
@@ -473,9 +475,23 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // Downloaded subtitles join the media before it opens, not while
         // playback is starting.
         if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
-        player.play()
         nowPlayingItem = item
         startSystemControls()
+        // The audio session is activated off the main thread (the app and the
+        // loading screen stay responsive); VLC starts once it is active, so
+        // its audio output opens on a live session.
+        let startedAt = Date()
+        audioSessionQueue.async { [weak self] in
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setActive(true)
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DispatchQueue.main.async {
+                guard let self = self, self.mediaPlayer === player, self.playbackRequested, !self.terminalSent else { return }
+                self.diag("audio-session-ready", ["ms": elapsedMs])
+                player.play()
+            }
+        }
     }
 
     @objc func seek(_ call: CAPPluginCall) {
