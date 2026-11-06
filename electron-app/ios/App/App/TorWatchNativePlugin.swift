@@ -479,21 +479,21 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
         nowPlayingItem = item
         startSystemControls()
-        // Activating the audio session takes ~0.7s on the first play after
-        // launch. It runs off the main thread (the app stays responsive) and
-        // alongside VLC opening the file, not before it: VLC's audio output
-        // activates the session itself when it opens. The category is set
-        // first so the sound follows it from the start.
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        // No audio-session call may run on the main thread: on the device
+        // (2026-11-06) setActive took 0.7s, and setCategory before play()
+        // froze the whole app for 4s. Both run on audioSessionQueue; VLC
+        // starts once the session is live.
         lastReportedState = nil
-        player.play()
         let startedAt = Date()
         audioSessionQueue.async { [weak self] in
-            try? AVAudioSession.sharedInstance().setActive(true)
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setActive(true)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             DispatchQueue.main.async {
-                guard let self = self, self.mediaPlayer === player, !self.terminalSent else { return }
+                guard let self = self, self.mediaPlayer === player, self.playbackRequested, !self.terminalSent else { return }
                 self.diag("audio-session-ready", ["ms": elapsedMs])
+                player.play()
             }
         }
     }
