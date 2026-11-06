@@ -64,6 +64,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// Activating the audio session can take ~3 s the first time after
     /// launch; on the main thread that froze the whole app (Xcode: "can lead
     /// to UI unresponsiveness if called on the main thread").
+    /// The last VLC state passed on (repeated "buffering" is dropped).
+    private var lastReportedState: VLCMediaPlayerState?
     private let audioSessionQueue = DispatchQueue(label: "app.torwatch.audio-session", qos: .userInitiated)
     private var surfaceView: VideoSurfaceView?
     private var playId = ""
@@ -477,20 +479,33 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
         nowPlayingItem = item
         startSystemControls()
-        // The audio session is activated off the main thread (the app and the
-        // loading screen stay responsive); VLC starts once it is active, so
-        // its audio output opens on a live session.
+        // Activating the audio session takes ~0.7s on the first play after
+        // launch. It runs off the main thread (the app stays responsive) and
+        // alongside VLC opening the file, not before it: VLC's audio output
+        // activates the session itself when it opens. The category is set
+        // first so the sound follows it from the start.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        lastReportedState = nil
+        player.play()
         let startedAt = Date()
         audioSessionQueue.async { [weak self] in
-            let session = AVAudioSession.sharedInstance()
-            try? session.setCategory(.playback, mode: .moviePlayback)
-            try? session.setActive(true)
+            try? AVAudioSession.sharedInstance().setActive(true)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             DispatchQueue.main.async {
-                guard let self = self, self.mediaPlayer === player, self.playbackRequested, !self.terminalSent else { return }
+                guard let self = self, self.mediaPlayer === player, !self.terminalSent else { return }
                 self.diag("audio-session-ready", ["ms": elapsedMs])
-                player.play()
             }
+        }
+    }
+
+    /// Deactivates the session off the main thread (it blocks for a moment
+    /// and iOS warns it freezes the UI), unless a new video took it since.
+    private func releaseAudioSession() {
+        audioSessionQueue.async { [weak self] in
+            var idle = true
+            DispatchQueue.main.sync { idle = self?.mediaPlayer == nil }
+            guard idle else { return }
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
 
@@ -929,6 +944,11 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     func mediaPlayerStateChanged(_ aNotificationName: Notification) {
         guard !terminalSent, let player = aNotificationName.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
+        // VLC repeats "buffering" ~100 times in a burst while it fills;
+        // only a change is worth a bridge message (each one wakes the app).
+        let state = player.state
+        if state == .buffering && lastReportedState == .buffering { return }
+        lastReportedState = state
         diag("state")
         switch player.state {
         case .buffering:
@@ -1302,7 +1322,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 DispatchQueue.main.async {
                     player.drawable = nil
                     if restoreOrientation, self?.mediaPlayer == nil {
-                        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                        self?.releaseAudioSession()
                     }
                 }
             }
@@ -1317,7 +1337,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // Let music or podcasts the player interrupted resume (once stopped,
         // above, when there was a player).
         if stopping == nil {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            releaseAudioSession()
         }
         if TorWatchPlaybackState.videoAttached {
             requestOrientation(false)
