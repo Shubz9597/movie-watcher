@@ -64,6 +64,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     /// Activating the audio session can take ~3 s the first time after
     /// launch; on the main thread that froze the whole app (Xcode: "can lead
     /// to UI unresponsiveness if called on the main thread").
+    /// Sound waits for the first picture (see unmuteForPicture).
+    private var mutedUntilPicture = false
+    private var playingSince: Date?
     /// The last VLC state passed on (repeated "buffering" is dropped).
     private var lastReportedState: VLCMediaPlayerState?
     private let audioSessionQueue = DispatchQueue(label: "app.torwatch.audio-session", qos: .userInitiated)
@@ -484,6 +487,12 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // froze the whole app for 4s. Both run on audioSessionQueue; VLC
         // starts once the session is live.
         lastReportedState = nil
+        // Muted until the first picture: on a resume VLC played ~1s of sound
+        // over the loading screen, cut it for 0.4s, then started both again
+        // (device recording 2026-11-06).
+        (player.audio as VLCAudio?)?.isMuted = true
+        mutedUntilPicture = true
+        playingSince = nil
         let startedAt = Date()
         audioSessionQueue.async { [weak self] in
             let session = AVAudioSession.sharedInstance()
@@ -903,6 +912,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         guard !terminalSent, let player = notification.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
         applyPendingSeek(player)
+        // VLC reports time once the picture runs (not while it plays sound
+        // alone over the loading screen).
+        if mutedUntilPicture && player.hasVideoOut { unmuteForPicture(player, reason: "picture") }
         applyVideoScale(player) // video output may appear after the playing/ES callbacks
         // VLC picks its default subtitle/audio track a moment after Playing,
         // with no callback of its own: report any change so the controls
@@ -954,6 +966,15 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         case .buffering:
             notifyListeners("buffering", data: ["active": true, "playId": playId])
         case .playing:
+            if mutedUntilPicture && playingSince == nil {
+                playingSince = Date()
+                // Fallback for audio-only media, or a picture that never
+                // reports: sound after 2.5s regardless.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                    guard let self = self, self.mediaPlayer === player else { return }
+                    self.unmuteForPicture(player, reason: "timeout")
+                }
+            }
             applyPendingSeek(player)
             applyVideoScale(player) // the video size is known from here
             updateNowPlaying()
@@ -987,6 +1008,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     }
 
     // MARK: - Internals
+
+    private func unmuteForPicture(_ player: VLCMediaPlayer, reason: String) {
+        guard mutedUntilPicture else { return }
+        mutedUntilPicture = false
+        (player.audio as VLCAudio?)?.isMuted = false
+        let ms = playingSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        diag("unmuted", ["reason": reason, "afterPlayingMs": ms])
+    }
 
     private func applyPendingSeek(_ player: VLCMediaPlayer) {
         guard let seconds = pendingSeek, seconds.isFinite, player.isSeekable else { return }
