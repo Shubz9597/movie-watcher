@@ -138,11 +138,11 @@ func TestRecencyFactorDecaysWithFloor(t *testing.T) {
 	if f := recencyFactor(now, time.Time{}); f != 1 {
 		t.Fatalf("undated signals keep full weight, got %v", f)
 	}
-	if f := recencyFactor(now, now.Add(-60*24*time.Hour)); f < 0.49 || f > 0.51 {
-		t.Fatalf("60 days halves the weight, got %v", f)
+	if f := recencyFactor(now, now.Add(-21*24*time.Hour)); f < 0.49 || f > 0.51 {
+		t.Fatalf("21 days halves the weight, got %v", f)
 	}
-	if f := recencyFactor(now, now.Add(-400*24*time.Hour)); f != 0.25 {
-		t.Fatalf("old signals floor at a quarter, got %v", f)
+	if f := recencyFactor(now, now.Add(-400*24*time.Hour)); f != 0.15 {
+		t.Fatalf("old signals floor at 0.15, got %v", f)
 	}
 }
 

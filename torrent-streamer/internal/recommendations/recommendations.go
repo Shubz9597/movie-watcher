@@ -254,6 +254,9 @@ type cacheEntry struct {
 	result      Result
 	computedAt  time.Time
 	candidateVn int
+	// taste: the profile's taste when computed (tasteFingerprint); a
+	// changed taste recomputes before the 15 minutes are up.
+	taste string
 }
 
 // Service computes and caches household recommendations.
@@ -350,10 +353,12 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("read household revision: %w", err)
 	}
 	profile := profiles.From(ctx)
+	taste := s.tasteFingerprint(ctx)
 	s.mu.Lock()
 	cached := s.cache[profile.ID]
 	s.mu.Unlock()
-	if cached != nil && cached.candidateVn == s.candidateVn && cached.result.Revision == revision && s.now().Sub(cached.computedAt) < cacheTTL {
+	if cached != nil && cached.candidateVn == s.candidateVn && cached.result.Revision == revision &&
+		cached.taste == taste && s.now().Sub(cached.computedAt) < cacheTTL {
 		return cached.result, nil
 	}
 	// Stale-while-revalidate: once anything was computed, Home gets it at
@@ -382,9 +387,63 @@ func (s *Service) Recommend(ctx context.Context) (Result, error) {
 		return Result{Revision: revision, Degraded: true, GeneratedAt: s.now(), Items: []Item{}}, nil
 	}
 
-	entry := &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn}
+	entry := &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn, taste: taste}
 	s.install(profile.ID, entry)
 	return result, nil
+}
+
+// tasteFingerprint names what the profile's recommendations are built from:
+// every title it favourited, saved, started, watched or downloaded (not
+// visits, and not positions within a title, which change all through
+// playback). Starting or finishing something changes it.
+func (s *Service) tasteFingerprint(ctx context.Context) string {
+	if s.taste == nil {
+		return ""
+	}
+	signals, err := s.taste.HouseholdSignals(ctx)
+	if err != nil {
+		return ""
+	}
+	keys := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		if signal.Label != "opened" {
+			keys = append(keys, signal.CanonicalID+"\x00"+signal.Label)
+		}
+	}
+	sort.Strings(keys)
+	hash := fnv.New64a()
+	for _, key := range keys {
+		_, _ = hash.Write([]byte(key + "\n"))
+	}
+	return fmt.Sprintf("%x", hash.Sum64())
+}
+
+// RefreshLoop keeps recommendations current: every interval, each profile
+// whose taste changed since its last result (it started, finished or saved
+// something) is recomputed in the background, so the next Home load already
+// shows it. Profiles nobody has loaded recommendations for are skipped.
+func (s *Service) RefreshLoop(ctx context.Context, list func(context.Context) []profiles.Profile, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		for _, profile := range list(ctx) {
+			profileCtx := profiles.WithProfile(ctx, profile)
+			s.mu.Lock()
+			cached := s.cache[profile.ID]
+			s.mu.Unlock()
+			if cached == nil || cached.taste == s.tasteFingerprint(profileCtx) {
+				continue
+			}
+			if revision, err := s.library.Revision(profileCtx); err == nil {
+				s.refreshInBackground(profile, revision)
+			}
+		}
+	}
 }
 
 func (s *Service) install(profileID string, entry *cacheEntry) {
@@ -419,12 +478,13 @@ func (s *Service) refreshInBackground(profile profiles.Profile, revision int64) 
 		}()
 		ctx, cancel := context.WithTimeout(profiles.WithProfile(context.Background(), profile), 2*time.Minute)
 		defer cancel()
+		taste := s.tasteFingerprint(ctx)
 		result, err := s.compute(ctx, revision)
 		if err != nil {
 			log.Printf("[recommendations] background refresh failed: %v", err)
 			return
 		}
-		s.install(profile.ID, &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn})
+		s.install(profile.ID, &cacheEntry{result: result, computedAt: s.now(), candidateVn: s.candidateVn, taste: taste})
 	}()
 }
 
@@ -614,6 +674,7 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		title  string
 		label  string
 		weight float64
+		at     time.Time
 	}
 	best := map[string]signalInfo{}
 	var completed []string
@@ -625,12 +686,18 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			completed = append(completed, signal.CanonicalID)
 			continue
 		}
-		weight := signal.Weight * recencyFactor(s.now(), signal.At)
+		base := signal.Weight
+		if signal.Label == "started" && watchingNow(s.now(), signal.At) {
+			// Being watched these days: what the viewer is into now, nearly
+			// as telling as a finished show.
+			base = max(base, watchingNowWeight)
+		}
+		weight := base * recencyFactor(s.now(), signal.At)
 		current, exists := best[signal.CanonicalID]
 		if !exists || weight > current.weight {
 			best[signal.CanonicalID] = signalInfo{
 				id: signal.CanonicalID, kind: signal.Kind, title: signal.Title,
-				label: signal.Label, weight: weight,
+				label: signal.Label, weight: weight, at: signal.At,
 			}
 		}
 	}
@@ -705,12 +772,17 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	// that several of the household's titles point at is a consensus pick
 	// about the household as a whole, not one title's provider list.
 	seedsFor := map[string][]*signalInfoWithKeys{}
+	// crossFor: titles of the other media type that merely share a seed's
+	// genres (TMDb crossover discovery). They support a pick weakly and never
+	// make it a consensus: two anime both "sharing genres" with The Lion
+	// King said nothing about either (seen 2026-11-10).
+	crossFor := map[string][]*signalInfoWithKeys{}
 	if s.seedSimilar != nil {
-		ordered := append([]signalInfoWithKeys(nil), resolved...)
-		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].weight > ordered[j].weight })
+		ordered := seedOrder(resolved, func(r signalInfoWithKeys) (float64, time.Time) { return r.weight, r.at }, s.now())
 		// Fetch every seed's lists concurrently, then merge in weight order.
 		seedCount := min(len(ordered), seedSimilarSeeds)
-		similarLists := make([][]catalog.Title, seedCount)
+		sameLists := make([][]catalog.Title, seedCount)
+		crossLists := make([][]catalog.Title, seedCount)
 		forEachBounded(seedCount, func(i int) {
 			callCtx, cancel := context.WithTimeout(ctx, providerCallTimeout)
 			defer cancel()
@@ -718,31 +790,31 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			if err != nil {
 				log.Printf("[recommendations] similar titles for %s unavailable: %v", ordered[i].id, err)
 			}
+			sameLists[i] = similar
 			if s.crossSimilar != nil {
 				if cross, crossErr := s.similarFor(callCtx, s.crossSimilar, "cross", ordered[i].id); crossErr == nil {
-					similar = mixCross(similar, cross)
+					crossLists[i] = cross
 				}
 			}
-			similarLists[i] = similar
 		})
-		for i := 0; i < seedCount; i++ {
-			similar := similarLists[i]
-			if len(similar) == 0 {
-				continue
-			}
-			for _, candidate := range similar {
+		credit := func(into map[string][]*signalInfoWithKeys, list []catalog.Title, seed *signalInfoWithKeys) {
+			for _, candidate := range list {
 				listed := false
-				for _, existing := range seedsFor[candidate.ID] {
-					if existing.id == ordered[i].id {
+				for _, existing := range into[candidate.ID] {
+					if existing.id == seed.id {
 						listed = true
 						break
 					}
 				}
 				if !listed {
-					seedsFor[candidate.ID] = append(seedsFor[candidate.ID], &ordered[i])
+					into[candidate.ID] = append(into[candidate.ID], seed)
 				}
 			}
-			pool = append(pool, similar...)
+		}
+		for i := 0; i < seedCount; i++ {
+			credit(seedsFor, sameLists[i], &ordered[i])
+			credit(crossFor, crossLists[i], &ordered[i])
+			pool = append(pool, mixCross(sameLists[i], crossLists[i])...)
 		}
 	}
 	trending, err := s.candidates.Candidates(ctx)
@@ -808,11 +880,21 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			if len(ranked) > 1 {
 				alsoSeed = ranked[1]
 			}
+		} else if crossers := crossFor[candidate.ID]; len(crossers) > 0 {
+			strongest := crossers[0]
+			for _, seed := range crossers[1:] {
+				if seed.weight > strongest.weight {
+					strongest = seed
+				}
+			}
+			score += strongest.weight * crossSupport
+			reasonSeed = strongest
 		}
 		// Daily variety: a small, date-seeded jitter reorders near-equal
 		// picks each day without overturning clear preferences.
 		score += dailyJitter(s.now(), candidate.ID) * 0.3
-		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed, supported: len(seedsFor[candidate.ID]) > 0})
+		supported := len(seedsFor[candidate.ID]) > 0 || len(crossFor[candidate.ID]) > 0
+		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed, supported: supported})
 	}
 
 	// Deterministic ordering: score desc, provider popularity rank, canonical id.
@@ -949,19 +1031,95 @@ func genreKey(namespace, genre string) string {
 // exploreEvery places one exploration pick after this many personal picks.
 const exploreEvery = 4
 
-// recencyFactor decays a signal's weight with age: half every 60 days, never
-// below a quarter (old favourites still count). Undated signals keep full
-// weight.
+// recencyFactor decays a signal's weight with age: half every 21 days,
+// never below recencyFloor (old favourites still count). With 60 days a show
+// binged a month ago kept outweighing what was being watched now
+// (2026-11-10). Undated signals keep full weight.
 func recencyFactor(now, at time.Time) float64 {
 	if at.IsZero() || !at.Before(now) {
 		return 1
 	}
 	days := now.Sub(at).Hours() / 24
-	factor := math.Pow(0.5, days/60)
-	if factor < 0.25 {
-		return 0.25
+	factor := math.Pow(0.5, days/recencyHalfLifeDays)
+	if factor < recencyFloor {
+		return recencyFloor
 	}
 	return factor
+}
+
+const (
+	recencyHalfLifeDays = 21
+	recencyFloor        = 0.15
+	// watchingNowWeight: a title started within watchingNowWindow weighs at
+	// least this (started otherwise weighs 2).
+	watchingNowWeight = 4
+	watchingNowWindow = 14 * 24 * time.Hour
+	// crossSupport: the share of a seed's weight a genre-sharing title of
+	// the other media type earns.
+	crossSupport = 0.5
+	// recentSeeds of the "more like this" seeds are kept for the most
+	// recent titles, whatever their weight.
+	recentSeeds = 2
+)
+
+func watchingNow(now, at time.Time) bool {
+	return !at.IsZero() && now.Sub(at) < watchingNowWindow
+}
+
+// seedOrder lists titles by weight, with up to recentSeeds recent ones
+// (within watchingNowWindow) moved into the first seedSimilarSeeds places:
+// the show started yesterday gets its "more like this" even while older
+// favourites weigh more. Each promoted title takes the place of the lightest
+// one inside, which moves just after.
+func seedOrder[T any](titles []T, info func(T) (float64, time.Time), now time.Time) []T {
+	ordered := append([]T(nil), titles...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		wi, _ := info(ordered[i])
+		wj, _ := info(ordered[j])
+		return wi > wj
+	})
+	if len(ordered) <= seedSimilarSeeds {
+		return ordered
+	}
+	recentInside := 0
+	for _, title := range ordered[:seedSimilarSeeds] {
+		if _, at := info(title); watchingNow(now, at) {
+			recentInside++
+		}
+	}
+	var outside []int
+	for i := seedSimilarSeeds; i < len(ordered); i++ {
+		if _, at := info(ordered[i]); watchingNow(now, at) {
+			outside = append(outside, i)
+		}
+	}
+	sort.SliceStable(outside, func(i, j int) bool {
+		_, ai := info(ordered[outside[i]])
+		_, aj := info(ordered[outside[j]])
+		return ai.After(aj)
+	})
+	promote := min(len(outside), max(0, recentSeeds-recentInside))
+	if promote == 0 {
+		return ordered
+	}
+	chosen := map[int]bool{}
+	for _, index := range outside[:promote] {
+		chosen[index] = true
+	}
+	keep := seedSimilarSeeds - promote
+	result := append(make([]T, 0, len(ordered)), ordered[:keep]...)
+	for i := seedSimilarSeeds; i < len(ordered); i++ {
+		if chosen[i] {
+			result = append(result, ordered[i])
+		}
+	}
+	result = append(result, ordered[keep:seedSimilarSeeds]...)
+	for i := seedSimilarSeeds; i < len(ordered); i++ {
+		if !chosen[i] {
+			result = append(result, ordered[i])
+		}
+	}
+	return result
 }
 
 // dailyJitter is a stable per-day pseudo-random value in [0,1) for a title,

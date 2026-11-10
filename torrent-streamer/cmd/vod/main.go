@@ -370,6 +370,9 @@ func main() {
 		// Compute once at startup so the first Home load after a deploy
 		// does not wait for dozens of provider calls.
 		recommendationService.Warm()
+		// Starting, finishing or saving a title shows in the next Home load
+		// (checked every 2 minutes per profile).
+		go recommendationService.RefreshLoop(rootCtx, profileStore.List, 2*time.Minute)
 	}
 	// Playback compatibility service (M1.3.x): the shared mobile playback
 	// foundation. The capability is advertised ONLY when BOTH ffprobe and

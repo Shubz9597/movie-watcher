@@ -22,8 +22,10 @@ func TestRegressionTasteFailureFallback(t *testing.T) {
 	if !result.Degraded {
 		t.Error("fallback must report degraded")
 	}
-	if taste.calls != 1 {
-		t.Errorf("Recommend(taste failure) called taste %d times, want one followed by legacy fallback", taste.calls)
+	// One read names the profile's taste (cache key), one builds the result;
+	// the failure falls back to the legacy path without retrying.
+	if taste.calls != 2 {
+		t.Errorf("Recommend(taste failure) called taste %d times, want the taste read and one compute, then the legacy fallback", taste.calls)
 	}
 }
 
