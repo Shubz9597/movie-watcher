@@ -174,11 +174,12 @@ bash deploy/torwatch-server/scripts/tests/run-tests.sh
 ## Automatic deployment from Git
 
 The Fedora deployment can poll one pushed branch every two minutes without a
-public webhook or GitHub deployment secret. Install it once from the normal
-deployment account:
+public webhook or GitHub deployment secret. The deployable branch is `main`
+(since 2.0; it was `001-build-torwatch-version`). Install it once from the
+normal deployment account:
 
 ```bash
-./deploy/torwatch-server/scripts/install-git-deploy-service.sh 001-build-torwatch-version
+./deploy/torwatch-server/scripts/install-git-deploy-service.sh main
 ```
 
 Each new fast-forward commit is fetched into the clean checkout. Changes under
