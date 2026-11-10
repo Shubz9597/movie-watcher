@@ -269,3 +269,38 @@ func TestNewServiceDefaultsAreDocumented(t *testing.T) {
 		t.Fatalf("defaults drifted: %+v", options)
 	}
 }
+
+type fakeStremio struct {
+	fakeProvider
+	hits []Title
+	err  error
+}
+
+func (f *fakeStremio) SearchAsTMDb(ctx context.Context, query SearchQuery) ([]Title, error) {
+	return f.hits, f.err
+}
+
+// Stremio's search answers alone; TMDb and AniList are only its backup.
+func TestServiceSearchStremioAnswersAlone(t *testing.T) {
+	asked := 0
+	tmdb := &fakeProvider{name: "tmdb", searchFn: func(ctx context.Context, query SearchQuery) ([]Title, error) {
+		asked++
+		return nil, errors.New("connection reset")
+	}}
+	stremio := &fakeStremio{fakeProvider: fakeProvider{name: "cinemeta"}, hits: []Title{title("One Piece", "tmdb:movie:1")}}
+	service := NewService([]Provider{tmdb, stremio}, Options{ProviderTimeout: 50 * time.Millisecond})
+	result := service.Search(context.Background(), SearchQuery{Query: "one piece"})
+	if asked != 0 || len(result.Titles) != 1 || len(result.DegradedProviders) != 0 {
+		t.Fatalf("stremio hits should answer alone: asked=%d %+v", asked, result)
+	}
+
+	// No Stremio hits: the others are asked.
+	stremio.hits = nil
+	result = service.Search(context.Background(), SearchQuery{Query: "zzqx"})
+	if asked != 1 || len(result.DegradedProviders) != 1 {
+		t.Fatalf("without stremio hits the providers are the backup: asked=%d %+v", asked, result)
+	}
+	if !result.Answered {
+		t.Fatalf("stremio answered (no matches); that is not 'all providers failed': %+v", result)
+	}
+}

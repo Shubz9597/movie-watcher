@@ -202,23 +202,27 @@ type SearchResult struct {
 
 // Search runs every search-capable provider and merges deterministically.
 func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
-	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
-	defer cancel()
 	if query.Limit <= 0 || query.Limit > s.options.SearchLimit {
 		query.Limit = s.options.SearchLimit
 	}
 	key := searchCacheKey(query)
-	// Stremio's search (Cinemeta) runs on every query, beside the others,
-	// and its order leads: the show lists as Stremio lists it.
-	stremio := s.searchFallbackSource()
-	stremioResult := make(chan fallbackReply, 1)
-	if stremio != nil {
-		go func() { stremioResult <- s.runSearchFallback(ctx, stremio, query, key) }()
-	} else {
-		stremioResult <- fallbackReply{}
+	// Stremio's search (Cinemeta) answers alone. TMDb and AniList are asked
+	// only when it fails or finds nothing: asking them on every query made
+	// search wait on them and fail with them (TMDb resets, AniList's 30
+	// requests a minute), 2026-11-10.
+	var fallback fallbackReply
+	if stremio := s.searchFallbackSource(); stremio != nil {
+		fallback = s.runSearchFallback(ctx, stremio, query, key)
 	}
+	stremioOnly := len(filterByType(fallback.titles, query.Type)) > 0
+	// The providers get their own budget after Cinemeta's.
+	ctx, cancel := context.WithTimeout(ctx, s.options.RequestTimeout)
+	defer cancel()
 	replies := parallelReplies(len(s.providers), func(i int) providerReply {
 		provider := s.providers[i]
+		if stremioOnly {
+			return providerReply{skipped: true}
+		}
 		searcher, ok := provider.(SearchProvider)
 		if !ok {
 			return providerReply{skipped: true}
@@ -232,7 +236,6 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
 	})
 	groups := make([][]Title, 0, len(replies)+1)
-	fallback := <-stremioResult
 	answered := fallback.answered
 	stremioHits := filterByType(fallback.titles, query.Type)
 	if len(stremioHits) > 0 {
