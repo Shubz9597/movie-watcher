@@ -98,8 +98,46 @@ func TestServiceSearchAllProvidersFailedMeansNoResultsForHandler(t *testing.T) {
 	}}
 	service := NewService([]Provider{down}, Options{ProviderTimeout: 50 * time.Millisecond})
 	result := service.Search(context.Background(), SearchQuery{Query: "q"})
-	if len(result.Titles) != 0 || len(result.DegradedProviders) != 1 {
+	if len(result.Titles) != 0 || len(result.DegradedProviders) != 1 || result.Answered {
 		t.Fatalf("all-failed = %+v", result)
+	}
+}
+
+// A search with no matches while one provider is down is "no results", not
+// "all catalog providers failed" (seen 2026-11-10: AniList rate-limited,
+// "breaking bad" as anime answered 503).
+func TestServiceSearchNoMatchesWithOneProviderDownIsAnswered(t *testing.T) {
+	empty := &fakeProvider{name: "empty", searchFn: func(ctx context.Context, query SearchQuery) ([]Title, error) {
+		return []Title{}, nil
+	}}
+	down := &fakeProvider{name: "down", searchFn: func(ctx context.Context, query SearchQuery) ([]Title, error) {
+		return nil, ErrRateLimited
+	}}
+	service := NewService([]Provider{empty, down}, Options{ProviderTimeout: 50 * time.Millisecond})
+	result := service.Search(context.Background(), SearchQuery{Query: "q"})
+	if len(result.Titles) != 0 || !result.Answered || len(result.DegradedProviders) != 1 {
+		t.Fatalf("no matches with one provider down = %+v", result)
+	}
+}
+
+// One slow answer pauses the provider for seconds, not the full failure TTL.
+func TestServiceTimeoutPausesProviderBriefly(t *testing.T) {
+	var calls int
+	slow := &fakeProvider{name: "slow", searchFn: func(ctx context.Context, query SearchQuery) ([]Title, error) {
+		calls++
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	service := NewService([]Provider{slow}, Options{ProviderTimeout: 20 * time.Millisecond})
+	service.Search(context.Background(), SearchQuery{Query: "a"})
+	if value, state, ok := service.failures.Get("slow", "availability"); !ok || state != cacheStateFresh {
+		t.Fatalf("a timeout should pause the provider: %v %v %v", value, state, ok)
+	}
+	service.failures.mu.Lock()
+	entry := service.failures.entries["slow\x00availability"]
+	service.failures.mu.Unlock()
+	if got := time.Until(entry.expires); got > slowAnswerFailureTTL {
+		t.Fatalf("timeout pause = %v, want <= %v", got, slowAnswerFailureTTL)
 	}
 }
 

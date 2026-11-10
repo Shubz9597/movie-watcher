@@ -195,6 +195,9 @@ type SearchResult struct {
 	Titles            []Title
 	DegradedProviders []string
 	CachedAt          map[string]time.Time
+	// Answered: at least one source replied (even with no matches). Only a
+	// search no source answered is "all catalog providers failed".
+	Answered bool
 }
 
 // Search runs every search-capable provider and merges deterministically.
@@ -208,28 +211,30 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 	// Stremio's search (Cinemeta) runs on every query, beside the others,
 	// and its order leads: the show lists as Stremio lists it.
 	stremio := s.searchFallbackSource()
-	stremioResult := make(chan []Title, 1)
+	stremioResult := make(chan fallbackReply, 1)
 	if stremio != nil {
 		go func() { stremioResult <- s.runSearchFallback(ctx, stremio, query, key) }()
 	} else {
-		stremioResult <- nil
+		stremioResult <- fallbackReply{}
 	}
 	replies := parallelReplies(len(s.providers), func(i int) providerReply {
 		provider := s.providers[i]
 		searcher, ok := provider.(SearchProvider)
 		if !ok {
-			return providerReply{}
+			return providerReply{skipped: true}
 		}
 		if typed, ok := provider.(TypedSearchProvider); ok && !typed.SupportsSearchType(query.Type) {
-			return providerReply{}
+			return providerReply{skipped: true}
 		}
 		if slices.Contains(s.options.NoSearch, provider.Name()) {
-			return providerReply{}
+			return providerReply{skipped: true}
 		}
 		return s.fetchCached(ctx, provider.Name(), key, func(callCtx context.Context) (any, error) { return searcher.Search(callCtx, query) })
 	})
 	groups := make([][]Title, 0, len(replies)+1)
-	stremioHits := filterByType(<-stremioResult, query.Type)
+	fallback := <-stremioResult
+	answered := fallback.answered
+	stremioHits := filterByType(fallback.titles, query.Type)
 	if len(stremioHits) > 0 {
 		groups = append(groups, stremioHits)
 	}
@@ -239,6 +244,9 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 		provider := s.providers[i].Name()
 		if reply.stale || (reply.err != nil && !errors.Is(reply.err, ErrNotFound)) {
 			degraded = append(degraded, provider)
+		}
+		if !reply.skipped && (reply.err == nil || errors.Is(reply.err, ErrNotFound)) {
+			answered = true
 		}
 		if titles, ok := reply.value.([]Title); ok {
 			groups = append(groups, filterByType(s.markAnime(titles), query.Type))
@@ -256,7 +264,7 @@ func (s *Service) Search(ctx context.Context, query SearchQuery) SearchResult {
 	if len(titles) > query.Limit {
 		titles = titles[:query.Limit]
 	}
-	return SearchResult{Titles: titles, DegradedProviders: degraded, CachedAt: cachedAt}
+	return SearchResult{Titles: titles, DegradedProviders: degraded, CachedAt: cachedAt, Answered: answered || len(titles) > 0}
 }
 
 // TMDbSearchFallback stands in for TMDb search while TMDb is unreachable,
@@ -288,7 +296,12 @@ func (s *Service) searchFallbackSource() TMDbSearchFallback {
 // budget (it starts as soon as TMDb's search fails, while slower providers
 // may still be using the search's) and remembers the hits as id links so
 // their title pages resolve too.
-func (s *Service) runSearchFallback(ctx context.Context, fallback TMDbSearchFallback, query SearchQuery, key string) []Title {
+type fallbackReply struct {
+	titles   []Title
+	answered bool
+}
+
+func (s *Service) runSearchFallback(ctx context.Context, fallback TMDbSearchFallback, query SearchQuery, key string) fallbackReply {
 	fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.options.RequestTimeout)
 	defer cancel()
 	asked := query
@@ -299,6 +312,7 @@ func (s *Service) runSearchFallback(ctx context.Context, fallback TMDbSearchFall
 		return fallback.SearchAsTMDb(callCtx, asked)
 	})
 	titles, _ := reply.value.([]Title)
+	answered := reply.err == nil || errors.Is(reply.err, ErrNotFound) || len(titles) > 0
 	titles = s.markAnime(slices.Clone(titles))
 	if s.options.Links != nil {
 		for _, title := range titles {
@@ -307,7 +321,7 @@ func (s *Service) runSearchFallback(ctx context.Context, fallback TMDbSearchFall
 			}
 		}
 	}
-	return titles
+	return fallbackReply{titles: titles, answered: answered}
 }
 
 func searchCacheKey(query SearchQuery) string {

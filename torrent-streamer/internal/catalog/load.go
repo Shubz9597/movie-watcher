@@ -3,8 +3,10 @@ package catalog
 import (
 	"context"
 	"errors"
+	"log"
 	"strconv"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -13,9 +15,14 @@ type providerReply struct {
 	value any
 	err   error
 	stale bool
+	// skipped: the provider was not asked (no search for this type).
+	skipped bool
 }
 
 type providerFailure struct{ err error }
+
+// slowAnswerFailureTTL pauses a provider that timed out only briefly.
+const slowAnswerFailureTTL = 5 * time.Second
 
 // Close cancels and joins shared loads and stale-cache refreshes. An operation
 // can outlive one disconnected caller, but cannot outlive the service.
@@ -122,8 +129,13 @@ func (s *Service) fetchFlight(ctx context.Context, provider, key string, fetch f
 				var limited *rateLimitError
 				if errors.As(err, &limited) {
 					ttl = max(ttl, limited.retryAfter)
+				} else if errors.Is(err, context.DeadlineExceeded) {
+					// One slow answer is not an outage: a 30s pause for a
+					// single timeout made every search in that window report
+					// "all catalog providers failed" (2026-11-10).
+					ttl = min(ttl, slowAnswerFailureTTL)
 				}
-
+				log.Printf("[catalog] %s paused %s after: %v", provider, ttl.Round(time.Second), err)
 				s.failures.Set(provider, failureKey, providerFailure{err: err}, ttl)
 			}
 			return providerReply{value: value, err: err}

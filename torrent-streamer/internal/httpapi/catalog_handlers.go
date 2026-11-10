@@ -140,7 +140,7 @@ func (h CatalogHandlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
 	result := h.Catalog.Search(r.Context(), catalog.SearchQuery{Query: query, Type: kind, Limit: limit})
-	if len(result.Titles) == 0 && len(result.DegradedProviders) > 0 {
+	if !result.Answered && len(result.DegradedProviders) > 0 {
 		writeCatalogError(w, http.StatusServiceUnavailable, "providers_unavailable", "all catalog providers failed", result.DegradedProviders)
 		return
 	}
