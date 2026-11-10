@@ -239,6 +239,23 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
     if (url.includes('/v1/version')) {
       return jsonResponse({ serverVersion: 'fixture', protocolVersion: 1, supportedProtocolRange: [1, 1], capabilities: ['catalog.bff.v2', 'leases.shared', 'progress.serverOrdered'] });
     }
+    // Stremio sync (Settings): ?stremio=linked|signed-out shows a linked
+    // account; linking in the preview always succeeds.
+    if (url.includes('/v1/stremio')) {
+      const flag = new URLSearchParams(window.location.search).get('stremio');
+      const account = {
+        email: 'viewer@example.com',
+        linkedAt: new Date(Date.now() - 86_400_000).toISOString(),
+        lastSyncAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+        lastError: flag === 'signed-out' ? 'stremio session ended' : '',
+        imported: 12,
+      };
+      if (url.includes('/v1/stremio/unlink')) return jsonResponse({ linked: false });
+      if (url.includes('/v1/stremio/link') || url.includes('/v1/stremio/sync')) {
+        return jsonResponse({ linked: true, account: { ...account, lastError: '', lastSyncAt: new Date().toISOString() } });
+      }
+      return jsonResponse(flag === 'linked' || flag === 'signed-out' ? { linked: true, account } : { linked: false });
+    }
     // Deterministic continue-watching rows consumed by the real
     // continue-service (enrichment resolves through the fixture details).
     if (url.includes('/v1/continue/dismiss')) {

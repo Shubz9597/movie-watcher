@@ -54,3 +54,21 @@ func TestEntriesPlacedInTheirShow(t *testing.T) {
 		t.Fatal("nil map finds nothing")
 	}
 }
+
+// Stremio's anime add-on names titles by Kitsu id.
+func TestKitsuLookup(t *testing.T) {
+	m := sample(t)
+	if entry, ok := m.Kitsu(12); !ok || entry.AniList != 21 || entry.TMDbTV != 37854 {
+		t.Fatalf("kitsu 12 (One Piece) = %+v %v", entry, ok)
+	}
+	if entry, ok := m.Kitsu(421); !ok || entry.TMDbMovie != 19576 {
+		t.Fatalf("kitsu 421 (a film) = %+v %v", entry, ok)
+	}
+	if _, ok := m.Kitsu(999999999); ok {
+		t.Fatal("unknown kitsu id found")
+	}
+	var none *Map
+	if _, ok := none.Kitsu(12); ok {
+		t.Fatal("nil map found an entry")
+	}
+}

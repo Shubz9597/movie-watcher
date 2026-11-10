@@ -101,3 +101,13 @@ ON CONFLICT (canonical_id) DO UPDATE SET provider_ids=EXCLUDED.provider_ids,
 		s.memory.PutLink(ctx, canonicalID, link)
 	}
 }
+
+// CanonicalForIMDb finds the title an IMDb id is linked to (a TMDb id is
+// preferred over other canonical ids).
+func (s *SQLIDLinks) CanonicalForIMDb(ctx context.Context, imdb string) (string, bool) {
+	var id string
+	err := s.DB.QueryRowContext(ctx, `
+SELECT canonical_id FROM catalog_id_links WHERE provider_ids->>'imdb' = $1
+ORDER BY (canonical_id LIKE 'tmdb:%') DESC, updated_at DESC LIMIT 1`, imdb).Scan(&id)
+	return id, err == nil && id != ""
+}

@@ -596,7 +596,20 @@ type OfflineProgress struct {
 // server record is older than the offline watch. A completed item is never
 // moved back to partial. Returns how many items were applied.
 func (s *Store) SyncOffline(ctx context.Context, subjectID string, items []OfflineProgress) (int, error) {
-	subjectID = s.subject(subjectID)
+	return s.applyWatched(ctx, s.subject(subjectID), items)
+}
+
+// ImportProgress applies positions watched elsewhere (Stremio) to a
+// profile, with SyncOffline's rules: newer wins, a finished episode never
+// goes back to partial. profileID is a profile, not a device.
+func (s *Store) ImportProgress(ctx context.Context, profileID string, items []OfflineProgress) (int, error) {
+	if strings.TrimSpace(profileID) == "" {
+		return 0, fmt.Errorf("import progress: no profile")
+	}
+	return s.applyWatched(ctx, profileID, items)
+}
+
+func (s *Store) applyWatched(ctx context.Context, subjectID string, items []OfflineProgress) (int, error) {
 	applied := 0
 	for _, item := range items {
 		item.SeriesID, item.Season, item.Episode = s.place(ctx, item.SeriesID, item.Season, item.Episode)
@@ -614,7 +627,10 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 ON CONFLICT (subject_id, series_id, season, episode) DO UPDATE
 SET position_s=EXCLUDED.position_s, duration_s=EXCLUDED.duration_s, percent=EXCLUDED.percent
 WHERE (EXCLUDED.percent >= `+completedPercentSQL+` AND watch_progress.percent < `+completedPercentSQL+`)
-   OR (watch_progress.percent < `+completedPercentSQL+` AND watch_progress.updated_at <= EXCLUDED.updated_at)`,
+   OR (watch_progress.percent < `+completedPercentSQL+` AND watch_progress.updated_at <= EXCLUDED.updated_at
+       -- The same position sent again is not news: rewriting it moved the
+       -- title to the front of Continue Watching.
+       AND (watch_progress.position_s, watch_progress.duration_s) IS DISTINCT FROM (EXCLUDED.position_s, EXCLUDED.duration_s))`,
 			subjectID, item.SeriesID, item.Season, item.Episode, item.PositionS, item.DurationS, percent, watchedAt)
 		if err != nil {
 			return applied, fmt.Errorf("sync offline progress: %w", err)

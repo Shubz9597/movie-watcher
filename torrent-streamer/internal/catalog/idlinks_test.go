@@ -116,4 +116,13 @@ func TestSQLIDLinksRoundTrip(t *testing.T) {
 	if _, ok := fresh.GetLink(ctx, "tmdb:tv:0"); ok {
 		t.Fatal("unknown ids have no link")
 	}
+	// Stremio names titles by IMDb id: the linked title is found from it,
+	// a TMDb id before any other canonical id.
+	store.PutLink(ctx, "anilist:1535", IDLink{ProviderIDs: map[string]string{"anilist": "1535", "imdb": "tt0877057"}})
+	if id, ok := fresh.CanonicalForIMDb(ctx, "tt0877057"); !ok || id != "tmdb:tv:13916" {
+		t.Fatalf("title for tt0877057 = %q, %v", id, ok)
+	}
+	if _, ok := fresh.CanonicalForIMDb(ctx, "tt0000000"); ok {
+		t.Fatal("unknown IMDb id found")
+	}
 }

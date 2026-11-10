@@ -6,6 +6,7 @@ import { ChevronLeft } from 'lucide-react';
 import type { ConnectionConfig } from '../platform/contracts.ts';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { WifiOnlySetting } from './WifiOnlySetting';
+import { StremioSyncSetting } from '../components/shared/StremioSyncSetting';
 import {
   applyServerOrigin,
   normalizeOrigin,
@@ -155,6 +156,7 @@ export function ServerSettings(props: {
         </div>
 
         <WifiOnlySetting />
+        <StremioSyncSetting />
       </section>
     </main>
   );

@@ -47,6 +47,7 @@ type Entry struct {
 // Map indexes the list.
 type Map struct {
 	byAniList map[int]Entry
+	byKitsu   map[int]Entry
 	byIMDb    map[string][]Entry
 	byTMDbTV  map[int][]Entry
 }
@@ -70,7 +71,7 @@ func Parse(data []byte) (*Map, error) {
 	if err := decoder.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("anime list: %w", err)
 	}
-	m := &Map{byAniList: map[int]Entry{}, byIMDb: map[string][]Entry{}, byTMDbTV: map[int][]Entry{}}
+	m := &Map{byAniList: map[int]Entry{}, byKitsu: map[int]Entry{}, byIMDb: map[string][]Entry{}, byTMDbTV: map[int][]Entry{}}
 	for _, r := range raw {
 		entry := Entry{AniList: r.AniList, MAL: r.MAL, Kitsu: r.Kitsu, TVDB: r.TVDB, Type: strings.ToUpper(r.Type), IMDb: imdbIDs(r.IMDb)}
 		entry.TMDbTV, entry.TMDbMovie = tmdbIDs(r.TMDb)
@@ -80,6 +81,9 @@ func Parse(data []byte) (*Map, error) {
 		}
 		if entry.AniList > 0 {
 			m.byAniList[entry.AniList] = entry
+		}
+		if entry.Kitsu > 0 {
+			m.byKitsu[entry.Kitsu] = entry
 		}
 		for _, imdb := range entry.IMDb {
 			m.byIMDb[imdb] = append(m.byIMDb[imdb], entry)
@@ -141,6 +145,16 @@ func (m *Map) AniList(id int) (Entry, bool) {
 		return Entry{}, false
 	}
 	entry, ok := m.byAniList[id]
+	return entry, ok
+}
+
+// Kitsu returns an entry by Kitsu id (Stremio's anime add-on names
+// anime "kitsu:<id>").
+func (m *Map) Kitsu(id int) (Entry, bool) {
+	if m == nil {
+		return Entry{}, false
+	}
+	entry, ok := m.byKitsu[id]
 	return entry, ok
 }
 

@@ -40,6 +40,7 @@ import (
 	"torrent-streamer/internal/rekey"
 	"torrent-streamer/internal/search"
 	"torrent-streamer/internal/skipsegments"
+	"torrent-streamer/internal/stremiosync"
 	"torrent-streamer/internal/taste"
 	"torrent-streamer/internal/torrentx"
 	"torrent-streamer/internal/watch"
@@ -278,6 +279,21 @@ func main() {
 	capabilities := []string{"catalog.bff.v2", "leases.shared", "progress.serverOrdered"}
 	if profileStore.Enabled(context.Background()) {
 		capabilities = append(capabilities, "profiles.v1")
+		// Stremio sync: a profile's Stremio watching joins its Continue
+		// Watching (migrations/018 comes after profiles).
+		stremioSync := &stremiosync.Service{
+			Store:    &stremiosync.Store{DB: db},
+			Client:   &stremiosync.Client{HTTP: &http.Client{Timeout: 30 * time.Second}},
+			Titles:   catalogService,
+			Progress: progressDB,
+			Kitsu: func(id int) (stremiosync.KitsuEntry, bool) {
+				entry, ok := animeList.Current().Kitsu(id)
+				return stremiosync.KitsuEntry{AniList: entry.AniList, TMDbMovie: entry.TMDbMovie}, ok
+			},
+		}
+		httpapi.StremioHandlers{Sync: stremioSync}.Register(mux)
+		go stremioSync.Run(rootCtx)
+		capabilities = append(capabilities, "stremio.sync.v1")
 	}
 	if libraryStore != nil {
 		capabilities = append(capabilities, library.Capability)
