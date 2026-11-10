@@ -154,10 +154,7 @@ export function ServerSettings(props: {
           </button>
         </div>
 
-        <h2 className="type-secondary mt-10 text-left font-medium text-white/70">Downloads</h2>
-        <div className="mt-2">
-          <WifiOnlySetting />
-        </div>
+        <WifiOnlySetting />
       </section>
     </main>
   );

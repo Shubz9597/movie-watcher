@@ -80,9 +80,6 @@ body :focus-visible { outline-color: var(--cinema-accent); }
 .cinema-primary { background: var(--cinema-accent); color: #201a13; padding-inline: 26px; border-radius: 9px; font-weight: 700; }
 .cinema-primary:hover { background: #f1ce9c; }
 .featured-actions > button:not(.cinema-primary) { background: #151718aa; border-color: #ffffff2b; border-radius: 9px; }
-.featured-controls { bottom: 36px; }
-.featured-controls button { width: 40px; height: 48px; }
-.featured-controls span { font-size: 11px; color: #d0cec9; margin-right: 12px; }
 
 .home-shelves { padding-top: 0; }
 .home-shelves > section, .home-shelves > div > section { padding-block: 26px; }
@@ -249,7 +246,6 @@ aside.episode-panel { background: #16181a; border-color: #ffffff14; border-radiu
 @media (max-width: 1023px) {
   .featured-hero, .featured-content { min-height: 510px; }
   .featured-content { padding-bottom: 76px; }
-  .featured-controls { bottom: 12px; }
   .carousel-shell { --carousel-columns: 4.3; }
 }
 @media (max-width: 639px) {
@@ -262,7 +258,6 @@ aside.episode-panel { background: #16181a; border-color: #ffffff14; border-radiu
   .featured-meta { font-size: 12px; margin-top: 14px; }
   .featured-actions { margin-top: 20px; gap: 10px; }
   .featured-actions button { font-size: 12px; }
-  .featured-controls { right: 20px; bottom: 8px; }
   .featured-hero:not(:has(.featured-controls)) .featured-content { padding-bottom: 32px; }
   .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 8px; }
   .catalog-shelf .shelf-heading { margin-bottom: 14px; }
@@ -289,3 +284,712 @@ aside.episode-panel { background: #16181a; border-color: #ffffff14; border-radiu
 @media (prefers-reduced-motion: reduce) {
   .poster-actions { transition: none; }
 }
+
+/* ---- Review round 1 ---- */
+/* Episodes on phones are part of the page: rows run to the page gutters,
+   no box around them, rows separated by space instead of rules. */
+.episode-panel--page .episode-row-main { padding-left: 20px; padding-right: 4px; }
+.episode-panel--page .episode-overview { padding-inline: 20px; }
+.episode-panel--page .content-auto-row { border-bottom: 0; }
+.episode-panel--page .content-auto-row + .content-auto-row { margin-top: 4px; }
+@media (min-width: 768px) {
+  .episode-panel--page .episode-row-main { padding-left: 32px; }
+  .episode-panel--page .episode-overview { padding-inline: 32px; }
+}
+.episode-season-trigger:hover { background: #ffffff1a; }
+/* Title text sits on artwork: on phones the copy spans the width, so the
+   artwork darkens toward the text instead of only from the left. */
+@media (max-width: 639px) {
+  .title-page > .title-backdrop img { filter: brightness(.62) saturate(.9); }
+  .title-page > .title-scrim { background: linear-gradient(180deg, #10111266 0%, #101112a6 30%, #101112e0 58%, #101112 82%); }
+}
+.title-page .title-genres { color: #b9b8b4; }
+.title-page .title-attribution { color: #8e8f8d; }
+/* Continue watching: progress reads at a glance. */
+.continue-card > div:first-child > div:last-child { height: 4px; background: #ffffff38; }
+/* Rank numbers: a quiet corner mark, not a sticker. */
+.poster-card .poster-rank { background: #101112b8; color: #e9e5dc; font-weight: 700; backdrop-filter: blur(6px); }
+/* Missing artwork: calmer initials. */
+.library-card-initials { font-size: 28px; color: #e7bd8290; }
+/* Sources: quality first, a calm two-line name. */
+.source-panel .source-quality { background: #e7bd821f; color: var(--cinema-accent); }
+aside.episode-panel.episode-panel--page { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+@media (min-width: 1024px) {
+  /* Wide screens without the desktop app's side panel: one readable column. */
+  aside.episode-panel.episode-panel--page { margin-inline: 0; max-width: 60rem; }
+  .episode-panel--page > div:first-of-type, .episode-panel--page .episode-row-main, .episode-panel--page .episode-overview { padding-left: 0; padding-inline-start: 0; }
+  .episode-panel--page > div:first-of-type { padding-right: 0; }
+}
+
+/* ---- Review round 2 ---- */
+/* The tab bar gets its own layer: poster images must never paint over it. */
+.destination-bar { transform: translateZ(0); }
+/* Phone shelves breathe: more space between rows. */
+@media (max-width: 639px) {
+  .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 16px; }
+}
+/* Library: a clear active tab. */
+.library-page [role='tab'][aria-selected='true']::after { height: 3px; border-radius: 2px; }
+/* Readable small print. */
+.title-page .title-attribution { font-size: 12px; }
+.title-page [aria-label='Title actions'] { gap: 8px; }
+/* Watched marks visible at rest. */
+.episode-panel .content-auto-row button[aria-pressed='false'] svg { color: #ffffff80; }
+/* Downloads: quiet labels but readable; rows breathe. */
+.downloads-page .download-rate { color: #a6a8a7; }
+.downloads-page ul.space-y-3 > li + li { margin-top: 22px; }
+.downloads-page [role='progressbar'] { height: 6px; }
+/* Sources: roomier rows, a one-line name on wide screens (Details has it all). */
+.source-panel ul > li > div { padding-block: 18px 10px; }
+@media (min-width: 640px) { .source-panel .source-name { -webkit-line-clamp: 1; } }
+
+/* ---- Review round 3 ---- */
+/* Phone title page: the artwork is a full-colour 16:9 picture at the top;
+   title, actions and text sit below it on the canvas (no text on artwork). */
+@media (max-width: 639px) {
+  .title-page { padding-top: calc(56.25vw - 12px); }
+  .title-page > .title-backdrop, .title-page > .title-scrim { height: calc(56.25vw + 40px); }
+  .title-page > .title-backdrop { -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent 100%); mask-image: linear-gradient(180deg, #000 70%, transparent 100%); }
+  .title-page > .title-backdrop img { filter: none; object-position: center 22%; }
+  .title-page > .title-scrim { background: linear-gradient(180deg, #10111200 0%, #10111200 55%, #101112b0 82%, #101112 100%); }
+  .title-page > .title-scrim--bottom { background: linear-gradient(180deg, #10111266 0%, #10111200 22%); }
+  .title-page .grid.mt-8 { margin-top: 14px; }
+}
+/* Labelled title tools. */
+.title-action { color: #d9d7d2; }
+.title-action:hover { background: #ffffff0d; }
+.title-action[aria-pressed='true'] { color: #fff; }
+/* Episodes: a scannable title, roomy description. */
+.episode-row-main .text-\[15px\] { font-size: 16px; }
+@media (max-width: 639px) {
+  .title-page .measure-prose { font-size: 15px; line-height: 1.65; color: #cfcdc8; }
+  .title-page .grid.mt-8 > div:first-child { row-gap: 22px; }
+}
+
+/* ---- Review round 4 ---- */
+/* "More" reads as an action. */
+.episode-overview button { color: var(--cinema-accent); }
+/* Wide screens: an episode's description sits under its title, beside the
+   picture's column, instead of under the picture. */
+@media (min-width: 1024px) {
+  .episode-panel--page .episode-overview { padding-left: 176px; margin-top: -42px; min-height: 0; }
+  .episode-panel--page .content-auto-row { padding-bottom: 10px; }
+}
+/* Sources: the release name is supporting text. */
+.source-panel ul > li p.source-name { font-size: 13px; color: #d4d2cd; }
+.source-panel { background: #16181ae6; }
+/* Downloads: the storage line breathes above its meter. */
+.downloads-page .download-storage-meter { margin-top: 10px; margin-bottom: 6px; }
+/* Bottom bar: inactive destinations readable. */
+.destination-bar button { color: #c2c3c0; }
+/* Missing artwork: a quiet tile, not a loud placeholder. */
+.library-card-badge { background: #10111299; color: #bdbbb6; font-size: 10px; }
+.library-card-initials { color: #e7bd8270; }
+.library-card-placeholder { background: linear-gradient(160deg, #2a2722 0%, #1c1d1f 55%, #151618 100%); box-shadow: inset 0 0 0 1px #ffffff0f; }
+.library-card-cover-title { letter-spacing: -.01em; text-wrap: balance; }
+@media (min-width: 1024px) { .episode-panel--page .episode-overview { margin-top: -30px; } }
+.downloads-page .download-storage-meter { height: 5px; }
+.downloads-page .download-active-text { font-weight: 600; }
+.library-page section + section { margin-top: 12px; }
+
+/* ---- Review round 5 ---- */
+/* Source rows on wide screens: badges and a one-line name on the first
+   line, quiet details beneath the name. */
+@media (min-width: 640px) {
+  .source-panel .source-row-text { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; align-items: center; }
+  .source-panel .source-badges { grid-column: 1; grid-row: 1; margin: 0; flex-wrap: nowrap; }
+  .source-panel .source-name { grid-column: 2; grid-row: 1; margin: 0; font-size: 14px; }
+  .source-panel .source-meta { grid-column: 2; grid-row: 2; margin-top: 4px; }
+  .source-panel .source-details-toggle { margin-left: 0; }
+}
+.source-panel .source-meta { color: #a9a8a4; column-gap: 14px; }
+/* Library: the selected collection stands out from the other. */
+.library-page [role='tab'][aria-selected='false'] { color: #9c9d9b; }
+
+/* ---- Review round 6 ---- */
+.episode-overview .episode-more { color: var(--cinema-accent); background: linear-gradient(90deg, #10111200 0%, var(--cinema-canvas) 38%); }
+.episode-overview .episode-more[aria-expanded='true'] { background: none; }
+.episode-overview .episode-more::after { content: ''; position: absolute; inset: -12px -8px; } /* 44px touch area */
+.episode-overview .episode-more { position: relative; }
+.episode-overview .episode-more:not([aria-expanded='true']) { position: absolute; }
+.library-page [role='tab'][aria-selected='false'] { color: #b8b9b6; }
+.downloads-page ul.space-y-3 > li + li { margin-top: 18px; }
+@media (max-width: 639px) {
+  .featured-description { color: #dcdad4; }
+  .poster-card h3 { font-size: 14px; }
+  .poster-card .type-caption { font-size: 12px; }
+}
+.shelf-see-all { font-size: 13px; }
+.title-page .rounded-full.border.backdrop-blur { background: #101112b3; }
+
+/* ---- Review round 7 ---- */
+/* Sources on wide screens: what you choose by (quality, size, seeders)
+   leads; the release name is a quiet second line. */
+@media (min-width: 640px) {
+  .source-panel .source-meta { grid-column: 2; grid-row: 1; margin-top: 0; color: #e6e4df; font-size: 13px; }
+  .source-panel .source-name { grid-column: 1 / -1; grid-row: 2; margin-top: 6px; font-size: 12.5px; color: #9d9c98; }
+  .source-panel ul > li p.source-name { color: #9d9c98; font-size: 12.5px; }
+}
+/* Phones: posters without rank stickers. */
+@media (max-width: 639px) { .poster-card .poster-rank { display: none; } }
+/* Grids: titles reserve two lines so rows line up. */
+.search-result-grid .poster-card h3, .library-card .line-clamp-2 { min-height: 2.6em; }
+
+/* ---- Review round 8 ---- */
+/* Rank numbers: a quiet numeral, not a sticker. */
+.poster-card .poster-rank { background: transparent; backdrop-filter: none; color: #fff; font-size: 13px; font-weight: 800; text-shadow: 0 1px 3px #000, 0 0 8px #000c; }
+.shelf-see-all { color: var(--cinema-accent); }
+@media (max-width: 639px) {
+  .featured-scrim { background: linear-gradient(0deg, #101112 0%, #101112f2 28%, #101112b8 50%, #10111226 80%, #10111200 100%); }
+}
+
+/* ---- Review round 9 ---- */
+/* Episode watched marks and the season picker read as controls. */
+.episode-panel .content-auto-row button[aria-pressed='false'] svg { color: #ffffffb0; }
+.episode-season-trigger { box-shadow: inset 0 0 0 1px #ffffff26; }
+/* The cut-off line fades out under "More" instead of stopping abruptly. */
+.episode-overview .episode-more:not([aria-expanded='true']) { padding-left: 64px; background: linear-gradient(90deg, #10111200 0%, var(--cinema-canvas) 55%); }
+/* Downloads: status text in white; gold is for the bar. */
+.downloads-page .download-active-text { color: #ecebe7; }
+/* Sources: more air between rows. */
+.source-panel ul > li > div { padding-block: 20px 12px; }
+/* Desktop nav: a clear current page. */
+.app-header nav [aria-current='page']::after { height: 3px; border-radius: 2px; }
+
+/* ==== Sonnet round 1 ==== */
+/* Title tools: every action the same chrome, an outlined circle over a
+   short label; no one-off highlight. */
+.title-action { gap: 6px; min-width: 4.75rem; color: #e2e0db; }
+.title-action:hover { background: transparent; }
+.title-action > svg { box-sizing: content-box; padding: 11px; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff38; transition: background-color 140ms ease-out; }
+.title-action:hover > svg { background: #ffffff14; }
+.title-action[aria-pressed='true'] > svg { box-shadow: inset 0 0 0 1px #ffffff80; }
+@media (max-width: 639px) {
+  /* Phones: the tools share the row evenly under the full-width Play. */
+  .title-action-tools { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0; }
+  .title-action { min-width: 0; }
+  /* The type pill crowded the artwork's fade; the page says what it is. */
+  .title-page .title-topline { display: none; }
+}
+/* Desktop title copy over artwork: a wider, darker left scrim; brighter body. */
+@media (min-width: 640px) {
+  .title-page > .title-scrim { background: linear-gradient(90deg, #101112f5 0%, #101112e0 34%, #10111299 55%, #10111220 80%, #10111200 100%); }
+  .title-page .measure-prose { color: #dcdad5; }
+  .title-page .title-attribution { color: #a3a3a0; }
+}
+
+/* Wide screens without the desktop app's side panel: the episode list
+   spans the page; bigger stills, hairline rows, the mark on the title. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: none; }
+  .episode-panel--page .episode-row-main > div:first-child { width: 224px; }
+  .episode-panel--page .episode-overview { padding-left: 240px; margin-top: -58px; }
+  .episode-panel--page .content-auto-row { border-bottom: 1px solid #ffffff12; padding-bottom: 14px; }
+  .episode-panel--page .content-auto-row + .content-auto-row { margin-top: 0; padding-top: 6px; }
+  .episode-panel--page .episode-row-main { align-items: flex-start; }
+  .episode-panel--page .episode-row-main > div:nth-child(2) { padding-top: 6px; }
+}
+
+/* Gold is for primary actions and the current place only. */
+.shelf-see-all { color: #c9c8c4; }
+.shelf-see-all:hover { color: var(--cinema-accent); }
+/* Rank numbers: a small dark backing so they read on any poster. */
+.poster-card .poster-rank { background: #000000a6; border-radius: 6px; text-shadow: none; font-size: 12px; }
+
+/* Phone hero: swipe moves it; keep the dots and pause, tighten the gaps. */
+@media (max-width: 639px) {
+  .featured-content { padding-bottom: 58px; }
+  .catalog-shelf .shelf-heading { margin-bottom: 8px; }
+}
+
+/* Downloads: secondary actions look tappable; status in the secondary tone. */
+.download-row-action { background: #2a2c33; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.download-row-action:hover { background: #33363e; }
+.downloads-page .download-active-text { color: #c9c8c4; }
+.downloads-page h3 { font-size: 17px; color: #d6d4cf; }
+@media (min-width: 1024px) {
+  /* The description starts right under the title and running time. */
+  .episode-panel--page .episode-overview { margin-top: -86px; min-height: 0; }
+  .episode-panel--page .episode-overview p { min-height: 0; }
+}
+
+/* ==== Sonnet round 2 ==== */
+/* Library captions: year straight under the title. */
+.library-card .line-clamp-2 { min-height: 0; line-height: 1.3; }
+/* A soft fade above the tab bar so content passing under it reads as scrolling. */
+.destination-bar::before { content: ''; position: absolute; left: 0; right: 0; top: -24px; height: 24px; background: linear-gradient(180deg, #14161800, #141618); pointer-events: none; }
+/* Phone title page: one clear type scale and tighter rhythm. */
+@media (max-width: 639px) {
+  .title-page .measure-prose { font-size: 15px; line-height: 1.55; color: #d9d7d2; }
+  .title-page .title-genres { font-size: 13px; color: #a9a8a4; margin-top: -10px; }
+  .title-page .title-attribution { font-size: 11px; color: #7f807e; margin-top: -14px; }
+  .title-action > span { font-size: 12px; color: #c9c8c4; }
+  /* Shelves: 32px between sections, headings close to their row. */
+  .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 14px; }
+  .catalog-shelf .shelf-heading { margin-bottom: 10px; }
+  /* Episode descriptions: three calm lines. */
+  .episode-overview p { font-size: 14px; color: #b9b8b4; }
+}
+/* Desktop title: copy sits on a darker, wider scrim; the art fades out before the episodes. */
+@media (min-width: 640px) {
+  .title-page > .title-scrim { background: linear-gradient(90deg, #101112f7 0%, #101112e6 38%, #101112b3 62%, #10111240 85%, #10111220 100%); }
+  .title-page .title-genres { color: #b4b3af; font-size: 13px; }
+  .title-page .title-attribution { color: #a8abb3; font-size: 12px; }
+}
+/* Sources: a solid surface, readable details, a clear quality chip. */
+.source-panel { background: #14161b; border-color: #23262d; }
+.source-panel .source-meta { color: #b8bbc3; }
+.source-panel .source-quality { background: #ffffff1f; color: #fff; font-weight: 700; }
+/* Wide screens: the episode list at a readable width; count and season
+   toggle sit with the season picker. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: 1080px; }
+  .episode-panel--page .episode-season-row { justify-content: flex-start; gap: 20px; }
+}
+/* Shelves: readable years; rank numbers on a solid chip. */
+.poster-card .type-caption { color: #a7a9ad; }
+@media (min-width: 640px) { .poster-card .type-caption { font-size: 13px; } }
+.poster-card .poster-rank { background: #000000bf; }
+/* Home hero: Watch Later reads as a button. */
+.featured-actions > button:not(.cinema-primary) { border-color: #ffffff59; color: #fff; }
+/* Downloads: muted status, one red for errors, a visible storage meter. */
+.downloads-page .download-active-text { color: #b8b7b3; font-size: 14px; }
+.downloads-page .text-red-300 { color: #f0786e; }
+.downloads-page .download-storage-meter { height: 6px; background: #2a2d33; }
+.downloads-page .download-storage-meter .download-progress-fill { background: var(--cinema-accent); }
+.downloads-page [role='progressbar'] { background: #2a2d33; }
+.downloads-page h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9a9b98; }
+@media (min-width: 1024px) {
+  .episode-panel--page .episode-heading-row { justify-content: flex-start; gap: 14px; }
+}
+
+/* ==== Sonnet round 3 ==== */
+/* Desktop title: the artwork stays bright on the right; darkening only
+   behind the text column; fully faded to canvas before the sections below. */
+@media (min-width: 640px) {
+  .title-page > .title-backdrop { height: min(640px, 100vh); -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 100%); mask-image: linear-gradient(180deg, #000 55%, transparent 100%); }
+  .title-page > .title-scrim { height: min(640px, 100vh); background: linear-gradient(90deg, #101112f2 0%, #101112d9 30%, #10111280 48%, #10111200 62%); }
+  .title-page > .title-scrim--bottom { height: min(640px, 100vh); background: linear-gradient(0deg, #101112 0%, #10111200 40%); }
+  .title-page > .title-backdrop img { filter: brightness(.82) saturate(1); }
+}
+/* Wide episode list: full content width again, watched mark at the edge. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: none; }
+}
+/* Search grid: compact titles, one-line meta right under them. */
+.search-result-grid .poster-card h3 { font-size: 13.5px; min-height: 2.7em; line-height: 1.35; }
+.search-result-grid .poster-card .poster-meta { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; font-size: 12px; }
+/* Library: the missing-poster tile is a deliberate surface. */
+.library-card-placeholder { background: linear-gradient(160deg, #2a2a2e 0%, #1f2127 60%, #1a1c21 100%); box-shadow: inset 0 0 0 1px #ffffff1a; }
+.library-card-cover-title { color: #fff; }
+/* Phone hero: dots and pause centred under the buttons, inside the hero. */
+@media (max-width: 639px) {
+  .featured-content { padding-bottom: 64px; }
+}
+/* Desktop hero: controls level with the buttons. */
+/* Downloads: the round pause/resume control. */
+.download-row-icon { background: #2a2c33; box-shadow: inset 0 0 0 1px #ffffff24; }
+.download-row-icon:hover { background: #33363e; }
+.downloads-page .download-rate { color: #a9a8a4; }
+
+/* ==== Sonnet round 4 ==== */
+/* Wide episode list: one readable column, watched mark at its end. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: 1000px; }
+  .episode-panel--page .episode-row-main > div:first-child { width: 208px; }
+  .episode-panel--page .episode-overview { padding-left: 224px; margin-top: -80px; }
+  .episode-panel--page .episode-overview p { color: #b8b8be; font-size: 14px; }
+  .episode-panel--page .type-caption { font-size: 13px; }
+}
+/* Title info: one 24px rhythm; details line slightly larger. */
+.title-page .grid.mt-8 > div:first-child { row-gap: 24px; }
+.title-page .grid.mt-8 > div:first-child > * + * { margin-top: 0 !important; }
+.title-page .grid.mt-8 > div:first-child { display: flex; flex-direction: column; }
+.title-page .title-more { color: var(--cinema-accent); }
+.title-action > span { font-size: 12.5px; color: #dedcd7; }
+@media (min-width: 640px) {
+  /* Play and the round tools share a centre line. */
+  .title-actions { align-items: flex-start; }
+  .title-actions > .cinema-primary { margin-top: 0; }
+}
+/* Phone: shelves a touch denser (more of the next poster shows), 40px apart. */
+@media (max-width: 639px) {
+  .carousel-shell { --carousel-columns: 2.85; }
+  .home-shelves > section, .home-shelves > div > section, .catalog-shelf { padding-block: 12px; }
+  .featured-hero, .featured-content { min-height: 470px; }
+  .featured-content { padding-top: 150px; }
+  .featured-actions > button:not(.cinema-primary) { background: #ffffff1f; border-color: transparent; }
+  .episode-panel .content-auto-row button[aria-pressed='false'] svg { width: 22px; height: 22px; color: #ffffff8c; }
+}
+/* Downloads: the status line in the secondary tone; a readable storage meter. */
+.downloads-page .download-active-text { color: #a9a8a4; }
+.downloads-page .download-storage-meter { height: 8px; }
+.download-row-icon--quiet { background: transparent; box-shadow: none; color: #b8b7b3; }
+.download-row-icon--quiet:hover { color: #fff; background: #ffffff10; }
+/* Bar controls: compact circles with a full 44px touch area. */
+.download-row-icon { position: relative; }
+.download-row-icon::after { content: ''; position: absolute; inset: -4px; }
+
+/* ==== Sonnet round 5 ==== */
+/* Downloads: pause/resume and cancel stacked in the row's right column. */
+.downloads-page li > div.flex-col > div:first-child > .download-row-controls { top: 50% !important; transform: translateY(-50%); right: 4px; }
+.downloads-page li:has(.download-row-controls) > div.flex-col { padding-right: 56px; }
+.downloads-page .download-rate { color: #b3b2ae; }
+.downloads-page h3 { font-size: 13px; color: #a6a7a4; }
+/* Phone title page: one 24 / 16 / 24 rhythm; a calmer synopsis. */
+@media (max-width: 639px) {
+  .title-page .grid.mt-8 > div:first-child { row-gap: 22px; }
+  .title-page .title-actions { gap: 14px; }
+  .title-page .measure-prose { font-size: 16px; line-height: 1.5; }
+  .title-page .title-genres { margin-top: -4px; }
+  /* Hero: dots and pause just under the buttons, left-aligned with them. */
+  .featured-content { padding-bottom: 66px; }
+  .featured-scrim { background: linear-gradient(0deg, #101112 0%, #101112f0 30%, #101112c4 52%, #10111240 75%, #10111200 100%); }
+  .featured-description { color: #e4e2dc; }
+}
+/* Captions: a calm title / year pair. */
+.poster-card h3 { color: #ebe9e4; }
+.poster-card .type-caption, .library-card .text-xs { color: #a9a8a4; }
+/* Headings: page 32, section 22. */
+.library-page > div:first-of-type h1, .downloads-page h1 { font-size: 32px; line-height: 1.15; }
+.episode-panel h3.type-panel-title { font-size: 22px; }
+.home-shelves .type-row-title, .catalog-shelf .type-row-title { font-size: 22px; }
+/* The ratings credit stays legible. */
+.title-page .title-attribution { color: #9c9c99; font-size: 12px; padding-bottom: 8px; }
+/* Tailwind 4's space-y uses margin-bottom; the column's row-gap is the rhythm. */
+.title-page .grid.mt-8 > div:first-child > * { margin-bottom: 0 !important; }
+
+/* ==== Sonnet round 6 (final Sonnet pass) ==== */
+@media (min-width: 1024px) {
+  /* Episode rows span the content width; the watched mark sits at the right edge. */
+  aside.episode-panel.episode-panel--page { max-width: none; }
+  .episode-panel--page .episode-overview p { max-width: 72ch; }
+  .episode-row-main .text-\[15px\] { font-size: 16px; }
+}
+/* Downloads: every trailing control on one x; the pause ring is quiet. */
+.downloads-page li > div.flex-col > div:first-child > :not(:first-child) { right: 4px !important; }
+.download-row-icon { background: #ffffff14; box-shadow: none; }
+.downloads-page .text-red-300 { color: #f08a80; }
+.download-row-action { min-height: 36px; padding-inline: 14px; font-size: 14px; }
+/* Phone hero: dots and pause centred together under the buttons. */
+@media (max-width: 639px) {
+}
+
+/* ==== Opus round 1 ==== */
+/* Wide episode list: a readable column whose watched mark sits right after
+   the text; equal padding above and below each row. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: 980px; }
+  .episode-panel--page .episode-overview p { max-width: none; }
+  .episode-panel--page .episode-overview { padding-right: 64px; }
+  .episode-panel--page .content-auto-row { padding-block: 16px; }
+  .episode-panel--page .content-auto-row + .content-auto-row { padding-top: 16px; }
+  .episode-panel--page .episode-row-main { padding-block: 0; }
+}
+.episode-panel .content-auto-row button[aria-pressed] svg { width: 16px; height: 16px; color: inherit; }
+/* Downloads: in-progress controls on the same right axis as the trash. */
+.downloads-page li > div.flex-col > div:first-child > .download-row-controls { right: 0 !important; top: 22px !important; transform: none; }
+.downloads-page li:has(.download-row-controls) > div.flex-col { padding-right: 0; }
+.downloads-page li:has(.download-row-controls) > div.flex-col > div:first-child { padding-right: 84px; }
+.download-row-icon { background: transparent; color: #e6e4df; }
+.download-row-icon:hover { background: #ffffff14; }
+/* Active downloads stand out again: status in gold. */
+.downloads-page .download-active-text { color: var(--cinema-accent); }
+/* Library: the active tab's underline matches its gold label. */
+.library-page [role='tab'][aria-selected='true'] { border-color: var(--cinema-accent) !important; box-shadow: inset 0 -3px 0 var(--cinema-accent); }
+/* Missing poster: icon only (the title is right below). */
+.library-card-cover-title { display: none; }
+.library-card-placeholder { align-items: center; justify-content: center; }
+.library-card-placeholder svg { width: 28px; height: 28px; }
+/* One rule on every screen: no rank stickers on posters. */
+.poster-card .poster-rank { display: none !important; }
+/* Search captions: meta right under the title; natural wrapping. */
+.search-result-grid .poster-card h3 { min-height: 0; text-wrap: wrap; }
+.poster-card h3 { text-wrap: pretty; }
+/* Years read as numbers, not spaced digits. */
+.poster-meta, .poster-card .type-caption { font-variant-numeric: normal; letter-spacing: 0; }
+/* Desktop hero copy: one comfortable line height; readable meta. */
+@media (min-width: 640px) {
+  .featured-description { font-size: 16px; line-height: 1.55; }
+  .featured-meta { font-size: 14px; margin-top: 12px; }
+}
+/* Sources: the release line is readable; seed counts without extra colour. */
+@media (min-width: 640px) {
+  .source-panel ul > li p.source-name { font-size: 13.5px; color: #c9c8c4; }
+}
+.source-panel .source-meta .text-emerald-300\/80 { color: #d6d4cf; }
+/* Phone home: hero to shelf gap 40px; a filled pause glyph. */
+@media (max-width: 639px) {
+  .home-shelves { padding-top: 0; }
+}
+/* Phone title page: room before the Sources card so it never peeks. */
+@media (max-width: 639px) {
+  .title-page .grid.mt-8 { row-gap: 40px; }
+}
+@media (min-width: 1024px) {
+  .episode-panel--page .episode-overview { margin-top: -62px; }
+}
+.library-page [role='tab'][aria-selected='true'] { box-shadow: none; }
+.library-page [role='tab'][aria-selected='true']::after, .library-page [role='tab'] > span[aria-hidden='true'] { background: var(--cinema-accent) !important; }
+/* One underline: the tab's own bar, in gold. */
+.library-page [role='tab'][aria-selected='true'] { border-color: transparent !important; }
+.library-page [role='tab'][aria-selected='true']::after { content: none !important; }
+.library-page [role='tab'] > span[aria-hidden='true'] { height: 3px; }
+
+/* ==== Opus round 2 ==== */
+/* Phone/tablet: on Home and title pages the top bar floats over the artwork
+   (soft shade, no rule) and turns solid once the page scrolls. */
+@media (max-width: 1023px) {
+  .compact-header { transition: background-color 180ms ease-out, border-color 180ms ease-out; }
+  .compact-header--hero { position: fixed; left: 0; right: 0; }
+  .compact-header--over { background: linear-gradient(180deg, #000000b8 0%, #00000059 60%, #00000000 100%) !important; border-color: transparent !important; }
+  .compact-header--over .brand-wordmark { text-shadow: 0 1px 6px #0009; }
+  .compact-header--hero ~ main .title-page { padding-top: calc(var(--app-safe-top) + 64px + 28px); }
+  .compact-header--hero ~ main .title-page > .title-backdrop,
+  .compact-header--hero ~ main .title-page > .title-scrim { top: 0; }
+}
+@media (max-width: 639px) {
+  .compact-header--hero ~ main .title-page { padding-top: calc(56.25vw + var(--app-safe-top) + 52px); }
+  .compact-header--hero ~ main .title-page > .title-backdrop,
+  .compact-header--hero ~ main .title-page > .title-scrim { height: calc(56.25vw + var(--app-safe-top) + 104px); }
+  .compact-header--hero ~ main .featured-hero, .compact-header--hero ~ main .featured-content { min-height: 540px; }
+  .compact-header--hero ~ main .featured-content { padding-top: 210px; }
+}
+
+/* Tab bar: solid with a blur and a hairline (no fade of content into it). */
+.destination-bar::before { content: none; }
+.destination-bar { background: #141618f5; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-top: 1px solid #ffffff14; }
+
+/* Phone shelves run to the screen edge; the first poster keeps the gutter. */
+@media (max-width: 639px) {
+  .carousel-shell { margin-inline: -20px; }
+  .carousel-shell .carousel-rail { padding-inline: 20px; scroll-padding-inline: 20px; }
+}
+
+/* Wide episode list: full content width; text at a reading measure; the
+   watched mark at the right edge. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: none; }
+  .episode-panel--page .episode-overview p { max-width: 72ch; }
+}
+/* Phone season controls on one row: picker and a compact watched pill. */
+@media (max-width: 639px) {
+  .episode-panel--page .episode-season-row { flex-wrap: nowrap; justify-content: space-between; }
+  .season-watched-button { padding-inline: 12px; white-space: nowrap; }
+}
+
+/* One play overlay everywhere: a light disc with a dark glyph. */
+.episode-play > span { background: #f3eee5e6 !important; box-shadow: 0 2px 10px #00000073; --tw-ring-color: transparent; }
+.episode-play svg { fill: #141414; color: #141414; }
+
+/* Downloads rows: title 16/600, meta 13 muted, status 13/500. Controls
+   centred on the row; outline glyphs. */
+.downloads-page li .text-base.font-medium, .downloads-page li .text-\[15px\] { font-size: 16px; font-weight: 600; }
+.downloads-page li .type-secondary { font-size: 13.5px; }
+.downloads-page .download-active-text { font-size: 13.5px; font-weight: 500; }
+.downloads-page li > div.flex-col > div:first-child > .download-row-controls { top: 50% !important; transform: translateY(-50%); }
+.download-row-icon svg { fill: none; stroke-width: 2; }
+.downloads-page h3 { text-transform: none; letter-spacing: 0; font-size: 15px; color: #c9c8c4; }
+.downloads-page h1 + button, .downloads-page h1 ~ button { color: #ecebe7 !important; }
+
+/* Tab bar opaque (content never shows through), blur kept for the edge. */
+.destination-bar { background: #141618 !important; }
+@media (max-width: 1023px) {
+  .compact-header--over { border-bottom-color: transparent !important; box-shadow: none; }
+}
+/* Phone season row: fits the width. */
+@media (max-width: 639px) {
+  .episode-panel--page .episode-season-row > * { min-width: 0; }
+  .episode-season-trigger { min-width: 0 !important; flex: 0 1 auto; }
+  .season-watched-button { font-size: 14px; }
+}
+/* The shade must not repeat into the (transparent) 1px border: that drew a dark line. */
+.compact-header--over { background-repeat: no-repeat !important; background-origin: border-box !important; border-bottom-width: 0 !important; padding-bottom: calc(0.5rem + 1px); }
+
+/* ==== Opus round 3 ==== */
+/* Wide episode list: one readable column (1000px); the watched check right
+   after the text; the hero fades out before the section starts. */
+@media (min-width: 1024px) {
+  aside.episode-panel.episode-panel--page { max-width: 1000px; }
+  .episode-panel--page .episode-overview p { max-width: none; }
+  .episode-panel .content-auto-row button[aria-pressed] .episode-watched-mark { width: 34px; height: 34px; }
+}
+@media (min-width: 640px) {
+  .title-page > .title-backdrop { -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent 88%); mask-image: linear-gradient(180deg, #000 45%, transparent 88%); }
+}
+/* Phone: calmer synopsis and episode descriptions; titles lead. */
+@media (max-width: 639px) {
+  .title-page .measure-prose { font-size: 15px; line-height: 1.5; color: #c9c8c4; }
+  .episode-overview p { font-size: 14px; line-height: 1.5; }
+  .episode-row-main .text-\[15px\] { font-size: 17px; }
+  .episode-panel--page .content-auto-row + .content-auto-row { margin-top: 0; }
+}
+/* Desktop captions readable at 1440px. */
+@media (min-width: 1024px) {
+  .poster-card h3 { font-size: 15px; font-weight: 500; }
+  .poster-card .type-caption { font-size: 13px; color: #a8a8a8; }
+  .shelf-see-all { font-size: 14px; }
+  .continue-card > div:last-child > button:first-child :last-child { font-size: 13px; }
+}
+/* Downloads: one 44px trailing column at the gutter for every row; the
+   storage meter neutral (gold stays for actions and progress). */
+.downloads-page li > div.flex-col > div:first-child > :not(:first-child):not(.download-row-controls) { right: 0 !important; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.downloads-page li > div.flex-col > div:first-child > :not(:first-child) svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.downloads-page .download-storage-meter .download-progress-fill { background: #9a9a98; }
+/* Hero meta: one separator rhythm. */
+.featured-meta { gap: 6px; }
+/* Secondary hero button: one outline style on every size. */
+.featured-actions > button:not(.cinema-primary) { background: #ffffff14 !important; border: 1px solid #ffffff40 !important; }
+
+/* ==== Opus round 4: one system ==== */
+/* Type scale: 13 / 15 / 17 / 22 / 32. Section headings 22 semibold with an
+   inline 15 count; group headings 17 semibold. */
+.episode-panel h3.type-panel-title, .source-panel h3, .home-shelves .type-row-title, .catalog-shelf .type-row-title { font-size: 22px; line-height: 28px; font-weight: 600; }
+.library-page section h2 { font-size: 17px; line-height: 22px; font-weight: 600; }
+.library-page section h2 .text-numeric, .episode-panel > div:first-of-type .text-sm { font-size: 15px; color: #ffffff8c; }
+.downloads-page h3 { font-size: 17px; line-height: 22px; font-weight: 600; color: #fff; }
+.episode-panel--page .episode-heading-row { justify-content: flex-start; gap: 12px; align-items: baseline; }
+/* Card titles: one weight and size; one meta tone. */
+.poster-card h3, .library-card .line-clamp-2, .continue-card > div:last-child > button:first-child { font-weight: 500 !important; }
+@media (min-width: 640px) { .poster-card h3, .library-card .line-clamp-2, .continue-card > div:last-child > button:first-child { font-size: 15px !important; line-height: 20px; } }
+/* Title description below the details in weight: 15/22 at 75% white. */
+.title-page .measure-prose { font-size: 15px !important; line-height: 22px !important; color: #ffffffbf !important; }
+@media (min-width: 1024px) { .title-page .measure-prose { font-size: 16px !important; line-height: 24px !important; } }
+/* Phone episodes: a description belongs to its own row. */
+@media (max-width: 639px) {
+  .episode-overview { margin-top: -6px; padding-bottom: 0; }
+  .episode-panel--page .content-auto-row { padding-bottom: 22px; }
+  .episode-overview p { color: #ffffffa6; }
+  /* Season controls: one surface, one height. */
+  .season-watched-button { background: #ffffff14 !important; box-shadow: inset 0 0 0 1px #ffffff26 !important; min-height: 44px; }
+  .episode-season-trigger { min-height: 44px; }
+}
+/* Downloads: every trailing control in the same 44px column at the gutter. */
+.download-row-controls > button { width: 44px !important; height: 44px !important; }
+.download-row-controls { gap: 0 !important; margin-right: -2px; }
+/* Header actions share one style. */
+.downloads-page h1 ~ button, .library-page > div:first-of-type button { font-size: 15px; font-weight: 500; color: #ffffffd9 !important; }
+.app-header nav button, .app-header button[aria-label*='Library'] { font-weight: 500; }
+/* Phone hero: dots at the left gutter, pause at the right margin. */
+@media (max-width: 639px) {
+}
+/* "More" sits under the text on the right (the earlier inline/fade styles are retired). */
+.episode-overview .episode-more, .episode-overview .episode-more:not([aria-expanded='true']) { position: relative !important; padding: 0 8px !important; background: none !important; }
+.episode-overview .episode-more::after { inset: -6px -4px; }
+
+/* ==== Feature pass: status controls, sources summary, resume ==== */
+.download-status { color: #ecebe7; }
+.downloads-page li > div.flex-col > div:first-child > .download-status { right: 0 !important; width: 44px; height: 44px; }
+.download-ready-row .download-status { margin-right: -2px; }
+.download-row-menu .download-row-action { background: #2a2c33; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.download-ready-row .download-row-menu { padding-left: calc(72px + 12px); }
+@media (min-width: 640px) { .download-ready-row .download-row-menu { padding-left: calc(88px + 16px); } }
+/* Sources: the readable line leads; details and name sit quietly below. */
+@media (min-width: 640px) {
+  .source-panel .source-row-text { display: block; }
+  .source-panel .source-badges { margin-bottom: 2px; flex-wrap: wrap; }
+  .source-panel .source-meta { margin-top: 2px; color: #a9a8a4; font-size: 13px; }
+  .source-panel ul > li p.source-name { margin-top: 4px; font-size: 12px; color: #8e8e8b; -webkit-line-clamp: 1; }
+}
+.source-panel .source-summary { letter-spacing: -.005em; }
+.source-panel .source-details-toggle { text-decoration: none; color: #a9a8a4; }
+.source-panel .source-details-toggle::after { content: ' ›'; }
+/* Resume on the Play button. */
+.cinema-primary .title-resume-left { font-weight: 500; }
+.cinema-primary:has(.title-resume-bar) { padding-bottom: 6px; }
+@media (min-width: 640px) {
+  .source-panel .source-row-text { display: flex; flex-direction: column; }
+  .source-panel .source-row-text > .source-badges { order: 1; }
+  .source-panel .source-row-text > .source-meta { order: 2; }
+  .source-panel .source-row-text > .source-name { order: 3; }
+}
+.downloads-page svg.progress-ring-svg { width: 36px !important; height: 36px !important; stroke-width: initial; }
+.downloads-page .download-status > span > svg:not(.progress-ring-svg) { width: 14px !important; height: 14px !important; }
+@media (min-width: 640px) { .source-panel .source-row-text { align-items: flex-start; text-align: left; } }
+
+
+/* ==== Hero carousel controls (one definition) ==== */
+/* Dots (real buttons, 44px tall) then pause, then arrows on desktop. */
+.featured-controls { right: 48px; bottom: 48px; gap: 4px; }
+.featured-controls .featured-dot { min-width: 28px; }
+.featured-controls .featured-pause svg { width: 16px; height: 16px; }
+@media (max-width: 639px) {
+  /* Phones: one row inside the 20px margins, under the buttons; dots on the
+     left, pause on the right, both fully tappable; arrows hidden (swipe). */
+  .featured-controls { left: 20px; right: 20px; bottom: 14px; justify-content: space-between; }
+  .featured-controls .featured-dots { margin-left: -8px; }
+  .featured-controls button[aria-label$='featured title'] { display: none; }
+  .featured-content { padding-bottom: 78px !important; }
+}
+@media (min-width: 640px) and (max-width: 1023px) { .featured-controls { right: 32px; bottom: 24px; } }
+
+/* ==== Touch targets near the screen edge (device check) ==== */
+.featured-controls .featured-dot { min-width: 36px; }
+@media (max-width: 639px) { .featured-controls .featured-dots { margin-left: -8px; } }
+/* Row controls end on the 20px margin, not past it. */
+.downloads-page li > div.flex-col > div:first-child > .download-status { right: 4px !important; }
+.download-ready-row .download-status { margin-right: 2px; }
+/* Small text actions get a full 44px touch height. */
+.episode-overview .episode-more, .title-page .title-more, .source-panel .source-details-toggle { min-height: 44px; }
+.title-page a[href*='imdb.com/title'] { padding-block: 12px; margin-block: -12px; }
+
+/* ==== Merged from ui/robin-cinema-polish: desktop layout and finish ==== */
+:root { color-scheme: dark; }
+body :focus-visible { --tw-ring-color: var(--cinema-accent); }
+.app-header > div { height: 76px; }
+.app-header nav [aria-current='page']::after { bottom: -16px; }
+.featured-copy h1 { text-wrap: balance; }
+.featured-actions > button { min-height: 48px; }
+.poster-card h3 { text-align: left; }
+.poster-card:focus-visible .poster-art { outline: 2px solid var(--cinema-accent); outline-offset: 4px; }
+.library-card:focus-visible { outline: 2px solid var(--cinema-accent); outline-offset: 5px; }
+.shelf-see-all { min-height: 44px; }
+.library-collections > section { min-width: 0; }
+.library-collections .shelf-heading h2 > svg { color: #b3b4b2; }
+.source-panel, aside.episode-panel { box-shadow: none; }
+.browse-page { padding-top: 36px; }
+.browse-page > ul { row-gap: 32px; }
+@media (min-width: 640px) {
+  .featured-hero { min-height: 520px; }
+  .featured-content { min-height: 520px; padding-top: 110px; padding-bottom: 64px; }
+}
+@media (min-width: 1024px) {
+  .continue-card { width: 310px; }
+  .home-shelves > .continue-section { padding-top: 0; padding-bottom: 20px; }
+  .home-shelves > .continue-section > div:first-child { margin-bottom: 20px; }
+  /* Library: Movies, Series and Anime side by side. */
+  .library-collections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; padding-top: 22px; }
+  .library-collections > section { margin-top: 0 !important; }
+  .library-collections > p { grid-column: 1 / -1; }
+  /* Title page: details on the left, Sources / Episodes beside them (sticky). */
+  .title-page .title-layout { grid-template-columns: minmax(0, 1fr) 440px; gap: 64px; padding-top: 18px; align-items: start; }
+  .title-page .title-layout > :last-child { position: sticky; top: 100px; }
+  .title-page .type-feature-title { font-size: 64px !important; line-height: 1.08 !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-card *, .continue-card *, .library-card * { transition: none; }
+  .poster-art, .poster-art img, .library-card img { transform: none; }
+}
+@media (min-width: 1024px) {
+  /* Episodes in the 440px side column: the same card as Sources, compact rows. */
+  .title-layout aside.episode-panel.episode-panel--page { max-width: none; margin-inline: 0; background: #16181a; border: 1px solid #ffffff14; border-radius: 16px; overflow: hidden; min-height: 0; }
+  .title-layout .episode-panel--page > div:first-of-type { padding: 20px 20px 8px !important; }
+  .title-layout .episode-panel--page .episode-row-main { padding-left: 20px !important; gap: 14px; align-items: flex-start; }
+  .title-layout .episode-panel--page .episode-row-main > div:first-child { width: 128px; }
+  .title-layout .episode-panel--page .episode-overview { padding: 0 20px 0 !important; margin-top: 4px !important; }
+  .title-layout .episode-panel--page .episode-overview p { font-size: 13.5px; }
+  .title-layout .episode-panel--page .content-auto-row { padding-block: 12px; }
+  .title-layout .episode-panel--page .app-scrollbar { max-height: calc(100vh - 290px); overflow-y: auto; overscroll-behavior: contain; }
+  .title-layout .episode-panel .episode-row-main .text-\[15px\] { font-size: 15px; }
+}
+
+/* ==== Title logos (TitleWordmark) ==== */
+.title-wordmark { filter: drop-shadow(0 2px 14px #000000b0); }
+.featured-wordmark { max-height: 132px; max-width: min(460px, 82%); }
+.title-page-wordmark { max-height: 150px; max-width: min(520px, 90%); margin-bottom: 6px; }
+@media (max-width: 639px) {
+  .featured-wordmark { max-height: 92px; max-width: 78%; }
+  .title-page-wordmark { max-height: 96px; max-width: 80%; }
+}
+/* Desktop search lines up with the app's 48px margin. */
+@media (min-width: 1024px) { .search-page { padding-inline: 48px; } }

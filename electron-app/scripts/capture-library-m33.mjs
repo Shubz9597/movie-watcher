@@ -55,7 +55,7 @@ const CAPTURES = [
   { name: "desktop-library-scoped-grid", url: "fixtures=ok&library=populated#library-category?collection=watch-later&kind=movie&sort=recent", waitFor: "Load more" },
   { name: "desktop-library-unavailable-server", url: "fixtures=ok&library=unavailable#library?collection=watch-later", waitFor: "not available on this server" },
   { name: "desktop-library-failure-retry", url: "fixtures=ok&library=error#library?collection=watch-later", waitFor: "Retry" },
-  { name: "desktop-library-unavailable-metadata", url: "fixtures=ok&library=populated#library?collection=watch-later", waitFor: "Info unavailable" },
+  { name: "desktop-library-unavailable-metadata", url: "fixtures=ok&library=populated#library?collection=watch-later", waitFor: "The Simpsons" },
   { name: "desktop-toggle-inactive-active", url: "fixtures=ok&library=populated#library-states", waitFor: "Save states" },
   { name: "desktop-toggle-pending", url: "fixtures=ok&library=write-pending#library-states", waitFor: "Save states", clickToggle: "watch-later", afterMs: 300 },
   { name: "desktop-toggle-failed-retry", url: "fixtures=ok&library=write-failure#library-states", waitFor: "Save states", clickToggle: "watch-later", afterMs: 900 },

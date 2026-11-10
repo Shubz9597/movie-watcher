@@ -109,7 +109,7 @@ test("ContinueCarousel separates resume and detail targets with progress on artw
     {
       seriesId: "tmdb:movie:693134", season: 0, episode: 0, position_s: 3900, duration_s: 10020,
       percent: 39, updated_at: "2026-09-06T12:00:00Z", sourceAvailable: true,
-      title: "Dune: Part Two", posterPath: "https://poster.example/dune.jpg", kind: "movie", upNext: false,
+      title: "Dune: Part Two", posterPath: "https://poster.example/dune.jpg", backdropPath: "https://backdrop.example/dune.jpg", kind: "movie", upNext: false,
     },
     {
       seriesId: "tmdb:tv:1396", season: 1, episode: 4, position_s: 600, duration_s: 2820,
@@ -127,6 +127,9 @@ test("ContinueCarousel separates resume and detail targets with progress on artw
   assert.match(html, /snap-mandatory/, "snap scrolling (no timer autoplay)");
   assert.match(html, /aria-label="Resume Dune: Part Two"/, "resume is its own named target");
   assert.match(html, /aria-label="Resume Breaking Bad"/);
+  assert.match(html, /src="https:\/\/backdrop.example\/dune.jpg"/, "landscape artwork is preferred to a cropped poster");
+  assert.match(html, /1h 42m left/, "remaining time comes from duration and current position");
+  assert.match(html, /S1 E4 · 37m left/, "episode progress is readable beside remaining time");
   assert.match(html, /width:39%/, "progress lives on the artwork");
   assert.match(html, /width:21%/);
   assert.match(html, /Dune: Part Two/, "title text is a separate element (detail intent)");

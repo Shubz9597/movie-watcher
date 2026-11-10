@@ -15,6 +15,8 @@ import { RecommendationRow } from '../components/shared/RecommendationRow';
 import { ACTION_PRIMARY_CLASS, ACTION_SECONDARY_CLASS } from '../lib/design-tokens';
 import { isUnreachable, OFFLINE_MESSAGE } from '../lib/user-error';
 import { requestReconnect } from '../lib/connection-banner';
+import { TitleWordmark } from '../components/shared/TitleWordmark';
+import { bffTitleDetail } from '../lib/services/catalog-bff';
 
 type ContinueItem = {
   seriesId: string;
@@ -26,6 +28,7 @@ type ContinueItem = {
   updated_at: string;
   title: string;
   posterPath: string | null;
+  backdropPath?: string | null;
   year?: number;
   kind: 'movie' | 'tv' | 'anime';
   tmdbId?: number;
@@ -53,6 +56,26 @@ const catalogRequests = {
 };
 
 type FeaturedItem = MovieCard & { kind: 'movie' | 'tv' | 'anime' };
+
+/** At most 7 dots, following the current title; the end dots shrink when
+ *  more titles lie beyond them (the hero can rotate through ~20). */
+const MAX_FEATURED_DOTS = 7;
+function featuredDotWindow(count: number, current: number): Array<{ index: number; edge: boolean }> {
+  if (count <= MAX_FEATURED_DOTS) return Array.from({ length: count }, (_, index) => ({ index, edge: false }));
+  const start = Math.min(Math.max(0, current - Math.floor(MAX_FEATURED_DOTS / 2)), count - MAX_FEATURED_DOTS);
+  return Array.from({ length: MAX_FEATURED_DOTS }, (_, offset) => {
+    const index = start + offset;
+    const edge = (offset === 0 && start > 0) || (offset === MAX_FEATURED_DOTS - 1 && index < count - 1);
+    return { index, edge };
+  });
+}
+
+/** The catalog id of a hero item (same rule as its Watch later toggle). */
+function featuredCatalogId(item: FeaturedItem): string {
+  return item.catalogId ?? (item.kind === 'anime' && item.sourceProvider !== 'tmdb'
+    ? `anilist:${item.id}`
+    : `tmdb:${item.sourceKind === 'movie' || item.kind === 'movie' ? 'movie' : 'tv'}:${item.id}`);
+}
 
 function buildFeaturedQueue(movies: MovieCard[], series: MovieCard[], anime: MovieCard[]): FeaturedItem[] {
   // M1.4 UI pass: a deeper, dynamic queue (was 6+6+6 capped at 8) so the
@@ -187,7 +210,6 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
     }
   }, []);
 
-    const handleResume = useCallback((item: ContinueItem) => onResumeRequest?.(item), [onResumeRequest]);
     const handleDismiss = useCallback((item: ContinueItem) => void dismiss(item), [dismiss]);
 
 // Stabilized for the memoized ContinueCarousel (see openItem note above).
@@ -212,9 +234,14 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
     navigate('title', titleParams);
   }, [navigate, subjectId]);
 
+  const handleResume = useCallback((item: ContinueItem) => {
+    if (onResumeRequest) onResumeRequest(item);
+    else openResumeSources(item);
+  }, [onResumeRequest, openResumeSources]);
+
   if (loading) {
     return (
-      <section className="tw-cull py-6 md:py-10">
+      <section className="continue-section tw-cull py-6 md:py-10">
         <div className="mb-4">
           <h2 className="type-row-title text-white">Continue watching</h2>
         </div>
@@ -236,7 +263,7 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
   if (!rows.length) return null;
 
   return (
-    <section className="tw-cull py-6 md:py-10">
+    <section className="continue-section tw-cull py-6 md:py-10">
       <div className="mb-4">
         <h2 className="type-row-title text-white">Continue watching</h2>
       </div>
@@ -335,7 +362,7 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
   );
 });
 
-export default function HomePage({ navigate, continueVariant = 'rail', onResumeRequest, recommendationDeps }: {
+export default function HomePage({ navigate, continueVariant = 'carousel', onResumeRequest, recommendationDeps }: {
   navigate: (path: string, params?: Record<string, string>) => void;
   continueVariant?: 'rail' | 'carousel';
   onResumeRequest?: (item: ContinueItem) => void;
@@ -498,6 +525,22 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
   }, [movies, series, anime, moviesLoading, seriesLoading, animeLoading]);
 
   const featuredItem = featuredItems[featuredIndex % Math.max(featuredItems.length, 1)];
+  // Hero titles show their logo artwork (title detail artwork.logo); this
+  // and the next item are looked up so a rotation never waits on it.
+  const [heroLogos, setHeroLogos] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    if (!featuredItems.length) return;
+    const wanted = [featuredItem, featuredItems[(featuredIndex + 1) % featuredItems.length]]
+      .filter((item): item is FeaturedItem => Boolean(item))
+      .map(featuredCatalogId)
+      .filter((id) => !(id in heroLogos));
+    for (const id of wanted) {
+      setHeroLogos((logos) => (id in logos ? logos : { ...logos, [id]: null }));
+      void bffTitleDetail(id)
+        .then((row) => setHeroLogos((logos) => ({ ...logos, [id]: row.artwork?.logo ?? null })))
+        .catch(() => {});
+    }
+  }, [featuredItem, featuredItems, featuredIndex, heroLogos]);
   const featuredLoading = !featuredItems.length && (moviesLoading || seriesLoading || animeLoading);
 
   useEffect(() => {
@@ -523,6 +566,17 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
       window.clearTimeout(timer);
     };
   }, [featuredIndex, featuredItems, featuredPaused]);
+
+  // A dot jumps straight to its title (same preload as the arrows).
+  const goToFeatured = async (index: number) => {
+    if (!featuredItems.length || index === featuredIndex) return;
+    const moveId = featuredMoveId.current + 1;
+    featuredMoveId.current = moveId;
+    await preloadBackdrop(featuredItems[index]?.backdropUrl);
+    if (featuredMoveId.current === moveId) setFeaturedIndex(index);
+  };
+  // Touch: a horizontal swipe on the hero changes title.
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   const moveFeatured = async (direction: -1 | 1) => {
     if (!featuredItems.length) return;
@@ -594,6 +648,18 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
           }
         }}
         aria-label="Trending highlights"
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          swipeStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+        }}
+        onTouchEnd={(event) => {
+          const start = swipeStart.current;
+          const touch = event.changedTouches[0];
+          swipeStart.current = null;
+          if (!start || !touch || featuredItems.length < 2) return;
+          const dx = touch.clientX - start.x;
+          if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(touch.clientY - start.y) * 1.5) void moveFeatured(dx < 0 ? 1 : -1);
+        }}
       >
         {featuredItem?.backdropUrl && featuredItem.backdropUrl !== failedBackdrop ? (
           <img
@@ -628,11 +694,17 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                   onClick={() => openItem(featuredItem.kind, featuredItem)}
                   className="text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 >
-                  <h1 className="type-feature-title text-white transition hover:text-white/85">
-                    {featuredItem?.title || 'TorWatch'}
-                  </h1>
+                  <TitleWordmark
+                    logoUrl={featuredItem ? heroLogos[featuredCatalogId(featuredItem)] : null}
+                    title={featuredItem?.title || 'TorWatch'}
+                    className="featured-wordmark"
+                  >
+                    <h1 className="type-feature-title text-white transition hover:text-white/85">
+                      {featuredItem?.title || 'TorWatch'}
+                    </h1>
+                  </TitleWordmark>
                 </button>
-                <div className="featured-meta type-secondary text-numeric mt-5 flex items-center gap-3 text-white/70">
+                <div className="featured-meta type-secondary text-numeric mt-5 flex items-center gap-1.5 text-white/70">
                   <span>{featuredItem.kind === 'tv' ? 'Series' : featuredItem.kind === 'anime' ? 'Anime' : 'Movie'}</span>
                   <span aria-hidden="true">·</span>
                   {featuredItem?.year ? <span>{featuredItem.year}</span> : null}
@@ -658,7 +730,7 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
                   className={ACTION_PRIMARY_CLASS}
                 >
                   <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-                  Watch
+                  Play
                 </button>
               ) : null}
               {featuredItem ? (
@@ -678,18 +750,34 @@ export default function HomePage({ navigate, continueVariant = 'rail', onResumeR
 
         {featuredItems.length > 1 ? (
           <>
-            <div className="featured-controls absolute right-5 bottom-5 flex items-center gap-1 md:right-8 xl:right-12">
-              <span className="type-secondary text-numeric mr-1 text-white/70">
-                {String(featuredIndex + 1).padStart(2, '0')} / {String(featuredItems.length).padStart(2, '0')}
-              </span>
+            <div className="featured-controls absolute flex items-center">
+              {/* Where the rotation is: each dot is a button (44px tall touch
+                  area); the current one is the longer gold one. */}
+              <div className="featured-dots flex items-center" role="group" aria-label={`Featured ${featuredIndex + 1} of ${featuredItems.length}`}>
+                {featuredDotWindow(featuredItems.length, featuredIndex).map(({ index, edge }) => {
+                  const item = featuredItems[index];
+                  return (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => void goToFeatured(index)}
+                    aria-label={`Show ${item.title || `featured title ${index + 1}`}`}
+                    aria-current={index === featuredIndex ? 'true' : undefined}
+                    className="featured-dot grid h-11 min-w-7 place-items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  >
+                    <span aria-hidden="true" className={`block rounded-full transition-all ${index === featuredIndex ? 'h-1.5 w-5 bg-[#e7bd82]' : edge ? 'h-1 w-1 bg-white/35' : 'h-1.5 w-1.5 bg-white/45'}`} />
+                  </button>
+                  );
+                })}
+              </div>
               <button
                 type="button"
                 onClick={() => setFeaturedUserPaused((paused) => !paused)}
-                className="flex h-12 w-12 items-center justify-center rounded-lg text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="featured-pause flex h-11 w-11 items-center justify-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 aria-label={featuredUserPaused ? 'Resume featured title rotation' : 'Pause featured title rotation'}
                 aria-pressed={featuredUserPaused}
               >
-                {featuredUserPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                {featuredUserPaused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
               </button>
               <button
                 type="button"

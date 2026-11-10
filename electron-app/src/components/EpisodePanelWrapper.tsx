@@ -3,7 +3,7 @@
 import { userMessage } from '../lib/user-error';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from '../lib/router-adapter';
-import { ArrowLeft, CheckCircle2, ChevronRight, Circle, Clock3, Loader2, Play } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Clock3, Loader2, Play } from 'lucide-react';
 import PlaybackSplitButton from './PlaybackSplitButton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { getTvSeason } from '../lib/services/catalog-gateway';
@@ -21,6 +21,7 @@ import { NativeDownloadButton } from './NativeDownloadButton';
 import { fetchWatched, setWatched, watchedKey, type WatchedItem } from '../lib/services/watched-service';
 import type { DownloadSelection } from '../mobile/download-queue';
 import { nextUpEpisode, type NextUp } from '../lib/next-up';
+import { releaseFeatures } from '../lib/release-summary';
 import type { BatchRange } from './NativeDownloadButton';
 
 type Props = {
@@ -211,18 +212,24 @@ function EpisodeOverview({ text }: { text: string }) {
     return () => observer.disconnect();
   }, [text, open]);
   return (
-    <div className="-mt-1 px-4 pb-3">
-      <p ref={ref} className={`type-secondary break-words text-white/65 ${open ? '' : 'line-clamp-3 sm:line-clamp-4'}`}>{text}</p>
-      {overflows || open ? (
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-          className="type-secondary -ml-2 mt-0.5 min-h-11 rounded-lg px-2 font-medium text-white/85 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-        >
-          {open ? 'Less' : 'More'}
-        </button>
-      ) : null}
+    <div className="episode-overview -mt-1 px-4 pb-4">
+      {/* Clamped at a word with an ellipsis; "More" sits under the text on
+          the right, in the row's bottom space. */}
+      <div className="max-w-[70ch]">
+        <p ref={ref} className={`break-words text-sm leading-[1.6] text-white/70 ${open ? '' : 'line-clamp-3'}`}>{text}</p>
+        {overflows || open ? (
+          <div className="-mb-2 flex justify-end">
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={() => setOpen(!open)}
+              className="episode-more min-h-9 rounded-lg px-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+            >
+              {open ? 'Less' : 'More'}
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -367,9 +374,20 @@ export default function EpisodePanel({
       || normalizedSeasons.find((entry) => entry.seasonNumber === season)?.episodeCount || 0,
     kind === 'anime',
   ), [watchedMap, normalizedSeasons, selectedSeason, episodes, kind]);
+  // The title page's Play says what it resumes: progress and time left.
+  const nextUpDetail = useMemo<NextUp | null>(() => {
+    if (!nextUp || !nextUp.started) return nextUp;
+    const mark = watchedMap.get(watchedKey(nextUp.season, nextUp.episode));
+    const percent = mark && mark.percent > 0 ? Math.min(100, mark.percent) : undefined;
+    const runtime = nextUp.season === selectedSeason
+      ? episodes.find((episode) => episode.episodeNumber === nextUp.episode)?.runtime ?? null
+      : null;
+    const remainingMinutes = percent !== undefined && runtime ? Math.max(1, Math.round(runtime * (1 - percent / 100))) : undefined;
+    return { ...nextUp, percent, remainingMinutes };
+  }, [nextUp, watchedMap, selectedSeason, episodes]);
   useEffect(() => {
-    onNextUpChange?.(nextUp);
-  }, [nextUp, onNextUpChange]);
+    onNextUpChange?.(nextUpDetail);
+  }, [nextUpDetail, onNextUpChange]);
 
   // One tap for a whole season: every released episode of the selected
   // season, and Continue watching moves on to the next season.
@@ -1065,20 +1083,20 @@ export default function EpisodePanel({
   const episodeArtwork = (episode: EpisodeSummary) => episode.stillUrl || null;
 
   return (
-    <aside ref={panelRef} data-source-panel data-source-layout={platform.desktop ? 'desktop' : 'page'} className={`episode-panel min-w-0 max-w-full scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] rounded-xl border border-white/[0.12] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] ${platform.desktop ? 'overflow-hidden bg-[#0a0a0a] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'bg-[#0a0a0a] min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
+    <aside ref={panelRef} data-source-panel data-source-layout={platform.desktop ? 'desktop' : 'page'} className={`episode-panel min-w-0 scroll-mt-[calc(var(--app-safe-top)+5rem)] [overflow-wrap:anywhere] ${platform.desktop ? 'max-w-full overflow-hidden rounded-xl border border-white/[0.12] bg-[#0a0a0a] shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] lg:bg-[#0a0a0a]/75 lg:backdrop-blur-2xl' : 'episode-panel--page -mx-5 md:-mx-8 min-h-[calc(100dvh-var(--app-safe-top)-8rem)]'}`}>
       {artworkHydrating ? (
         <span className="sr-only" role="status" aria-live="polite">Loading episode artwork.</span>
       ) : null}
       {!activeEpisode ? (
         <>
-          <div className="border-b border-white/[0.08] px-5 py-4">
-            <div className="flex items-baseline justify-between gap-3">
+          <div className="px-5 pb-2 pt-5 md:px-8 lg:px-5">
+            <div className="episode-heading-row flex items-baseline justify-between gap-3">
               <h3 className="type-panel-title text-white">Episodes</h3>
               <span className="text-sm text-white/60">{episodes.length} episodes</span>
             </div>
-            <p className="mt-2 text-sm text-white/65">Choose an episode.</p>
+            <div className="episode-season-row mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <Select value={String(selectedSeason)} onValueChange={onSeasonChange}>
-              <SelectTrigger className="mt-4 min-h-12 w-full rounded-lg border-white/15 bg-transparent text-white/85">
+              <SelectTrigger className="episode-season-trigger min-h-11 w-auto min-w-[9.5rem] gap-3 rounded-lg border-0 bg-white/[0.08] px-4 text-[15px] font-semibold text-white">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1094,14 +1112,13 @@ export default function EpisodePanel({
                 type="button"
                 onClick={() => void toggleSeasonWatched()}
                 aria-pressed={seasonWatched}
-                className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm text-white/75 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                className={`season-watched-button inline-flex min-h-11 items-center gap-2 rounded-lg px-3.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${seasonWatched ? 'bg-white/[0.12] text-white' : 'text-white/80 ring-1 ring-inset ring-white/20 hover:bg-white/[0.06] hover:text-white'}`}
               >
-                {seasonWatched
-                  ? <CheckCircle2 className="h-5 w-5 fill-white text-black" aria-hidden="true" />
-                  : <Circle className="h-5 w-5" aria-hidden="true" />}
+                <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden="true" />
                 {seasonWatched ? 'Season watched' : 'Mark season watched'}
               </button>
             ) : null}
+            </div>
           </div>
 
           {seasonLoading ? (
@@ -1138,10 +1155,10 @@ export default function EpisodePanel({
                   aria-label={isUpcoming
                     ? `${episode.name}, coming soon${releaseLabel ? ` on ${releaseLabel}` : ''}`
                     : episode.name}
-                  className="group flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
+                  className="episode-row-main group flex min-w-0 flex-1 items-center gap-4 py-3.5 pl-4 pr-2 text-left transition hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 disabled:cursor-not-allowed disabled:bg-transparent disabled:opacity-70"
                   onClick={() => void fetchTorrentsForEpisode(episode)}
                 >
-                  <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-white/[0.04] sm:w-32">
+                  <div className="relative aspect-video w-[7.5rem] shrink-0 overflow-hidden rounded-md bg-white/[0.04] sm:w-40">
                     <EpisodeArtworkMedia
                       key={artwork || `missing-${episode.id}`}
                       src={artwork}
@@ -1149,29 +1166,35 @@ export default function EpisodePanel({
                       lazy
                       interactive
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                    <span className="type-caption text-numeric absolute bottom-1.5 left-2 font-medium text-white/90">
-                      EP {String(episode.episodeNumber).padStart(2, '0')}
-                    </span>
+                    {!isUpcoming ? (
+                      <span className="episode-play absolute inset-0 grid place-items-center" aria-hidden="true">
+                        <span className="grid h-9 w-9 place-items-center rounded-full bg-black/60 ring-1 ring-white/80 backdrop-blur-sm transition group-hover:bg-black/75">
+                          <Play className="ml-0.5 h-3.5 w-3.5 fill-white text-white" />
+                        </span>
+                      </span>
+                    ) : null}
                     {partial ? (
                       <div className="absolute inset-x-0 bottom-0 h-1 bg-white/20" aria-hidden="true">
-                        <div className="h-full bg-white" style={{ width: `${partial}%` }} />
+                        <div className="h-full bg-[var(--cinema-accent,#e7bd82)]" style={{ width: `${partial}%` }} />
                       </div>
                     ) : null}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start gap-2">
-                      <div className="min-w-0 break-words text-sm font-medium leading-5 text-white/90">{episode.name}</div>
+                      <div className="min-w-0 break-words text-[15px] font-semibold leading-snug text-white">
+                        <span className="text-numeric">{episode.episodeNumber}.</span> {episode.name}
+                      </div>
                       {isUpcoming ? (
                         <span className="type-caption shrink-0 rounded border border-white/15 px-1.5 py-0.5 text-white/70">
                           Coming soon
                         </span>
                       ) : null}
                     </div>
-                    <div className="type-caption text-numeric mt-1.5 flex flex-wrap gap-x-2 text-white/65">
+                    <div className="type-caption text-numeric mt-1 flex flex-wrap gap-x-2 text-white/60">
                       {watched ? <span className="text-white/85">Watched</span> : null}
-                      {releaseLabel ? <span>{releaseLabel}</span> : null}
-                      {episode.runtime ? <span>{episode.runtime} min</span> : null}
+                      {/* Like Netflix: the running time; the date only matters before it airs. */}
+                      {isUpcoming && releaseLabel ? <span>{releaseLabel}</span> : null}
+                      {episode.runtime ? <span>{episode.runtime}m</span> : null}
                     </div>
                   </div>
                   {isUpcoming ? (
@@ -1189,9 +1212,10 @@ export default function EpisodePanel({
                     title={watched ? 'Mark unwatched' : 'Mark watched'}
                     className="mr-2 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg transition hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                   >
-                    {watched
-                      ? <CheckCircle2 className="h-6 w-6 fill-white text-black" aria-hidden="true" />
-                      : <Circle className="h-6 w-6 text-white/35" aria-hidden="true" />}
+                    {/* A check in a ring (not an empty radio circle); filled once watched. */}
+                    <span className={`episode-watched-mark grid h-7 w-7 place-items-center rounded-full ${watched ? 'bg-white text-black' : 'text-white/55 ring-1 ring-white/30'}`} aria-hidden="true">
+                      <Check className="h-4 w-4" strokeWidth={watched ? 3 : 2} />
+                    </span>
                   </button>
                 ) : null}
                 </div>
@@ -1300,16 +1324,21 @@ export default function EpisodePanel({
                 return (
                   <div key={torrentRowKey} className={`content-auto-row border-t border-white/[0.08] px-5 py-4 ${torrent.previouslyUsed ? 'bg-white/[0.035]' : ''}`}>
                     <div className="flex items-center justify-between gap-3">
-                      <button type="button" aria-label={`Play source ${torrent.title}`} onClick={() => void playTorrent(torrent)} disabled={Boolean(playBusyId || externalBusyId)} className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white text-black disabled:opacity-50 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+                      <button type="button" aria-label={`Play source ${torrent.title}`} onClick={() => void playTorrent(torrent)} disabled={Boolean(playBusyId || externalBusyId)} className="episode-source-play inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/[0.12] text-white disabled:opacity-50 sm:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
                         {playBusyId === torrentRowKey ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
                       </button>
                       <div className="min-w-0 flex-1">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="line-clamp-2 text-sm leading-5 text-white/80" title={torrent.title}>{torrent.title}</div>
+                        {/* What you choose by first (quality, picture, sound, size);
+                            the release name small underneath. */}
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <div className="episode-source-summary text-[15px] font-semibold leading-snug text-white/90">
+                            {[...releaseFeatures(torrent.title, torrent.quality), torrent.size ? formatBytes(torrent.size) : null].filter(Boolean).join(' · ') || 'Unknown quality'}
+                          </div>
                           {torrent.previouslyUsed ? (
                             <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
                           ) : null}
                         </div>
+                        <div className="episode-source-name mt-0.5 line-clamp-1 text-xs text-white/45" title={torrent.title}>{torrent.title}</div>
                         <div className="type-caption text-numeric mt-1 text-white/70">
                           <span>{torrent.indexer || 'Unknown indexer'}</span>
                           {torrent.pack ? (
@@ -1319,10 +1348,8 @@ export default function EpisodePanel({
                           ) : torrent.seasonPack ? (
                             <span> · Batch</span>
                           ) : null}
-                          {torrent.quality ? <span> · {torrent.quality}</span> : null}
                           {torrent.audio ? <span> · {torrent.audio}</span> : null}
                           {torrent.seeders ? <span> · {torrent.seeders} seeders</span> : null}
-                          {torrent.size ? <span> · {formatBytes(torrent.size)}</span> : null}
                         </div>
                       </div>
                       <div className="hidden shrink-0 gap-2 sm:flex">

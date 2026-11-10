@@ -2,7 +2,14 @@
 // episode watched or started; if it is finished, the one after it, rolling
 // over to the first episode of the next season after a season's last.
 
-export type NextUp = { season: number; episode: number; started: boolean };
+export type NextUp = {
+  season: number;
+  episode: number;
+  started: boolean;
+  /** Set by the episode list for a started episode: how far in, and the minutes left. */
+  percent?: number;
+  remainingMinutes?: number;
+};
 /** updated_at: when it was last played or marked (Unix seconds; older
  *  servers leave it out). */
 export type WatchedMark = { season: number; episode: number; percent: number; watched: boolean; updated_at?: number };

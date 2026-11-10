@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import puppeteer from 'puppeteer';
+import { PNG } from 'pngjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist-mobile');
@@ -40,17 +41,55 @@ const report = { screenshots: [], runtimeErrors: [] };
 async function settle(page) {
   await page.evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all([...document.images].filter(img => img.loading !== 'lazy').map(img => img.decode().catch(() => {})));
+    await Promise.all([...document.images].filter(img => {
+      const r = img.getBoundingClientRect();
+      const clip = img.closest('.carousel-rail, .continue-carousel')?.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0 && r.left < Math.min(innerWidth, clip?.right ?? innerWidth) && r.right > Math.max(0, clip?.left ?? 0);
+    }).map(img => { img.loading = 'eager'; return img.decode().catch(() => {}); }));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   await new Promise(resolve => setTimeout(resolve, 700));
 }
 async function capture(page, name) {
   await settle(page);
-  const layout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));
+  const layout = await page.evaluate(() => ({
+    width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+    brokenVisibleImages: [...document.images].filter(img => {
+      const r = img.getBoundingClientRect();
+      const clip = img.closest('.carousel-rail, .continue-carousel')?.getBoundingClientRect();
+      return (!img.complete || !img.naturalWidth) && r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0 && r.left < Math.min(innerWidth, clip?.right ?? innerWidth) && r.right > Math.max(0, clip?.left ?? 0);
+    }).map(img => img.src),
+  }));
   await page.screenshot({ path: path.join(out, `${name}.png`) });
   report.screenshots.push({ name, ...layout });
-  if (layout.scrollWidth > layout.width) throw new Error(`Horizontal overflow on ${name}: ${JSON.stringify(layout)}`);
+  if (layout.scrollWidth > layout.width || layout.brokenVisibleImages.length) throw new Error(`Horizontal overflow on ${name}: ${JSON.stringify(layout)}`);
 }
+// Measure text against the actual composited artwork, rather than assuming
+// that the page canvas is the background under title metadata.
+async function verifyVoteContrast(page, title) {
+  const metrics = await page.$eval('.title-vote-count', el => {
+    const r = el.getBoundingClientRect();
+    const color = getComputedStyle(el).color.match(/[\d.]+/g).slice(0, 3).map(Number);
+    el.style.color = 'transparent';
+    return { x: r.x, y: r.y, width: r.width, height: r.height, scale: devicePixelRatio, color };
+  });
+  const png = PNG.sync.read(await page.screenshot());
+  await page.$eval('.title-vote-count', el => el.style.removeProperty('color'));
+  const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+  const foreground = luminance(metrics.color);
+  let minimum = Infinity;
+  for (let y = Math.floor(metrics.y * metrics.scale); y < Math.ceil((metrics.y + metrics.height) * metrics.scale); y++) {
+    for (let x = Math.floor(metrics.x * metrics.scale); x < Math.ceil((metrics.x + metrics.width) * metrics.scale); x++) {
+      const i = (y * png.width + x) * 4;
+      const background = luminance([png.data[i], png.data[i + 1], png.data[i + 2]]);
+      minimum = Math.min(minimum, (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05));
+    }
+  }
+  report.voteContrast ??= [];
+  report.voteContrast.push({ title, foreground: metrics.color, minimum: Number(minimum.toFixed(2)), required: 4.5 });
+  if (minimum < 4.5) throw new Error(`Vote text contrast below 4.5:1 on ${title}: ${minimum}`);
+}
+
 async function open(page, hash, selector, url = base) {
   // A full load per screen: tab roots restore their earlier scroll position
   // within one session, which would leak between captures.
@@ -100,10 +139,14 @@ try {
   await page.evaluate(() => window.scrollTo(0, document.querySelector('.catalog-shelf').getBoundingClientRect().top + scrollY - 60));
   await capture(page, 'shelves');
   await open(page, '#title?kind=movie&id=693134', '.title-page h1');
+  await settle(page);
+  await verifyVoteContrast(page, 'movie');
   await capture(page, 'title-movie');
   await page.evaluate(() => document.querySelector('[data-source-panel]')?.scrollIntoView({ block: 'start' }));
   await capture(page, 'title-movie-sources');
   await open(page, '#title?kind=tv&id=1396', '.title-page h1');
+  await settle(page);
+  await verifyVoteContrast(page, 'series');
   await capture(page, 'title-series');
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.45));
   await capture(page, 'title-series-episodes');

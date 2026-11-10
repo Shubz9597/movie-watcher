@@ -309,6 +309,7 @@ export async function queueNativeDownload(
     episodeTitle: selection.episodeTitle,
     stillUrl: selection.stillUrl,
     posterUrl: selection.posterUrl,
+    titleId: selection.seriesId,
   }).catch(() => {});
   void resumePendingDownload(pending);
   return pending;

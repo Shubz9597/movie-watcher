@@ -61,6 +61,15 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     ]
 
     private var mediaPlayer: VLCMediaPlayer?
+    /// Activating the audio session can take ~3 s the first time after
+    /// launch; on the main thread that froze the whole app (Xcode: "can lead
+    /// to UI unresponsiveness if called on the main thread").
+    /// Sound waits for the first picture (see unmuteForPicture).
+    private var mutedUntilPicture = false
+    private var playingSince: Date?
+    /// The last VLC state passed on (repeated "buffering" is dropped).
+    private var lastReportedState: VLCMediaPlayerState?
+    private let audioSessionQueue = DispatchQueue(label: "app.torwatch.audio-session", qos: .userInitiated)
     private var surfaceView: VideoSurfaceView?
     private var playId = ""
     private var terminalSent = false
@@ -78,7 +87,27 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
             self.persistLocalProgress(state: "stopped")
             self.teardown()
         }
+        // The first play after launch was ~3s slower than the rest (device
+        // 2026-11-06: 0.7s audio setup, 2.1s VLC start, vs 0.03s later), and
+        // the app froze while the player rotated in. Warm both up in the
+        // background shortly after launch: the audio category (setting it
+        // does not interrupt other apps' sound; only activation does) and a
+        // VLC engine, kept so its loaded modules stay loaded.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            let startedAt = Date()
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            let audioMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let engine = VLCMediaPlayer(options: ["--no-video-title-show"])
+            let totalMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DispatchQueue.main.async {
+                self?.warmEngine = engine
+                self?.warmUpTimes = ["audioMs": audioMs, "vlcMs": totalMs - audioMs]
+            }
+        }
     }
+    private var warmEngine: VLCMediaPlayer?
+    /// Reported with the first play (no diagnostics endpoint before it).
+    private var warmUpTimes: [String: Any]?
     // Size the drawable with UIKit, without changing VLC's crop/aspect or
     // seeking. This also updates the displayed picture while paused.
     private var videoScaleMode: String = "fit"
@@ -174,11 +203,17 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
 
     /// Runs off the main thread every second.
     private func checkMainThread() {
+        let posted = Date()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.freezeLock.lock()
             self.lastMainBeat = Date()
+            let watching = self.watchingFreezes
             self.freezeLock.unlock()
+            // Shorter stalls than a freeze (the app stops answering touches
+            // and drawing, e.g. while the player rotates in).
+            let lagMs = Int(Date().timeIntervalSince(posted) * 1000)
+            if watching && lagMs >= 400 { self.diag("main-stall", ["ms": lagMs]) }
         }
         freezeLock.lock()
         let silent = Date().timeIntervalSince(lastMainBeat)
@@ -448,8 +483,6 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         TorWatchPlaybackState.videoAttached = true
         requestOrientation(true)
         applyVideoScale(player)
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
         UIApplication.shared.isIdleTimerDisabled = true
         // Pause only when the app really leaves the screen: willResignActive
         // also fires for Control Center, Notification Center and Siri, which
@@ -473,9 +506,46 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // Downloaded subtitles join the media before it opens, not while
         // playback is starting.
         if let lang = localSubtitleLang { attachLocalSidecars(selecting: lang) }
-        player.play()
         nowPlayingItem = item
         startSystemControls()
+        if let times = warmUpTimes {
+            warmUpTimes = nil
+            diag("warm-up", times)
+        }
+        // No audio-session call may run on the main thread: on the device
+        // (2026-11-06) setActive took 0.7s, and setCategory before play()
+        // froze the whole app for 4s. Both run on audioSessionQueue; VLC
+        // starts once the session is live.
+        lastReportedState = nil
+        // Muted until the first picture: on a resume VLC played ~1s of sound
+        // over the loading screen, cut it for 0.4s, then started both again
+        // (device recording 2026-11-06).
+        (player.audio as VLCAudio?)?.isMuted = true
+        mutedUntilPicture = true
+        playingSince = nil
+        let startedAt = Date()
+        audioSessionQueue.async { [weak self] in
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setActive(true)
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DispatchQueue.main.async {
+                guard let self = self, self.mediaPlayer === player, self.playbackRequested, !self.terminalSent else { return }
+                self.diag("audio-session-ready", ["ms": elapsedMs])
+                player.play()
+            }
+        }
+    }
+
+    /// Deactivates the session off the main thread (it blocks for a moment
+    /// and iOS warns it freezes the UI), unless a new video took it since.
+    private func releaseAudioSession() {
+        audioSessionQueue.async { [weak self] in
+            var idle = true
+            DispatchQueue.main.sync { idle = self?.mediaPlayer == nil }
+            guard idle else { return }
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     @objc func seek(_ call: CAPPluginCall) {
@@ -872,6 +942,9 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         guard !terminalSent, let player = notification.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
         applyPendingSeek(player)
+        // VLC reports time once the picture runs (not while it plays sound
+        // alone over the loading screen).
+        if mutedUntilPicture && player.hasVideoOut { unmuteForPicture(player, reason: "picture") }
         applyVideoScale(player) // video output may appear after the playing/ES callbacks
         // VLC picks its default subtitle/audio track a moment after Playing,
         // with no callback of its own: report any change so the controls
@@ -913,11 +986,25 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     func mediaPlayerStateChanged(_ aNotificationName: Notification) {
         guard !terminalSent, let player = aNotificationName.object as? VLCMediaPlayer,
               player === mediaPlayer else { return }
+        // VLC repeats "buffering" ~100 times in a burst while it fills;
+        // only a change is worth a bridge message (each one wakes the app).
+        let state = player.state
+        if state == .buffering && lastReportedState == .buffering { return }
+        lastReportedState = state
         diag("state")
         switch player.state {
         case .buffering:
             notifyListeners("buffering", data: ["active": true, "playId": playId])
         case .playing:
+            if mutedUntilPicture && playingSince == nil {
+                playingSince = Date()
+                // Fallback for audio-only media, or a picture that never
+                // reports: sound after 2.5s regardless.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                    guard let self = self, self.mediaPlayer === player else { return }
+                    self.unmuteForPicture(player, reason: "timeout")
+                }
+            }
             applyPendingSeek(player)
             applyVideoScale(player) // the video size is known from here
             updateNowPlaying()
@@ -951,6 +1038,14 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     }
 
     // MARK: - Internals
+
+    private func unmuteForPicture(_ player: VLCMediaPlayer, reason: String) {
+        guard mutedUntilPicture else { return }
+        mutedUntilPicture = false
+        (player.audio as VLCAudio?)?.isMuted = false
+        let ms = playingSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        diag("unmuted", ["reason": reason, "afterPlayingMs": ms])
+    }
 
     private func applyPendingSeek(_ player: VLCMediaPlayer) {
         guard let seconds = pendingSeek, seconds.isFinite, player.isSeekable else { return }
@@ -1286,7 +1381,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
                 DispatchQueue.main.async {
                     player.drawable = nil
                     if restoreOrientation, self?.mediaPlayer == nil {
-                        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                        self?.releaseAudioSession()
                     }
                 }
             }
@@ -1301,7 +1396,7 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         // Let music or podcasts the player interrupted resume (once stopped,
         // above, when there was a player).
         if stopping == nil {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            releaseAudioSession()
         }
         if TorWatchPlaybackState.videoAttached {
             requestOrientation(false)

@@ -31,7 +31,7 @@ import type {
 import type { MovieCard } from '../lib/types';
 
 const COLLECTION_TABS = [
-  { id: 'watch-later' as const, label: 'Watch Later' },
+  { id: 'watch-later' as const, label: 'Watch later' },
   { id: 'favourites' as const, label: 'Favourites' },
 ];
 
@@ -226,7 +226,7 @@ function ServerLibraryOverview({ library, collection, sort, navigate }: {
   const empty = overview.shelves.every((shelf) => shelf.count === 0);
 
   return (
-    <div className="mt-4 space-y-8">
+    <div className="library-collections mt-4 space-y-8">
       {overview.stale ? (
         <p className="type-secondary text-white/60" role="note">
           Offline · Last synced
@@ -267,7 +267,8 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
           {/* Full-scope count from the server ” independent of preview length. */}
           <span className="text-numeric text-sm font-normal text-white/50">{count}</span>
         </h2>
-        {count > 0 ? (
+        {/* "See all" only when the shelf shows part of the collection. */}
+        {count > previews.length ? (
           <button
             type="button"
             onClick={() => navigate('library-category', { collection, kind, sort })}
@@ -282,7 +283,7 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
       {count === 0 ? (
         <p className="type-secondary text-white/60">No titles</p>
       ) : (
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-6">
           {previews.map((row) => (
             <LibraryCardButton
               key={row.canonicalId}
@@ -295,11 +296,6 @@ function ServerShelfRow({ kind, count, previews, collection, sort, navigate }: {
       )}
     </section>
   );
-}
-
-// Missing artwork shows the title's initials ("The Simpsons" → "TS").
-function initialsOf(title: string) {
-  return title.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]?.toUpperCase() ?? '').join('');
 }
 
 function LibraryCardButton({ row, navigate, label }: {
@@ -330,16 +326,12 @@ function LibraryCardButton({ row, navigate, label }: {
           className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
         />
       ) : (
-        <span className="library-card-placeholder absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40" aria-hidden="true">
-          <span className="library-card-initials">{initialsOf(row.title)}</span>
-          <Film className="h-4 w-4 opacity-40" />
+        // No poster: a title card in the app's colours, like a cover.
+        <span className="library-card-placeholder absolute inset-0 flex flex-col justify-between p-3" aria-hidden="true">
+          {row.type === 'movie' ? <Film className="h-5 w-5 text-[#e7bd82]/70" /> : <Tv className="h-5 w-5 text-[#e7bd82]/70" />}
+          <span className="library-card-cover-title line-clamp-4 text-[15px] font-bold leading-tight text-[#efe9df]">{row.title}</span>
         </span>
       )}
-      {!row.metadataAvailable ? (
-        <span className="library-card-badge absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white/80" aria-label="Metadata unavailable">
-          Info unavailable
-        </span>
-      ) : null}
       </span>
       <span className="mt-2.5 block text-left">
         {/* Stored snapshot title: an unavailable-metadata entry renders from
@@ -353,7 +345,7 @@ function LibraryCardButton({ row, navigate, label }: {
 
 function ShelfSkeleton() {
   return (
-    <div className="mt-8 grid grid-cols-3 gap-4 sm:grid-cols-6" role="status" aria-label="Loading library">
+    <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-6" role="status" aria-label="Loading library">
       {Array.from({ length: 6 }).map((_, index) => (
         <div key={index} className="aspect-[2/3] animate-pulse rounded-lg bg-white/[0.06]" />
       ))}
@@ -386,7 +378,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
   }
   const empty = overview.shelves.every((shelf) => shelf.count === 0);
   return (
-    <div className="mt-4 space-y-8">
+    <div className="library-collections mt-4 space-y-8">
       <p className="type-secondary text-white/60" role="note">{overview.sourceLabel}</p>
       {empty ? (
         <p className="type-secondary text-white/60">No saved titles.</p>
@@ -411,7 +403,7 @@ function PreviewLibraryOverview({ provider, collection, navigate }: {
           {shelf.count === 0 ? (
             <p className="type-secondary text-white/60">No titles</p>
           ) : (
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-6">
               {shelf.previews.map((card) => (
                 <button
                   key={`${shelf.kind}-${card.id}`}
@@ -544,7 +536,7 @@ function ServerLibraryGrid({ library, collection, kind, sort, navigate }: {
           Offline · {page.total} {page.total === 1 ? 'title' : 'titles'}
         </p>
       ) : null}
-      <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-6">
         {page.items.map((row) => (
           <LibraryCardButton key={row.canonicalId} row={row} navigate={navigate} label={`Open ${row.title}${row.metadataAvailable ? '' : ' (metadata unavailable)'}`} />
         ))}
@@ -605,7 +597,7 @@ function PreviewLibraryGrid({ provider, collection, kind }: {
   return (
     <>
       <p className="mt-2 type-secondary text-white/60" role="note">{state.sourceLabel} · {state.count} titles</p>
-      <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-6">
         {state.items.map((card) => (
           <button
             key={card.id}

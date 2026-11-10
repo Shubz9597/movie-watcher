@@ -157,7 +157,7 @@ export default function SeeAllPage({
   });
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-8 px-5 py-6 md:px-8 lg:px-12">
+    <div className="browse-page mx-auto max-w-[1600px] space-y-8 px-5 py-6 md:px-8 lg:px-12">
       {pullIndicator}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         {/* Back sits before the title, where it is on every other screen. */}

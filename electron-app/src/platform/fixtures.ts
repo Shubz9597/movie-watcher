@@ -97,11 +97,28 @@ const showcaseShows: Array<[number, 'series' | 'anime', string, number, string]>
   [114410, 'anime', 'Chainsaw Man', 2022, 'npdB6eFzizki0WaZ1OvKcJrWe97.jpg'],
   [37854, 'anime', 'One Piece', 1999, 'cMD9Ygz11zjJzAovURpO75Qg7rT.jpg'],
 ];
+const BB_STILL = 'https://images.metahub.space/background/medium/tt0903747/img';
+const SHOWCASE_EPISODES: Record<string, Array<[string, string, string]>> = {
+  'tmdb:tv:1396': [
+    ['Pilot', 'When an unassuming high school chemistry teacher discovers he has a rare form of lung cancer, he decides to team up with a former student and create a top of the line crystal meth in a used RV, to provide for his family once he is gone.', BB_STILL],
+    ['Cat\'s in the Bag...', 'Walt and Jesse attempt to tie up loose ends. The desperate situation gets more complicated with the flip of a coin. Walt\'s wife, Skyler, becomes suspicious of Walt\'s strange behavior.', BB_STILL],
+    ['...And the Bag\'s in the River', 'Walter fights with Jesse over his drug use, causing him to leave Walter alone with their captive, Krazy-8. Meanwhile, Hank has a scared-straight moment with Walter Jr. after his drug use.', BB_STILL],
+    ['Cancer Man', 'Walter finally tells his family that he has been stricken with cancer. Meanwhile, the DEA believes Albuquerque has a new, big time player to worry about.', BB_STILL],
+    ['Gray Matter', 'Walter and Skyler attend a former colleague\'s party. Jesse tries to free himself from the drugs, while Skyler organizes an intervention.', BB_STILL],
+    ['Crazy Handful of Nothin\'', 'The side effects of chemo begin to plague Walt. Meanwhile, the DEA rounds up suspected dealers.', BB_STILL],
+    ['A No-Rough-Stuff-Type Deal', 'Walter accepts his new identity as a drug dealer after a PTA meeting. Elsewhere, Jesse decides to put his aunt\'s house on the market and Skyler is the recipient of a baby shower.', BB_STILL],
+  ],
+};
 const TITLES: FixtureTitle[] = showcase ? [
   ...BASE_TITLES.map((title) => title.type === 'movie' ? {
     ...title,
     overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family. A choice between love and the fate of the universe awaits.',
-    artwork: { ...title.artwork, background: 'https://images.metahub.space/background/medium/tt15239678/img' },
+    artwork: { ...title.artwork, background: 'https://images.metahub.space/background/medium/tt15239678/img', logo: 'https://image.tmdb.org/t/p/w500/eYvF1LhPKuoBxOAmWjFTAK7EPWl.png' },
+  } : title.id === 'tmdb:tv:1396' ? {
+    ...title,
+    overview: 'Walter White, a New Mexico chemistry teacher, is diagnosed with Stage III cancer and given a prognosis of only two years left to live. He becomes filled with a sense of fearlessness and an unrelenting desire to secure his family\'s financial future at any cost.',
+    imdbId: 'tt0903747',
+    artwork: { ...title.artwork, background: BB_STILL, logo: 'https://image.tmdb.org/t/p/w500/chw44B2VnLha8iiTdyZcIW0ZELC.png' },
   } : title),
   ...showcaseMovies.map(([id, title, year, poster]): FixtureTitle => ({
     id: `tmdb:movie:${id}`, type: 'movie', title, year,
@@ -125,6 +142,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 // flows stay reproducible).
 const torrentSearchCounts = new Map<string, number>();
 
+// Showcase: release names as real indexers list them.
+const SHOWCASE_TORRENTS = [
+  { title: 'Dune.Part.Two.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX', sizeBytes: 19_756_849_152, seeders: 412, leechers: 38, magnetUri: 'magnet:?xt=urn:btih:6666666666666666666666666666666666666666', infoHash: '6666666666666666666666666666666666666666', indexer: 'TorrentGalaxy', publishDate: '2024-05-14T00:00:00Z' },
+  { title: 'Dune.Part.Two.2024.1080p.BluRay.x264-SPARKS', sizeBytes: 2_147_483_648, seeders: 128, leechers: 14, magnetUri: 'magnet:?xt=urn:btih:7777777777777777777777777777777777777777', infoHash: '7777777777777777777777777777777777777777', indexer: 'YTS', publishDate: '2024-05-21T00:00:00Z' },
+  { title: 'Dune.Part.Two.2024.720p.WEBRip.x264.AAC-YIFY', sizeBytes: 1_288_490_189, seeders: 96, magnetUri: 'magnet:?xt=urn:btih:8888888888888888888888888888888888888888', infoHash: '8888888888888888888888888888888888888888', indexer: 'YTS', publishDate: '2024-05-15T00:00:00Z' },
+];
 const TORRENT_SETS = {
   original: [
     {
@@ -236,7 +259,7 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
       const call = (torrentSearchCounts.get(titleKey) ?? 0) + 1;
       torrentSearchCounts.set(titleKey, call);
       const results = call === 1
-        ? TORRENT_SETS.original
+        ? (showcase ? SHOWCASE_TORRENTS : TORRENT_SETS.original)
         : call === 2
           ? TORRENT_SETS.withoutFirst
           : (call % 2 === 1 ? TORRENT_SETS.replacementA : TORRENT_SETS.replacementB);
@@ -259,6 +282,16 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
       const rows = type === 'all' ? TITLES : TITLES.filter((t) => t.type === type);
       return jsonResponse({ query: url, total: rows.length, results: rows, degraded: false, degradedProviders: [] });
     }
+    // Showcase: Breaking Bad watched to S1 E3, E4 a fifth of the way in.
+    if (url.includes('/v1/watched')) {
+      const seriesId = new URL(url, 'http://fixture.local').searchParams.get('seriesId') ?? '';
+      const now = Math.floor(Date.now() / 1000);
+      const items = showcase && seriesId.includes('1396')
+        ? [1, 2, 3].map((episode) => ({ season: 1, episode, percent: 100, watched: true, updated_at: now - 86400 + episode }))
+          .concat([{ season: 1, episode: 4, percent: 21, watched: false, updated_at: now - 3600 }])
+        : [];
+      return jsonResponse({ items });
+    }
     if (url.includes('/v2/catalog/sections')) {
       return jsonResponse({ id: 'fixture', kind: 'provider', titleIds: TITLES.map((t) => t.id), results: TITLES, degraded: false, degradedProviders: [] });
     }
@@ -267,6 +300,8 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
       const id = decodeURIComponent(detail?.[1] ?? '');
       const title = TITLES.find((t) => t.id === id);
       const count = title?.seasons?.[0]?.episodeCount ?? 0;
+      // Showcase: real episode names and descriptions for the visual review.
+      const real = showcase ? SHOWCASE_EPISODES[id] : undefined;
       return jsonResponse({
         titleId: id,
         season: 1,
@@ -274,7 +309,8 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
           id: `${id}:1:${index + 1}`,
           season: 1,
           episode: index + 1,
-          title: `Episode ${index + 1}`,
+          title: real?.[index]?.[0] ?? `Episode ${index + 1}`,
+          ...(real?.[index] ? { overview: real[index][1], still: real[index][2], duration_s: 47 * 60 } : {}),
           airDate: '2023-09-29',
         })),
         degraded: false,
