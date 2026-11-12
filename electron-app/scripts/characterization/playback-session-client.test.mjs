@@ -273,6 +273,21 @@ test("controller: Next episode ends the episode at once, recorded as played to t
   assert.equal(fb.calls.dismissed, 1);
 });
 
+test("controller: Next episode also ends a downloaded episode", async () => {
+  const server = stubServer();
+  const fb = fakeBridge();
+  fb.bridge.playLocal = async () => {};
+  const controller = new NativePlaybackController({ client: server.client, bridge: fb.bridge });
+  const terminals = [];
+  controller.onStopped((event) => terminals.push(event));
+  await controller.startLocal({ downloadId: "d-1", title: "Severance" });
+  fb.emitTime({ currentTime: 3354, duration: 3436 });
+  controller.finishEpisode();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(terminals.map((event) => event.reason), ["ended"], "the tap ends it, so the next episode opens");
+  assert.equal(fb.calls.dismissed, 1);
+});
+
 test("controller: a clock stuck in the last seconds ends the episode; paused or mid-episode never does", async () => {
   const server = stubServer();
   const fb = fakeBridge();

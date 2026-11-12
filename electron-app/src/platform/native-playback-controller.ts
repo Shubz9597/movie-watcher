@@ -589,9 +589,11 @@ export class NativePlaybackController {
     }
   }
 
-  /** "Next episode": the episode counts as played to the end, now. */
+  /** "Next episode": the episode counts as played to the end, now. A
+   * downloaded file has no stream request (the device keeps its position,
+   * saved as the player closes during the credits), but ends the same way. */
   finishEpisode(): void {
-    if (!this.request) return;
+    if (!this.request && !this.currentPlayId.startsWith('local-')) return;
     if (this.lastDurationSec > 0) this.lastPositionSec = this.lastDurationSec;
     void this.finishNaturally(this.generation);
   }

@@ -404,6 +404,7 @@ export class NativePlayer implements PlayerPort {
   }
 
   finishEpisode(): void {
+    queueDiagnostic({ kind: 'next-episode' });
     this.controller.finishEpisode();
   }
 
