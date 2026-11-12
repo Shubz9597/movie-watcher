@@ -993,3 +993,8 @@ body :focus-visible { --tw-ring-color: var(--cinema-accent); }
 }
 /* Desktop search lines up with the app's 48px margin. */
 @media (min-width: 1024px) { .search-page { padding-inline: 48px; } }
+
+/* ==== Episode download rows: nothing runs under the status ring ==== */
+/* The ring sits beside the title; the status line ("0 MB of 1.9 GB") ends
+   before it, and the bar below it keeps the full width. */
+.downloads-page li:has(> .aspect-video) [aria-live='polite'] > div:first-child { padding-right: 48px; }

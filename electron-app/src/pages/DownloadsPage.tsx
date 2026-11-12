@@ -646,9 +646,13 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
     const busy = acting.has(item.downloadId);
     const rate = item.transferState === 'downloading' ? formatRate(item.bytesPerSecond) : null;
     const eta = item.transferState === 'downloading' ? formatEta(item.etaSeconds) : null;
-    const amount = size
-      ? `${received || '0 MB'} of ${size}${typeof percent === 'number' ? ` · ${percent}%` : ''}`
-      : received;
+    const queued = item.transferState === 'queued' && !item.receivedBytes;
+    // Queued with nothing received: "Queued · 1.9 GB", no 0% amount or bar.
+    const amount = queued
+      ? null
+      : size
+        ? `${received || '0 MB'} of ${size}${typeof percent === 'number' ? ` · ${percent}%` : ''}`
+        : received;
     const label = episodeView ? episodeLabel(item.episode, downloadMeta(item.downloadId).episodeTitle) : item.title;
     const selecting = selection != null;
     const selectable = ready && downloads?.remove != null;
@@ -764,6 +768,9 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
                   <ProgressRing value={percent}><Play className="ml-0.5 h-3.5 w-3.5 fill-current" /></ProgressRing>
                 ) : item.transferState === 'downloading' ? (
                   <ProgressRing value={percent}><Pause className="h-3.5 w-3.5 fill-current" /></ProgressRing>
+                ) : item.transferState === 'queued' ? (
+                  // Waiting its turn: still, not a spinner (nothing is happening yet).
+                  <ProgressRing value={0}><Download className="h-3.5 w-3.5 opacity-70" /></ProgressRing>
                 ) : (
                   <ProgressRing spinning />
                 )}
@@ -794,12 +801,12 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
               <div className={`type-secondary mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${needsRepair ? 'text-red-300' : 'text-white/70'}`}>
                 {/* A plain "Downloading" adds nothing above its own progress
                     bar; other states (Wi-Fi, paused, checking) still say so. */}
-                {item.transferState === 'downloading' && !item.waitingForWifi && amount ? null : <span>{transferStatus(item)}</span>}
+                {item.transferState === 'downloading' && !item.waitingForWifi && amount ? null : <span>{[transferStatus(item), queued ? size : null].filter(Boolean).join(' · ')}</span>}
                 {inTransfer && amount ? <span className="text-numeric shrink-0 text-white/60">{amount}</span> : null}
               </div>
               {/* One row: the bar with its pause/resume control; speed and
                   time left on one quiet line beneath. */}
-              {inTransfer ? (
+              {inTransfer && !queued ? (
                 <div className="flex items-center gap-3">
                   <div className="min-w-0 flex-1"><DownloadProgress value={percent} label={`${item.title} download progress`} /></div>
                 </div>
@@ -920,8 +927,12 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
           <section key={season} className={index ? 'mt-6' : ''} aria-label={season === 0 ? 'Specials and extras' : `Season ${season}`}>
             <h3 className="type-secondary mb-3 font-medium text-white/70">{season === 0 ? 'Specials & extras' : `Season ${season}`}</h3>
             <ul className="space-y-3">
-              {showPending.filter((item) => item.season === season).sort(byEpisode).map((item) => renderPending(item, true))}
-              {showItems.filter((item) => (item.season ?? 0) === season).sort(byEpisode).map((item) => renderItem(item, true))}
+              {/* One episode order, whether the server still prepares it or
+                  the phone downloads it. */}
+              {[
+                ...showPending.filter((item) => (item.season ?? 0) === season).map((item) => ({ item, render: () => renderPending(item, true) })),
+                ...showItems.filter((item) => (item.season ?? 0) === season).map((item) => ({ item, render: () => renderItem(item, true) })),
+              ].sort((a, b) => byEpisode(a.item, b.item)).map((row) => row.render())}
             </ul>
           </section>
         ))}

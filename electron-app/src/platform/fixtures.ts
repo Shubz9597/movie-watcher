@@ -458,6 +458,20 @@ export class FixtureDownloads implements DownloadsPort {
           etaSeconds: 60,
         },
         {
+          // Waiting behind E5: nothing received yet.
+          downloadId: 'fixture-download-6',
+          title: 'Breaking Bad',
+          subtitle: 'S1 E6',
+          seriesId: 'tmdb:tv:1396',
+          season: 1,
+          episode: 6,
+          posterUrl: 'https://image.tmdb.org/t/p/w342/ggFHVNu6YYI5L9pCfOacjizRGt.jpg',
+          state: 'ready',
+          transferState: 'queued',
+          receivedBytes: 0,
+          sizeBytes: 2040109466,
+        },
+        {
           downloadId: 'fixture-download-3',
           title: 'Frieren: Beyond Journey\'s End',
           subtitle: 'S1 E9',
