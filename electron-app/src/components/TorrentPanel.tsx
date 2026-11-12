@@ -458,10 +458,12 @@ export default function TorrentPanel({
                         aria-label={`Select source ${t.title}`}
                       >
                         <div className="source-row-text min-w-0 flex-1">
-                            {/* What you choose by, in words (quality, picture, sound,
-                                source, size); the release name sits small underneath. */}
-                            <div className="source-badges mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className={`source-summary text-[15px] leading-snug ${isSelected ? 'font-semibold text-white' : 'font-semibold text-white/90'}`}>
+                            {/* The release name leads (two lines; Details has it in
+                                full); what it is in words (quality, picture, sound,
+                                source, size) beneath, then seeders and site. */}
+                            <p title={t.title} className="source-name line-clamp-2 text-[15px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">{breakableReleaseName(t.title)}</p>
+                            <div className="source-badges mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="source-summary text-sm leading-snug text-white/75">
                                 {[...releaseFeatures(t.title, quality), t.size ? formatBytes(t.size) : null].filter(Boolean).join(' · ') || 'Unknown quality'}
                               </span>
                               {isSelected ? (
@@ -470,9 +472,7 @@ export default function TorrentPanel({
                                 <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
                               ) : null}
                             </div>
-                            {/* Two lines of the release name; Details has it in full. */}
-                            <p title={t.title} className={`source-name mb-1.5 line-clamp-2 text-sm [overflow-wrap:anywhere] ${isSelected ? 'font-semibold text-white' : 'text-white/85'}`}>{breakableReleaseName(t.title)}</p>
-                            <div className="source-meta type-caption text-numeric flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
+                            <div className="source-meta type-caption text-numeric mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-white/70">
                               {t.size ? null : <span>Unknown size</span>}
                               {typeof t.seeders === 'number' ? (
                                 <span className="inline-flex items-center gap-1 text-emerald-300/80" title={`${t.seeders} seeders`}>

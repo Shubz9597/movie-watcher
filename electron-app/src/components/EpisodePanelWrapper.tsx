@@ -1328,17 +1328,17 @@ export default function EpisodePanel({
                         {playBusyId === torrentRowKey ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Play className="h-5 w-5 fill-current" aria-hidden="true" />}
                       </button>
                       <div className="min-w-0 flex-1">
-                        {/* What you choose by first (quality, picture, sound, size);
-                            the release name small underneath. */}
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <div className="episode-source-summary text-[15px] font-semibold leading-snug text-white/90">
+                        {/* The release name leads; what it is (quality, picture,
+                            sound, size) beneath, then the site. */}
+                        <div className="episode-source-name line-clamp-2 text-[15px] font-semibold leading-snug text-white [overflow-wrap:anywhere]" title={torrent.title}>{torrent.title}</div>
+                        <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
+                          <div className="episode-source-summary text-sm leading-snug text-white/75">
                             {[...releaseFeatures(torrent.title, torrent.quality), torrent.size ? formatBytes(torrent.size) : null].filter(Boolean).join(' · ') || 'Unknown quality'}
                           </div>
                           {torrent.previouslyUsed ? (
                             <span className="type-caption shrink-0 rounded border border-white/40 px-1.5 py-0.5 font-medium text-white">Previously used</span>
                           ) : null}
                         </div>
-                        <div className="episode-source-name mt-0.5 line-clamp-1 text-xs text-white/45" title={torrent.title}>{torrent.title}</div>
                         <div className="type-caption text-numeric mt-1 text-white/70">
                           <span>{torrent.indexer || 'Unknown indexer'}</span>
                           {torrent.pack ? (

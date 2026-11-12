@@ -998,3 +998,12 @@ body :focus-visible { --tw-ring-color: var(--cinema-accent); }
 /* The ring sits beside the title; the status line ("0 MB of 1.9 GB") ends
    before it, and the bar below it keeps the full width. */
 .downloads-page li:has(> .aspect-video) [aria-live='polite'] > div:first-child { padding-right: 48px; }
+
+/* ==== Sources: the release name leads, specs beneath (every width) ==== */
+/* Overrides the earlier rounds that put the specs line first. */
+.source-panel .source-row-text { display: flex !important; flex-direction: column; }
+.source-panel .source-row-text > .source-name { order: 1; margin: 0; grid-column: auto; grid-row: auto; }
+.source-panel .source-row-text > .source-badges { order: 2; margin: 4px 0 0; grid-column: auto; grid-row: auto; flex-wrap: wrap; }
+.source-panel .source-row-text > .source-meta { order: 3; margin-top: 4px; grid-column: auto; grid-row: auto; color: #a9a8a4; font-size: 12.5px; }
+.source-panel ul > li p.source-name { font-size: 15px; font-weight: 600; line-height: 1.35; color: #f1efea; -webkit-line-clamp: 2; }
+.source-panel .source-summary { font-size: 13.5px; font-weight: 500; color: #c9c8c4; }
