@@ -100,7 +100,8 @@ async function enrichItem(item: RawContinueItem): Promise<EnrichedContinueItem> 
     tmdbId,
     malId,
     anilistId,
-    upNext: item.position_s === 0 && item.duration_s === 0 && item.percent === 0,
+    // Not started, or opened for a few seconds: it starts from the top.
+    upNext: item.position_s < 10,
   };
 }
 

@@ -10,6 +10,8 @@ import { getDeviceId } from '../device-id';
 export type WatchedItem = {
   season: number;
   episode: number;
+  position_s?: number;
+  duration_s?: number;
   percent: number;
   watched: boolean;
   /** When it was last played or marked (Unix seconds). */
@@ -20,9 +22,9 @@ export type EpisodeRef = { season: number; episode: number };
 
 export const watchedKey = (season: number, episode: number): string => `${season}:${episode}`;
 
-export async function fetchWatched(seriesId: string): Promise<Map<string, WatchedItem>> {
+export async function fetchWatched(seriesId: string, origin = getVodBase()): Promise<Map<string, WatchedItem>> {
   const params = new URLSearchParams({ subjectId: getDeviceId(), seriesId });
-  const response = await fetch(`${getVodBase()}/v1/watched?${params.toString()}`, {
+  const response = await fetch(`${origin}/v1/watched?${params.toString()}`, {
     headers: { Accept: 'application/json' },
     cache: 'no-store',
     signal: AbortSignal.timeout(8_000),

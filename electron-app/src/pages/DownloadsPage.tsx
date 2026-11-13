@@ -334,7 +334,7 @@ const ROW_CLASS = '-mx-2 flex gap-3 rounded-lg px-2 py-1.5 sm:gap-4';
 const ROW_ACTION_CLASS = `download-row-action ${ACTION_SECONDARY_CLASS} px-4`;
 
 export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps) {
-  const { downloads } = usePlatform();
+  const { downloads, connection } = usePlatform();
   const onOpenSettings = () => window.dispatchEvent(new CustomEvent('torwatch:open-settings'));
   const compat = useConnectionStatus();
   const [inventory, setInventory] = useState<DownloadsInventory | null>(null);
@@ -412,6 +412,17 @@ export default function DownloadsPage({ navigate, seriesId }: DownloadsPageProps
       void handle?.remove();
     };
   }, [downloads, reloadKey]);
+
+  // Positions from watching elsewhere (offline-progress-sync) re-read the
+  // list, so "68% watched" doesn't linger after finishing on the desktop.
+  useEffect(() => {
+    const reload = () => setReloadKey((key) => key + 1);
+    window.addEventListener('torwatch:offline-progress-pulled', reload);
+    if (getNativeDownloads()) {
+      void import('../mobile/offline-progress-sync').then(({ syncOfflineProgressNow }) => syncOfflineProgressNow(connection));
+    }
+    return () => window.removeEventListener('torwatch:offline-progress-pulled', reload);
+  }, [connection]);
 
   useEffect(() => {
     // A new array each time: live progress changes without the stored

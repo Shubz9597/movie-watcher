@@ -110,7 +110,7 @@ export const ContinueCarousel = memo(function ContinueCarousel({ items, onResume
                 {displayTitle}
                 <span className="block text-xs font-normal text-white/60">
                   {/* What resuming means, like the major apps: the episode and time left. */}
-                  {item.upNext ? 'Up next' : continueCaption(item)}
+                  {item.upNext ? ['Up next', item.kind !== 'movie' ? `S${item.season} E${item.episode}` : null].filter(Boolean).join(' · ') : continueCaption(item)}
                 </span>
               </button>
               {onDismiss ? (

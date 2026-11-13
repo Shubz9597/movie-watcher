@@ -337,7 +337,7 @@ const ContinueRail = memo(function ContinueRail({ navigate, variant = 'rail', on
                 <div className="absolute inset-x-2 bottom-3 space-y-0.5">
                   <div className="line-clamp-2 text-sm font-medium leading-5 text-white">{displayTitle}</div>
                   {it.upNext ? (
-                    <div className="type-caption text-white/70">Up next</div>
+                    <div className="type-caption text-white/70">Up next{kind !== 'movie' ? ` · S${it.season} E${it.episode}` : ''}</div>
                   ) : it.year ? (
                     <div className="type-caption text-numeric text-white/70">{it.year}</div>
                   ) : null}
