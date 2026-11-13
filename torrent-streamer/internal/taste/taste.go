@@ -7,6 +7,8 @@
 //   - watch later       weight 3  (derived: library_memberships.watch_later)
 //   - watched           weight 4–6 (derived: watch_progress, any item ≥50% or finished; +0.5 per finished episode, max +2)
 //   - started (<50%)    weight 2  (derived: watch_progress)
+//   - dropped           (started, under 50%, nothing finished, untouched for
+//     21 days): no taste weight; recommendations count titles like it against
 //   - downloaded        weight 3  (derived: download_jobs)
 //   - opened title      weight 1  (collected: taste_events "visited" pings)
 //
@@ -31,11 +33,15 @@ import (
 type Signal struct {
 	CanonicalID string
 	Kind        string // movie | series | anime (may be empty for visits)
-	Label       string // favourited | watch-later | watched | started | downloaded | completed | opened
+	Label       string // favourited | watch-later | watched | started | dropped | downloaded | completed | opened
 	Weight      float64
 	Title       string    // display title when a snapshot/name is available
 	At          time.Time // when the signal last happened (recency decay)
 }
+
+// droppedAfter: a title started but left under half watched for this long
+// was dropped.
+const droppedAfter = 21 * 24 * time.Hour
 
 // Store is the SQL-backed taste signal store (migrations/008).
 type Store struct {
@@ -145,7 +151,9 @@ GROUP BY series_id`, subjectID)
 			return nil, err
 		}
 		signals = append(signals, Signal{CanonicalID: seriesID, Label: "completed", Weight: 0, Title: seriesID})
-		if best >= 50 || finished > 0 {
+		if best < 50 && finished == 0 && time.Since(lastAt) > droppedAfter {
+			signals = append(signals, Signal{CanonicalID: seriesID, Label: "dropped", Weight: 0, Title: seriesID, At: lastAt})
+		} else if best >= 50 || finished > 0 {
 			bonus := float64(finished) * 0.5
 			if bonus > 2 {
 				bonus = 2

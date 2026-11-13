@@ -23,12 +23,17 @@ import (
 	"time"
 
 	"torrent-streamer/internal/catalog"
+	"torrent-streamer/internal/embeddings"
 	"torrent-streamer/internal/library"
 )
 
 // Capability advertised through /v1/version ONLY when the complete
 // recommendation service is wired (contract §Negotiation).
 const Capability = "recommendations.basic.v1"
+
+// LearningCapability: the server records seen cards and "not interested"
+// (/v2/recommendations/seen, /feedback, /stats).
+const LearningCapability = "recommendations.learning.v1"
 
 // MaxLimit is the maximum number of recommendations returned (contract).
 const MaxLimit = 20
@@ -92,6 +97,15 @@ func (a CatalogSeedGenres) SeedTitle(ctx context.Context, canonicalID string) (s
 		return "", catalog.ErrNotFound
 	}
 	return result.Title.Title, nil
+}
+
+// SeedDetail returns the seed's catalog detail (genres, name, plot).
+func (a CatalogSeedGenres) SeedDetail(ctx context.Context, canonicalID string) (catalog.Title, error) {
+	result := a.Catalog.Detail(ctx, canonicalID)
+	if !result.Found {
+		return catalog.Title{}, catalog.ErrNotFound
+	}
+	return result.Title, nil
 }
 
 // SeedGenres returns the merged catalog genres for the seed title.
@@ -210,10 +224,27 @@ type Deps struct {
 	// Optional household taste signals (v2): when wired, scoring uses the
 	// WEIGHTED taste profile (favourites + Watch Later + watch progress +
 	// opened titles) instead of the legacy favourites-only binary points.
-	Taste                 TasteSource
+	Taste TasteSource
+	// Optional learning (migration 019): what was shown and what came of it,
+	// "not interested", and each profile's trained ranking.
+	Feedback *Feedback
+	// Optional content understanding: title embeddings from the local model
+	// (nil or a down model server: ranked without them).
+	Embeddings            Embedder
 	CandidateCacheVersion int
 	// Now overrides the clock (tests); defaults to time.Now.
 	Now func() time.Time
+}
+
+// Embedder returns title embeddings (embeddings.Index).
+type Embedder interface {
+	Vectors(ctx context.Context, docs []embeddings.Doc) map[string][]float32
+}
+
+// SeedDetailSource returns a title's catalog detail (genres, name, plot) in
+// one call; optional on SeedGenreSource.
+type SeedDetailSource interface {
+	SeedDetail(ctx context.Context, canonicalID string) (catalog.Title, error)
 }
 
 type LibrarySource interface {
@@ -248,6 +279,8 @@ type Result struct {
 	Degraded    bool
 	GeneratedAt time.Time
 	Items       []Item
+	// features: each item's ranking inputs, recorded when its card is seen.
+	features map[string]Features
 }
 
 type cacheEntry struct {
@@ -267,8 +300,13 @@ type Service struct {
 	seedSimilar  SeedSimilarSource
 	crossSimilar SeedSimilarSource
 	taste        TasteSource
+	feedback     *Feedback
+	embed        Embedder
 	candidateVn  int
 	now          func() time.Time
+
+	modelMu sync.Mutex
+	models  map[string]modelEntry // per profile, read from rec_models
 
 	mu sync.Mutex
 	// Per profile (internal/profiles): each viewer's recommendations come
@@ -338,6 +376,8 @@ func New(deps Deps) *Service {
 		seedSimilar:  deps.SeedSimilar,
 		crossSimilar: deps.CrossSimilar,
 		taste:        deps.Taste,
+		feedback:     deps.Feedback,
+		embed:        deps.Embeddings,
 		candidateVn:  deps.CandidateCacheVersion,
 		now:          now,
 	}
@@ -408,6 +448,13 @@ func (s *Service) tasteFingerprint(ctx context.Context) string {
 	for _, signal := range signals {
 		if signal.Label != "opened" {
 			keys = append(keys, signal.CanonicalID+"\x00"+signal.Label)
+		}
+	}
+	if s.feedback != nil {
+		if rejections, err := s.feedback.Rejections(ctx, profiles.From(ctx).ID); err == nil {
+			for _, rejection := range rejections {
+				keys = append(keys, rejection.ID+"\x00not-interested")
+			}
 		}
 	}
 	sort.Strings(keys)
@@ -675,15 +722,28 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		label  string
 		weight float64
 		at     time.Time
+		// negative: dropped or rejected; counts against similar titles.
+		negative bool
+		// From the catalog detail: what the title is described by (the same
+		// text as when it is a candidate, so it is embedded once).
+		overview string
+		year     int
+		ttype    string
+		genres   []string
 	}
 	best := map[string]signalInfo{}
 	var completed []string
+	dropped := map[string]TasteSignal{}
 	for _, signal := range signals {
 		if signal.CanonicalID == "" || signal.Label == "" {
 			continue
 		}
 		if signal.Label == "completed" {
 			completed = append(completed, signal.CanonicalID)
+			continue
+		}
+		if signal.Label == "dropped" {
+			dropped[signal.CanonicalID] = signal
 			continue
 		}
 		base := signal.Weight
@@ -701,7 +761,28 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 			}
 		}
 	}
-	if len(best) == 0 {
+	// A dropped show (started, under half watched, left for weeks) is not
+	// taste, whatever else it got (a download), unless it is a favourite.
+	for id, signal := range dropped {
+		if current, ok := best[id]; ok && current.label == "favourited" {
+			continue
+		}
+		best[id] = signalInfo{id: id, kind: signal.Kind, title: signal.Title, label: "dropped", at: signal.At, negative: true}
+	}
+	profileID := profiles.From(ctx).ID
+	rejections, _ := s.feedback.Rejections(ctx, profileID)
+	for _, rejection := range rejections {
+		if _, ok := best[rejection.ID]; !ok {
+			best[rejection.ID] = signalInfo{id: rejection.ID, title: rejection.Title, label: "not-interested", negative: true}
+		}
+	}
+	positiveCount := 0
+	for _, signal := range best {
+		if !signal.negative {
+			positiveCount++
+		}
+	}
+	if positiveCount == 0 {
 		return Result{Revision: revision, Fallback: true, GeneratedAt: s.now(), Items: []Item{}}, nil
 	}
 
@@ -725,7 +806,24 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		callCtx, cancel := context.WithTimeout(ctx, providerCallTimeout)
 		defer cancel()
 		keys := map[string]bool{}
-		genres, err := s.seedGenres.SeedGenres(callCtx, signal.id)
+		var genres []string
+		var err error
+		if detailed, ok := s.seedGenres.(SeedDetailSource); ok {
+			var title catalog.Title
+			if title, err = detailed.SeedDetail(callCtx, signal.id); err == nil {
+				genres = title.Genres
+				signal.overview, signal.year = title.Overview, title.Year
+				signal.ttype, signal.genres = string(title.Type), title.Genres
+				if strings.TrimSpace(title.Title) != "" {
+					signal.title = title.Title
+				}
+				if signal.kind == "" {
+					signal.kind = string(title.Type)
+				}
+			}
+		} else {
+			genres, err = s.seedGenres.SeedGenres(callCtx, signal.id)
+		}
 		if err == nil {
 			namespace := seedNamespace(signal.id)
 			for _, genre := range genres {
@@ -734,13 +832,15 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				}
 			}
 		}
-		if len(keys) == 0 {
+		if len(keys) == 0 && !signal.negative {
 			// Genres only drive overlap scoring; the title still contributes
 			// its "more like this" lists (a flaky detail lookup must not drop
 			// a household title from recommendations).
 			log.Printf("[recommendations] genres for %s unavailable; using its similar lists only: %v", signal.id, err)
 		}
-		if titled, ok := s.seedGenres.(interface {
+		if _, detailed := s.seedGenres.(SeedDetailSource); detailed {
+			// The title came with the detail.
+		} else if titled, ok := s.seedGenres.(interface {
 			SeedTitle(ctx context.Context, canonicalID string) (string, error)
 		}); ok {
 			if title, err := titled.SeedTitle(callCtx, signal.id); err == nil && strings.TrimSpace(title) != "" {
@@ -749,6 +849,20 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		}
 		resolved[index] = signalInfoWithKeys{signalInfo: signal, keys: keys}
 	})
+	// From here the profile's taste is its positive titles; negatives only
+	// count against what resembles them.
+	var negatives []signalInfoWithKeys
+	{
+		positives := resolved[:0:0]
+		for _, signal := range resolved {
+			if signal.negative {
+				negatives = append(negatives, signal)
+			} else {
+				positives = append(positives, signal)
+			}
+		}
+		resolved = positives
+	}
 	if len(resolved) == 0 {
 		return Result{Revision: revision, Fallback: true, GeneratedAt: s.now(), Items: []Item{}}, nil
 	}
@@ -822,14 +936,58 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		return Result{}, fmt.Errorf("read candidate pool: %w", err)
 	}
 	pool = append(pool, trending...)
+	trendingRank := map[string]int{}
+	for i, title := range trending {
+		if _, ok := trendingRank[title.ID]; !ok {
+			trendingRank[title.ID] = i
+		}
+	}
 
 	excluded := map[string]bool{}
 	for _, id := range completed {
 		excluded[id] = true
 	}
+	for _, rejection := range rejections {
+		excluded[rejection.ID] = true
+	}
+	impressions, _ := s.feedback.Impressions(ctx, profileID)
+	model := s.modelFor(ctx, profileID)
 
-	// Score: each candidate sums the profile weights of its overlapping
-	// genres; the reason attributes the highest-weight contributing signal.
+	// Content: embeddings of the profile's titles, what it turned down, and
+	// every candidate (the local model; missing ones are simply absent).
+	vectors := map[string][]float32{}
+	if s.embed != nil {
+		docs := make([]embeddings.Doc, 0, len(resolved)+len(negatives)+len(pool))
+		for _, list := range [][]signalInfoWithKeys{resolved, negatives} {
+			for _, signal := range list {
+				if signal.overview != "" && signal.title != signal.id {
+					docs = append(docs, embeddings.Doc{ID: signal.id, Text: embeddings.Text(signal.title, signal.year, signal.ttype, signal.genres, signal.overview)})
+				}
+			}
+		}
+		listed := map[string]bool{}
+		for _, doc := range docs {
+			listed[doc.ID] = true // a profile title is described once
+		}
+		for _, title := range pool {
+			if listed[title.ID] || excluded[title.ID] || title.Overview == "" {
+				continue
+			}
+			listed[title.ID] = true
+			docs = append(docs, embeddings.Doc{ID: title.ID, Text: embeddings.Text(title.Title, title.Year, string(title.Type), title.Genres, title.Overview)})
+		}
+		embedCtx, cancel := context.WithTimeout(ctx, embedTimeout)
+		vectors = s.embed.Vectors(embedCtx, docs)
+		cancel()
+	}
+	var heaviest, tasteWeight float64
+	for _, signal := range resolved {
+		heaviest = max(heaviest, signal.weight)
+		tasteWeight += signal.weight
+	}
+
+	// Score: features per candidate, ranked by the profile's model (the
+	// hand-set prior until it has learned enough).
 	seen := map[string]bool{}
 	type scored struct {
 		title      catalog.Title
@@ -837,8 +995,9 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		score      float64
 		reasonSeed *signalInfoWithKeys
 		alsoSeed   *signalInfoWithKeys // second supporting title (consensus picks)
-		supported  bool                // listed by at least one household title
+		supported  bool                // listed by (or, in content, close to) a profile title
 		explore    bool                // exploration slot (not tied to one title)
+		features   Features
 	}
 	scored_ := make([]scored, 0, len(pool))
 	for rank, candidate := range pool {
@@ -849,10 +1008,21 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		if excluded[candidate.ID] {
 			continue
 		}
+		impression := impressions[candidate.ID]
+		ignored := 0
+		if !impression.Opened {
+			ignored = max(0, impression.Views-1)
+		}
+		// Shown this often and never opened: it rests for a while.
+		if ignored >= restAfterViews-1 && s.now().Sub(impression.LastAt) < restFor {
+			continue
+		}
+		features := Features{}
 		namespace := seedNamespace(candidate.ID)
-		var score float64
+		var genreWeight float64
 		var reasonSeed *signalInfoWithKeys
-		for _, signal := range resolved {
+		for i := range resolved {
+			signal := &resolved[i]
 			shared := false
 			for _, genre := range candidate.Genres {
 				if key := genreKey(namespace, genre); key != "" && signal.keys[key] {
@@ -861,25 +1031,32 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 				}
 			}
 			if shared {
-				score += signal.weight
+				genreWeight += signal.weight
 				if reasonSeed == nil || signal.weight > reasonSeed.weight {
-					reasonSeed = &signal
+					reasonSeed = signal
 				}
 			}
+		}
+		if tasteWeight > 0 {
+			features["genre"] = genreWeight / tasteWeight
 		}
 		// "More like this" support from each listing title outranks genre
 		// overlap alone, and accumulates across titles (consensus).
 		var alsoSeed *signalInfoWithKeys
+		listedBy := false
 		if supporters := seedsFor[candidate.ID]; len(supporters) > 0 {
 			ranked := append([]*signalInfoWithKeys(nil), supporters...)
 			sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].weight > ranked[j].weight })
 			for _, seed := range ranked {
-				score += seed.weight
+				features["seed"] += seed.weight
 			}
+			features["seedTop"] = ranked[0].weight
+			features["consensus"] = float64(len(ranked) - 1)
 			reasonSeed = ranked[0]
 			if len(ranked) > 1 {
 				alsoSeed = ranked[1]
 			}
+			listedBy = true
 		} else if crossers := crossFor[candidate.ID]; len(crossers) > 0 {
 			strongest := crossers[0]
 			for _, seed := range crossers[1:] {
@@ -887,14 +1064,60 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 					strongest = seed
 				}
 			}
-			score += strongest.weight * crossSupport
+			features["cross"] = strongest.weight * crossSupport
 			reasonSeed = strongest
+			listedBy = true
 		}
+		// Content: how close it is to the profile's titles (the nearest one,
+		// a little in favour of heavier ones) and to what it turned down.
+		var closeTo *signalInfoWithKeys
+		if vector := vectors[candidate.ID]; vector != nil {
+			bestSim := -1.0
+			for i := range resolved {
+				other := vectors[resolved[i].id]
+				if other == nil || resolved[i].id == candidate.ID {
+					continue // a title is never its own reason
+				}
+				sim := embeddings.Cosine(vector, other) * (0.85 + 0.15*resolved[i].weight/max(heaviest, 1e-9))
+				if sim > bestSim {
+					bestSim, closeTo = sim, &resolved[i]
+				}
+			}
+			if closeTo != nil {
+				features["sim"] = 10 * (bestSim - simBaseline)
+			}
+			worst := -1.0
+			for i := range negatives {
+				if other := vectors[negatives[i].id]; other != nil {
+					worst = max(worst, embeddings.Cosine(vector, other))
+				}
+			}
+			if worst > negBaseline {
+				features["neg"] = 10 * (worst - negBaseline)
+			}
+		}
+		similar := closeTo != nil && features["sim"] >= simSupport
+		if !listedBy && similar {
+			// Nobody's list mentions it, but it plainly resembles one of the
+			// profile's titles: that title is its reason.
+			reasonSeed = closeTo
+		}
+		if r, ok := trendingRank[candidate.ID]; ok && len(trending) > 0 {
+			features["popular"] = 1 - float64(r)/float64(len(trending))
+		}
+		if candidate.Year >= s.now().Year()-1 {
+			features["fresh"] = 1
+		}
+		features["views"] = math.Log1p(float64(ignored))
+		supported := listedBy || similar
+		if !supported {
+			features["explore"] = 1
+		}
+		features["prior"] = priorScore(features)
 		// Daily variety: a small, date-seeded jitter reorders near-equal
 		// picks each day without overturning clear preferences.
-		score += dailyJitter(s.now(), candidate.ID) * 0.3
-		supported := len(seedsFor[candidate.ID]) > 0 || len(crossFor[candidate.ID]) > 0
-		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed, supported: supported})
+		score := model.Score(features) + dailyJitter(s.now(), candidate.ID)*0.3
+		scored_ = append(scored_, scored{title: candidate, rank: rank, score: score, reasonSeed: reasonSeed, alsoSeed: alsoSeed, supported: supported, features: features})
 	}
 
 	// Deterministic ordering: score desc, provider popularity rank, canonical id.
@@ -914,12 +1137,12 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 	{
 		groups := map[string][]scored{}
 		order := []string{}
-		var consensus, explore []scored
+		var explore []scored
 		for _, entry := range scored_ {
 			switch {
-			case entry.alsoSeed != nil:
-				consensus = append(consensus, entry) // already score-ordered
 			case entry.supported && entry.reasonSeed != nil:
+				// Consensus picks too: they lead their show's turn when
+				// their score earns it, not ahead of everything.
 				key := entry.reasonSeed.id
 				if _, seen := groups[key]; !seen {
 					order = append(order, key)
@@ -935,13 +1158,23 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		// Rotation: every 6 hours each title leads with a different one of
 		// its best matches (and the exploration picks shift too), so the row
 		// changes through the day while staying about the same titles.
-		for _, key := range order {
-			groups[key] = rotateHead(groups[key], rotationOffset(s.now(), key, min(len(groups[key]), rotateDepth)), rotateDepth)
+		// Only near-ties take turns: a clearly better match keeps the lead.
+		closeToTop := func(list []scored) int {
+			depth := 0
+			for depth < len(list) && depth < rotateDepth && list[depth].score >= list[0].score-rotateMargin {
+				depth++
+			}
+			return depth
 		}
-		explore = rotateHead(explore, rotationOffset(s.now(), "explore", min(len(explore), rotateDepth)), rotateDepth)
-		// Consensus picks (backed by several household titles) lead; then
-		// titles rotate, with one exploration pick after every four.
-		interleaved := append(make([]scored, 0, len(scored_)), consensus...)
+		for _, key := range order {
+			depth := closeToTop(groups[key])
+			groups[key] = rotateHead(groups[key], rotationOffset(s.now(), key, depth), depth)
+		}
+		depth := closeToTop(explore)
+		explore = rotateHead(explore, rotationOffset(s.now(), "explore", depth), depth)
+		// Titles take turns (the best-scoring first), with one exploration
+		// pick after every four.
+		interleaved := make([]scored, 0, len(scored_))
 		sinceExplore := 0
 		for progress := true; progress; {
 			progress = false
@@ -972,7 +1205,9 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		"opened":      func(t string) string { return fmt.Sprintf("Because you opened %s", t) },
 	}
 	items := make([]Item, 0, len(scored_))
+	featuresOf := make(map[string]Features, len(scored_))
 	for _, entry := range scored_ {
+		featuresOf[entry.title.ID] = entry.features
 		item := Item{
 			CanonicalID: entry.title.ID,
 			Type:        string(entry.title.Type),
@@ -984,7 +1219,7 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		if entry.explore {
 			// Exploration: well-regarded outside the household's own lists.
 			item.Reason = Reason{Code: reasonPopular, Text: "Something different"}
-		} else if entry.score > 0 && entry.reasonSeed != nil {
+		} else if entry.reasonSeed != nil {
 			primary := shortTitle(entry.reasonSeed.title)
 			text := reasonText[entry.reasonSeed.label](primary)
 			if entry.alsoSeed != nil && entry.alsoSeed.title != entry.alsoSeed.id {
@@ -1006,7 +1241,7 @@ func (s *Service) computeFromTaste(ctx context.Context, revision int64) (Result,
 		}
 		items = append(items, item)
 	}
-	return Result{Revision: revision, Fallback: false, GeneratedAt: s.now(), Items: items}, nil
+	return Result{Revision: revision, Fallback: false, GeneratedAt: s.now(), Items: items, features: featuresOf}, nil
 }
 
 // seedNamespace extracts the provider namespace from a canonical id
@@ -1060,6 +1295,20 @@ const (
 	// recentSeeds of the "more like this" seeds are kept for the most
 	// recent titles, whatever their weight.
 	recentSeeds = 2
+	// Content similarity (cosine of embeddings): simBaseline is about where
+	// unrelated titles sit; a candidate this far above it (sim feature) is
+	// close enough to name the title it resembles as its reason.
+	simBaseline = 0.5
+	simSupport  = 1.2
+	// negBaseline: closer than this to a dropped or rejected title counts
+	// against.
+	negBaseline = 0.6
+	// A title shown restAfterViews times without being opened rests for
+	// restFor.
+	restAfterViews = 6
+	restFor        = 21 * 24 * time.Hour
+	// embedTimeout bounds embedding new titles during one computation.
+	embedTimeout = 25 * time.Second
 )
 
 func watchingNow(now, at time.Time) bool {
@@ -1134,7 +1383,9 @@ func dailyJitter(now time.Time, id string) float64 {
 // rotateDepth is how many of each title's best matches take turns leading.
 const (
 	rotateWindow = 6 * time.Hour
-	rotateDepth  = 8
+	rotateDepth  = 3
+	// rotateMargin: matches within this score of the best take turns.
+	rotateMargin = 1.0
 )
 
 // rotationOffset is a stable 0..n-1 offset for key in the current rotation

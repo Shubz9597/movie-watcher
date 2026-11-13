@@ -28,6 +28,7 @@ import (
 	"torrent-streamer/internal/catalog"
 	"torrent-streamer/internal/config"
 	"torrent-streamer/internal/downloads"
+	"torrent-streamer/internal/embeddings"
 	"torrent-streamer/internal/httpapi"
 	"torrent-streamer/internal/imdb"
 	"torrent-streamer/internal/introdetect"
@@ -333,6 +334,7 @@ func main() {
 	// titles); per-seed similar candidates route by namespace (TMDb for
 	// tmdb: seeds, AniList recommendations for anilist: seeds).
 	var recommendationService *recommendations.Service
+	var embedIndex *embeddings.Index
 	if libraryStore != nil {
 		for _, provider := range catalogProviders {
 			if candidateProvider, ok := provider.(catalog.CandidateProvider); ok {
@@ -360,7 +362,28 @@ func main() {
 				if tasteStore != nil {
 					deps.Taste = tasteAdapter{store: tasteStore}
 				}
+				if db != nil {
+					// Learning: what was shown, what came of it, "not
+					// interested", per-profile models (migration 019).
+					deps.Feedback = &recommendations.Feedback{DB: db}
+					// Content: a local text-embedding model (the GPU overlay,
+					// compose.embeddings.yaml). Without it ranking still works.
+					if base := strings.TrimSpace(os.Getenv("TORWATCH_EMBEDDINGS_URL")); base != "" {
+						model := strings.TrimSpace(os.Getenv("TORWATCH_EMBEDDINGS_MODEL"))
+						if model == "" {
+							model = "bge-base-en-v1.5"
+						}
+						embedIndex = &embeddings.Index{DB: db, Client: &embeddings.Client{Base: base, Model: model}}
+						deps.Embeddings = embedIndex
+						log.Printf("[recommendations] title embeddings from %s (%s)", base, model)
+					}
+				}
 				recommendationService = recommendations.New(deps)
+				if embedIndex != nil {
+					// Titles embedded in the background reach the next ranking.
+					service := recommendationService
+					embedIndex.OnEmbedded = func(int) { service.ContentChanged() }
+				}
 				break
 			}
 		}
@@ -373,6 +396,12 @@ func main() {
 		// Starting, finishing or saving a title shows in the next Home load
 		// (checked every 2 minutes per profile).
 		go recommendationService.RefreshLoop(rootCtx, profileStore.List, 2*time.Minute)
+		if recommendationService.Learns() {
+			capabilities = append(capabilities, recommendations.LearningCapability)
+			// Each profile's model learns from what came of its
+			// recommendations (6-hourly; first a minute after start).
+			go recommendationService.TrainLoop(rootCtx, profileStore.List, 6*time.Hour)
+		}
 	}
 	// Playback compatibility service (M1.3.x): the shared mobile playback
 	// foundation. The capability is advertised ONLY when BOTH ffprobe and
