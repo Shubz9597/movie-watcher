@@ -7,7 +7,7 @@
 #   TORWATCH_VERSION  semantic version of this image
 #   TORWATCH_REVISION git revision the image was built from
 #   TORWATCH_BUILT_AT UTC build timestamp
-FROM golang:1.27.1-alpine AS build
+FROM golang:1.27.4-alpine AS build
 ARG TORWATCH_VERSION=dev
 ARG TORWATCH_REVISION=unknown
 ARG TORWATCH_BUILT_AT=unknown
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
       -X torrent-streamer/internal/buildinfo.BuiltAt=${TORWATCH_BUILT_AT}" \
     -o /out/torwatch-vod ./cmd/vod
 
-FROM alpine:3.20.6
+FROM alpine:3.24.4
 # ca-certificates: HTTPS provider calls; tzdata: TZ support; curl: container
 # healthcheck; ffmpeg: playback.compat.v1 tooling (transcode off by default).
 RUN apk add --no-cache ca-certificates tzdata curl ffmpeg \

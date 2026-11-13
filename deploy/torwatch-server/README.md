@@ -50,11 +50,11 @@ clients (trusted LAN) ──> gateway (Caddy, only LAN port) ──> vod :4001
   flaresolverr/ downloads/ subtitles/ logs/ backups/`). In bundled database
   mode, `postgres/` is there too. Shared database mode uses the named volume
   owned by `deploy/homelab-postgres`.
-- Images are pinned (no `:latest`): `postgres:16.9-alpine`,
-  `lscr.io/linuxserver/prowlarr:2.6.5`,
-  `ghcr.io/flaresolverr/flaresolverr:v3.5.0`, `caddy:2.10.0-alpine`,
+- Images are pinned (no `:latest`): `postgres:16.16-alpine`,
+  `lscr.io/linuxserver/prowlarr:2.7.0`,
+  `ghcr.io/flaresolverr/flaresolverr:v3.5.2`, `caddy:2.11.9-alpine`,
   `qmcgaw/gluetun:v3.40.0` (VPN overlay only),
-  `ghcr.io/huggingface/text-embeddings-inference:turing-1.6` (embeddings
+  `ghcr.io/huggingface/text-embeddings-inference:turing-1.9` (embeddings
   overlay only).
 - Secrets live exclusively in `.env` (gitignored); preflight rejects
   placeholders and world-readable files.

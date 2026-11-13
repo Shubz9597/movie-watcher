@@ -27,7 +27,7 @@ services:
       retries: 8
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     container_name: "${MW_CONTAINER_PREFIX:-torwatch}-flaresolverr"
     restart: unless-stopped
     env_file:
@@ -55,7 +55,7 @@ services:
       - "${MW_BIND_HOST:-127.0.0.1}:${MW_PROWLARR_PORT:-9696}:9696"
 
   postgres:
-    image: postgres:16.9-alpine
+    image: postgres:16.16-alpine
     container_name: "${MW_CONTAINER_PREFIX:-torwatch}-postgres"
     restart: unless-stopped
     env_file:

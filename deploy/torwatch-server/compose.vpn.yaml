@@ -64,7 +64,7 @@ services:
   # so the services share gluetun's network namespace instead of joining the
   # internal network. Their published loopback ports move to gluetun above.
   prowlarr: !override
-    image: lscr.io/linuxserver/prowlarr:2.6.5
+    image: lscr.io/linuxserver/prowlarr:2.7.0
     restart: unless-stopped
     depends_on:
       gluetun:
@@ -84,7 +84,7 @@ services:
         max-file: 3
 
   flaresolverr: !override
-    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     restart: unless-stopped
     depends_on:
       gluetun:

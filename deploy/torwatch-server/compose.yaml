@@ -34,7 +34,7 @@ networks:
 
 services:
   postgres:
-    image: postgres:16.9-alpine
+    image: postgres:16.16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-torwatch}
@@ -59,7 +59,7 @@ services:
       start_period: 15s
 
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:2.6.5
+    image: lscr.io/linuxserver/prowlarr:2.7.0
     restart: unless-stopped
     environment:
       PUID: ${PUID:-1000}
@@ -83,7 +83,7 @@ services:
       - "127.0.0.1:${PROWLARR_ADMIN_PORT:-9696}:9696"
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     restart: unless-stopped
     environment:
       LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
@@ -172,7 +172,7 @@ services:
         max-file: 3
 
   gateway:
-    image: caddy:2.10.0-alpine
+    image: caddy:2.11.9-alpine
     restart: unless-stopped
     depends_on:
       - vod

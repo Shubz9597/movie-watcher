@@ -8,7 +8,7 @@
 #     TORWATCH_VERIFY_SSE_URL=http://127.0.0.1:$GATEWAY_PORT/buffer/info scripts/verify.sh
 services:
   fixtures:
-    image: caddy:2.10.0-alpine
+    image: caddy:2.11.9-alpine
     command: caddy file-server --root /srv --listen :9090
     volumes:
       - ./tests/fixture:/srv:ro

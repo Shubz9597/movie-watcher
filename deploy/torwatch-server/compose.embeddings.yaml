@@ -10,7 +10,7 @@
 
 services:
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:turing-1.6
+    image: ghcr.io/huggingface/text-embeddings-inference:turing-1.9
     restart: unless-stopped
     command: ["--model-id", "${TORWATCH_EMBEDDINGS_MODEL_ID:-BAAI/bge-base-en-v1.5}"]
     volumes:
