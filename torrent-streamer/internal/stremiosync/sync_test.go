@@ -41,6 +41,12 @@ func fakeStremio(t *testing.T, items *atomic.Value) *httptest.Server {
 				t.Errorf("datastoreGet body = %v", body)
 			}
 			_, _ = w.Write([]byte(`{"result":` + items.Load().(string) + `}`))
+		case "/api/getUser":
+			if body["authKey"] != "key-1" {
+				_, _ = w.Write([]byte(`{"error":{"code":1,"message":"Session does not exist"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"result":{"email":"me@example.com"}}`))
 		case "/api/logout":
 			_, _ = w.Write([]byte(`{"result":{"success":true}}`))
 		default:
@@ -247,5 +253,126 @@ INSERT INTO profiles (id, name, household_id) VALUES ('p-guest', 'Guest', 7) ON 
 	}
 	if _, linked, _ := service.Store.Get(ctx, "p-guest"); linked {
 		t.Fatal("still linked after unlink")
+	}
+}
+
+// fakeLink answers like link.stremio.com: a code, then errors until the
+// code is approved, then the session key.
+func fakeLink(t *testing.T, approved *atomic.Bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v2/create" && r.URL.Query().Get("type") == "Create":
+			_, _ = w.Write([]byte(`{"result":{"success":true,"code":"K10N","link":"https://link.stremio.com/K10N","qrcode":"x"}}`))
+		case r.URL.Path == "/api/v2/read" && r.URL.Query().Get("code") == "K10N":
+			if !approved.Load() {
+				_, _ = w.Write([]byte(`{"error":{"code":101,"message":"Invalid or expired token"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"result":{"authKey":"key-1"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestClientLinkCode(t *testing.T) {
+	var approved atomic.Bool
+	server := fakeLink(t, &approved)
+	defer server.Close()
+	client := &Client{LinkBase: server.URL + "/api/v2/"}
+	ctx := context.Background()
+	code, err := client.CreateLink(ctx)
+	if err != nil || code.Code != "K10N" || code.Link != "https://link.stremio.com/K10N" {
+		t.Fatalf("create = %+v, %v", code, err)
+	}
+	if key, err := client.ReadLink(ctx, "K10N"); key != "" || err != nil {
+		t.Fatalf("before approval = %q, %v; want waiting", key, err)
+	}
+	approved.Store(true)
+	if key, err := client.ReadLink(ctx, "K10N"); key != "key-1" || err != nil {
+		t.Fatalf("after approval = %q, %v", key, err)
+	}
+}
+
+// End to end: a code, approved on Stremio's site a moment later, links the
+// profile (with its email) and brings its positions in; an unapproved code
+// expires; cancelling forgets it.
+func TestLinkWithCode(t *testing.T) {
+	dsn := os.Getenv("TORWATCH_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("TORWATCH_TEST_PG_DSN not set")
+	}
+	ctx := context.Background()
+	progress, err := watch.NewTestStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progress.Close()
+	db := progress.DB
+	for _, table := range []string{"stremio_accounts", "watch_progress"} {
+		if _, err := db.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO library_household (id, revision) VALUES (7, 0) ON CONFLICT DO NOTHING;
+INSERT INTO profiles (id, name, household_id) VALUES ('p-guest', 'Guest', 7) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+
+	var items atomic.Value
+	items.Store(libraryJSON(time.Now().Add(-time.Hour)))
+	api := fakeStremio(t, &items)
+	defer api.Close()
+	var approved atomic.Bool
+	link := fakeLink(t, &approved)
+	defer link.Close()
+	service := newService(api)
+	service.Client.LinkBase = link.URL + "/api/v2/"
+	service.Store = &Store{DB: db}
+	service.Progress = progress
+	service.LinkPoll = 20 * time.Millisecond
+
+	pending, err := service.StartLink(ctx, "p-guest")
+	if err != nil || pending.Code != "K10N" || pending.Link == "" || pending.Expired {
+		t.Fatalf("start = %+v, %v", pending, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, linked, _ := service.Store.Get(ctx, "p-guest"); linked {
+		t.Fatal("linked before approval")
+	}
+	if _, waiting := service.Pending("p-guest"); !waiting {
+		t.Fatal("the code must be waiting")
+	}
+	approved.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	var account Account
+	for time.Now().Before(deadline) {
+		var linked bool
+		if account, linked, _ = service.Store.Get(ctx, "p-guest"); linked && account.LastSyncAt != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if account.Email != "me@example.com" || account.Imported != 3 || account.AuthKey != "key-1" {
+		t.Fatalf("after approval: %+v", account)
+	}
+	if _, waiting := service.Pending("p-guest"); waiting {
+		t.Fatal("an approved code must stop waiting")
+	}
+
+	// Nobody approves: the code expires and says so.
+	approved.Store(false)
+	service.LinkWait = 80 * time.Millisecond
+	if _, err := service.StartLink(ctx, "p-guest"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if pending, waiting := service.Pending("p-guest"); !waiting || !pending.Expired {
+		t.Fatalf("unapproved code = %+v waiting=%v, want expired", pending, waiting)
+	}
+	service.CancelLink("p-guest")
+	if _, waiting := service.Pending("p-guest"); waiting {
+		t.Fatal("cancel must forget the code")
 	}
 }

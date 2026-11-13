@@ -19,12 +19,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 // DefaultAPI is Stremio's account API.
 const DefaultAPI = "https://api.strem.io/api/"
+
+// DefaultLinkAPI is Stremio's device-link service (what its TV apps sign in
+// with): a short code the viewer approves on stremio.com, no password
+// through TorWatch (stremio-core models/link.rs).
+const DefaultLinkAPI = "https://link.stremio.com/api/v2/"
 
 var (
 	// ErrBadLogin: Stremio refused the email or password.
@@ -35,8 +41,16 @@ var (
 )
 
 type Client struct {
-	Base string // default DefaultAPI
-	HTTP *http.Client
+	Base     string // default DefaultAPI
+	LinkBase string // default DefaultLinkAPI
+	HTTP     *http.Client
+}
+
+func (c *Client) httpClient() *http.Client {
+	if c.HTTP == nil {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	return c.HTTP
 }
 
 type apiError struct {
@@ -59,11 +73,7 @@ func (c *Client) call(ctx context.Context, method string, body any, out any) err
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("stremio %s: %w", method, err)
 	}
@@ -144,4 +154,78 @@ func (c *Client) Library(ctx context.Context, authKey string) ([]LibraryItem, er
 		}
 	}
 	return items, nil
+}
+
+// LinkCode is a device-link code and the page that approves it.
+type LinkCode struct {
+	Code string `json:"code"`
+	Link string `json:"link"`
+}
+
+// linkGet calls the link service: {"result": ...} or {"error": ...}.
+func (c *Client) linkGet(ctx context.Context, path string, out any) (*apiError, error) {
+	base := c.LinkBase
+	if base == "" {
+		base = DefaultLinkAPI
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/"+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("stremio link: %w", err)
+	}
+	defer resp.Body.Close()
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+		Error  *apiError       `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("stremio link: HTTP %d: %w", resp.StatusCode, err)
+	}
+	if envelope.Error != nil {
+		return envelope.Error, nil
+	}
+	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
+		return &apiError{Message: "empty answer"}, nil
+	}
+	return nil, json.Unmarshal(envelope.Result, out)
+}
+
+// CreateLink asks for a new code.
+func (c *Client) CreateLink(ctx context.Context) (LinkCode, error) {
+	var code LinkCode
+	apiErr, err := c.linkGet(ctx, "create?type=Create", &code)
+	if err != nil {
+		return LinkCode{}, err
+	}
+	if apiErr != nil || code.Code == "" || code.Link == "" {
+		return LinkCode{}, fmt.Errorf("stremio link: no code (%v)", apiErr)
+	}
+	return code, nil
+}
+
+// ReadLink returns the session key once the code was approved ("" while it
+// waits: the service answers an error until then).
+func (c *Client) ReadLink(ctx context.Context, code string) (string, error) {
+	var out struct {
+		AuthKey string `json:"authKey"`
+	}
+	apiErr, err := c.linkGet(ctx, "read?type=Read&code="+url.QueryEscape(code), &out)
+	if err != nil || apiErr != nil {
+		return "", err
+	}
+	return out.AuthKey, nil
+}
+
+// Email is the account's email (to show which account is linked).
+func (c *Client) Email(ctx context.Context, authKey string) (string, error) {
+	var out struct {
+		Email string `json:"email"`
+	}
+	if err := c.call(ctx, "getUser", map[string]any{"type": "GetUser", "authKey": authKey}, &out); err != nil {
+		return "", err
+	}
+	return out.Email, nil
 }

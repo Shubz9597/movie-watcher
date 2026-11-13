@@ -42,7 +42,15 @@ type Service struct {
 	// does not fill Continue Watching with years-old titles.
 	MaxAge time.Duration
 
+	// LinkWait: how long a link code waits for approval (default 10
+	// minutes); LinkPoll: how often the server checks it (default 3 s).
+	LinkWait time.Duration
+	LinkPoll time.Duration
+
 	mu sync.Mutex // one sync at a time
+
+	pendingMu sync.Mutex
+	pending   map[string]*pendingState // per profile: a code waiting for approval
 }
 
 // Link signs in to Stremio, keeps the session for the profile and syncs

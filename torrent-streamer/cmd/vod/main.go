@@ -294,7 +294,7 @@ func main() {
 		}
 		httpapi.StremioHandlers{Sync: stremioSync}.Register(mux)
 		go stremioSync.Run(rootCtx)
-		capabilities = append(capabilities, "stremio.sync.v1")
+		capabilities = append(capabilities, "stremio.sync.v1", "stremio.link-code.v1")
 	}
 	if libraryStore != nil {
 		capabilities = append(capabilities, library.Capability)

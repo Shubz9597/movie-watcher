@@ -13,14 +13,18 @@ import (
 
 // Stremio sync (internal/stremiosync), for the request's profile (clientId):
 //
-//	GET  /v1/stremio?clientId        -> {linked, account?}
+//	GET  /v1/stremio?clientId        -> {linked, account?, pending?}
+//	POST /v1/stremio/link/start      -> {linked:false, pending: {code, link, expiresAt}}
+//	POST /v1/stremio/link/cancel     -> {linked, account?}
 //	POST /v1/stremio/link?clientId   {email,password} -> {linked, account}
 //	POST /v1/stremio/sync?clientId   -> {linked, account}
 //	POST /v1/stremio/unlink?clientId -> {linked:false}
 //
-// account: {email, linkedAt, lastSyncAt, lastError, imported}. The password
-// is sent on to Stremio once and never stored; the session key never leaves
-// the server.
+// account: {email, linkedAt, lastSyncAt, lastError, imported}. pending: a
+// link code waiting for the viewer to approve it on Stremio's site (the
+// server watches for the approval; expired once nobody approved it in
+// time). With email and password, the password is sent on to Stremio once
+// and never stored; the session key never leaves the server.
 type StremioHandlers struct {
 	Sync *stremiosync.Service
 }
@@ -31,6 +35,8 @@ func (h StremioHandlers) Register(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/v1/stremio", h.handleStatus)
 	mux.HandleFunc("/v1/stremio/link", h.handleLink)
+	mux.HandleFunc("/v1/stremio/link/start", h.handleLinkStart)
+	mux.HandleFunc("/v1/stremio/link/cancel", h.handleLinkCancel)
 	mux.HandleFunc("/v1/stremio/sync", h.handleSync)
 	mux.HandleFunc("/v1/stremio/unlink", h.handleUnlink)
 }
@@ -40,7 +46,44 @@ func (h StremioHandlers) status(w http.ResponseWriter, r *http.Request, account 
 	if linked {
 		body["account"] = account
 	}
+	if pending, ok := h.Sync.Pending(profiles.From(r.Context()).ID); ok {
+		body["pending"] = pending
+	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+func (h StremioHandlers) handleLinkStart(w http.ResponseWriter, r *http.Request) {
+	middleware.EnableCORS(w)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	profileID := profiles.From(r.Context()).ID
+	if _, err := h.Sync.StartLink(r.Context(), profileID); err != nil {
+		log.Printf("[stremio] link code for profile %s: %v", profileID, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Couldn't reach Stremio. Try again in a moment."})
+		return
+	}
+	account, linked, _ := h.Sync.Store.Get(r.Context(), profileID)
+	h.status(w, r, account, linked)
+}
+
+func (h StremioHandlers) handleLinkCancel(w http.ResponseWriter, r *http.Request) {
+	middleware.EnableCORS(w)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	profileID := profiles.From(r.Context()).ID
+	h.Sync.CancelLink(profileID)
+	account, linked, _ := h.Sync.Store.Get(r.Context(), profileID)
+	h.status(w, r, account, linked)
 }
 
 func (h StremioHandlers) handleStatus(w http.ResponseWriter, r *http.Request) {

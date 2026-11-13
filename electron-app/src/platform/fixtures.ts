@@ -250,7 +250,12 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
         lastError: flag === 'signed-out' ? 'stremio session ended' : '',
         imported: 12,
       };
+      const pending = { code: 'K10N', link: 'https://link.stremio.com/K10N', expiresAt: new Date(Date.now() + 600_000).toISOString() };
       if (url.includes('/v1/stremio/unlink')) return jsonResponse({ linked: false });
+      if (url.includes('/v1/stremio/link/start')) return jsonResponse({ linked: false, pending });
+      if (url.includes('/v1/stremio/link/cancel')) return jsonResponse({ linked: false });
+      if (flag === 'pending') return jsonResponse({ linked: false, pending });
+      if (flag === 'expired') return jsonResponse({ linked: false, pending: { ...pending, expired: true } });
       if (url.includes('/v1/stremio/link') || url.includes('/v1/stremio/sync')) {
         return jsonResponse({ linked: true, account: { ...account, lastError: '', lastSyncAt: new Date().toISOString() } });
       }

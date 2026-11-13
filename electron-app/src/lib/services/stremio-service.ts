@@ -8,7 +8,9 @@ import { getDeviceId } from '../device-id';
 import type { StremioAccount } from '../stremio-status';
 
 export { STREMIO_SESSION_ENDED, stremioSyncNote, type StremioAccount } from '../stremio-status';
-export type StremioStatus = { linked: boolean; account?: StremioAccount };
+/** A link code waiting for approval on Stremio's site (the server watches for it). */
+export type StremioPendingLink = { code: string; link: string; expiresAt: string; expired?: boolean };
+export type StremioStatus = { linked: boolean; account?: StremioAccount; pending?: StremioPendingLink };
 
 async function call(path: string, init?: RequestInit, timeoutMs = 20_000): Promise<StremioStatus> {
   const separator = path.includes('?') ? '&' : '?';
@@ -43,4 +45,13 @@ export function syncStremio(): Promise<StremioStatus> {
 
 export function unlinkStremio(): Promise<StremioStatus> {
   return call('/v1/stremio/unlink', { method: 'POST' });
+}
+
+/** Starts linking with a code: approve it on Stremio's site, no password here. */
+export function startStremioLink(): Promise<StremioStatus> {
+  return call('/v1/stremio/link/start', { method: 'POST' });
+}
+
+export function cancelStremioLink(): Promise<StremioStatus> {
+  return call('/v1/stremio/link/cancel', { method: 'POST' });
 }
