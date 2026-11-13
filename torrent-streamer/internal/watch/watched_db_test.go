@@ -79,3 +79,29 @@ func TestSyncOfflineAppliesNewerAndNeverUncompletes(t *testing.T) {
 		t.Fatalf("completion must stick: applied=%d items=%+v", applied, items)
 	}
 }
+
+// Finishing E2 queues E3; opening E3 for a second (to see which episode it
+// is) keeps the show in Continue Watching at E3. A new show opened for a
+// second stays out.
+func TestPeekAtNextEpisodeKeepsShowInContinue(t *testing.T) {
+	store := newCharacterizationStore(t)
+	ctx := context.Background()
+	subject, series, other := t.Name(), "tmdb:tv:95396", "tmdb:tv:7"
+
+	if err := store.SetWatched(ctx, subject, series, []EpisodeRef{{1, 2}}, true, &EpisodeRef{1, 3}); err != nil {
+		t.Fatalf("mark watched: %v", err)
+	}
+	if err := store.SaveProgress(ctx, subject, series, 1, 3, 1, 3401); err != nil {
+		t.Fatalf("peek: %v", err)
+	}
+	if err := store.SaveProgress(ctx, subject, other, 1, 1, 2, 1500); err != nil {
+		t.Fatalf("accidental open: %v", err)
+	}
+	items, err := store.ListContinue(ctx, subject, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].SeriesID != series || items[0].Episode != 3 {
+		t.Fatalf("continue = %+v, want only %s E3", items, series)
+	}
+}

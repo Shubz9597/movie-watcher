@@ -383,7 +383,8 @@ func (s *Store) ListContinue(ctx context.Context, subjectID string, limit int) (
 	rows, err := s.DB.QueryContext(ctx, `
 WITH series_rows AS (
   SELECT wp.*,
-         max(wp.updated_at) OVER (PARTITION BY wp.series_id) AS series_updated_at
+         max(wp.updated_at) OVER (PARTITION BY wp.series_id) AS series_updated_at,
+         count(*) OVER (PARTITION BY wp.series_id) AS series_episodes
   FROM watch_progress wp
   WHERE wp.subject_id=$1
 ),
@@ -395,6 +396,10 @@ latest AS (
     AND (
       (wp.position_s >= 10 AND wp.duration_s > 0 AND wp.percent < `+completedPercentSQL+`)
       OR (wp.position_s = 0 AND wp.duration_s = 0 AND wp.percent = 0)
+      -- A few seconds into the next episode of a show already under way
+      -- (opened to see which episode it was): still that show's place. A
+      -- new show opened by accident stays out.
+      OR (wp.position_s < 10 AND wp.series_episodes > 1)
     )
 )
 SELECT wp.series_id, wp.season, wp.episode, wp.position_s, wp.duration_s, wp.percent, wp.updated_at,
