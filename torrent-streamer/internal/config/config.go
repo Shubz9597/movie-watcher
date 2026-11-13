@@ -61,7 +61,7 @@ var (
 	logFilePath   = "debug.log"
 	errorLogPath  = "errors.log"
 	logConsole    = true
-	logAllowRegex = `\[(init|boot|http|add|files|prefetch|stream|subtitles|watch|janitor|stats|trackers)\]`
+	logAllowRegex = `\[(init|boot|http|add|files|prefetch|stream|subtitles|watch|janitor|stats|trackers|recommendations|embeddings|stremio|catalog)\]`
 	logDenyRegex  = `(?i)msg="error flushing piece storage".*FlushFileBuffers:\s*The handle is invalid`
 	logDedupWin   = 3 * time.Second
 )
