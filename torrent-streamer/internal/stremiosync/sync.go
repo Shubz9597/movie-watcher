@@ -42,6 +42,10 @@ type Service struct {
 	// does not fill Continue Watching with years-old titles.
 	MaxAge time.Duration
 
+	// Push (TorWatch → Stremio): Describe names catalog titles the way
+	// Stremio does; AniList finds an anime entry's Kitsu and IMDb ids.
+	Describe Describer
+	AniList  func(id int) (AnimeEntry, bool)
 	// LinkWait: how long a link code waits for approval (default 10
 	// minutes); LinkPoll: how often the server checks it (default 3 s).
 	LinkWait time.Duration

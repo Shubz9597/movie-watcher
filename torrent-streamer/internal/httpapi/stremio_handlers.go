@@ -16,6 +16,7 @@ import (
 //	GET  /v1/stremio?clientId        -> {linked, account?, pending?}
 //	POST /v1/stremio/link/start      -> {linked:false, pending: {code, link, expiresAt}}
 //	POST /v1/stremio/link/cancel     -> {linked, account?}
+//	POST /v1/stremio/push {enabled}  -> {linked, account} (write TorWatch progress to Stremio)
 //	POST /v1/stremio/link?clientId   {email,password} -> {linked, account}
 //	POST /v1/stremio/sync?clientId   -> {linked, account}
 //	POST /v1/stremio/unlink?clientId -> {linked:false}
@@ -37,6 +38,7 @@ func (h StremioHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/stremio/link", h.handleLink)
 	mux.HandleFunc("/v1/stremio/link/start", h.handleLinkStart)
 	mux.HandleFunc("/v1/stremio/link/cancel", h.handleLinkCancel)
+	mux.HandleFunc("/v1/stremio/push", h.handlePush)
 	mux.HandleFunc("/v1/stremio/sync", h.handleSync)
 	mux.HandleFunc("/v1/stremio/unlink", h.handleUnlink)
 }
@@ -166,4 +168,36 @@ func (h StremioHandlers) handleUnlink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.status(w, r, stremiosync.Account{}, false)
+}
+
+func (h StremioHandlers) handlePush(w http.ResponseWriter, r *http.Request) {
+	middleware.EnableCORS(w)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decodeProfileRequest(w, r, &req) {
+		return
+	}
+	profileID := profiles.From(r.Context()).ID
+	account, linked, err := h.Sync.Store.Get(r.Context(), profileID)
+	if err != nil || !linked {
+		h.status(w, r, stremiosync.Account{}, false)
+		return
+	}
+	if err := h.Sync.Store.SetPush(r.Context(), profileID, req.Enabled); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Couldn't change that."})
+		return
+	}
+	account, _, _ = h.Sync.Store.Get(r.Context(), profileID)
+	if req.Enabled {
+		// Send what is being watched now right away.
+		if _, err := h.Sync.PushProfile(r.Context(), account); err != nil {
+			log.Printf("[stremio] first send for profile %s: %v", profileID, err)
+		}
+		account, _, _ = h.Sync.Store.Get(r.Context(), profileID)
+	}
+	h.status(w, r, account, true)
 }

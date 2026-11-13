@@ -13,6 +13,7 @@ import {
   cancelStremioLink,
   linkStremio,
   loadStremioStatus,
+  setStremioPush,
   startStremioLink,
   stremioSyncNote,
   syncStremio,
@@ -25,7 +26,7 @@ const PRIMARY_CLASS = 'cinema-primary flex min-h-12 w-full items-center justify-
 const SECONDARY_CLASS = `flex min-h-11 flex-1 items-center justify-center rounded-lg border border-white/20 px-4 text-sm text-white/85 transition hover:border-white/40 disabled:opacity-40 ${FOCUS_RING_CLASS}`;
 const QUIET_CLASS = `min-h-11 rounded-lg px-1 text-sm text-white/65 underline decoration-white/25 underline-offset-4 hover:text-white ${FOCUS_RING_CLASS}`;
 
-type Busy = 'start' | 'link' | 'sync' | 'unlink' | 'cancel' | null;
+type Busy = 'start' | 'link' | 'sync' | 'unlink' | 'cancel' | 'push' | null;
 
 export function StremioSyncSetting() {
   const [status, setStatus] = useState<StremioStatus | null>(null);
@@ -193,6 +194,31 @@ export function StremioSyncSetting() {
               {busy === 'unlink' ? 'Unlinking…' : 'Unlink'}
             </button>
           </div>
+        ) : null}
+
+        {account && !relink && account.pushEnabled !== undefined ? (
+          // Both ways: what's watched here also goes to Stremio, so the TV
+          // starts at the same episode and minute.
+          <button
+            type="button"
+            role="switch"
+            aria-checked={account.pushEnabled}
+            onClick={() => void run('push', () => setStremioPush(!account.pushEnabled))}
+            disabled={busy !== null}
+            className={`mt-3 flex min-h-12 w-full items-center gap-3 rounded-lg border border-white/[0.08] bg-black/20 px-3.5 py-3 text-left disabled:opacity-60 ${FOCUS_RING_CLASS}`}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-white">Continue in Stremio too</span>
+              <span className="type-secondary block text-white/60">
+                {account.pushEnabled
+                  ? 'What you watch here shows in Stremio’s Continue Watching, at the same minute'
+                  : 'Pick up on your TV where you left off here'}
+              </span>
+            </span>
+            <span aria-hidden="true" className={`relative h-7 w-12 shrink-0 rounded-full transition ${account.pushEnabled ? 'bg-green-500' : 'bg-white/20'}`}>
+              <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all ${account.pushEnabled ? 'left-[1.375rem]' : 'left-0.5'}`} />
+            </span>
+          </button>
         ) : null}
 
         {account && !relink ? (

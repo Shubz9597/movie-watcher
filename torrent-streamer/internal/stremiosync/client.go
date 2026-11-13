@@ -229,3 +229,35 @@ func (c *Client) Email(ctx context.Context, authKey string) (string, error) {
 	}
 	return out.Email, nil
 }
+
+// LibraryRaw reads the whole library as JSON objects, so an update keeps
+// every field Stremio has (watched marks, hints) untouched.
+func (c *Client) LibraryRaw(ctx context.Context, authKey string) ([]map[string]any, error) {
+	var raw []json.RawMessage
+	err := c.call(ctx, "datastoreGet", map[string]any{
+		"authKey": authKey, "collection": "libraryItem", "ids": []string{}, "all": true,
+	}, &raw)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0, len(raw))
+	for _, one := range raw {
+		var item map[string]any
+		if json.Unmarshal(one, &item) == nil {
+			if id, _ := item["_id"].(string); id != "" {
+				items = append(items, item)
+			}
+		}
+	}
+	return items, nil
+}
+
+// PutLibrary writes library items (Stremio keeps the newest _mtime).
+func (c *Client) PutLibrary(ctx context.Context, authKey string, items []map[string]any) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return c.call(ctx, "datastorePut", map[string]any{
+		"authKey": authKey, "collection": "libraryItem", "changes": items,
+	}, nil)
+}

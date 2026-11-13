@@ -249,7 +249,11 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
         lastSyncAt: new Date(Date.now() - 4 * 60_000).toISOString(),
         lastError: flag === 'signed-out' ? 'stremio session ended' : '',
         imported: 12,
+        pushEnabled: flag === 'pushing',
+        lastPushAt: flag === 'pushing' ? new Date(Date.now() - 60_000).toISOString() : null,
+        pushed: flag === 'pushing' ? 5 : 0,
       };
+      if (url.includes('/v1/stremio/push')) return jsonResponse({ linked: true, account: { ...account, pushEnabled: !account.pushEnabled } });
       const pending = { code: 'K10N', link: 'https://link.stremio.com/K10N', expiresAt: new Date(Date.now() + 600_000).toISOString() };
       if (url.includes('/v1/stremio/unlink')) return jsonResponse({ linked: false });
       if (url.includes('/v1/stremio/link/start')) return jsonResponse({ linked: false, pending });
@@ -259,7 +263,7 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
       if (url.includes('/v1/stremio/link') || url.includes('/v1/stremio/sync')) {
         return jsonResponse({ linked: true, account: { ...account, lastError: '', lastSyncAt: new Date().toISOString() } });
       }
-      return jsonResponse(flag === 'linked' || flag === 'signed-out' ? { linked: true, account } : { linked: false });
+      return jsonResponse(flag === 'linked' || flag === 'signed-out' || flag === 'pushing' ? { linked: true, account } : { linked: false });
     }
     // Deterministic continue-watching rows consumed by the real
     // continue-service (enrichment resolves through the fixture details).

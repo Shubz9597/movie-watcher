@@ -58,3 +58,35 @@ func (s *Service) TitleForIMDb(ctx context.Context, imdb, kind string) string {
 	}
 	return "imdb:" + imdb
 }
+
+// StremioTitle is how Stremio names a title: its IMDb id, display name,
+// kind ("movie" or "series") and poster.
+type StremioTitle struct {
+	IMDb   string
+	Name   string
+	Kind   string
+	Poster string
+}
+
+// StremioTitle describes a catalog title for Stremio (ok false: unknown).
+func (s *Service) StremioTitle(ctx context.Context, id string) (StremioTitle, bool) {
+	if imdb, found := strings.CutPrefix(id, "imdb:"); found && strings.HasPrefix(imdb, "tt") {
+		out := StremioTitle{IMDb: imdb, Kind: "series"}
+		if result := s.Detail(ctx, id); result.Found {
+			out.Name, out.Poster = result.Title.Title, result.Title.Artwork["poster"]
+			if result.Title.Type == TypeMovie {
+				out.Kind = "movie"
+			}
+		}
+		return out, true
+	}
+	result := s.Detail(ctx, id)
+	if !result.Found {
+		return StremioTitle{}, false
+	}
+	out := StremioTitle{IMDb: strings.TrimSpace(result.Title.IMDBID), Name: result.Title.Title, Kind: "series", Poster: result.Title.Artwork["poster"]}
+	if result.Title.Type == TypeMovie {
+		out.Kind = "movie"
+	}
+	return out, true
+}

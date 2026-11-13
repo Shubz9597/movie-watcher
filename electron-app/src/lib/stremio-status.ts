@@ -8,6 +8,10 @@ export type StremioAccount = {
   lastError: string;
   /** Positions brought in from Stremio in total. */
   imported: number;
+  /** TorWatch progress is also written to Stremio (servers with stremio.push.v1). */
+  pushEnabled?: boolean;
+  lastPushAt?: string | null;
+  pushed?: number;
 };
 
 /** The server's error when Stremio ended its session (link again). */

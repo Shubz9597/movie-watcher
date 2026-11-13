@@ -75,6 +75,15 @@ func (a tasteAdapter) HouseholdSignals(ctx context.Context) ([]recommendations.T
 	}
 	return out, nil
 }
+
+// stremioTitles names catalog titles the way Stremio does (stremiosync push).
+type stremioTitles struct{ catalog *catalog.Service }
+
+func (t stremioTitles) StremioTitle(ctx context.Context, id string) (stremiosync.TitleInfo, bool) {
+	title, ok := t.catalog.StremioTitle(ctx, id)
+	return stremiosync.TitleInfo{IMDb: title.IMDb, Name: title.Name, Kind: title.Kind, Poster: title.Poster}, ok
+}
+
 func startPlaybackSweeper(manager *playback.Manager, interval time.Duration) (stop func()) {
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -291,10 +300,21 @@ func main() {
 				entry, ok := animeList.Current().Kitsu(id)
 				return stremiosync.KitsuEntry{AniList: entry.AniList, TMDbMovie: entry.TMDbMovie}, ok
 			},
+			// Both ways: TorWatch progress written to Stremio's library.
+			Describe: stremioTitles{catalogService},
+			AniList: func(id int) (stremiosync.AnimeEntry, bool) {
+				entry, ok := animeList.Current().AniList(id)
+				imdb := ""
+				if len(entry.IMDb) > 0 {
+					imdb = entry.IMDb[0]
+				}
+				return stremiosync.AnimeEntry{Kitsu: entry.Kitsu, IMDb: imdb, Season: entry.Season, HasSeason: entry.HasSeason, EpisodeOffset: entry.EpisodeOffset}, ok
+			},
 		}
 		httpapi.StremioHandlers{Sync: stremioSync}.Register(mux)
 		go stremioSync.Run(rootCtx)
-		capabilities = append(capabilities, "stremio.sync.v1", "stremio.link-code.v1")
+		go stremioSync.PushLoop(rootCtx, 30*time.Second)
+		capabilities = append(capabilities, "stremio.sync.v1", "stremio.link-code.v1", "stremio.push.v1")
 	}
 	if libraryStore != nil {
 		capabilities = append(capabilities, library.Capability)

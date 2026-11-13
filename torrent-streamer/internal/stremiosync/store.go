@@ -17,21 +17,31 @@ type Account struct {
 	LastSyncAt *time.Time `json:"lastSyncAt"`
 	LastError  string     `json:"lastError"`
 	Imported   int        `json:"imported"`
+	// Push: what is watched in TorWatch is written to Stremio's library
+	// (migrations/020); LastPushAt: progress up to then has been sent.
+	PushEnabled bool       `json:"pushEnabled"`
+	LastPushAt  *time.Time `json:"lastPushAt"`
+	Pushed      int        `json:"pushed"`
 }
 
 type Store struct{ DB *sql.DB }
 
-const accountColumns = `profile_id, email, auth_key, linked_at, last_sync_at, last_error, imported`
+const accountColumns = `profile_id, email, auth_key, linked_at, last_sync_at, last_error, imported, push_enabled, last_push_at, pushed`
 
 func scanAccount(row interface{ Scan(...any) error }) (Account, error) {
 	var a Account
-	var last sql.NullTime
-	if err := row.Scan(&a.ProfileID, &a.Email, &a.AuthKey, &a.LinkedAt, &last, &a.LastError, &a.Imported); err != nil {
+	var last, pushedAt sql.NullTime
+	if err := row.Scan(&a.ProfileID, &a.Email, &a.AuthKey, &a.LinkedAt, &last, &a.LastError, &a.Imported,
+		&a.PushEnabled, &pushedAt, &a.Pushed); err != nil {
 		return Account{}, err
 	}
 	if last.Valid {
 		at := last.Time
 		a.LastSyncAt = &at
+	}
+	if pushedAt.Valid {
+		at := pushedAt.Time
+		a.LastPushAt = &at
 	}
 	return a, nil
 }
@@ -82,5 +92,23 @@ func (s *Store) Record(ctx context.Context, profileID string, applied int, syncE
 	_, err := s.DB.ExecContext(ctx, `
 UPDATE stremio_accounts SET last_sync_at=now(), last_error=$2, imported=imported+$3 WHERE profile_id=$1`,
 		profileID, syncErr, applied)
+	return err
+}
+
+// SetPush turns writing to Stremio on or off. Turning it on sends the last
+// day's progress first (what is being watched now), not everything ever.
+func (s *Store) SetPush(ctx context.Context, profileID string, enabled bool) error {
+	_, err := s.DB.ExecContext(ctx, `
+UPDATE stremio_accounts SET push_enabled=$2,
+  last_push_at = CASE WHEN $2 AND NOT push_enabled THEN now() - interval '24 hours' ELSE last_push_at END
+WHERE profile_id=$1`, profileID, enabled)
+	return err
+}
+
+// MarkPushed notes progress up to at as sent (count: items written).
+func (s *Store) MarkPushed(ctx context.Context, profileID string, at time.Time, count int) error {
+	_, err := s.DB.ExecContext(ctx, `
+UPDATE stremio_accounts SET last_push_at=GREATEST(COALESCE(last_push_at, $2), $2), pushed=pushed+$3 WHERE profile_id=$1`,
+		profileID, at, count)
 	return err
 }

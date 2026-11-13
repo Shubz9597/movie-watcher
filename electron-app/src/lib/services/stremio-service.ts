@@ -55,3 +55,8 @@ export function startStremioLink(): Promise<StremioStatus> {
 export function cancelStremioLink(): Promise<StremioStatus> {
   return call('/v1/stremio/link/cancel', { method: 'POST' });
 }
+
+/** Also write what is watched in TorWatch to Stremio (its Continue Watching). */
+export function setStremioPush(enabled: boolean): Promise<StremioStatus> {
+  return call('/v1/stremio/push', { method: 'POST', body: JSON.stringify({ enabled }) }, 30_000);
+}
