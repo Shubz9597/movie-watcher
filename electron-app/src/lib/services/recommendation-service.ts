@@ -43,6 +43,15 @@ export async function fetchRecommendations(deps?: { fetchImpl?: typeof fetch }):
 // advertises the recommendation capability. Discovery is fail-open (a server
 // without a version endpoint simply has no recommendation section).
 export async function hasLiveRecommendationsCapability(deps?: { fetchImpl?: typeof fetch }): Promise<boolean> {
+  return (await liveRecommendationCapabilities(deps)).available;
+}
+
+// liveRecommendationCapabilities: whether the current origin recommends, and
+// whether it learns from seen cards and "not interested".
+export async function liveRecommendationCapabilities(deps?: { fetchImpl?: typeof fetch }): Promise<{ available: boolean; learning: boolean }> {
   const version = await fetchServerVersion(deps);
-  return serverHasRecommendationsCapability(version?.capabilities);
+  return {
+    available: serverHasRecommendationsCapability(version?.capabilities),
+    learning: Array.isArray(version?.capabilities) && version.capabilities.includes('recommendations.learning.v1'),
+  };
 }

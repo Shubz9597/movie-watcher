@@ -9,7 +9,7 @@
 // without the recommendations capability renders nothing at all. Qualified
 // opaque canonical ids drive navigation.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronRight, ListFilter, RotateCw, Sparkles } from 'lucide-react';
+import { Check, ChevronRight, EyeOff, ListFilter, RotateCw, Sparkles } from 'lucide-react';
 import { PageBackButton } from './PageBackButton';
 import { ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import { titleRouteParams } from '../../lib/canonical-route';
@@ -17,10 +17,16 @@ import { LibraryToggle } from './LibraryToggle';
 import { SelectionSurface } from '../primitives';
 import {
   fetchRecommendations,
-  hasLiveRecommendationsCapability,
+  liveRecommendationCapabilities,
   type RecommendationItem,
   type RecommendationsData,
 } from '../../lib/services/recommendation-service';
+import {
+  fetchRecommendationStats,
+  recommendationStatsLine,
+  reportSeen,
+  sendNotInterested,
+} from '../../lib/services/recommendation-feedback';
 import { backendGeneration, subscribeOrigin } from '../../lib/connection-service';
 
 // generationChanged: a response that raced an origin switch is discarded.
@@ -42,6 +48,8 @@ export type RowState = {
   status: 'loading' | 'ready' | 'error' | 'hidden';
   data: RecommendationsData | null;
   error: string | null;
+  /** The server learns from seen cards and "not interested". */
+  learning?: boolean;
 };
 
 // useRecommendations loads the section once per mount with generation-guarded
@@ -60,14 +68,15 @@ function useRecommendations(deps?: { fetchImpl?: typeof fetch }) {
     const startedGeneration = generationRef.current = backendGeneration();
     setState((current) => ({ ...current, status: 'loading', error: null }));
     try {
-      if (!(await hasLiveRecommendationsCapability({ fetchImpl }))) {
+      const capabilities = await liveRecommendationCapabilities({ fetchImpl });
+      if (!capabilities.available) {
         // Older server: no recommendation section at all (never a fake row).
         setState({ status: 'hidden', data: null, error: null });
         return;
       }
       const data = await fetchRecommendations({ fetchImpl });
       if (generationChanged(startedGeneration)) return; // stale/cross-origin discard
-      setState({ status: 'ready', data, error: null });
+      setState({ status: 'ready', data, error: null, learning: capabilities.learning });
     } catch (error) {
       if (generationChanged(startedGeneration)) return;
       setState({ status: 'error', data: null, error: String((error as Error)?.message ?? error) });
@@ -89,13 +98,103 @@ function useRecommendations(deps?: { fetchImpl?: typeof fetch }) {
   return { state, retry: load };
 }
 
-function RecommendationCard({ item, navigate, index }: {
+// useSeenOnScreen reports a card once it has been at least 60% on screen for
+// a second (what the profile actually saw, not what was loaded).
+function useSeenOnScreen(canonicalId: string, position: number, enabled: boolean) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (!enabled || !element || typeof IntersectionObserver === 'undefined') return undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let reported = false;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (reported) return;
+      if (entry?.isIntersecting && entry.intersectionRatio >= 0.6) {
+        timer ??= setTimeout(() => {
+          reported = true;
+          reportSeen(canonicalId, position);
+          observer.disconnect();
+        }, 1000);
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    }, { threshold: [0, 0.6, 1] });
+    observer.observe(element);
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [canonicalId, position, enabled]);
+  return ref;
+}
+
+// useNotInterested: cards turned down leave the row at once; the last one
+// can be taken back for a few seconds.
+function useNotInterested(enabled: boolean) {
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [last, setLast] = useState<RecommendationItem | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!last) return undefined;
+    const timer = setTimeout(() => setLast(null), 8000);
+    return () => clearTimeout(timer);
+  }, [last]);
+  const dismiss = useCallback((item: RecommendationItem) => {
+    if (!enabled) return;
+    setFailed(false);
+    setHidden((current) => new Set(current).add(item.canonicalId));
+    setLast(item);
+    void sendNotInterested(item.canonicalId, item.title).then((ok) => {
+      if (ok) return;
+      setHidden((current) => {
+        const next = new Set(current);
+        next.delete(item.canonicalId);
+        return next;
+      });
+      setLast(null);
+      setFailed(true);
+    });
+  }, [enabled]);
+  const undo = useCallback(() => {
+    if (!last) return;
+    const item = last;
+    setLast(null);
+    setHidden((current) => {
+      const next = new Set(current);
+      next.delete(item.canonicalId);
+      return next;
+    });
+    void sendNotInterested(item.canonicalId, item.title, true);
+  }, [last]);
+  return { hidden, last, failed, dismiss, undo };
+}
+
+function NotInterestedNote({ last, failed, undo }: { last: RecommendationItem | null; failed: boolean; undo: () => void }) {
+  if (failed) {
+    return <p className="type-secondary mb-3 text-white/70" role="status">Couldn’t save that. Try again in a moment.</p>;
+  }
+  if (!last) return null;
+  return (
+    <div className="mb-3 flex items-center gap-3" role="status">
+      <p className="type-secondary min-w-0 truncate text-white/75">You won’t see {last.title} here again.</p>
+      <button type="button" onClick={undo} className={`shrink-0 rounded-lg px-2 text-sm font-semibold text-[var(--cinema-accent,#e7bd82)] min-h-11 ${FOCUS_RING_CLASS}`}>
+        Undo
+      </button>
+    </div>
+  );
+}
+
+function RecommendationCard({ item, navigate, index, learning = false, onNotInterested }: {
   item: RecommendationItem;
   navigate: Navigate;
   index: number;
+  learning?: boolean;
+  onNotInterested?: (item: RecommendationItem) => void;
 }) {
+  const seenRef = useSeenOnScreen(item.canonicalId, index, learning);
   return (
-    <div className="relative">
+    <div className="relative" ref={seenRef}>
       <button
         type="button"
         onClick={() => navigate('title', titleRouteParams(item.canonicalId))}
@@ -138,6 +237,17 @@ function RecommendationCard({ item, navigate, index }: {
         <LibraryToggle canonicalId={item.canonicalId} field="watch-later" variant="overlay" />
         <LibraryToggle canonicalId={item.canonicalId} field="favourites" variant="overlay" />
       </div>
+      {learning && onNotInterested ? (
+        <button
+          type="button"
+          onClick={() => onNotInterested(item)}
+          aria-label={`Not interested in ${item.title}`}
+          title="Not interested"
+          className={`absolute left-1.5 top-1.5 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/60 text-white/75 transition hover:text-white ${FOCUS_RING_CLASS}`}
+        >
+          <EyeOff className="h-4 w-4" aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -216,16 +326,24 @@ export function RecommendationRowView({ state, retry, navigate, loadingPlacehold
     );
   }
 
+  return <ReadyRow state={state} navigate={navigate} />;
+}
+
+function ReadyRow({ state, navigate }: { state: RowState; navigate: Navigate }) {
+  const learning = Boolean(state.learning);
+  const { hidden, last, failed, dismiss, undo } = useNotInterested(learning);
   const data = state.data;
   if (!data || data.items.length === 0) return null; // truthful empty: no fabricated row
+  const items = data.items.filter((item) => !hidden.has(item.canonicalId));
 
   return (
     <section aria-label={data.fallback ? 'Popular picks' : 'Recommendations for your household'} className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
       <SectionHeader fallback={data.fallback} degraded={data.degraded} navigate={navigate} />
+      <NotInterestedNote last={last} failed={failed} undo={undo} />
       <div className="hide-scrollbar flex gap-4 overflow-x-auto pb-2">
-        {data.items.map((item, index) => (
+        {items.map((item, index) => (
           <div key={item.canonicalId} className="w-[148px] shrink-0 sm:w-[164px] md:w-[178px] xl:w-[190px]">
-            <RecommendationCard item={item} navigate={navigate} index={index} />
+            <RecommendationCard item={item} navigate={navigate} index={index} learning={learning} onNotInterested={data.fallback ? undefined : dismiss} />
           </div>
         ))}
       </div>
@@ -253,7 +371,17 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
 }) {
   const [filter, setFilter] = useState<RecommendationKind>('all');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const items = state.data?.items ?? [];
+  const learning = Boolean(state.learning);
+  const { hidden, last, failed, dismiss, undo } = useNotInterested(learning);
+  const [statsLine, setStatsLine] = useState<string | null>(null);
+  useEffect(() => {
+    if (!learning) return undefined;
+    let active = true;
+    void fetchRecommendationStats().then((stats) => { if (active) setStatsLine(recommendationStatsLine(stats)); });
+    return () => { active = false; };
+  }, [learning]);
+  const allItems = state.data?.items ?? [];
+  const items = useMemo(() => allItems.filter((item) => !hidden.has(item.canonicalId)), [allItems, hidden]);
   const counts = useMemo(() => ({
     all: items.length,
     movie: items.filter((item) => item.type === 'movie').length,
@@ -344,9 +472,11 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
           {state.data.degraded ? (
             <p className="type-secondary mt-2 text-white/60" role="note">May be out of date</p>
           ) : null}
+          {statsLine ? <p className="type-secondary mt-2 text-white/55">{statsLine}</p> : null}
+          <div className="mt-4"><NotInterestedNote last={last} failed={failed} undo={undo} /></div>
           {visibleItems.length > 0 ? <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {visibleItems.map((item, index) => (
-              <RecommendationCard key={item.canonicalId} item={item} navigate={navigate} index={index} />
+              <RecommendationCard key={item.canonicalId} item={item} navigate={navigate} index={index} learning={learning} onNotInterested={state.data?.fallback ? undefined : dismiss} />
             ))}
           </div> : (
             <div className="mt-6" role="status">

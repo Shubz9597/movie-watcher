@@ -258,6 +258,13 @@ export function fixtureFetch(scenario: FixtureScenario): typeof fetch {
     }
     // Deterministic continue-watching rows consumed by the real
     // continue-service (enrichment resolves through the fixture details).
+    // Recommendations that learn (recommendation-feedback.ts).
+    if (url.includes('/v2/recommendations/seen')) return new Response(null, { status: 204 });
+    if (url.includes('/v2/recommendations/feedback')) return jsonResponse({ ok: true });
+    if (url.includes('/v2/recommendations/stats')) {
+      return jsonResponse({ days: 30, shown: 46, opened: 9, saved: 3, started: 4, finished: 2, notInterested: 5,
+        model: { samples: 38, positives: 11, trainedAt: '2026-11-13T06:00:00Z', auc: 0.81 } });
+    }
     if (url.includes('/v1/continue/dismiss')) {
       return jsonResponse({ ok: true });
     }

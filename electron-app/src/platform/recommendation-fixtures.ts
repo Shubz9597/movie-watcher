@@ -14,7 +14,7 @@ export type RecommendationFixtureScenario =
 
 const VERSION = {
   serverVersion: 'fixture', protocolVersion: 1, supportedProtocolRange: [1, 1],
-  capabilities: ['catalog.bff.v2', 'library.household.v1', 'recommendations.basic.v1'],
+  capabilities: ['catalog.bff.v2', 'library.household.v1', 'recommendations.basic.v1', 'recommendations.learning.v1'],
 };
 
 const items = (fallback: boolean) => [
@@ -50,7 +50,7 @@ export function createRecommendationsFixtureFetch(scenario: string): typeof fetc
       new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
     if (url.includes('/v1/version')) {
       if (scenario === 'oldserver') {
-        return json({ ...VERSION, capabilities: VERSION.capabilities.filter((c) => c !== 'recommendations.basic.v1') });
+        return json({ ...VERSION, capabilities: VERSION.capabilities.filter((c) => !c.startsWith('recommendations.')) });
       }
       return json(VERSION);
     }
