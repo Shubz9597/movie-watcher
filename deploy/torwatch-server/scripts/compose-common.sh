@@ -8,6 +8,10 @@ torwatch_compose_files() {
   if [ "${TORWATCH_MODE:-direct}" = "embedded-vpn" ]; then
     COMPOSE_FILES+=(-f compose.vpn.yaml)
   fi
+  # Local text-embedding model on the GPU for recommendations.
+  if [ "${TORWATCH_EMBEDDINGS:-off}" = "gpu" ]; then
+    COMPOSE_FILES+=(-f compose.embeddings.yaml)
+  fi
   if [ "${TORWATCH_VERIFY_FIXTURES:-0}" = "1" ]; then
     COMPOSE_FILES+=(-f compose.verify.yaml)
   fi

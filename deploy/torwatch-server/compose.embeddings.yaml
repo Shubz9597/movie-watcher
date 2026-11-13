@@ -1,0 +1,39 @@
+# Optional overlay: a local text-embedding model on the GPU, so
+# recommendations understand what a title is about (internal/embeddings).
+# Enabled by TORWATCH_EMBEDDINGS=gpu in .env (scripts/compose-common.sh).
+#
+# Hugging Face text-embeddings-inference, Turing build (GTX 16xx / RTX 20xx;
+# other GPUs: see the image's tags). About 350 MB of GPU memory. The model is
+# downloaded once into TORWATCH_DATA_DIR/embeddings. Nothing is published;
+# only the Go service calls it. When it is down, recommendations rank
+# without it.
+
+services:
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:turing-1.6
+    restart: unless-stopped
+    command: ["--model-id", "${TORWATCH_EMBEDDINGS_MODEL_ID:-BAAI/bge-base-en-v1.5}"]
+    volumes:
+      - ${TORWATCH_DATA_DIR:?TORWATCH_DATA_DIR is required}/embeddings:/data:rw${SELINUX_MOUNT_OPTS:-}
+    networks:
+      # Outbound for the one-time model download.
+      - gateway
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+
+  vod:
+    environment:
+      TORWATCH_EMBEDDINGS_URL: http://embeddings:80
+      # Vectors are stored per model: changing the model re-embeds titles.
+      TORWATCH_EMBEDDINGS_MODEL: ${TORWATCH_EMBEDDINGS_MODEL_ID:-BAAI/bge-base-en-v1.5}

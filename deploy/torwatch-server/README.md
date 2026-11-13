@@ -34,6 +34,14 @@ clients (trusted LAN) ──> gateway (Caddy, only LAN port) ──> vod :4001
   `deploy/homelab-postgres` stack. Set `TORWATCH_DB_MODE=shared`; the operator
   scripts select the overlay automatically. Start the database stack first.
 
+- **Recommendation embeddings** (`compose.embeddings.yaml` overlay, optional):
+  a local text-embedding model (Hugging Face text-embeddings-inference) on
+  an NVIDIA GPU, so recommendations understand what a title is about rather
+  than only which provider lists it. Set `TORWATCH_EMBEDDINGS=gpu`; the host
+  needs the NVIDIA container runtime. About 350 MB of GPU memory; the model
+  downloads once into `TORWATCH_DATA_DIR/embeddings`. When it is off or down,
+  recommendations rank without it.
+
 - Only the Caddy gateway publishes a LAN port (FR-008). Prowlarr's admin UI
   is **loopback-only** (`127.0.0.1:${PROWLARR_ADMIN_PORT}`); reach it with
   `ssh -L 9696:127.0.0.1:9696 <user>@<host>`. PostgreSQL, FlareSolverr, and
@@ -45,7 +53,9 @@ clients (trusted LAN) ──> gateway (Caddy, only LAN port) ──> vod :4001
 - Images are pinned (no `:latest`): `postgres:16.9-alpine`,
   `lscr.io/linuxserver/prowlarr:2.6.5`,
   `ghcr.io/flaresolverr/flaresolverr:v3.5.0`, `caddy:2.10.0-alpine`,
-  `qmcgaw/gluetun:v3.40.0` (VPN overlay only).
+  `qmcgaw/gluetun:v3.40.0` (VPN overlay only),
+  `ghcr.io/huggingface/text-embeddings-inference:turing-1.6` (embeddings
+  overlay only).
 - Secrets live exclusively in `.env` (gitignored); preflight rejects
   placeholders and world-readable files.
 
