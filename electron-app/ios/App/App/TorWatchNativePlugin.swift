@@ -398,7 +398,8 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         let requestedScale = Int(call.getDouble("subTextScale") ?? Double(currentSubTextScale))
         currentSubTextScale = max(25, min(200, requestedScale))
         currentMediaURL = url
-        localDownloadId = nil // remote session playback: local progress N/A
+        // localDownloadId stays set here: teardown (in startPlaybackSurface)
+        // saves the outgoing download's position, then clears it.
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let bridge = self.bridge, let rootVC = bridge.viewController else {
