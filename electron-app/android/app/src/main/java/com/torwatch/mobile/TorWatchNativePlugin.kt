@@ -203,9 +203,6 @@ class TorWatchNativePlugin : Plugin() {
         localSidecars = emptyList()
 
         startPlaybackEngine(activity, url, title, seekTo)
-
-        mainHandler.postDelayed(timeTicker, TIME_TICK_MS)
-        scheduleTracksRefresh()
         call.resolve()
     }
 
@@ -311,6 +308,12 @@ class TorWatchNativePlugin : Plugin() {
             pendingSeek = (seekTo * 1000.0).toLong()
         }
         player.play()
+        // Every engine reports its time and tracks, a rebuilt one too (after
+        // a subtitle resize the seek bar stood still and a download's
+        // position was no longer saved).
+        mainHandler.removeCallbacks(timeTicker)
+        mainHandler.postDelayed(timeTicker, TIME_TICK_MS)
+        scheduleTracksRefresh()
     }
 
     @PluginMethod
@@ -370,6 +373,8 @@ class TorWatchNativePlugin : Plugin() {
         // An offline download keeps its id and subtitle files.
         val local = localDownloadId
         val sidecars = localSidecars
+        // The rebuilt engine selects the subtitle file that is on now.
+        if (local != null) mediaPlayer?.let { localSubtitleLang = currentLocalSubtitleLang(it) }
         teardown()
         localDownloadId = local
         localSidecars = sidecars
@@ -501,8 +506,6 @@ class TorWatchNativePlugin : Plugin() {
         currentUrl = Uri.fromFile(files.first).toString()
         currentTitle = record?.title ?: call.getString("title") ?: "TorWatch"
         startPlaybackEngine(activity, currentUrl!!, currentTitle, seekTo)
-        mainHandler.postDelayed(timeTicker, TIME_TICK_MS)
-        scheduleTracksRefresh()
         call.resolve(JSObject().put("resumedPositionS", seekTo ?: 0.0))
     }
 
@@ -781,6 +784,9 @@ class TorWatchNativePlugin : Plugin() {
 
     /** Full teardown: bounded, idempotent, orientation + background restored. */
     private fun teardown() {
+        // A download replaced by another video (or rebuilt) keeps its place;
+        // dismiss, the end and errors have saved it already.
+        if (!terminalSent) persistLocalProgress("stopped")
         abandonAudioFocus()
         localDownloadId = null
         terminalSent = true
@@ -788,21 +794,31 @@ class TorWatchNativePlugin : Plugin() {
         pendingSeek = null
         mainHandler.removeCallbacks(timeTicker)
         tracksHandler.removeCallbacks(tracksRefresher)
-        try {
-            mediaPlayer?.setEventListener(null)
-            mediaPlayer?.stop()
-        } catch (ignored: Exception) {
-        }
-        try {
-            mediaPlayer?.detachViews()
-        } catch (ignored: Exception) {
-        }
-        mediaPlayer?.release()
+        val stoppingPlayer = mediaPlayer
+        val stoppingVlc = libVLC
         mediaPlayer = null
-        subtitleFiles.forEach { it.delete() }
-        subtitleFiles.clear()
-        libVLC?.release()
         libVLC = null
+        try {
+            stoppingPlayer?.setEventListener(null)
+            stoppingPlayer?.detachViews()
+        } catch (ignored: Exception) {
+        }
+        val stoppingFiles = subtitleFiles.toList()
+        subtitleFiles.clear()
+        // stop() waits for VLC's threads: on a stalled stream that froze the
+        // app (the iPhone had the same). The views are detached above, on the
+        // main thread; the engine stops and is released off it, then its
+        // subtitle files go.
+        if (stoppingPlayer != null || stoppingVlc != null) {
+            Thread({
+                try { stoppingPlayer?.stop() } catch (ignored: Exception) {}
+                try { stoppingPlayer?.release() } catch (ignored: Exception) {}
+                try { stoppingVlc?.release() } catch (ignored: Exception) {}
+                stoppingFiles.forEach { it.delete() }
+            }, "torwatch-vlc-release").start()
+        } else {
+            stoppingFiles.forEach { it.delete() }
+        }
         videoLayout?.let { layout ->
             (layout.parent as? ViewGroup)?.removeView(layout)
         }

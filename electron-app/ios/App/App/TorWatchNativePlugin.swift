@@ -617,9 +617,13 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
     private func watchResume(fromMs: Int32, playId expected: String, attempt: Int) {
         resumeWatchdog?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self = self, let player = self.mediaPlayer, !self.terminalSent,
+            guard let self = self else { return }
+            // This check is done; the branches below start the next one. (A
+            // seek moves a check only while one is still waiting.)
+            self.resumeWatchdog = nil
+            guard let player = self.mediaPlayer, !self.terminalSent,
                   self.playbackRequested, self.playId == expected else { return }
-            if player.time.intValue > fromMs + 300 { return } // playing
+            if Int64(player.time.intValue) > Int64(fromMs) + 300 { return } // playing
             let loading = player.state == .buffering || player.state == .opening
             self.diag("play-stuck", ["attempt": attempt, "fromMs": Int(fromMs)])
             if loading && attempt < 3 {
@@ -1052,12 +1056,18 @@ class TorWatchNativePlugin: CAPPlugin, CAPBridgedPlugin, VLCMediaPlayerDelegate 
         pendingSeek = nil
         let duration = Double(player.media?.length.intValue ?? 0)
         let upper = duration > 0 ? duration : Double(Int32.max)
-        player.time = VLCTime(int: Int32(max(0, min(upper, seconds * 1000))))
+        let targetMs = Int32(max(0, min(upper, seconds * 1000)))
+        player.time = VLCTime(int: targetMs)
         if !playbackRequested {
             // A scrub while paused becomes the new resume anchor, shown at
             // once (VLC sends no time change while paused).
-            pausedPositionMs = Int32(max(0, min(upper, seconds * 1000)))
+            pausedPositionMs = targetMs
             emitTime(player)
+        } else if resumeWatchdog != nil {
+            // A seek just after Play: the "is it playing?" check measures
+            // from the new position. Measured from the old one, a step back
+            // looked stuck and the player jumped to where it was paused.
+            watchResume(fromMs: targetMs, playId: playId, attempt: 1)
         }
     }
 
