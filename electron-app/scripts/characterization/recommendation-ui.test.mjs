@@ -75,7 +75,7 @@ test("seeded recommendations show truthful grounded reasons and accessible card 
   );
   assert.match(html, /Because you favourited Blade Runner 2049/, "the server's seed-grounded reason renders verbatim");
   assert.match(html, /aria-label="Dune: Part Two, Because you favourited Blade Runner 2049"/, "cards carry title + reason as accessible names");
-  assert.match(html, /Recommended for your household/, "favourite-based section is distinguishable from fallback");
+  assert.match(html, /Recommended for you/, "favourite-based section is distinguishable from fallback");
   assert.match(html, /See all/, "See-all affordance present");
   assert.match(html, /focus-visible:ring-2/, "keyboard focus treatment on cards and controls");
 });

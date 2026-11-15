@@ -193,11 +193,11 @@ function EpisodeArtworkMedia({
 }
 
 /**
- * An episode's description: 3 lines (4 on wider screens) with "More" when
+ * An episode's description: 2 lines with "More" when
  * it runs longer, the rest on tap. Measured, so "More" shows only when
  * text is actually hidden at this screen width.
  */
-function EpisodeOverview({ text }: { text: string }) {
+function EpisodeOverview({ text, watched = false }: { text: string; watched?: boolean }) {
   const [open, setOpen] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const ref = useRef<HTMLParagraphElement | null>(null);
@@ -216,7 +216,7 @@ function EpisodeOverview({ text }: { text: string }) {
       {/* Clamped at a word with an ellipsis; "More" sits under the text on
           the right, in the row's bottom space. */}
       <div className="max-w-[70ch]">
-        <p ref={ref} className={`break-words text-sm leading-[1.6] text-white/70 ${open ? '' : 'line-clamp-3'}`}>{text}</p>
+        <p ref={ref} className={`break-words text-sm leading-[1.6] ${watched && !open ? 'episode-overview-watched' : ''} text-white/70 ${open ? '' : 'line-clamp-2'}`}>{text}</p>
         {overflows || open ? (
           <div className="-mb-2 flex justify-end">
             <button
@@ -1133,7 +1133,7 @@ export default function EpisodePanel({
               page scrolls through it (scrolling episodes hides the header
               info naturally). Desktop keeps the bounded, internally-scrolling
               card. */}
-          <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
+          <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[max(580px,calc(100dvh-19rem))] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
             {watchedError ? <p className="type-secondary px-4 py-2 text-red-300" role="alert">{watchedError}</p> : null}
             {episodes.map((episode) => {
               const artwork = episodeArtwork(episode);
@@ -1221,7 +1221,7 @@ export default function EpisodePanel({
                 </div>
                 {/* Like Netflix: the description under the row, full width;
                     a long one shows its first lines and "More". */}
-                {episode.overview ? <EpisodeOverview text={episode.overview} /> : null}
+                {episode.overview ? <EpisodeOverview text={episode.overview} watched={watched} /> : null}
               </div>
               );
             })}
@@ -1305,7 +1305,7 @@ export default function EpisodePanel({
 
 
           {torrentRows && displayedTorrentRows.length > 0 ? (
-          <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[580px] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
+          <div className={`app-scrollbar ${platform.desktop ? 'sm:max-h-[max(580px,calc(100dvh-19rem))] sm:overflow-y-auto sm:overscroll-contain' : ''}`}>
               <div className="flex items-center justify-between gap-3 px-5 py-3">
                 <p className="type-secondary font-medium text-white/65">Available sources</p>
                 {nextEpisode ? (

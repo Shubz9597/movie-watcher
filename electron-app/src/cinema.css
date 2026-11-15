@@ -1007,3 +1007,19 @@ body :focus-visible { --tw-ring-color: var(--cinema-accent); }
 .source-panel .source-row-text > .source-meta { order: 3; margin-top: 4px; grid-column: auto; grid-row: auto; color: #a9a8a4; font-size: 12.5px; }
 .source-panel ul > li p.source-name { font-size: 15px; font-weight: 600; line-height: 1.35; color: #f1efea; -webkit-line-clamp: 2; }
 .source-panel .source-summary { font-size: 13.5px; font-weight: 500; color: #c9c8c4; }
+
+/* ==== Density pass ==== */
+/* Watched episodes recede; what's next reads first. */
+.episode-panel .episode-overview p.episode-overview-watched { color: #8b8c8a; }
+@media (max-width: 639px) {
+  /* Episodes: "More" keeps its 44px touch area but not a 44px row. */
+  .episode-overview .episode-more { min-height: 26px !important; margin-top: -2px; }
+  .episode-overview .episode-more::after { inset: -9px -4px; }
+  /* Source rows: "Details" shares the seeders line instead of taking its
+     own (the date is in Details), so more sources fit on a screen. */
+  .source-panel .source-date { display: none; }
+  .source-panel ul > li > div { padding-block: 16px 10px; }
+  .source-panel .source-details:not([data-open]) { margin-top: -30px; text-align: right; pointer-events: none; }
+  .source-panel .source-details:not([data-open]) .source-details-toggle { pointer-events: auto; position: relative; min-height: 32px; margin: 0; }
+  .source-panel .source-details:not([data-open]) .source-details-toggle::before { content: ''; position: absolute; inset: -6px -10px; } /* 44px touch area */
+}

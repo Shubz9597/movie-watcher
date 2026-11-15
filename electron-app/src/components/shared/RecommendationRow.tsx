@@ -9,7 +9,7 @@
 // without the recommendations capability renders nothing at all. Qualified
 // opaque canonical ids drive navigation.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronRight, EyeOff, ListFilter, RotateCw, Sparkles } from 'lucide-react';
+import { Check, ChevronRight, EyeOff, Info, ListFilter, RotateCw } from 'lucide-react';
 import { PageBackButton } from './PageBackButton';
 import { ACTION_SECONDARY_CLASS, FOCUS_RING_CLASS } from '../../lib/design-tokens';
 import { titleRouteParams } from '../../lib/canonical-route';
@@ -193,13 +193,14 @@ function RecommendationCard({ item, navigate, index, learning = false, onNotInte
   onNotInterested?: (item: RecommendationItem) => void;
 }) {
   const seenRef = useSeenOnScreen(item.canonicalId, index, learning);
+  const open = () => navigate('title', titleRouteParams(item.canonicalId));
   return (
-    <div className="relative" ref={seenRef}>
+    <div className="group relative" ref={seenRef}>
       <button
         type="button"
-        onClick={() => navigate('title', titleRouteParams(item.canonicalId))}
+        onClick={open}
         aria-label={`${item.title}, ${item.reason.text || 'Popular pick'}`}
-        className={`group block w-full rounded-lg text-left ${FOCUS_RING_CLASS}`}
+        className={`block w-full rounded-lg text-left ${FOCUS_RING_CLASS}`}
       >
         <span className="relative block aspect-[2/3] w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[var(--surface-raised)]">
           {item.artwork?.poster ? (
@@ -213,41 +214,45 @@ function RecommendationCard({ item, navigate, index, learning = false, onNotInte
               className="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105"
             />
           ) : (
-            <span className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025]">
-              <Sparkles className="h-6 w-6 opacity-30" aria-hidden="true" />
+            // No artwork: the name stands in for the poster.
+            <span className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-white/[0.08] to-white/[0.025] px-3 text-center">
+              <span className="line-clamp-4 text-sm font-medium leading-snug text-white/55">{item.title}</span>
             </span>
           )}
         </span>
-        {/* Text sits below the artwork (readable on any poster), matching
-            the other rails. The reason names the seed title only. */}
-        <span className="mt-2 line-clamp-2 block text-sm font-medium leading-snug text-white/90 group-hover:text-white">{item.title}</span>
-        <span className="type-caption mt-1 block capitalize text-white/60">
-          {item.type === 'series' ? 'Series' : item.type}{item.year ? ` · ${item.year}` : ''}
-        </span>
-        {/* Truthful reason: favourite-grounded vs Popular pick are
-            distinguishable in text, never by color alone. */}
-        <span className="type-caption mt-0.5 line-clamp-2 block text-white/60">
-          {item.reason.text}
-        </span>
         <span className="sr-only">Recommendation {index + 1}</span>
       </button>
-      {/* Same Watch Later / Favourites overlays as every other rail: the
-          card is a sibling of the toggles (never nested buttons). */}
-      <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1.5">
+      {/* One control on the artwork, like every other rail. Favourite is on
+          the title's page; "Not interested" sits beside the name. */}
+      <div className="absolute right-1.5 top-1.5 z-10">
         <LibraryToggle canonicalId={item.canonicalId} field="watch-later" variant="overlay" />
-        <LibraryToggle canonicalId={item.canonicalId} field="favourites" variant="overlay" />
       </div>
-      {learning && onNotInterested ? (
-        <button
-          type="button"
-          onClick={() => onNotInterested(item)}
-          aria-label={`Not interested in ${item.title}`}
-          title="Not interested"
-          className={`absolute left-1.5 top-1.5 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/60 text-white/75 transition hover:text-white ${FOCUS_RING_CLASS}`}
-        >
-          <EyeOff className="h-4 w-4" aria-hidden="true" />
-        </button>
-      ) : null}
+      <div className="mt-2 flex items-start gap-1">
+        {/* Text sits below the artwork (readable on any poster). The poster
+            button above is the named control; this opens the same page. */}
+        <div className="min-w-0 flex-1 cursor-pointer" onClick={open}>
+          <span className="line-clamp-2 text-sm font-medium leading-snug text-white/90 group-hover:text-white">{item.title}</span>
+          <span className="type-caption mt-1 block capitalize text-white/60">
+            {item.type === 'series' ? 'Series' : item.type}{item.year ? ` · ${item.year}` : ''}
+          </span>
+          {/* Truthful reason: favourite-grounded vs Popular pick are
+              distinguishable in text, never by color alone. */}
+          <span className="type-caption mt-0.5 line-clamp-2 text-white/60">
+            {item.reason.text}
+          </span>
+        </div>
+        {learning && onNotInterested ? (
+          <button
+            type="button"
+            onClick={() => onNotInterested(item)}
+            aria-label={`Not interested in ${item.title}`}
+            title="Not interested"
+            className={`-mr-2 -mt-3 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-white/50 transition hover:bg-white/[0.08] hover:text-white ${FOCUS_RING_CLASS}`}
+          >
+            <EyeOff className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -260,7 +265,7 @@ function SectionHeader({ fallback, degraded, navigate }: { fallback: boolean; de
           section headers. */}
       <h2 className="type-row-title text-white">
         <span>
-        {fallback ? 'Popular picks' : 'Recommended for your household'}
+        {fallback ? 'Popular picks' : 'Recommended for you'}
         </span>
       </h2>
       {degraded ? <p className="type-secondary mt-1 text-white/60" role="note">May be out of date</p> : null}
@@ -337,7 +342,7 @@ function ReadyRow({ state, navigate }: { state: RowState; navigate: Navigate }) 
   const items = data.items.filter((item) => !hidden.has(item.canonicalId));
 
   return (
-    <section aria-label={data.fallback ? 'Popular picks' : 'Recommendations for your household'} className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
+    <section aria-label={data.fallback ? 'Popular picks' : 'Recommendations for you'} className="tw-cull border-t border-white/[0.08] py-8 md:py-10">
       <SectionHeader fallback={data.fallback} degraded={data.degraded} navigate={navigate} />
       <NotInterestedNote last={last} failed={failed} undo={undo} />
       <div className="hide-scrollbar flex gap-4 overflow-x-auto pb-2">
@@ -399,7 +404,7 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
     <section className="mx-auto max-w-[1600px] px-5 py-6 md:px-8 lg:px-12">
       <PageBackButton />
       <h1 className="type-section-title mt-2 text-white">
-        {state.data?.fallback ? 'Popular picks' : 'Recommended for your household'}
+        {state.data?.fallback ? 'Popular picks' : 'Recommended for you'}
       </h1>
       <div className={`mt-4 items-center justify-end gap-4 md:hidden ${items.length ? 'flex' : 'hidden'}`}>
         <button
@@ -472,7 +477,17 @@ export function RecommendationsAllPageView({ state, retry, navigate }: {
           {state.data.degraded ? (
             <p className="type-secondary mt-2 text-white/60" role="note">May be out of date</p>
           ) : null}
-          {statsLine ? <p className="type-secondary mt-2 text-white/55">{statsLine}</p> : null}
+          {statsLine ? (
+            <details className="mt-2">
+              <summary className={`type-secondary inline-flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg text-white/60 hover:text-white [&::-webkit-details-marker]:hidden ${FOCUS_RING_CLASS}`}>
+                <Info className="h-4 w-4" aria-hidden="true" />
+                How these are picked
+              </summary>
+              <p className="type-secondary mt-1 max-w-[60ch] text-white/60">
+                From what you watch, save and skip here. {statsLine}
+              </p>
+            </details>
+          ) : null}
           <div className="mt-4"><NotInterestedNote last={last} failed={failed} undo={undo} /></div>
           {visibleItems.length > 0 ? <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {visibleItems.map((item, index) => (

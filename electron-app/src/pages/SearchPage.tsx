@@ -8,7 +8,8 @@ import * as React from 'react';
 import { History, Search, X } from 'lucide-react';
 import PosterCard from '../components/PosterCard';
 import { RecommendationRow } from '../components/shared/RecommendationRow';
-import { catalogGateway } from '../lib/services/catalog-gateway';
+import { catalogGateway, getMovies, getTvShows } from '../lib/services/catalog-gateway';
+import type { MovieCard } from '../lib/types';
 import { FOCUS_RING_CLASS } from '../lib/design-tokens';
 import { loadTitlePage } from '../lib/route-loaders';
 import { resultLabel } from '../lib/search-franchise';
@@ -39,6 +40,9 @@ const MIN_CHARS = 2;
 const DEBOUNCE_MS = 300;
 const RECENT_STORAGE_KEY = 'moviewatcher.global-search.recent';
 const MAX_RECENT = 8;
+const MAX_TRENDING = 12;
+
+type TrendingEntry = { key: string; kind: 'movie' | 'tv'; card: MovieCard };
 
 type RecentEntry = { kind: SearchKind; item: Basic; searchedAt: number };
 
@@ -82,6 +86,37 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
   React.useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Something to pick from before typing: what's popular now, films and
+  // series in turn. Best effort: the page is complete without it.
+  const [trending, setTrending] = React.useState<TrendingEntry[]>([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    void Promise.allSettled([getMovies(1), getTvShows(1)]).then(([movies, shows]) => {
+      if (cancelled) return;
+      const lists: Array<{ kind: 'movie' | 'tv'; items: MovieCard[] }> = [
+        { kind: 'movie', items: movies.status === 'fulfilled' ? movies.value.items : [] },
+        { kind: 'tv', items: shows.status === 'fulfilled' ? shows.value.items : [] },
+      ];
+      const next: TrendingEntry[] = [];
+      for (let index = 0; next.length < MAX_TRENDING && lists.some((list) => index < list.items.length); index += 1) {
+        for (const list of lists) {
+          const card = list.items[index];
+          if (card?.id && next.length < MAX_TRENDING) next.push({ key: `${list.kind}-${card.id}`, kind: list.kind, card });
+        }
+      }
+      setTrending(next);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  const openTrending = React.useCallback((kind: 'movie' | 'tv', card: MovieCard) => {
+    void loadTitlePage();
+    navigate('title', { kind, id: String(card.id) });
+  }, [navigate]);
+  const trendingCards = React.useMemo(
+    () => trending.map((entry) => ({ ...entry, onOpen: () => openTrending(entry.kind, entry.card) })),
+    [trending, openTrending],
+  );
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query.trim()), DEBOUNCE_MS);
@@ -264,6 +299,18 @@ export default function SearchPage(props: { navigate: (path: string, params?: Re
               not hold the idle page on its skeleton — the section pops in
               when it arrives, after the input and recents are interactive. */}
           <RecommendationRow navigate={navigate} loadingPlaceholder="none" />
+          {trendingCards.length ? (
+            <section aria-label="Trending now">
+              <h2 className="mb-4 text-lg font-semibold text-white">Trending now</h2>
+              <ul className="search-result-grid grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+                {trendingCards.map((entry) => (
+                  <li key={entry.key}>
+                    <PosterCard movie={entry.card} label={entry.kind === 'movie' ? 'Movie' : 'Series'} onOpen={entry.onOpen} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </div>
       ) : (
         <div className="mt-8">

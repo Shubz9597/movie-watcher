@@ -489,7 +489,7 @@ export default function TorrentPanel({
                                 </span>
                               )}
                               {t.indexer && t.indexer !== '-' && <span>{t.indexer}</span>}
-                              {t.publishDate && <span>{formatDate(t.publishDate)}</span>}
+                              {t.publishDate && <span className="source-date">{formatDate(t.publishDate)}</span>}
                             </div>
                         </div>
                       </button>
@@ -563,7 +563,7 @@ export default function TorrentPanel({
                         metadata with explicit unknowns; "Use this torrent"
                         confirms the selection and returns to the list without
                         starting playback. */}
-                    <div className="mt-2">
+                    <div className="source-details mt-2" data-open={detailsOpen || undefined}>
                       <button
                         type="button"
                         ref={(element) => {
