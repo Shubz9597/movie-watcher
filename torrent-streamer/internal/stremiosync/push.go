@@ -89,6 +89,7 @@ func (s *Service) PushProfile(ctx context.Context, account Account) (int, error)
 		}
 		if item, ok := updatedItem(byID[target.id], target, row, now); ok {
 			changes = append(changes, item)
+			changes = append(changes, retiredDuplicates(library, target, row, now)...)
 		}
 	}
 	if err := s.Client.PutLibrary(ctx, account.AuthKey, changes); err != nil {
@@ -262,6 +263,61 @@ func updatedItem(existing map[string]any, target pushTarget, row progressRow, no
 	item["temp"] = false
 	item["_mtime"] = now.Format(time.RFC3339)
 	return item, true
+}
+
+// retiredDuplicates takes older copies of the same show out of Stremio's
+// Continue Watching, so the TV shows one card at TorWatch's episode. A copy
+// is another library item for the title, e.g. "tmdb:95396" from the TMDB
+// add-on next to Cinemeta's "tt11280740", still holding an old place. Only
+// its timeOffset is cleared (that is what takes an item out of Continue
+// Watching); it stays in the library with its history. A copy watched in
+// Stremio after TorWatch's progress is left alone.
+func retiredDuplicates(library []map[string]any, target pushTarget, row progressRow, now time.Time) []map[string]any {
+	tmdbID := ""
+	if rest, ok := strings.CutPrefix(row.seriesID, "tmdb:"); ok {
+		if _, n, ok := strings.Cut(rest, ":"); ok {
+			tmdbID = "tmdb:" + n
+		}
+	}
+	var out []map[string]any
+	for _, existing := range library {
+		id, _ := existing["_id"].(string)
+		state, _ := existing["state"].(map[string]any)
+		if id == target.id || state == nil || existing["removed"] == true || num(state["timeOffset"]) <= 0 {
+			continue
+		}
+		video, _ := state["video_id"].(string)
+		if titleOf(video) != target.id && (tmdbID == "" || id != tmdbID) {
+			continue
+		}
+		if watched, ok := parseTime(state["lastWatched"]); ok && !watched.Before(row.updatedAt.Truncate(time.Second)) {
+			continue
+		}
+		item := make(map[string]any, len(existing))
+		for key, value := range existing {
+			item[key] = value
+		}
+		retired := make(map[string]any, len(state))
+		for key, value := range state {
+			retired[key] = value
+		}
+		retired["timeOffset"] = 0
+		item["state"] = retired
+		item["_mtime"] = now.Format(time.RFC3339)
+		out = append(out, item)
+	}
+	return out
+}
+
+// titleOf is the title part of a Stremio video id: "tt123" for "tt123:1:2"
+// and "tt123", "kitsu:12" for "kitsu:12:5".
+func titleOf(video string) string {
+	if rest, ok := strings.CutPrefix(video, "kitsu:"); ok {
+		n, _, _ := strings.Cut(rest, ":")
+		return "kitsu:" + n
+	}
+	id, _, _ := strings.Cut(video, ":")
+	return id
 }
 
 func num(value any) int64 {

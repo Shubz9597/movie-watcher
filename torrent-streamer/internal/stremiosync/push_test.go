@@ -93,6 +93,10 @@ INSERT INTO profiles (id, name, household_id) VALUES ('p-guest', 'Guest', 7) ON 
 		stored("tt0944947", "tt0944947:1:2", 1200000, earlier), // Game of Thrones, at E2 in Stremio
 		stored("tt1475582", "tt1475582:1:1", 600000, later),    // Sherlock: changed in Stremio since
 		stored("kitsu:12", "kitsu:12:3", 300000, earlier),      // One Piece, the Kitsu way
+		// Older copies of Game of Thrones (the TMDB add-on's id, an old
+		// place) leave Continue Watching; one watched since stays.
+		stored("tmdb:1399", "tt0944947:1:1", 50000, earlier.Add(-24*time.Hour)),
+		stored("tmdb:9991399", "tt0944947:1:1", 50000, later),
 	}}
 	server := library.server(t)
 	defer server.Close()
@@ -138,7 +142,7 @@ INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if written != 4 || len(library.puts) != 1 {
+	if written != 5 || len(library.puts) != 1 {
 		t.Fatalf("written %d in %d put(s): %+v", written, len(library.puts), library.puts)
 	}
 	got := map[string]map[string]any{}
@@ -168,6 +172,13 @@ INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, 
 	if s := state("kitsu:12"); s["video_id"] != "kitsu:12:5" || s["timeOffset"] != float64(700000) {
 		t.Fatalf("One Piece state = %+v", s)
 	}
+	// The older copy: out of Continue Watching, nothing else changed.
+	if s := state("tmdb:1399"); s["timeOffset"] != float64(0) || s["video_id"] != "tt0944947:1:1" || s["timeWatched"] != float64(600000) || got["tmdb:1399"]["removed"] != false {
+		t.Fatalf("older copy = %+v", got["tmdb:1399"])
+	}
+	if _, ok := got["tmdb:9991399"]; ok {
+		t.Fatal("a copy watched in Stremio since must be left alone")
+	}
 	if _, ok := got["tt1475582"]; ok {
 		t.Fatal("Sherlock changed in Stremio since: must be left alone")
 	}
@@ -182,7 +193,7 @@ INSERT INTO watch_progress (subject_id, series_id, season, episode, position_s, 
 
 	// Sent once: the next run has nothing new.
 	account, _, _ = store.Get(ctx, "p-guest")
-	if account.LastPushAt == nil || account.Pushed != 4 {
+	if account.LastPushAt == nil || account.Pushed != 5 {
 		t.Fatalf("account after push = %+v", account)
 	}
 	if written, err := service.PushProfile(ctx, account); err != nil || written != 0 || len(library.puts) != 1 {
