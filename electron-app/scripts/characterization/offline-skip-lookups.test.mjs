@@ -30,3 +30,12 @@ test("a download with intro and credits is not looked up", () => {
   assert.equal(needsSkipLookup("ep21"), false);
   assert.equal(needsSkipLookup("ep5"), true, "credits without an intro is still incomplete");
 });
+
+// Severance S2E2: TheIntroDB's intro (another release) skipped part of the
+// episode; the download kept it because it counted as complete.
+test("another provider's intro and credits are asked about again", () => {
+  store.set("torwatch_offline_skip_segments_v1", JSON.stringify({
+    s2e2: [{ type: "intro", start: 769.8, end: 849.1, provider: "theintrodb" }, { type: "credits", start: 2686, end: 2781, provider: "theintrodb" }],
+  }));
+  assert.equal(needsSkipLookup("s2e2"), true);
+});

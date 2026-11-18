@@ -19,9 +19,13 @@ const (
 // title sequence can be a 10 s card or a 79 s sequence (Severance), and
 // some episodes have none (Severance's pilot).
 type Profile struct {
-	HeadSeconds, TailSeconds int     // audio measured at each end
-	IntroMin, IntroMax       float64 // plausible lengths, seconds
-	CreditsMin, CreditsMax   float64
+	HeadSeconds, TailSeconds int // audio measured at each end (HeadFor)
+	// HeadShare: a longer head is measured only up to this share of the
+	// file, so an episode's credits song can't pass for its intro (0: the
+	// head is always HeadSeconds).
+	HeadShare              float64
+	IntroMin, IntroMax     float64 // plausible lengths, seconds
+	CreditsMin, CreditsMax float64
 	// LoneMatchMin: a stretch found in only one other episode is taken
 	// when at least this long (recaps and previews are cut into short
 	// pieces with narration over them); shorter needs a second episode.
@@ -30,8 +34,38 @@ type Profile struct {
 
 var (
 	AnimeProfile = Profile{HeadSeconds: 600, TailSeconds: 300, IntroMin: 20, IntroMax: 150, CreditsMin: 20, CreditsMax: 200, LoneMatchMin: 30}
-	TVProfile    = Profile{HeadSeconds: 600, TailSeconds: 300, IntroMin: 10, IntroMax: 150, CreditsMin: 15, CreditsMax: 300, LoneMatchMin: 25}
+	// A TV cold open can run past 10 minutes (Severance S2E2's titles
+	// start at 12:50), so long episodes are measured for up to 20.
+	TVProfile = Profile{HeadSeconds: 1200, HeadShare: 0.45, TailSeconds: 300, IntroMin: 10, IntroMax: 150, CreditsMin: 15, CreditsMax: 300, LoneMatchMin: 25}
 )
+
+// minHead is the head measured whatever the share: what every profile
+// measured before longer heads.
+const minHead = 600
+
+// HeadFor is the audio measured at the start of a file of this duration.
+func (p Profile) HeadFor(duration float64) int {
+	if p.HeadShare <= 0 {
+		return p.HeadSeconds
+	}
+	return min(p.HeadSeconds, max(minHead, int(p.HeadShare*duration)))
+}
+
+// measuredHead is how far into the file its stored head reaches, seconds.
+func (f File) measuredHead() float64 {
+	longest := 0.0
+	for _, part := range f.Head {
+		longest = max(longest, part.Start+Seconds(len(part.Points)))
+	}
+	return longest
+}
+
+// NeedsLongerHead: the file was measured with a shorter head than the
+// profile now wants (fingerprints stored before longer heads).
+func (f File) NeedsLongerHead(profile Profile) bool {
+	want := min(float64(profile.HeadFor(f.Duration)), f.Duration)
+	return f.measuredHead()+30 < want
+}
 
 func (p Profile) limits(kind Kind) (minimum, maximum float64) {
 	if kind == Intro {

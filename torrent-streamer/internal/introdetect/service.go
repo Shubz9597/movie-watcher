@@ -292,8 +292,14 @@ func (s *Service) DetectPrepared(ctx context.Context, ref Ref, stagedPath string
 
 // fingerprint measures and stores a file unless it is stored already.
 func (s *Service) fingerprint(ctx context.Context, ref Ref, input string, profile Profile) error {
-	if _, stored, err := s.Store.LoadFile(ctx, ref.InfoHash, ref.FileIndex); err != nil || stored {
+	file, stored, err := s.Store.LoadFile(ctx, ref.InfoHash, ref.FileIndex)
+	if err != nil {
 		return err
+	}
+	// Measured again when stored with a shorter head than the profile now
+	// wants (and the file can still be read).
+	if stored && (!file.NeedsLongerHead(profile) || input == "") {
+		return nil
 	}
 	if input == "" {
 		return errors.New("no fingerprints stored and no file to measure")
@@ -308,7 +314,7 @@ func (s *Service) fingerprint(ctx context.Context, ref Ref, input string, profil
 	if err != nil {
 		return fmt.Errorf("measure: %w", err)
 	}
-	file := File{Key: fileKey(ref.InfoHash, ref.FileIndex), Season: ref.Season, Episode: ref.Episode, Duration: duration, Head: head, Tail: tail}
+	file = File{Key: fileKey(ref.InfoHash, ref.FileIndex), Season: ref.Season, Episode: ref.Episode, Duration: duration, Head: head, Tail: tail}
 	return s.Store.SaveFile(ctx, ref, file)
 }
 

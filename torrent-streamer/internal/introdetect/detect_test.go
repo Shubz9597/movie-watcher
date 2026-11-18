@@ -84,7 +84,7 @@ func TestCreditlessOpeningGivesExactTimes(t *testing.T) {
 func TestLearnedSongFindsLaterEpisodesAlone(t *testing.T) {
 	episodes := dbzEpisodes(t)
 	_, learned := Detect(episodes[1], episodes[:2], nil, AnimeProfile) // ep 15 with ep 6
-	result, more := Detect(episodes[2], nil, learned, AnimeProfile)     // ep 16, nothing else
+	result, more := Detect(episodes[2], nil, learned, AnimeProfile)    // ep 16, nothing else
 	near(t, "ep16 intro", result.Intro, 26.4, 109.7, 3.5)
 	near(t, "ep16 credits", result.Credits, 1291.2, 1350.2, 3.5)
 	if len(more) != 0 {
@@ -165,4 +165,38 @@ func TestCreditlessSongBeatsALearnedOne(t *testing.T) {
 	themes := append(learned, Theme{Kind: Intro, Points: fixture(t, "dbz_op1_ja"), Source: "extra:pack:3"})
 	result, _ := Detect(episodes[1], nil, themes, AnimeProfile)
 	near(t, "ep15 intro", result.Intro, 25.0, 112.0, 0.6)
+}
+
+func TestHeadForLongEpisodes(t *testing.T) {
+	cases := []struct {
+		profile  Profile
+		duration float64
+		want     int
+	}{
+		{TVProfile, 2781, 1200}, // Severance S2E2: titles at 12:50
+		{TVProfile, 2246, 1010}, // under half of a 37-minute episode
+		{TVProfile, 1320, 600},  // a 22-minute episode keeps 10 minutes
+		{TVProfile, 400, 600},   // shorter than the head: decode stops at the end
+		{AnimeProfile, 2781, 600},
+	}
+	for _, c := range cases {
+		if got := c.profile.HeadFor(c.duration); got != c.want {
+			t.Errorf("HeadFor(%v) = %d, want %d", c.duration, got, c.want)
+		}
+	}
+	old := File{Duration: 2781, Head: []Part{{Points: make([]uint32, 600*PointsPerSecond)}}}
+	if !old.NeedsLongerHead(TVProfile) {
+		t.Error("a 46-minute episode measured for 10 minutes must be measured again")
+	}
+	if old.NeedsLongerHead(AnimeProfile) {
+		t.Error("anime keeps 10 minutes")
+	}
+	short := File{Duration: 400, Head: []Part{{Points: make([]uint32, 399*PointsPerSecond)}}}
+	if short.NeedsLongerHead(TVProfile) {
+		t.Error("a file shorter than the head is complete")
+	}
+	measured := File{Duration: 2781, Head: []Part{{Points: make([]uint32, 1199*PointsPerSecond)}}}
+	if measured.NeedsLongerHead(TVProfile) {
+		t.Error("a file measured with the longer head is complete")
+	}
 }

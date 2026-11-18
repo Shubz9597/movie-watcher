@@ -48,7 +48,7 @@ func Probe(ctx context.Context, ffprobe, input string) (tracks int, duration flo
 }
 
 // Measure fingerprints both ends of every audio track of input: the first
-// profile.HeadSeconds and the last profile.TailSeconds.
+// profile.HeadFor(duration) seconds and the last profile.TailSeconds.
 func Measure(ctx context.Context, ffmpeg, ffprobe, input string, profile Profile) (head, tail []Part, duration float64, err error) {
 	tracks, duration, err := Probe(ctx, ffprobe, input)
 	if err != nil {
@@ -58,14 +58,15 @@ func Measure(ctx context.Context, ffmpeg, ffprobe, input string, profile Profile
 		return nil, nil, 0, errors.New("no audio to measure")
 	}
 	tracks = min(tracks, maxTracks)
+	headSeconds := profile.HeadFor(duration)
 	tailStart := max(0, duration-float64(profile.TailSeconds))
 	for track := range tracks {
-		pcm, err := decode(ctx, ffmpeg, input, track, 0, profile.HeadSeconds)
+		pcm, err := decode(ctx, ffmpeg, input, track, 0, headSeconds)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		head = append(head, Part{Track: track, Start: 0, Points: Fingerprint(pcm)})
-		if tailStart > float64(profile.HeadSeconds) {
+		if tailStart > float64(headSeconds) {
 			pcm, err := decode(ctx, ffmpeg, input, track, tailStart, profile.TailSeconds)
 			if err != nil {
 				return nil, nil, 0, err

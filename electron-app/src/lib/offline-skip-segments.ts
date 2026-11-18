@@ -67,11 +67,17 @@ function lookups(): Record<string, number> {
   }
 }
 
-/** True while a download lacks an intro or credits and lookups remain. */
+// Timings the server found in the episode's own file. Other providers'
+// (TheIntroDB, AniSkip) come from other releases and can be off by a
+// minute (Severance S2E2), so they are asked about again.
+const OWN_PROVIDER = 'torwatch';
+
+/** True while a download lacks an intro or credits found in its own file,
+ *  and lookups remain. */
 export function needsSkipLookup(downloadId: string): boolean {
   const stored = offlineSkipSegments(downloadId);
-  const complete = stored.some((segment) => segment.type === 'intro') && stored.some((segment) => segment.type === 'credits');
-  return !complete && (lookups()[downloadId] ?? 0) < MAX_LOOKUPS;
+  const own = (type: string) => stored.some((segment) => segment.type === type && segment.provider === OWN_PROVIDER);
+  return !(own('intro') && own('credits')) && (lookups()[downloadId] ?? 0) < MAX_LOOKUPS;
 }
 
 /** Counts a lookup the server answered (with or without timestamps). */
